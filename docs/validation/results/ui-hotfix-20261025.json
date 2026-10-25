@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-25",
+  "revision": "ui-hotfix-20261025",
+  "source_manifest_sha256": "c6268378ed0352a49da0528bc566199638c93b06fc4990b8528680438c3d6614",
+  "fixed": [
+    "lazy_highlighter_dependency_failure",
+    "page_error_unmount",
+    "hash_navigation_and_history",
+    "immediate_unsaved_navigation_guard",
+    "source_order_document_contents",
+    "retarget_inherited_causal_basis"
+  ],
+  "owner_login": {
+    "username": "owner",
+    "default_password_configured": true,
+    "restart_preserves_changed_password": true
+  },
+  "full_python": {
+    "passed": 251,
+    "skipped": 11,
+    "seconds": 60.32
+  },
+  "frontend": {
+    "passed": 26,
+    "format": "passed",
+    "build": "passed"
+  },
+  "final_browser_regressions": {
+    "passed": 2,
+    "seconds": 5.6,
+    "failure_injection": "abort lazy highlighter module; reader remains usable",
+    "navigation": "eight pages, empty docs, hash links, back/forward, unsaved drafts"
+  },
+  "live_workspace_browser": {
+    "projects": 3,
+    "page_checks": 24,
+    "page_errors": 0,
+    "failed_http_responses": 0,
+    "flowtest_highlighted_blocks": 18
+  },
+  "remote_ci_executed": false
+}

@@ -1,0 +1,34 @@
+{
+  "version": "1.0.0-rc.1",
+  "date": "2026-10-25",
+  "source_manifest_sha256": "bb526783aebc082011ae88b74bf2b06b6e061ffc0033adb20213c75ee9755357",
+  "python": {
+    "passed": 253,
+    "skipped": 11,
+    "seconds": 76.7
+  },
+  "frontend": {
+    "passed": 30,
+    "build": "passed",
+    "format": "passed",
+    "npm_audit_vulnerabilities": 0
+  },
+  "integration": {
+    "postgres": 6,
+    "rabbitmq": 1,
+    "svn_container": 1,
+    "postgres_recovery": 1,
+    "compose": 1,
+    "flowtest_source": 1
+  },
+  "original_design_files": 44,
+  "formal_business_acceptance": false,
+  "remote_ci_executed": false,
+  "production_deployed": false,
+  "revision": "markdown-rendering-20261025",
+  "browser_regressions": {
+    "passed": 4,
+    "seconds": 25.56
+  },
+  "production_diagram_cases": 4
+}

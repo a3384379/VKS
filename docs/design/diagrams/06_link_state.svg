@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="1590" viewBox="0 0 1300 1590"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8BA3C4"/></marker></defs><g font-family="Noto Sans SC, DejaVu Sans, sans-serif">
+<rect x="0" y="0" width="1300" height="1590" rx="0" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<rect x="30" y="28" width="60" height="34" rx="10" fill="#246BDA" stroke="#246BDA" stroke-width="1.5" />
+<text x="60" y="53" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle"><tspan x="60" dy="0">06</tspan></text>
+<text x="112" y="56" font-size="31" font-weight="600" fill="#19304F" text-anchor="start"><tspan x="112" dy="0">关联审核轴、有效性轴与证据分类</tspan></text>
+<text x="48" y="98" font-size="19" font-weight="400" fill="#627895" text-anchor="start"><tspan x="48" dy="0">审核决定、当前证据有效性与来源类型分别存储，不能相互替代。</tspan></text>
+<rect x="60" y="145" width="1180" height="330" rx="20" fill="#EDF4FE" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="85" y="184" font-size="23" font-weight="600" fill="#627895" text-anchor="start"><tspan x="85" dy="0">审核轴 review_status</tspan></text>
+<rect x="60" y="510" width="1180" height="610" rx="20" fill="#F2F7FB" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="85" y="550" font-size="23" font-weight="600" fill="#627895" text-anchor="start"><tspan x="85" dy="0">有效性轴 validity_status</tspan></text>
+<path d="M420,305 L510,305" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="407.5" y="222" width="115" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="465" y="243" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="465" dy="0">人员确认</tspan></text>
+<path d="M280,350 L280,400 L1020,400 L1020,350" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="592.5" y="364" width="115" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="650" y="385" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="650" dy="0">人员拒绝</tspan></text>
+<path d="M520,670 L260,670 L260,785" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="312.5" y="632" width="155" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="390" y="653" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="390" dy="0">依据内容变化</tspan></text>
+<path d="M780,670 L1040,670 L1040,785" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="832.5" y="632" width="155" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="910" y="653" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="910" dy="0">引用不可定位</tspan></text>
+<path d="M130,830 L90,830 L90,595 L590,595 L590,625" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<rect x="190" y="564" width="200" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="290" y="585" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="290" dy="0">复核通过，新修订</tspan></text>
+<path d="M1170,830 L1210,830 L1210,595 L710,595 L710,625" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<rect x="885" y="564" width="230" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="1000" y="585" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="1000" dy="0">修复后验证，新修订</tspan></text>
+<path d="M260,875 L260,990 L520,990" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="310" y="952" width="160" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="390" y="973" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="390" dy="0">确认不再适用</tspan></text>
+<path d="M1040,875 L1040,990 L780,990" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="830" y="952" width="160" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="910" y="973" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="910" dy="0">确认永久失效</tspan></text>
+<rect x="140" y="260" width="280" height="90" rx="16" fill="#E8F1FF" stroke="#9EBFED" stroke-width="1.5" />
+<text x="280" y="296.4" font-size="24" font-weight="600" fill="#204D91" text-anchor="middle"><tspan x="280" dy="0">candidate</tspan><tspan x="280" dy="34">候选关联</tspan></text>
+<rect x="510" y="260" width="280" height="90" rx="16" fill="#E9F7F2" stroke="#AEDBCD" stroke-width="1.5" />
+<text x="650" y="296.4" font-size="24" font-weight="400" fill="#287D68" text-anchor="middle"><tspan x="650" dy="0">confirmed</tspan><tspan x="650" dy="34">已确认</tspan></text>
+<rect x="880" y="260" width="280" height="90" rx="16" fill="#FFF1F2" stroke="#EBC2C7" stroke-width="1.5" />
+<text x="1020" y="296.4" font-size="24" font-weight="400" fill="#B84A54" text-anchor="middle"><tspan x="1020" dy="0">rejected</tspan><tspan x="1020" dy="34">已拒绝</tspan></text>
+<rect x="520" y="625" width="260" height="90" rx="16" fill="#E9F7F2" stroke="#AEDBCD" stroke-width="1.5" />
+<text x="650" y="661.4" font-size="24" font-weight="400" fill="#287D68" text-anchor="middle"><tspan x="650" dy="0">valid</tspan><tspan x="650" dy="34">证据仍有效</tspan></text>
+<rect x="130" y="785" width="260" height="90" rx="16" fill="#FFF6E5" stroke="#EBCF9F" stroke-width="1.5" />
+<text x="260" y="820.7" font-size="22" font-weight="400" fill="#B87512" text-anchor="middle"><tspan x="260" dy="0">stale</tspan><tspan x="260" dy="34">证据变化待复核</tspan></text>
+<rect x="910" y="785" width="260" height="90" rx="16" fill="#FFF1F2" stroke="#EBC2C7" stroke-width="1.5" />
+<text x="1040" y="820.7" font-size="22" font-weight="400" fill="#B84A54" text-anchor="middle"><tspan x="1040" dy="0">broken</tspan><tspan x="1040" dy="34">引用无法定位</tspan></text>
+<rect x="520" y="945" width="260" height="90" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="650" y="980.7" font-size="22" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="650" dy="0">obsolete</tspan><tspan x="650" dy="34">不再适用</tspan></text>
+<rect x="135" y="1150" width="1030" height="85" rx="16" fill="#E8F1FF" stroke="#9EBFED" stroke-width="1.5" />
+<text x="650" y="1200.55" font-size="23" font-weight="600" fill="#204D91" text-anchor="middle"><tspan x="650" dy="0">可组合：review_status=confirmed + validity_status=stale</tspan></text>
+<rect x="60" y="1330" width="270" height="105" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="195" y="1372.85" font-size="21" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="195" dy="0">static 静态分析</tspan><tspan x="195" dy="34">源码与声明关系</tspan></text>
+<rect x="363" y="1330" width="270" height="105" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="498" y="1372.85" font-size="21" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="498" dy="0">observed 运行观察</tspan><tspan x="498" dy="34">录制路径的实际行为</tspan></text>
+<rect x="666" y="1330" width="270" height="105" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="801" y="1372.85" font-size="21" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="801" dy="0">semantic 语义推断</tspan><tspan x="801" dy="34">待验证的语义建议</tspan></text>
+<rect x="970" y="1330" width="270" height="105" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="1105" y="1372.85" font-size="21" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="1105" dy="0">manual 人工来源</tspan><tspan x="1105" dy="34">人工标注与确认记录</tspan></text>
+<text x="650" y="447" font-size="20" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="650" dy="0">是否接受关联，与当前证据是否过期，是两个独立问题。</tspan></text>
+<text x="650" y="1082" font-size="20" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="650" dy="0">新基线生成新修订；旧发布版本及其审核记录不原地修改。</tspan></text>
+<text x="85" y="1290" font-size="23" font-weight="600" fill="#19304F" text-anchor="start"><tspan x="85" dy="0">证据来源 evidence_type（第三个独立字段）</tspan></text>
+<text x="650" y="1480" font-size="21" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="650" dy="0">人工确认不等于运行因果证明；运行观察也只覆盖实际录制的路径。</tspan></text>
+<path d="M48,1525 L1252,1525" fill="none" stroke="#C7D8EF" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"  />
+<text x="48" y="1560" font-size="18" font-weight="400" fill="#627895" text-anchor="start"><tspan x="48" dy="0">自动规则提取的是事实索引；业务因果须有独立证据，不由审核状态推导。</tspan></text>
+</g></svg>

@@ -1,0 +1,299 @@
+{
+  "schema_version": "1.0",
+  "fixture": "Java8-Spring-MyBatis-static-v1",
+  "review_status": "synthetic_regression_labels_not_independent_human_blind_review",
+  "expected_relations": [
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceController.records(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceController.submit(double)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceController.pending()"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceController.reflective(Object)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.find(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.insert(double)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.note(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.dynamic(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceService",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceService.find(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceService",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceService.save(double)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceService",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceService.save(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceService",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceService.ambiguous(Object)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceService",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceService.unknown(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceService",
+      "type": "contains",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceService.unknown(Integer)"
+    },
+    {
+      "from_service": "support",
+      "from": "fixture.billing.InvoiceController",
+      "type": "contains",
+      "to_service": "support",
+      "to": "fixture.billing.InvoiceController.records(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.records(String)",
+      "type": "handler_of",
+      "to_service": "billing",
+      "to": "GET /pay/records"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.pending()",
+      "type": "handler_of",
+      "to_service": "billing",
+      "to": "GET /pay/records"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.reflective(Object)",
+      "type": "handler_of",
+      "to_service": "billing",
+      "to": "GET /pay/reflect"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.submit(double)",
+      "type": "handler_of",
+      "to_service": "billing",
+      "to": "POST /pay/invoice"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.submit(double)",
+      "type": "handler_of",
+      "to_service": "billing",
+      "to": "POST /pay/invoices"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.records(String)",
+      "type": "handler_of",
+      "to_service": "billing",
+      "to": "GET /payments/records"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.pending()",
+      "type": "handler_of",
+      "to_service": "billing",
+      "to": "GET /payments/records"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.reflective(Object)",
+      "type": "handler_of",
+      "to_service": "billing",
+      "to": "GET /payments/reflect"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.submit(double)",
+      "type": "handler_of",
+      "to_service": "billing",
+      "to": "POST /payments/invoice"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.submit(double)",
+      "type": "handler_of",
+      "to_service": "billing",
+      "to": "POST /payments/invoices"
+    },
+    {
+      "from_service": "support",
+      "from": "fixture.billing.InvoiceController.records(String)",
+      "type": "handler_of",
+      "to_service": "support",
+      "to": "GET /pay/records"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.records(String)",
+      "type": "may_call",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceService.find(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.pending()",
+      "type": "may_call",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceService.find(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceController.submit(double)",
+      "type": "may_call",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceService.save(double)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceService.find(String)",
+      "type": "may_call",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.find(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceService.save(double)",
+      "type": "may_call",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.insert(double)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceService.save(String)",
+      "type": "may_call",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.note(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceService.ambiguous(Object)",
+      "type": "may_call",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceService.unknown(String)"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper.find(String)",
+      "type": "maps_to_sql",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.find"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper.insert(double)",
+      "type": "maps_to_sql",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.insert"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper.note(String)",
+      "type": "maps_to_sql",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.note"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper.dynamic(String)",
+      "type": "maps_to_sql",
+      "to_service": "billing",
+      "to": "fixture.billing.InvoiceMapper.dynamic"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper.find",
+      "type": "reads_table",
+      "to_service": "billing",
+      "to": "demo_invoice"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper.insert",
+      "type": "writes_table",
+      "to_service": "billing",
+      "to": "demo_invoice"
+    },
+    {
+      "from_service": "billing",
+      "from": "fixture.billing.InvoiceMapper.note",
+      "type": "writes_table",
+      "to_service": "billing",
+      "to": "demo_invoice"
+    }
+  ],
+  "fixture_sha256": {
+    "billing/InvoiceController.java": "45cac1890c13300af88d7ace94c9d8cc62c063591a2b250b6c950d75d7a9626e",
+    "billing/InvoiceMapper.java": "eb37baa332dd4b52b245ee2a33eb5e42f9b2dc57be28cd0e9f5314d57f9d5e6c",
+    "billing/InvoiceMapper.xml": "5dea3f636d8202fd54089f270b3081e29e94e3e306db2917c7b8b786786965eb",
+    "billing/InvoiceService.java": "fde9c28a032a0da7fd28907e5495349ead5fbe49c15b99414591584876512bc6",
+    "support/InvoiceController.java": "776cf90666414a04ddf8153cb1063a6cea7873f557d363cd28ff6d0b5202b409"
+  },
+  "limitations": [
+    "External standard-library return type inference deliberately produces a known FN for InvoiceService.ambiguous(Object) -> unknown(String).",
+    "Reflection and calls to absent library declarations remain explicit dynamic/external gaps.",
+    "This 40-relation fixture does not replace the design requirement for 100 independently reviewed project relations."
+  ]
+}

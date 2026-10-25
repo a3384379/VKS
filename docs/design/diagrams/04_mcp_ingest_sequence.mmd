@@ -1,0 +1,23 @@
+sequenceDiagram
+    participant C as AI 客户端
+    participant M as MCP / API 入口
+    participant J as 任务与 Worker
+    participant E as 知识与证据库
+    participant H as 审核发布者
+    C->>M: import_bundle + 幂等键
+    M->>E: 校验 scope、基线与幂等键
+    E-->>M: 复用已有任务或允许创建
+    M->>J: 提交受控异步任务
+    M-->>C: 立即返回 job_id
+    J->>E: 保存节点、证据和候选关联
+    C->>M: get_job(job_id)
+    M->>J: 查询任务状态
+    J-->>M: 进度及候选 ID
+    M-->>C: 状态与结果引用
+    C->>M: request_release(待发布草稿)
+    M->>H: 创建审核任务，不自动发布
+    H->>M: 经 Web 审核发布 + expected_manifest_sha256
+    M->>E: 事务校验角色、基线与已审核项
+    E-->>M: 原子发布并返回 release_id
+    M-->>H: 发布结果与审计记录
+    Note over C,H: 重试复用同一幂等键；任务取消与失败不回写已发布知识。

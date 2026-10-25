@@ -1,0 +1,29 @@
+flowchart TB
+    subgraph REVIEW["审核轴 review_status"]
+        A["candidate · 候选关联"]
+        B["confirmed · 已确认"]
+        C["rejected · 已拒绝"]
+    end
+    subgraph VALIDITY["有效性轴 validity_status"]
+        D["valid · 证据仍有效"]
+        E["stale · 证据变化待复核"]
+        F["broken · 引用无法定位"]
+        G["obsolete · 不再适用"]
+    end
+    subgraph COMBINATION["两个状态轴可共存"]
+        Z["可组合：review_status=confirmed + validity_status=stale"]
+    end
+    subgraph EVIDENCE["来源 evidence_type 独立于状态"]
+        H["static 静态分析 · 源码与声明关系"]
+        I["observed 运行观察 · 录制路径的实际行为"]
+        J["semantic 语义推断 · 待验证的语义建议"]
+        K["manual 人工来源 · 人工标注与确认记录"]
+    end
+    A -- "人员确认" --> B
+    A -- "人员拒绝" --> C
+    D -- "依据内容变化" --> E
+    D -- "引用不可定位" --> F
+    E -. "复核通过，新修订" .-> D
+    F -. "修复后验证，新修订" .-> D
+    E -- "确认不再适用" --> G
+    F -- "确认永久失效" --> G

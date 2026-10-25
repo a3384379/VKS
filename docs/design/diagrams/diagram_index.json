@@ -1,0 +1,42 @@
+{
+  "version": "1.0",
+  "render": "SVG + Sharp, font Noto Sans SC",
+  "files": [
+    {
+      "name": "01_architecture",
+      "source": "01_architecture.mmd",
+      "svg": "01_architecture.svg",
+      "png": "01_architecture.png"
+    },
+    {
+      "name": "02_ingest_flow",
+      "source": "02_ingest_flow.mmd",
+      "svg": "02_ingest_flow.svg",
+      "png": "02_ingest_flow.png"
+    },
+    {
+      "name": "03_workbench_sequence",
+      "source": "03_workbench_sequence.mmd",
+      "svg": "03_workbench_sequence.svg",
+      "png": "03_workbench_sequence.png"
+    },
+    {
+      "name": "04_mcp_ingest_sequence",
+      "source": "04_mcp_ingest_sequence.mmd",
+      "svg": "04_mcp_ingest_sequence.svg",
+      "png": "04_mcp_ingest_sequence.png"
+    },
+    {
+      "name": "05_drift_flow",
+      "source": "05_drift_flow.mmd",
+      "svg": "05_drift_flow.svg",
+      "png": "05_drift_flow.png"
+    },
+    {
+      "name": "06_link_state",
+      "source": "06_link_state.mmd",
+      "svg": "06_link_state.svg",
+      "png": "06_link_state.png"
+    }
+  ]
+}

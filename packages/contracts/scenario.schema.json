@@ -1,0 +1,828 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vks:contracts:scenario:1.0",
+  "title": "VKS 1.0 Declarative UI Scenario",
+  "description": "仅支持声明式浏览器动作；steps 始终是一次线性录制，不是分支执行器。可选 explanation_graph 将多次录制或明确标记的模拟分支组织为讲解状态图。无 eval、任意 JS、shell、外部 URL 或凭据明文字段。Schema 通过不等于获准执行；环境、数据集、审批及风险由服务器另行校验。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "scenario_key",
+    "name",
+    "environment_ref",
+    "dataset_ref",
+    "risk_level",
+    "timeout_ms",
+    "steps"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "scenario_key": {
+      "$ref": "#/$defs/key"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "environment_ref": {
+      "$ref": "#/$defs/key"
+    },
+    "dataset_ref": {
+      "$ref": "#/$defs/key"
+    },
+    "risk_level": {
+      "enum": [
+        "read_only",
+        "test_write"
+      ]
+    },
+    "approval_ref": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 1800000
+    },
+    "preconditions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "maxLength": 500
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "explanation_graph": {
+      "$ref": "#/$defs/explanationGraph"
+    },
+    "role": {
+      "type": "string",
+      "maxLength": 160,
+      "description": "合成测试角色说明；不是凭据或权限声明。"
+    },
+    "expected_results": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "maxLength": 500
+      },
+      "description": "供人员核对的预期结果；不会执行为脚本。"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "risk_level": {
+            "const": "test_write"
+          }
+        },
+        "required": [
+          "risk_level"
+        ]
+      },
+      "then": {
+        "required": [
+          "approval_ref"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "risk_level": {
+            "const": "read_only"
+          }
+        },
+        "required": [
+          "risk_level"
+        ]
+      },
+      "then": {
+        "properties": {
+          "steps": {
+            "items": {
+              "properties": {
+                "risk": {
+                  "const": "read_only"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[a-z][a-z0-9._-]*$"
+    },
+    "timeout": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 60000
+    },
+    "risk": {
+      "enum": [
+        "read_only",
+        "test_write"
+      ]
+    },
+    "explanationGraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projectKey",
+        "baselineKey",
+        "states",
+        "transitions"
+      ],
+      "properties": {
+        "projectKey": {
+          "$ref": "#/$defs/key"
+        },
+        "baselineKey": {
+          "$ref": "#/$defs/key"
+        },
+        "states": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/explanationState"
+          }
+        },
+        "transitions": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/$defs/explanationTransition"
+          }
+        }
+      },
+      "description": "只用于知识讲解与导航，不驱动条件执行。服务端验证 projectKey/baselineKey、状态与动作 logical key、所有场景修订及 capture/evidence 均属于当前分析集合的固定来源基线；跨基线引用拒绝。多个线性录制可贡献不同分支。"
+    },
+    "explanationState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stateKey",
+        "label",
+        "evidenceOrigin"
+      ],
+      "properties": {
+        "stateKey": {
+          "$ref": "#/$defs/key"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "evidenceOrigin": {
+          "enum": [
+            "observed",
+            "simulated",
+            "declared"
+          ]
+        },
+        "captureRef": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scenarioRevisionRef": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "evidenceOrigin": {
+                "const": "observed"
+              }
+            },
+            "required": [
+              "evidenceOrigin"
+            ]
+          },
+          "then": {
+            "required": [
+              "captureRef",
+              "scenarioRevisionRef"
+            ]
+          }
+        }
+      ],
+      "description": "observed 仅表示在标明的环境中有经服务核验的录制观察，不自动表示生产行为或接口因果。simulated 是模拟/合成展示；declared 是未运行的声明。UI 必须始终显示来源标记。captureRef 指已登记的采集记录，不能使用任意文件或外部 URL。"
+    },
+    "explanationTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transitionKey",
+        "fromState",
+        "actionKey",
+        "conditionLabel",
+        "toState",
+        "evidenceOrigin",
+        "scenarioRef"
+      ],
+      "properties": {
+        "transitionKey": {
+          "$ref": "#/$defs/key"
+        },
+        "fromState": {
+          "$ref": "#/$defs/key"
+        },
+        "actionKey": {
+          "$ref": "#/$defs/key"
+        },
+        "conditionLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "toState": {
+          "$ref": "#/$defs/key"
+        },
+        "evidenceOrigin": {
+          "enum": [
+            "observed",
+            "simulated",
+            "declared"
+          ]
+        },
+        "scenarioRef": {
+          "$ref": "#/$defs/key"
+        },
+        "scenarioRevisionRef": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "captureRef": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "evidenceOrigin": {
+                "const": "observed"
+              }
+            },
+            "required": [
+              "evidenceOrigin"
+            ]
+          },
+          "then": {
+            "required": [
+              "captureRef",
+              "scenarioRevisionRef",
+              "evidenceRefs"
+            ]
+          }
+        }
+      ],
+      "description": "conditionLabel 只是展示文字，绝不作为 JavaScript、表达式或脚本求值；不接受 conditionScript/eval 等字段。observed 需服务核验采集、步骤和状态变化证据，模型自称 observed 不生效。模拟成功/失败分支可以讲解，但不能混充真实运行或自动赋予 correlated_runtime。"
+    },
+    "locator": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "by",
+            "value"
+          ],
+          "properties": {
+            "by": {
+              "enum": [
+                "test_id",
+                "label",
+                "text",
+                "css"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "exact": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "by",
+            "role",
+            "name"
+          ],
+          "properties": {
+            "by": {
+              "const": "role"
+            },
+            "role": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "exact": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        }
+      ]
+    },
+    "inputValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "literal"
+          ],
+          "properties": {
+            "literal": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fixture_field"
+          ],
+          "properties": {
+            "fixture_field": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.]*$",
+              "maxLength": 160
+            }
+          }
+        }
+      ],
+      "description": "literal 禁止包含秘密；fixture_field 只访问登记的数据集字段，不执行模板或脚本。登录态通过环境的 SecretRef 管理，不经过此结构。"
+    },
+    "step": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/gotoStep"
+        },
+        {
+          "$ref": "#/$defs/clickStep"
+        },
+        {
+          "$ref": "#/$defs/fillStep"
+        },
+        {
+          "$ref": "#/$defs/selectStep"
+        },
+        {
+          "$ref": "#/$defs/waitStep"
+        },
+        {
+          "$ref": "#/$defs/assertVisibleStep"
+        },
+        {
+          "$ref": "#/$defs/assertTextStep"
+        },
+        {
+          "$ref": "#/$defs/snapshotStep"
+        }
+      ]
+    },
+    "gotoStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_key",
+        "kind",
+        "path",
+        "timeout_ms",
+        "risk"
+      ],
+      "properties": {
+        "step_key": {
+          "$ref": "#/$defs/key"
+        },
+        "kind": {
+          "const": "goto"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/(?!/)[^\\u0000-\\u001F]*$",
+          "maxLength": 2048
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/timeout"
+        },
+        "risk": {
+          "$ref": "#/$defs/risk"
+        },
+        "wait_until": {
+          "type": "string",
+          "enum": [
+            "domcontentloaded",
+            "load",
+            "networkidle"
+          ],
+          "default": "domcontentloaded",
+          "description": "显式限定页面初始化等待阶段；不扩大环境写路径授权。"
+        }
+      }
+    },
+    "clickStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_key",
+        "kind",
+        "target",
+        "timeout_ms",
+        "risk"
+      ],
+      "properties": {
+        "step_key": {
+          "$ref": "#/$defs/key"
+        },
+        "kind": {
+          "const": "click"
+        },
+        "target": {
+          "$ref": "#/$defs/locator"
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/timeout"
+        },
+        "risk": {
+          "$ref": "#/$defs/risk"
+        },
+        "action_entity_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "fillStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_key",
+        "kind",
+        "target",
+        "value",
+        "timeout_ms",
+        "risk"
+      ],
+      "properties": {
+        "step_key": {
+          "$ref": "#/$defs/key"
+        },
+        "kind": {
+          "const": "fill"
+        },
+        "target": {
+          "$ref": "#/$defs/locator"
+        },
+        "value": {
+          "$ref": "#/$defs/inputValue"
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/timeout"
+        },
+        "risk": {
+          "$ref": "#/$defs/risk"
+        },
+        "redact": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "selectStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_key",
+        "kind",
+        "target",
+        "value",
+        "timeout_ms",
+        "risk"
+      ],
+      "properties": {
+        "step_key": {
+          "$ref": "#/$defs/key"
+        },
+        "kind": {
+          "const": "select"
+        },
+        "target": {
+          "$ref": "#/$defs/locator"
+        },
+        "value": {
+          "$ref": "#/$defs/inputValue"
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/timeout"
+        },
+        "risk": {
+          "$ref": "#/$defs/risk"
+        }
+      }
+    },
+    "waitStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_key",
+        "kind",
+        "target",
+        "state",
+        "timeout_ms",
+        "risk"
+      ],
+      "properties": {
+        "step_key": {
+          "$ref": "#/$defs/key"
+        },
+        "kind": {
+          "const": "wait_for"
+        },
+        "target": {
+          "$ref": "#/$defs/locator"
+        },
+        "state": {
+          "enum": [
+            "visible",
+            "hidden",
+            "enabled",
+            "disabled"
+          ]
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/timeout"
+        },
+        "risk": {
+          "const": "read_only"
+        }
+      }
+    },
+    "assertVisibleStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_key",
+        "kind",
+        "target",
+        "timeout_ms",
+        "risk"
+      ],
+      "properties": {
+        "step_key": {
+          "$ref": "#/$defs/key"
+        },
+        "kind": {
+          "const": "assert_visible"
+        },
+        "target": {
+          "$ref": "#/$defs/locator"
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/timeout"
+        },
+        "risk": {
+          "const": "read_only"
+        }
+      }
+    },
+    "assertTextStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_key",
+        "kind",
+        "target",
+        "expected",
+        "timeout_ms",
+        "risk"
+      ],
+      "properties": {
+        "step_key": {
+          "$ref": "#/$defs/key"
+        },
+        "kind": {
+          "const": "assert_text"
+        },
+        "target": {
+          "$ref": "#/$defs/locator"
+        },
+        "expected": {
+          "$ref": "#/$defs/inputValue"
+        },
+        "match": {
+          "enum": [
+            "exact",
+            "contains"
+          ],
+          "default": "exact"
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/timeout"
+        },
+        "risk": {
+          "const": "read_only"
+        }
+      }
+    },
+    "snapshotStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_key",
+        "kind",
+        "name",
+        "timeout_ms",
+        "risk"
+      ],
+      "properties": {
+        "step_key": {
+          "$ref": "#/$defs/key"
+        },
+        "kind": {
+          "const": "snapshot"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/timeout"
+        },
+        "risk": {
+          "const": "read_only"
+        },
+        "full_page": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1.0",
+      "scenario_key": "invoice-preview",
+      "name": "开票弹窗只读演示",
+      "environment_ref": "mock-demo",
+      "dataset_ref": "invoice-demo-v1",
+      "risk_level": "read_only",
+      "timeout_ms": 90000,
+      "preconditions": [
+        "mock-demo 已通过审核，数据为合成样例",
+        "查看原型不发起真实开票"
+      ],
+      "steps": [
+        {
+          "step_key": "open-page",
+          "kind": "goto",
+          "path": "/demo/invoices",
+          "timeout_ms": 10000,
+          "risk": "read_only"
+        },
+        {
+          "step_key": "fill-client",
+          "kind": "fill",
+          "target": {
+            "by": "label",
+            "value": "客户名称"
+          },
+          "value": {
+            "fixture_field": "client.name"
+          },
+          "redact": true,
+          "timeout_ms": 5000,
+          "risk": "read_only"
+        },
+        {
+          "step_key": "open-preview",
+          "kind": "click",
+          "target": {
+            "by": "test_id",
+            "value": "invoice-preview"
+          },
+          "timeout_ms": 5000,
+          "risk": "read_only"
+        },
+        {
+          "step_key": "assert-dialog",
+          "kind": "assert_visible",
+          "target": {
+            "by": "role",
+            "role": "dialog",
+            "name": "开票预览"
+          },
+          "timeout_ms": 5000,
+          "risk": "read_only"
+        },
+        {
+          "step_key": "capture-dialog",
+          "kind": "snapshot",
+          "name": "开票预览状态",
+          "full_page": true,
+          "timeout_ms": 5000,
+          "risk": "read_only"
+        }
+      ],
+      "explanation_graph": {
+        "projectKey": "charge-demo",
+        "baselineKey": "mock-v1",
+        "states": [
+          {
+            "stateKey": "invoice.ready",
+            "label": "合成样例：待预览",
+            "evidenceOrigin": "simulated"
+          },
+          {
+            "stateKey": "invoice.preview",
+            "label": "合成样例：预览成功",
+            "evidenceOrigin": "simulated"
+          },
+          {
+            "stateKey": "invoice.validation-error",
+            "label": "合成样例：校验失败",
+            "evidenceOrigin": "simulated"
+          }
+        ],
+        "transitions": [
+          {
+            "transitionKey": "preview.success",
+            "fromState": "invoice.ready",
+            "actionKey": "ui.action.invoice.preview",
+            "conditionLabel": "合成输入有效，仅展示预览",
+            "toState": "invoice.preview",
+            "evidenceOrigin": "simulated",
+            "scenarioRef": "invoice-preview"
+          },
+          {
+            "transitionKey": "preview.failure",
+            "fromState": "invoice.ready",
+            "actionKey": "ui.action.invoice.preview",
+            "conditionLabel": "合成输入缺少必填字段；讲解用，未运行观察",
+            "toState": "invoice.validation-error",
+            "evidenceOrigin": "simulated",
+            "scenarioRef": "invoice-preview"
+          }
+        ]
+      }
+    }
+  ]
+}

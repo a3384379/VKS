@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1.0",
+  "projectKey": "charge-demo",
+  "baselineKey": "explicit-demo-v1",
+  "pages": [
+    {
+      "logicalKey": "ui.page.invoice",
+      "name": "合成开票规则",
+      "artifactPath": "preview/index.html",
+      "sha256": "f391f82bf9faceb39d9773d384057a3103f476b9f8e545e49e8edb367e82b69a"
+    }
+  ],
+  "actions": [
+    {
+      "logicalKey": "ui.action.invoice.rules",
+      "pageKey": "ui.page.invoice",
+      "label": "查看开票规则",
+      "event": "click"
+    }
+  ],
+  "documentSections": [
+    {
+      "sectionKey": "doc.section.invoice.rules",
+      "artifactPath": "docs/invoice-rules.md",
+      "sha256": "81765a5dacb3ba4840f3e68dd59dc6d02772dd962834a1d9d7438eeb4749129e",
+      "headingPath": [
+        "开票规则演示",
+        "查看规则"
+      ],
+      "startLine": 5,
+      "endLine": 9
+    }
+  ]
+}

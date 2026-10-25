@@ -1,0 +1,99 @@
+{
+  "date": "2026-10-25",
+  "version": "1.0.0-rc.1",
+  "revision": "markdown-rendering-20261025",
+  "source_manifest_sha256": "bb526783aebc082011ae88b74bf2b06b6e061ffc0033adb20213c75ee9755357",
+  "libraries": {
+    "mermaid": "12.2.0",
+    "plantuml": "1.2026.9",
+    "katex": "0.19.1",
+    "dompurify": "3.4.17"
+  },
+  "python": {
+    "passed": 253,
+    "skipped": 11,
+    "seconds": 76.7
+  },
+  "frontend": {
+    "passed": 30,
+    "build": "passed",
+    "format": "passed",
+    "npm_audit_vulnerabilities": 0
+  },
+  "final_browser": {
+    "passed": 4,
+    "seconds": 25.56,
+    "normal_diagrams": 4,
+    "syntax_fallbacks": [
+      "mermaid",
+      "plantuml",
+      "latex"
+    ],
+    "features": [
+      "actual_svg_labels",
+      "local_only_requests",
+      "fit_to_reader",
+      "actual_zoom_size",
+      "svg_download",
+      "timeout_retry",
+      "opaque_frame",
+      "cancel_on_navigation",
+      "svg_resource_filter"
+    ],
+    "after_full_check": "Responsive image fit adjusted; all four UI cases and frontend suite/build rerun"
+  },
+  "production": {
+    "image": "nginx:1.31.3-alpine-slim",
+    "results": [
+      {
+        "kind": "mermaid",
+        "expected_label": "知识库",
+        "svg": true
+      },
+      {
+        "kind": "mermaid",
+        "expected_label": "Hello",
+        "svg": true
+      },
+      {
+        "kind": "plantuml",
+        "expected_label": "Hello",
+        "svg": true
+      },
+      {
+        "kind": "plantuml",
+        "expected_label": "Chapter",
+        "svg": true
+      }
+    ],
+    "nginx_config": "passed",
+    "image_id": "sha256:45b82ed5f285b90d63df07ba70430fdd8f25624b416617d9e6dc93412b2006dc",
+    "external_requests": 0,
+    "failed_requests": 0,
+    "opaque_frame": true,
+    "cleaned": true
+  },
+  "cache_isolation": {
+    "dev_dependency_cache_unchanged": true,
+    "metadata_files": 2
+  },
+  "sample": {
+    "project_id": "49b4af48-f0d3-4422-85b6-766a37b21eb1",
+    "document_id": "4922265d-a103-45a1-ad64-0894426f12a6",
+    "analysis_set_id": "bf193af1-e342-424f-8c4f-33cfea03ab53",
+    "published": false,
+    "model_calls": 0,
+    "url": "http://127.0.0.1:5173/#view=documents&project=49b4af48-f0d3-4422-85b6-766a37b21eb1&entity=4922265d-a103-45a1-ad64-0894426f12a6"
+  },
+  "limits": {
+    "diagram_chars": 24000,
+    "diagram_lines": 500,
+    "svg_chars": 2097152,
+    "formula_chars": 8000,
+    "concurrent_frames": 2,
+    "render_timeout_seconds": 15,
+    "external_imports": false
+  },
+  "scope": "Web reading and per-diagram SVG download; original Markdown preserved",
+  "remote_ci_executed": false
+}

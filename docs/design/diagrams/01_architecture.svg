@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="1300" viewBox="0 0 1300 1300"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8BA3C4"/></marker></defs><g font-family="Noto Sans SC, DejaVu Sans, sans-serif">
+<rect x="0" y="0" width="1300" height="1300" rx="0" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<rect x="30" y="28" width="60" height="34" rx="10" fill="#246BDA" stroke="#246BDA" stroke-width="1.5" />
+<text x="60" y="53" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle"><tspan x="60" dy="0">01</tspan></text>
+<text x="112" y="56" font-size="31" font-weight="600" fill="#19304F" text-anchor="start"><tspan x="112" dy="0">系统架构</tspan></text>
+<text x="48" y="98" font-size="19" font-weight="400" fill="#627895" text-anchor="start"><tspan x="48" dy="0">同一权限与快照模型服务 Web 和 MCP；采集器运行在受控测试网络。</tspan></text>
+<rect x="55" y="295" width="765" height="725" rx="22" fill="#EDF4FE" stroke="#BDD0EC" stroke-width="1.5" stroke-dasharray="8 6"/>
+<text x="82" y="330" font-size="21" font-weight="600" fill="#627895" text-anchor="start"><tspan x="82" dy="0">私有部署服务域</tspan></text>
+<rect x="875" y="295" width="370" height="430" rx="22" fill="#F0F7F7" stroke="#B7D8D5" stroke-width="1.5" stroke-dasharray="8 6"/>
+<text x="900" y="330" font-size="21" font-weight="600" fill="#627895" text-anchor="start"><tspan x="900" dy="0">授权采集边界</tspan></text>
+<rect x="875" y="790" width="370" height="230" rx="22" fill="#F1F4FA" stroke="#C5D2E6" stroke-width="1.5" stroke-dasharray="8 6"/>
+<text x="900" y="827" font-size="21" font-weight="600" fill="#627895" text-anchor="start"><tspan x="900" dy="0">可选模型出口</tspan></text>
+<path d="M315,235 L315,380" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<path d="M985,235 L985,264 L650,264 L650,380" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<path d="M438,465 L438,525" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<path d="M438,630 L438,690" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<path d="M300,775 L300,820 L250,820 L250,865" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<path d="M570,775 L570,820 L620,820 L620,865" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<path d="M130,578 L80,578 L80,835 L170,835 L170,865" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<path d="M745,578 L790,578 L790,835 L700,835 L700,865" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<path d="M745,602 L850,602 L850,925 L910,925" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<path d="M910,440 L745,440" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="775" y="401" width="110" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="830" y="422" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="830" dy="0">脱敏证据</tspan></text>
+<path d="M1060,490 L1060,590" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="970" y="525" width="180" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="1060" y="546" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="1060" dy="0">显式允许的采集</tspan></text>
+<path d="M105,1135 L32,1135 L32,423 L130,423" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="33.5" y="1049" width="65" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="66" y="1070" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="66" dy="0">导入</tspan></text>
+<rect x="125" y="150" width="380" height="85" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="315" y="200.9" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="315" dy="0">浏览器知识工作台</tspan></text>
+<rect x="795" y="150" width="380" height="85" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="985" y="200.9" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="985" dy="0">AI 客户端 / MCP</tspan></text>
+<rect x="130" y="380" width="615" height="85" rx="16" fill="#E8F1FF" stroke="#9EBFED" stroke-width="1.5" />
+<text x="437.5" y="430.9" font-size="24" font-weight="600" fill="#204D91" text-anchor="middle"><tspan x="437.5" dy="0">Web API / MCP 网关</tspan></text>
+<rect x="130" y="525" width="615" height="105" rx="16" fill="#E8F1FF" stroke="#9EBFED" stroke-width="1.5" />
+<text x="437.5" y="568.9" font-size="24" font-weight="600" fill="#204D91" text-anchor="middle"><tspan x="437.5" dy="0">共享领域服务与授权策略</tspan><tspan x="437.5" dy="34">项目权限 · 版本基线 · 审核发布</tspan></text>
+<rect x="130" y="690" width="615" height="85" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="437.5" y="740.9" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="437.5" dy="0">异步任务 / 解析与关联 Worker</tspan></text>
+<rect x="100" y="865" width="300" height="100" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="250" y="906.4" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="250" dy="0">PostgreSQL</tspan><tspan x="250" dy="34">节点 · 关系 · 审计</tspan></text>
+<rect x="465" y="865" width="310" height="100" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="620" y="906.4" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="620" dy="0">对象 / 文件存储</tspan><tspan x="620" dy="34">原始材料 · 证据包</tspan></text>
+<rect x="910" y="390" width="300" height="100" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="1060" y="431.4" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="1060" dy="0">本地采集 Runner</tspan><tspan x="1060" dy="34">临时凭证 · 出站连接</tspan></text>
+<rect x="910" y="590" width="300" height="85" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="1060" y="640.9" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="1060" dy="0">白名单测试环境</tspan></text>
+<rect x="910" y="875" width="300" height="100" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="1060" y="915.35" font-size="21" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="1060" dy="0">受控模型网关</tspan><tspan x="1060" dy="34">本地或批准的远端模型</tspan></text>
+<rect x="105" y="1090" width="1090" height="90" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="650" y="1142.7" font-size="22" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="650" dy="0">只读资料输入：Git / SVN / 目录 / ZIP + Markdown / OpenAPI + 原型 / 录制包</tspan></text>
+<path d="M48,1235 L1252,1235" fill="none" stroke="#C7D8EF" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"  />
+<text x="48" y="1270" font-size="18" font-weight="400" fill="#627895" text-anchor="start"><tspan x="48" dy="0">默认不运行目标仓库构建脚本；不连接生产环境执行写操作。</tspan></text>
+</g></svg>

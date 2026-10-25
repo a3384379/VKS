@@ -1,0 +1,236 @@
+.team-settings {
+  display: grid;
+  gap: 20px;
+}
+.team-settings > section {
+  padding: 22px;
+}
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 0 24px;
+}
+.profile-row > div:last-child {
+  display: grid;
+  gap: 5px;
+}
+.profile-row small {
+  font-size: 12px;
+  color: #667a96;
+}
+.profile-avatar {
+  width: 48px;
+  height: 48px;
+  background: #edf4ff;
+  border: 1px solid #dce7fb;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: #2563eb;
+}
+.profile-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.profile-form label {
+  flex: 1;
+  min-width: 180px;
+  max-width: 430px;
+}
+.team-settings td small {
+  display: block;
+  color: #667a96;
+  font-size: 12px;
+  margin-top: 5px;
+}
+.tiny-label {
+  display: inline-flex;
+  margin-left: 8px;
+  padding: 3px 6px;
+  color: #536680;
+  background: #f0f4fb;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.login-mode-tabs {
+  display: flex;
+  padding: 4px;
+  background: #f3f6fc;
+  border: 1px solid #e1e9f7;
+  border-radius: 9px;
+  margin: 18px 0 24px;
+  gap: 3px;
+}
+.login-mode-tabs button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  background: none;
+  border-radius: 6px;
+  padding: 10px 8px;
+  color: #667a96;
+  font-weight: 600;
+}
+.login-mode-tabs button.active {
+  background: #fff;
+  box-shadow: 0 1px 5px #163e7410;
+  color: #2563eb;
+}
+.source-connectors {
+  display: grid;
+  gap: 10px;
+}
+.source-connectors > div {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #e1e9f7;
+  border-radius: 9px;
+  padding: 13px;
+}
+.source-connectors section {
+  display: grid;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+.source-connectors section small {
+  font-size: 12px;
+  color: #667a96;
+}
+.source-connectors section code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  color: #536680;
+}
+.source-snapshot-table {
+  margin-top: 20px;
+}
+.collector-guide {
+  margin-top: 20px;
+  border-top: 1px solid #e6edf8;
+  padding-top: 18px;
+}
+.collector-guide summary {
+  font-weight: 600;
+  color: #2563eb;
+  cursor: pointer;
+}
+.collector-guide .notice {
+  margin-top: 16px;
+}
+.collector-guide .notice > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.collector-notes {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+  margin-top: 15px;
+}
+.collector-notes li {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  line-height: 1.8;
+  font-size: 12px;
+  color: #667a96;
+}
+.collector-notes code {
+  font-size: 11px;
+  color: #536680;
+}
+.draft-import-target {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+.draft-import-target > label {
+  flex: 1;
+  min-width: 200px;
+}
+.draft-import-target select {
+  min-width: 180px;
+}
+.draft-banner {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  background: #f0f6ff;
+  border-bottom: 1px solid #dce8ff;
+  padding: 12px 18px;
+  font-size: 12px;
+  color: #536b92;
+}
+.import-kind-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: #667a96;
+  border-radius: 7px;
+  font-weight: 600;
+}
+.import-kind-tabs button.active {
+  background: #e3eeff;
+  color: #2563eb;
+}
+.import-kind-tabs button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.settings-tabs {
+  flex-wrap: wrap;
+}
+.static-screenshot {
+  max-width: 100%;
+  display: block;
+  margin: auto;
+  object-fit: contain;
+}
+.screenshot-preview {
+  padding: 16px;
+  background: #f6f9fe;
+}
+.screenshot-preview > p {
+  font-size: 12px;
+  color: #667a96;
+  text-align: center;
+  margin: 8px 0;
+}
+.source-tabs {
+  flex-wrap: wrap;
+}
+@media (max-width: 850px) {
+  .team-settings > section {
+    padding: 16px;
+  }
+  .draft-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .profile-form label {
+    max-width: 100%;
+  }
+  .draft-import-target {
+    align-items: stretch;
+  }
+  .draft-import-target .button {
+    width: 100%;
+  }
+}

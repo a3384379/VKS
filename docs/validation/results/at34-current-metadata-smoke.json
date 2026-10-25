@@ -1,0 +1,83 @@
+{
+  "profile": "AT-34 local synthetic PoC; not specified 8vCPU/16GiB/network acceptance",
+  "transport": "HTTP loopback, machine-token auth and response serialization",
+  "hardware": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "cpu_count": "10",
+    "memory_bytes": "17179869184"
+  },
+  "dataset": {
+    "relations": 50000,
+    "actions": 1000,
+    "documents": 200
+  },
+  "concurrency": 20,
+  "requested_seconds": 20.0,
+  "elapsed_seconds": 20.474,
+  "sql_queries": null,
+  "operations": {
+    "action": {
+      "requests": 350,
+      "p50_ms": 330.941,
+      "p95_ms": 685.269,
+      "p99_ms": 807.023,
+      "errors": {}
+    },
+    "graph": {
+      "requests": 333,
+      "p50_ms": 440.909,
+      "p95_ms": 581.56,
+      "p99_ms": 745.555,
+      "errors": {}
+    },
+    "search": {
+      "requests": 338,
+      "p50_ms": 325.876,
+      "p95_ms": 517.344,
+      "p99_ms": 1090.046,
+      "errors": {}
+    }
+  },
+  "phases": {
+    "first_wave": {
+      "requests": 20,
+      "p50_ms": 696.935,
+      "p95_ms": 836.096,
+      "p99_ms": 836.096,
+      "errors": {}
+    },
+    "warm": {
+      "requests": 1001,
+      "p50_ms": 361.265,
+      "p95_ms": 586.285,
+      "p99_ms": 800.785,
+      "errors": {}
+    }
+  },
+  "resources": [
+    {
+      "seconds": 0.005,
+      "rss_kib": 108144,
+      "cpu_percent": 73.0
+    },
+    {
+      "seconds": 10.021,
+      "rss_kib": 206496,
+      "cpu_percent": 82.0
+    },
+    {
+      "seconds": 20.034,
+      "rss_kib": 150560,
+      "cpu_percent": 80.3
+    }
+  ],
+  "external_model_calls": 0,
+  "cache": "server release-fact cache cold on start; first concurrent wave reported separately; no grants or policies cached across transactions",
+  "cache_counts": null,
+  "source_sha256": {
+    "services/api/vks_api/reading.py": "07f6609bf7b9435ad7ba29bb32a3fee23e52da7d16452828078e842fbb89dadd",
+    "services/api/vks_api/service.py": "76e3a642111ae088ecc55805ba8907038ef08e2f2fc04f3265187280f240ac7b",
+    "services/api/vks_api/identity.py": "fd9a1428dc2199678204053930b0ade2f12f559a15be1ff7b1759598fd9e039a"
+  },
+  "source_changed_during_run": false
+}

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0",
+  "projectKey": "charge-demo",
+  "baselineKey": "explicit-demo-v1",
+  "producer": {
+    "kind": "external_ai",
+    "name": "VKS synthetic contract example",
+    "version": "1.0"
+  },
+  "evidence": [
+    {
+      "evidenceKey": "evidence.invoice-dom",
+      "evidenceKind": "static",
+      "artifactPath": "preview/index.html",
+      "sha256": "f391f82bf9faceb39d9773d384057a3103f476b9f8e545e49e8edb367e82b69a",
+      "locator": {
+        "kind": "dom_attribute",
+        "pageKey": "ui.page.invoice",
+        "actionKey": "ui.action.invoice.rules"
+      },
+      "claim": "HTML 静态结构中存在该页面与原生展开动作；未声称已采集运行证据。"
+    },
+    {
+      "evidenceKey": "evidence.invoice-doc",
+      "evidenceKind": "static",
+      "artifactPath": "docs/invoice-rules.md",
+      "sha256": "81765a5dacb3ba4840f3e68dd59dc6d02772dd962834a1d9d7438eeb4749129e",
+      "locator": {
+        "kind": "document_section",
+        "sectionKey": "doc.section.invoice.rules",
+        "startLine": 5,
+        "endLine": 9
+      },
+      "claim": "当前 Markdown 第 5–9 行描述该合成操作；未声称真实业务规则已经实现。"
+    }
+  ],
+  "bindings": [
+    {
+      "fromLogicalKey": "ui.action.invoice.rules",
+      "toLogicalKey": "doc.section.invoice.rules",
+      "relationType": "documents",
+      "evidenceRefs": [
+        "evidence.invoice-dom",
+        "evidence.invoice-doc"
+      ],
+      "reason": "由稳定 logical key 显式声明动作与说明章节的关联；导入为候选，需人工审核业务意义。"
+    }
+  ]
+}

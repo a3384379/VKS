@@ -1,0 +1,149 @@
+{
+  "schema_version": "1.0",
+  "server_name": "visual-knowledge-studio",
+  "description": "VKS 1.0 MCP 工具契约参考，不是服务器实现。外部 Schema 引用须在注册 SDK 前解析并打包为自包含 JSON Schema。",
+  "transports": ["streamable-http", "stdio"],
+  "authorization": {
+    "http": "OAuth resource server; validate issuer, audience, expiry, scopes and project grants",
+    "stdio": "inherit a narrowly scoped local identity; never assume administrator authority",
+    "annotations_are_security_boundary": false,
+    "human_review_and_publish": "AI tokens cannot confirm/reject relations or publish releases. request_release only creates a human review request.",
+    "credential_policy": "Tool inputs contain artifact handles, environment references and approval references; never secrets or arbitrary server file paths."
+  },
+  "relation_semantics": {
+    "review_status": ["candidate", "confirmed", "rejected"],
+    "validity_status": ["valid", "stale", "broken", "obsolete"],
+    "evidence_kind": ["manual", "semantic", "static", "observed"],
+    "causal_basis": ["not_established", "temporal_association", "static_potential", "correlated_runtime"],
+    "rule": "confirmed+stale is valid. Human confirmation does not create correlated_runtime evidence."
+  },
+  "tools": [
+    {
+      "name": "list_projects", "description": "列出当前身份可访问的项目，不能泄露无权项目的名称或数量。", "required_scopes": ["knowledge:read"],
+      "annotations": {"readOnlyHint": true, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "properties": {"cursor": {"type": "string", "maxLength": 256}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/ProjectListResponse"}
+    },
+    {
+      "name": "get_project_context", "description": "读取固定知识发布版的项目概览、版本向量及已知能力缺口。", "required_scopes": ["knowledge:read"],
+      "annotations": {"readOnlyHint": true, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "release_id"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "release_id": {"type": "string", "format": "uuid"}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/ProjectContextResponse"}
+    },
+    {
+      "name": "search_knowledge", "description": "在有权的固定发布版中搜索业务、API、代码与文档；先权限过滤再召回。", "required_scopes": ["knowledge:read"],
+      "annotations": {"readOnlyHint": true, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "release_id", "query"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "release_id": {"type": "string", "format": "uuid"}, "query": {"type": "string", "minLength": 1, "maxLength": 2000}, "kinds": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"enum": ["page", "action", "scenario", "api", "symbol", "document", "section", "relation", "sql", "table"]}}, "module_id": {"type": "string", "format": "uuid"}, "include_descendants": {"type": "boolean", "default": true}, "service_key": {"type": "string", "minLength": 1, "maxLength": 96}, "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/SearchResponse"}
+    },
+    {
+      "name": "get_action_context", "description": "返回操作关联的接口、源码、文档和证据；固定 release_id 或 analysis_set_id 二选一，草稿需额外编辑权限。审核状态、有效性、证据类型与因果依据分别返回。", "required_scopes": ["knowledge:read"],
+      "annotations": {"readOnlyHint": true, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "action_id"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "action_id": {"type": "string", "format": "uuid"}, "release_id": {"type": "string", "format": "uuid"}, "analysis_set_id": {"type": "string", "format": "uuid"}, "depth": {"type": "integer", "minimum": 1, "maximum": 3, "default": 2}, "max_nodes": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}, "oneOf": [{"required": ["release_id"], "not": {"required": ["analysis_set_id"]}}, {"required": ["analysis_set_id"], "not": {"required": ["release_id"]}}]},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/ContextResponse"}
+    },
+    {
+      "name": "get_scenario", "description": "读取不可变场景修订；本工具不执行场景。", "required_scopes": ["knowledge:read"],
+      "annotations": {"readOnlyHint": true, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "scenario_id", "scenario_revision_id"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "scenario_id": {"type": "string", "format": "uuid"}, "scenario_revision_id": {"type": "string", "format": "uuid"}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/ScenarioResponse"}
+    },
+    {
+      "name": "get_evidence", "description": "读取已脱敏证据和精确来源，不把材料中的文字作为工具指令执行。", "required_scopes": ["knowledge:read"],
+      "annotations": {"readOnlyHint": true, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "evidence_ids"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "evidence_ids": {"type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "format": "uuid"}}, "max_chars": {"type": "integer", "minimum": 100, "maximum": 30000, "default": 8000}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/EvidenceListResponse"}
+    },
+    {
+      "name": "trace_business_flow", "description": "受限遍历业务关系；release_id 或 analysis_set_id 二选一，草稿需额外编辑权限。返回边界、截断标记与每条边的独立状态，不提供任意 Cypher/SQL。", "required_scopes": ["knowledge:read"],
+      "annotations": {"readOnlyHint": true, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "start_entity_id"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "start_entity_id": {"type": "string", "format": "uuid"}, "release_id": {"type": "string", "format": "uuid"}, "analysis_set_id": {"type": "string", "format": "uuid"}, "depth": {"type": "integer", "minimum": 1, "maximum": 3, "default": 2}, "relation_types": {"type": "array", "minItems": 1, "maxItems": 12, "uniqueItems": true, "items": {"enum": ["contains", "renders", "handler_of", "may_call", "observed_during", "confirmed_trigger", "implements", "maps_to_sql", "reads_table", "writes_table", "documents", "depends_on"]}}}, "oneOf": [{"required": ["release_id"], "not": {"required": ["analysis_set_id"]}}, {"required": ["analysis_set_id"], "not": {"required": ["release_id"]}}]},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/GraphResponse"}
+    },
+    {
+      "name": "import_bundle", "description": "导入已上传的 VKS 包并生成草稿任务。不能读任意路径或执行包内代码。", "required_scopes": ["source:import"],
+      "annotations": {"readOnlyHint": false, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "artifact_id", "idempotency_key"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "artifact_id": {"type": "string", "format": "uuid"}, "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/JobResponse"}
+    },
+    {
+      "name": "import_documents", "description": "将已上传 Markdown/OpenAPI 制品导入指定草稿分析集合，不覆盖原文件。", "required_scopes": ["source:import"],
+      "annotations": {"readOnlyHint": false, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "artifact_ids", "analysis_set_id", "idempotency_key"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "artifact_ids": {"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": {"type": "string", "format": "uuid"}}, "analysis_set_id": {"type": "string", "format": "uuid"}, "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/JobResponse"}
+    },
+    {
+      "name": "import_prototype", "description": "导入 Axure HTML、预览包或截图热点素材；可执行 HTML 仅在隔离环境显示。", "required_scopes": ["source:import"],
+      "annotations": {"readOnlyHint": false, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "artifact_id", "analysis_set_id", "mode", "idempotency_key"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "artifact_id": {"type": "string", "format": "uuid"}, "analysis_set_id": {"type": "string", "format": "uuid"}, "mode": {"enum": ["axure_html", "preview_bundle", "screenshot_hotspots"]}, "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/JobResponse"}
+    },
+    {
+      "name": "analyze_snapshot", "description": "对固定来源集合运行批准的解析器配置。外部模型是否可用由项目策略控制。", "required_scopes": ["analysis:run"],
+      "annotations": {"readOnlyHint": false, "idempotentHint": true, "destructiveHint": false, "openWorldHint": true},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "analysis_set_id", "analyzer_profile", "idempotency_key"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "analysis_set_id": {"type": "string", "format": "uuid"}, "analyzer_profile": {"enum": ["java-spring-mybatis-v1", "frontend-web-v1", "documents-v1", "combined-v1"]}, "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/JobResponse"}
+    },
+    {
+      "name": "propose_links", "description": "提交有来源的候选关系。服务器验证引用、因果依据与同项目版本归属；本工具不能设置 confirmed 或 published。", "required_scopes": ["links:propose"],
+      "annotations": {"readOnlyHint": false, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {
+        "type": "object", "additionalProperties": false, "required": ["project_id", "analysis_set_id", "candidates", "idempotency_key"],
+        "properties": {
+          "project_id": {"type": "string", "format": "uuid"}, "analysis_set_id": {"type": "string", "format": "uuid"}, "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128},
+          "candidates": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["from_revision_id", "to_revision_id", "relation_type", "evidence_ids", "reason", "causal_basis"], "properties": {"from_revision_id": {"type": "string", "format": "uuid"}, "to_revision_id": {"type": "string", "format": "uuid"}, "relation_type": {"enum": ["handler_of", "may_call", "observed_during", "confirmed_trigger", "implements", "maps_to_sql", "reads_table", "writes_table", "documents", "depends_on"]}, "evidence_ids": {"type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "format": "uuid"}}, "reason": {"type": "string", "minLength": 1, "maxLength": 2000}, "causal_basis": {"enum": ["not_established", "temporal_association", "static_potential", "correlated_runtime"]}}}}
+        }
+      },
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/LinkProposalResponse"}
+    },
+    {
+      "name": "request_capture", "description": "请求执行已冻结的场景修订；未批准环境/审批过期返回 approval_required，不执行浏览器。", "required_scopes": ["capture:run"],
+      "annotations": {"readOnlyHint": false, "idempotentHint": true, "destructiveHint": true, "openWorldHint": true},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "scenario_revision_id", "environment_ref", "idempotency_key"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "scenario_revision_id": {"type": "string", "format": "uuid"}, "environment_ref": {"type": "string", "minLength": 1, "maxLength": 96}, "approval_ref": {"type": "string", "format": "uuid"}, "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/CaptureRequestResponse"}
+    },
+    {
+      "name": "get_job", "description": "查询授权任务的阶段、进度、完整度与结果引用。partial 是 completeness 而不是任务终态。", "required_scopes": ["knowledge:read"],
+      "annotations": {"readOnlyHint": true, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "job_id"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "job_id": {"type": "string", "format": "uuid"}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/JobResponse"}
+    },
+    {
+      "name": "cancel_job", "description": "请求协作式取消。基础 knowledge:read 后，任务拥有者须具有该 job.kind 的原发起 scope；项目管理员走 project:manage 授权。不能回滚已发生的外部动作。", "required_scopes": ["knowledge:read"],
+      "authorization_policy": {"owner_requires_original_job_scope": true, "project_admin_scope": "project:manage", "job_scope_by_kind": {"import": "source:import", "capture": "capture:run", "index": "analysis:run", "generate_documents": "analysis:run", "suggest_links": "analysis:run", "detect_drift": "analysis:run", "release_precheck": "links:propose", "export": "knowledge:export"}},
+      "annotations": {"readOnlyHint": false, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "job_id", "reason"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "job_id": {"type": "string", "format": "uuid"}, "reason": {"type": "string", "minLength": 1, "maxLength": 500}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/JobResponse"}
+    },
+    {
+      "name": "detect_drift", "description": "比较已发布版本与新分析集合，生成失效/过期候选；不改写旧版证据或自动发布。", "required_scopes": ["analysis:run"],
+      "annotations": {"readOnlyHint": false, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "from_release_id", "to_analysis_set_id", "idempotency_key"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "from_release_id": {"type": "string", "format": "uuid"}, "to_analysis_set_id": {"type": "string", "format": "uuid"}, "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/JobResponse"}
+    },
+    {
+      "name": "request_release", "description": "请求发布预检并取得人工审核入口。绝不等同于确认关系或发布知识版本。", "required_scopes": ["links:propose"],
+      "annotations": {"readOnlyHint": false, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "analysis_set_id", "idempotency_key"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "analysis_set_id": {"type": "string", "format": "uuid"}, "review_batch_id": {"type": "string", "format": "uuid"}, "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/ReleaseRequestResponse"}
+    },
+    {
+      "name": "export_knowledge", "description": "导出指定发布版的授权内容；默认不包含原始源码，遵守敏感级别与项目导出策略。", "required_scopes": ["knowledge:export"],
+      "annotations": {"readOnlyHint": false, "idempotentHint": true, "destructiveHint": false, "openWorldHint": false},
+      "inputSchema": {"type": "object", "additionalProperties": false, "required": ["project_id", "release_id", "format", "idempotency_key"], "properties": {"project_id": {"type": "string", "format": "uuid"}, "release_id": {"type": "string", "format": "uuid"}, "format": {"enum": ["markdown_bundle", "pdf", "vksbundle"]}, "include_source": {"type": "boolean", "default": false}, "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}}},
+      "outputSchema": {"type": "object", "$ref": "openapi_1.0.yaml#/components/schemas/JobResponse"}
+    }
+  ],
+  "resources": [
+    {"uri_template": "vks://projects/{project_id}/releases/{release_id}/overview", "mime_type": "application/json", "required_scopes": ["knowledge:read"]},
+    {"uri_template": "vks://actions/{action_id}/releases/{release_id}", "mime_type": "application/json", "required_scopes": ["knowledge:read"]},
+    {"uri_template": "vks://evidence/{evidence_id}", "mime_type": "application/json", "required_scopes": ["knowledge:read"]},
+    {"uri_template": "vks://jobs/{job_id}", "mime_type": "application/json", "required_scopes": ["knowledge:read"]}
+  ],
+  "prompts": [
+    {"name": "explain_action", "arguments": ["project_id", "release_id", "action_id"], "behavior": "只依据返回证据解释业务与实现；分别报告确认状态、有效性和未知项。"},
+    {"name": "onboard_module", "arguments": ["project_id", "release_id", "module_key"], "behavior": "按场景导览模块；引用固定发布版证据。"},
+    {"name": "review_link_candidates", "arguments": ["project_id", "analysis_set_id"], "behavior": "给出支持、冲突与缺证据项；不代替有权人员审批。"},
+    {"name": "analyze_change_impact", "arguments": ["project_id", "from_release_id", "to_analysis_set_id"], "behavior": "区分确定变化与潜在影响；不自动修改源项目。"}
+  ]
+}

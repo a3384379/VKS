@@ -1,0 +1,118 @@
+.modal.hotspot-editor-dialog {
+  width: min(1120px, 96vw);
+  max-width: 1120px;
+}
+.hotspot-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 22px;
+  margin-top: 20px;
+}
+.hotspot-editor-fields {
+  min-width: 0;
+}
+.hotspot-editor-fields small {
+  color: #7a8ea1;
+  font-weight: 400;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.hotspot-draw-area,
+.hotspot-surface {
+  position: relative;
+  width: 100%;
+}
+.hotspot-draw-area {
+  background: #f6f9fd;
+  border: 1px solid #dbe8f0;
+  overflow: hidden;
+  border-radius: 9px;
+  touch-action: none;
+  user-select: none;
+}
+.hotspot-draw-area.drawing {
+  cursor: crosshair;
+}
+.hotspot-draw-area > * {
+  pointer-events: none;
+}
+.hotspot-draw-area .safe-prototype {
+  min-height: 340px;
+}
+.hotspot-draft-rect {
+  position: absolute;
+  border: 2px solid #228cb6;
+  background: #55b8e129;
+  box-sizing: border-box;
+}
+.hotspot-draft-rect span {
+  display: inline-block;
+  background: #268bb2;
+  color: white;
+  font-size: 11px;
+  padding: 3px 7px;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.hotspot-coordinates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.raster-attachment-preview .static-screenshot {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: none;
+  display: block;
+  object-fit: contain;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+.authored-hotspots {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.authored-hotspot {
+  position: absolute;
+  display: block;
+  padding: 0;
+  border: 2px solid #43a6c599;
+  border-radius: 4px;
+  background: #74cee91a;
+  pointer-events: auto;
+  cursor: pointer;
+  box-sizing: border-box;
+  min-width: 6px;
+  min-height: 6px;
+}
+.authored-hotspot.active,
+.authored-hotspot:hover {
+  border-color: #1682ae;
+  background: #4fb3da33;
+  box-shadow: 0 0 0 3px #64bfd22b;
+}
+.authored-hotspot span {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: 220px;
+  white-space: nowrap;
+  background: #227fa5;
+  color: white;
+  padding: 3px 7px;
+  font-size: 10px;
+}
+.authored-hotspot.active span,
+.authored-hotspot:hover span {
+  display: block;
+}
+@media (max-width: 900px) {
+  .hotspot-editor-layout {
+    grid-template-columns: 1fr;
+  }
+}

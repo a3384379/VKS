@@ -1,0 +1,63 @@
+{
+  "profile": "AT-34 local synthetic PoC; not specified 8vCPU/16GiB/network acceptance",
+  "transport": "HTTP loopback, machine-token auth and response serialization",
+  "hardware": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "cpu_count": "10",
+    "memory_bytes": "17179869184"
+  },
+  "dataset": {
+    "relations": 50000,
+    "actions": 1000,
+    "documents": 200
+  },
+  "concurrency": 1,
+  "requested_seconds": 0.0,
+  "elapsed_seconds": 2.208,
+  "sql_queries": null,
+  "operations": {
+    "workspace": {
+      "requests": 1,
+      "p50_ms": 1961.223,
+      "p95_ms": 1961.223,
+      "p99_ms": 1961.223,
+      "errors": {}
+    }
+  },
+  "phases": {
+    "first_wave": {
+      "requests": 1,
+      "p50_ms": 1961.223,
+      "p95_ms": 1961.223,
+      "p99_ms": 1961.223,
+      "errors": {}
+    },
+    "warm": {
+      "requests": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "errors": {}
+    }
+  },
+  "resources": [
+    {
+      "seconds": 0.004,
+      "rss_kib": 106960,
+      "cpu_percent": 72.5
+    }
+  ],
+  "external_model_calls": 0,
+  "cache": "server release-fact cache cold on start; first concurrent wave reported separately; no grants or policies cached across transactions",
+  "cache_counts": null,
+  "store": "<isolated temporary synthetic store>",
+  "source_sha256": {
+    "services/api/vks_api/reading.py": "07f6609bf7b9435ad7ba29bb32a3fee23e52da7d16452828078e842fbb89dadd",
+    "services/api/vks_api/service.py": "fd8076fd599e73fb7708f4c6201405f59ba770704e8a657f300be23d9e560a75",
+    "services/api/vks_api/identity.py": "fd9a1428dc2199678204053930b0ade2f12f559a15be1ff7b1759598fd9e039a"
+  },
+  "source_changed_during_run": false,
+  "report_redactions": [
+    "temporary synthetic store path; no metrics removed"
+  ]
+}

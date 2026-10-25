@@ -1,0 +1,495 @@
+"""Durable dispatch helpers; database state is authoritative, never the broker."""
+
+from __future__ import annotations
+
+import os
+from contextlib import contextmanager
+from threading import Event, Thread
+
+from sqlalchemy import JSON, ForeignKey, Integer, String, UniqueConstraint, select
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .models import Base, Credential, Identified, Job, Outbox, now, uid
+
+
+class DispatchState(Identified, Base):
+    __tablename__ = "job_dispatch"
+    job_id: Mapped[str] = mapped_column(ForeignKey("job.id"), unique=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    state: Mapped[str] = mapped_column(String(20), default="pending")
+    next_attempt_at: Mapped[str] = mapped_column(String(40), default=now)
+    last_error_code: Mapped[str] = mapped_column(String(80), default="")
+
+
+class Checkpoint(Identified, Base):
+    __tablename__ = "job_checkpoint"
+    __table_args__ = (UniqueConstraint("job_id", "stage", "input_hash", "processor_version"),)
+    job_id: Mapped[str] = mapped_column(ForeignKey("job.id"), index=True)
+    stage: Mapped[str] = mapped_column(String(40))
+    input_hash: Mapped[str] = mapped_column(String(64))
+    processor_version: Mapped[str] = mapped_column(String(96))
+    result_json: Mapped[dict] = mapped_column(JSON)
+
+
+def current_actor(service, actor_id, pid, session=None):
+    from .identity import UserIdentity, ensure_owner, human_scopes
+    from .service import Actor, DomainError
+
+    if session is None:
+        with service.db() as s:
+            return current_actor(service, actor_id, pid, s)
+    ensure_owner(service, session)
+    identity = session.get(UserIdentity, actor_id)
+    if identity:
+        if identity.status != "active":
+            raise DomainError("VKS_FORBIDDEN", "任务发起人已停用", 403)
+        return Actor(actor_id, frozenset(human_scopes(service, session, identity)), True)
+    from .oauth import OAuthPrincipal, actor_for_job
+
+    if session.get(OAuthPrincipal, actor_id) is not None:
+        return actor_for_job(service, session, actor_id, pid)
+    credential = session.scalar(
+        select(Credential).where(
+            Credential.actor_id == actor_id,
+            Credential.kind == "token",
+            Credential.revoked.is_(False),
+            Credential.expires_at > now(),
+        )
+    )
+    if not credential:
+        raise DomainError("VKS_UNAUTHENTICATED", "任务客户端授权已失效", 401)
+    actor = Actor(actor_id, frozenset(credential.scopes), False, credential.project_id, credential.id)
+    service.require(session, actor, pid)
+    return actor
+
+
+@contextmanager
+def heartbeat(service, jid, attempt):
+    """Refresh only the same active attempt. Cancellation never renews scheduling."""
+    from .service import future
+
+    done = Event()
+
+    def pulse():
+        while not done.wait(10):
+            try:
+                with service.db() as s:
+                    job = s.scalar(select(Job).where(Job.id == jid).with_for_update())
+                    if not job or job.attempt != attempt or job.state != "running":
+                        return
+                    job.lease_until = future(60)
+            except Exception:
+                # A failed lease refresh cannot publish; final attempt CAS still applies.
+                continue
+
+    worker = Thread(target=pulse, daemon=True, name="vks-job-lease")
+    worker.start()
+    try:
+        yield
+    finally:
+        done.set()
+        worker.join(timeout=1)
+
+
+def dispatch_mode():
+    mode = os.getenv("VKS_TASK_MODE", "local")
+    if mode not in ("local", "celery", "external"):
+        raise ValueError("VKS_TASK_MODE must be local, celery, or external")
+    return mode
+
+
+def reconcile(service):
+    """Recover DB-authoritative jobs after worker loss; never replay a write capture."""
+
+    with service.db() as s:
+        for job in s.scalars(
+            select(Job)
+            .where(Job.state.in_(["running", "cancelling", "retry_wait"]), Job.lease_until < now())
+            .with_for_update(skip_locked=True)
+        ):
+            if job.cancel_requested:
+                job.state = "cancelled"
+                job.stage = "CANCELLED"
+            elif job.kind == "capture":
+                job.state = "failed"
+                job.stage = "APPROVAL_REQUIRED"
+                job.error_json = {
+                    "code": "VKS_APPROVAL_REQUIRED",
+                    "message": "采集进程中断，必须重新审批；不会自动重放动作",
+                    "retryable": False,
+                }
+            else:
+                job.state = "queued"
+                job.stage = "RECOVERED"
+                out = s.scalar(select(Outbox).where(Outbox.job_id == job.id))
+                if out:
+                    out.dispatched = False
+                dispatch = s.scalar(select(DispatchState).where(DispatchState.job_id == job.id))
+                if dispatch:
+                    dispatch.state = "pending"
+                    dispatch.next_attempt_at = now()
+            job.lease_until = None
+            job.updated_at = now()
+
+
+def run_pending(service):
+    reconcile(service)
+    if dispatch_mode() == "external":
+        return
+    if dispatch_mode() == "celery":
+        dispatch_pending(service)
+        return
+    with service.db() as s:
+        ids = list(s.scalars(select(Job.id).where(Job.state == "queued").order_by(Job.created_at).limit(1)))
+    for jid in ids:
+        execute_job(service, jid)
+
+
+def publish_job(job_id, kind):
+    """Only a UUID is sent to the broker; content/identity remain in the database."""
+    from services.worker.celery_app import celery
+
+    queue = "vks-browser" if kind == "capture" else "vks-model" if kind == "generate_documents" else "vks-index"
+    celery.send_task("vks.execute_job", args=[job_id], queue=queue, serializer="json", retry=False)
+
+
+def dispatch_pending(service, publisher=None, limit=10):
+    from .models import Outbox
+    from .service import future
+
+    publisher = publisher or publish_job
+    due = []
+    with service.db() as s:
+        jobs = list(
+            s.scalars(
+                select(Job)
+                .where(Job.state == "queued")
+                .order_by(Job.created_at)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        for job in jobs:
+            entry = s.scalar(select(DispatchState).where(DispatchState.job_id == job.id).with_for_update())
+            if not entry:
+                entry = DispatchState(
+                    id=uid(), job_id=job.id, attempt=0, state="pending", next_attempt_at=now(), last_error_code=""
+                )
+                s.add(entry)
+                s.flush()
+            if entry.state == "failed":
+                # A queued job after terminal dispatch failure was explicitly retried by its owner.
+                entry.state = "pending"
+                entry.attempt = 0
+                entry.next_attempt_at = now()
+            if entry.next_attempt_at > now():
+                continue
+            entry.state = "sending"
+            entry.attempt += 1
+            entry.next_attempt_at = future(30)
+            due.append((job.id, job.kind, entry.attempt))
+    for jid, kind, attempt in due:
+        try:
+            publisher(jid, kind)
+            success = True
+        except Exception:
+            success = False
+        with service.db() as s:
+            entry = s.scalar(select(DispatchState).where(DispatchState.job_id == jid).with_for_update())
+            job = s.get(Job, jid)
+            if not entry or entry.attempt != attempt:
+                continue
+            out = s.scalar(select(Outbox).where(Outbox.job_id == jid))
+            if success:
+                entry.state = "published"
+                entry.last_error_code = ""
+                entry.next_attempt_at = future(30)
+                if out:
+                    out.dispatched = True
+            else:
+                entry.state = "failed" if attempt >= 8 else "pending"
+                entry.last_error_code = "BROKER_UNAVAILABLE"
+                entry.next_attempt_at = future(min(60, 2**attempt))
+                if out:
+                    out.dispatched = False
+                if entry.state == "failed" and job and job.state == "queued":
+                    job.state = "failed"
+                    job.stage = "DISPATCH_FAILED"
+                    job.error_json = {
+                        "code": "VKS_DEPENDENCY_UNAVAILABLE",
+                        "message": "消息队列不可用，投递已达重试上限",
+                        "retryable": True,
+                    }
+    return len(due)
+
+
+def _processor_version():
+    import hashlib
+    from pathlib import Path
+
+    from packages.analyzers.vks_ingest import ANALYZER_VERSION
+
+    root = Path(__file__).resolve().parents[3]
+    files = [
+        root / "packages/analyzers/vks_ingest.py",
+        root / "services/api/vks_api/knowledge.py",
+        root / "packages/analyzers/java_spring.py",
+        root / "packages/analyzers/document_links.py",
+        root / "packages/analyzers/cancellation.py",
+    ]
+    h = hashlib.sha256()
+    for path in files:
+        if path.exists():
+            h.update(path.read_bytes())
+    return f"{ANALYZER_VERSION}:{h.hexdigest()[:32]}"
+
+
+def load_parse_checkpoint(service, job_id, input_hash):
+    import hashlib
+    import json
+
+    from packages.analyzers.vks_ingest import ParsedBundle
+
+    with service.db() as s:
+        point = s.scalar(
+            select(Checkpoint).where(
+                Checkpoint.job_id == job_id,
+                Checkpoint.stage == "PARSE",
+                Checkpoint.input_hash == input_hash,
+                Checkpoint.processor_version == _processor_version(),
+            )
+        )
+        if not point:
+            return None
+        key = point.result_json["object_key"]
+    try:
+        raw = (service.data_dir / "objects" / key).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != key:
+            return None
+        payload = json.loads(raw)
+        artifacts = []
+        for item in payload["artifacts"]:
+            artifact = dict(item)
+            content_key = artifact.pop("content_ref")
+            content = (service.data_dir / "objects" / content_key).read_bytes()
+            if hashlib.sha256(content).hexdigest() != content_key:
+                return None
+            artifact["content"] = content
+            artifacts.append(artifact)
+        return ParsedBundle(
+            manifest=payload["manifest"],
+            sources=payload["sources"],
+            artifacts=artifacts,
+            entities=payload["entities"],
+            evidence=payload["evidence"],
+            relations=payload["relations"],
+            issues=payload["issues"],
+        )
+    except (OSError, KeyError, ValueError, TypeError):
+        return None
+
+
+def save_parse_checkpoint(service, job_id, attempt, input_hash, parsed):
+    import json
+
+    from .service import JOB_SCOPES
+
+    # JSON+content-addressed bytes only: a corrupted cache can never execute pickle.
+    artifacts = []
+    for item in parsed.artifacts:
+        artifact = {k: v for k, v in item.items() if k != "content"}
+        artifact["content_ref"] = service._put_object(item["content"])
+        artifacts.append(artifact)
+    payload = {
+        name: getattr(parsed, name) for name in ("manifest", "sources", "entities", "evidence", "relations", "issues")
+    }
+    payload["artifacts"] = artifacts
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    key = service._put_object(raw)
+    with service.db() as s:
+        job = s.scalar(select(Job).where(Job.id == job_id).with_for_update())
+        if not job or job.attempt != attempt or job.cancel_requested or job.state != "running":
+            return
+        service.require(
+            s, current_actor(service, job.created_by, job.project_id, s), job.project_id, JOB_SCOPES[job.kind]
+        )
+        existing = s.scalar(
+            select(Checkpoint).where(
+                Checkpoint.job_id == job_id,
+                Checkpoint.stage == "PARSE",
+                Checkpoint.input_hash == input_hash,
+                Checkpoint.processor_version == _processor_version(),
+            )
+        )
+        if not existing:
+            s.add(
+                Checkpoint(
+                    id=uid(),
+                    job_id=job_id,
+                    stage="PARSE",
+                    input_hash=input_hash,
+                    processor_version=_processor_version(),
+                    result_json={"object_key": key},
+                )
+            )
+
+
+def execute_job(service, jid):
+    from .knowledge import ImportService
+    from .models import Outbox, Project, Upload
+    from .scenarios import ScenarioService
+    from .service import JOB_SCOPES, DomainError, canonical, future, sha
+
+    with service.db() as s:
+        job = s.scalar(select(Job).where(Job.id == jid).with_for_update())
+        if not job or job.state != "queued":
+            return
+        job.attempt += 1
+        attempt = job.attempt
+        try:
+            service.require(
+                s, current_actor(service, job.created_by, job.project_id, s), job.project_id, JOB_SCOPES[job.kind]
+            )
+        except DomainError as error:
+            job.state = "failed"
+            job.stage = "AUTHORIZATION_FAILED"
+            job.error_json = {"code": error.code, "message": error.message, "retryable": False}
+            job.updated_at = now()
+            return
+        job.state = "running"
+        job.stage = "PARSE"
+        job.lease_until = future(60)
+        job.updated_at = now()
+        payload = job.input_json
+        pid = job.project_id
+        kind = job.kind
+        owner = job.created_by
+        project = s.get(Project, pid)
+        project_key = project.key
+        upload = (
+            s.scalar(select(Upload).where(Upload.artifact_id == payload["artifact_ids"][0]))
+            if kind == "import"
+            else None
+        )
+        object_key = upload.sha256 if upload else None
+        input_hash = sha(canonical(payload))
+
+    def processing_cancelled():
+        with service.db() as session:
+            active = session.get(Job, jid)
+            if not active or active.attempt != attempt or active.state not in ("running", "cancelling"):
+                raise DomainError("VKS_CANCELLED", "任务 attempt 已失效，停止解析", 409)
+            if active.cancel_requested or (active.lease_until and active.lease_until <= now()):
+                raise DomainError("VKS_CANCELLED", "任务取消或租约失效，停止解析", 409)
+            principal = current_actor(service, owner, pid, session)
+            service.require(session, principal, pid, JOB_SCOPES[kind])
+            if kind in ("index", "suggest_links"):
+                service.require(session, principal, pid, "source:read")
+        return False
+
+    from packages.analyzers.cancellation import cancellation_scope
+
+    try:
+        with heartbeat(service, jid, attempt):
+            with cancellation_scope(processing_cancelled):
+                if kind == "capture":
+                    capture_output = ScenarioService(service).execute_capture(jid)
+                if kind in ("index", "suggest_links"):
+                    from .static_index import prepare
+
+                    index_output = prepare(service, jid)
+                if kind == "generate_documents":
+                    from .ai_gateway import AiService
+
+                    document_output = AiService(service).prepare_document(jid)
+                if kind == "import":
+                    parsed = load_parse_checkpoint(service, jid, input_hash)
+                    if parsed is None:
+                        if payload["kind"] != "bundle":
+                            parsed = ImportService(service).prepare(jid)
+                        else:
+                            if not object_key:
+                                raise DomainError("VKS_INVALID_INPUT", "上传对象不可用")
+                            try:
+                                data = (service.data_dir / "objects" / object_key).read_bytes()
+                            except OSError as e:
+                                raise DomainError(
+                                    "VKS_DEPENDENCY_UNAVAILABLE", "上传对象存储暂不可用", 503, retryable=True
+                                ) from e
+                            parsed = service._parse(data, project_key)
+                        save_parse_checkpoint(service, jid, attempt, input_hash, parsed)
+            with service.db() as s:
+                s.scalar(select(Project).where(Project.id == pid).with_for_update())
+                job = s.scalar(
+                    select(Job).where(Job.id == jid).with_for_update().execution_options(populate_existing=True)
+                )
+                if not job or job.attempt != attempt or job.state not in ("running", "cancelling"):
+                    return
+                if job.cancel_requested:
+                    job.state = "cancelled"
+                    job.stage = "CANCELLED"
+                    job.lease_until = None
+                    job.updated_at = now()
+                    return
+                if job.lease_until and job.lease_until <= now():
+                    return
+                service.require(s, current_actor(service, owner, pid, s), pid, JOB_SCOPES[kind])
+                if kind == "import":
+                    result = service._commit_bundle(
+                        s, pid, owner, parsed, payload.get("analysis_set_id") if payload["kind"] != "bundle" else None
+                    )
+                elif kind == "capture":
+                    result = ScenarioService(service).finalize_capture(s, job, capture_output)
+                elif kind == "generate_documents":
+                    from .ai_gateway import AiService
+
+                    result = AiService(service).finalize_document(s, job, document_output)
+                elif kind == "export":
+                    result = service._perform_export(s, job)
+                elif kind == "detect_drift":
+                    from .versions import VersionService
+
+                    result = VersionService(service).detect_drift(
+                        s, pid, payload["from_release_id"], payload["analysis_set_id"], owner
+                    )
+                elif kind in ("index", "suggest_links"):
+                    from .static_index import finalize
+
+                    result = finalize(service, s, job, index_output)
+                else:
+                    raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", "平台模型尚未配置，不能生成文档", 503)
+                job.result_json = result
+                job.state = "succeeded"
+                job.stage = "READY_FOR_REVIEW" if kind == "import" else "COMPLETE"
+                job.progress = 100
+                job.issue_count = len(result.get("issues", []))
+                job.completeness = "partial" if job.issue_count else "complete"
+                job.lease_until = None
+                job.updated_at = now()
+                out = s.scalar(select(Outbox).where(Outbox.job_id == jid))
+                if out:
+                    out.dispatched = True
+                service.audit(s, owner, pid, "job.succeeded", jid)
+    except Exception as e:
+        error = (
+            e
+            if isinstance(e, DomainError)
+            else DomainError("VKS_INTERNAL_ERROR", "任务处理失败；可查看诊断后重试", 500)
+        )
+        with service.db() as s:
+            job = s.scalar(select(Job).where(Job.id == jid).with_for_update())
+            if job and job.attempt == attempt and job.state in ("running", "cancelling"):
+                retry = error.retryable and kind != "capture" and attempt < 3 and dispatch_mode() == "celery"
+                job.state = "cancelled" if job.cancel_requested else "retry_wait" if retry else "failed"
+                job.stage = job.state.upper()
+                job.error_json = {
+                    "code": error.code,
+                    "message": error.message,
+                    "retryable": error.retryable,
+                    "details": error.details,
+                }
+                job.lease_until = future(min(60, 2**attempt)) if retry else None
+                job.updated_at = now()
+                service.audit(
+                    s, owner, pid, "job.failed", jid, "failed", {"code": error.code, "retry_scheduled": retry}
+                )

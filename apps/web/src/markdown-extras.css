@@ -1,0 +1,57 @@
+.markdown-attachment {
+  display: block;
+  margin: 16px 0;
+}
+.markdown-attachment img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #dfeaf2;
+  border-radius: 8px;
+  background: #fff;
+}
+.markdown .markdown-download {
+  color: #2584aa;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.markdown code.hljs {
+  color: #38546f;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal {
+  color: #8756ac;
+  font-weight: 600;
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attr {
+  color: #2b8278;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: #b7772e;
+}
+.hljs-title,
+.hljs-name,
+.hljs-function,
+.hljs-built_in,
+.hljs-type {
+  color: #277ba7;
+}
+.hljs-comment,
+.hljs-quote {
+  color: #7b91a4;
+  font-style: italic;
+}
+.hljs-variable,
+.hljs-template-variable,
+.hljs-deletion {
+  color: #a8546b;
+}
+.hljs-meta {
+  color: #8b6c3d;
+}

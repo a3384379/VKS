@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="1450" viewBox="0 0 1300 1450"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8BA3C4"/></marker></defs><g font-family="Noto Sans SC, DejaVu Sans, sans-serif">
+<rect x="0" y="0" width="1300" height="1450" rx="0" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<rect x="30" y="28" width="60" height="34" rx="10" fill="#246BDA" stroke="#246BDA" stroke-width="1.5" />
+<text x="60" y="53" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle"><tspan x="60" dy="0">02</tspan></text>
+<text x="112" y="56" font-size="31" font-weight="600" fill="#19304F" text-anchor="start"><tspan x="112" dy="0">材料导入与关联发布流程</tspan></text>
+<text x="48" y="98" font-size="19" font-weight="400" fill="#627895" text-anchor="start"><tspan x="48" dy="0">分析结果先进入草稿区；通过校验和审核后，发布不可变的知识版本。</tspan></text>
+<path d="M650,227 L650,280" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<path d="M650,362 L650,415" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<path d="M380,460 L185,460 L185,575" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="227.5" y="425" width="65" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="260" y="446" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="260" dy="0">失败</tspan></text>
+<path d="M650,505 L650,575" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="617.5" y="525" width="65" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="650" y="546" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="650" dy="0">通过</tspan></text>
+<path d="M650,657 L650,710" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<path d="M650,792 L650,845" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<path d="M920,886 L975,886" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="917.5" y="804" width="65" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="950" y="825" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="950" dy="0">拒绝</tspan></text>
+<path d="M650,927 L650,980" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="617.5" y="938" width="65" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="650" y="959" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="650" dy="0">确认</tspan></text>
+<path d="M380,1025 L185,1025 L185,1120" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="205" y="989" width="130" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="270" y="1010" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="270" dy="0">冲突或失败</tspan></text>
+<path d="M650,1070 L650,1130" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<rect x="617.5" y="1087" width="65" height="33" rx="4" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<text x="650" y="1108" font-size="18" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="650" dy="0">通过</tspan></text>
+<rect x="380" y="145" width="540" height="82" rx="16" fill="#E8F1FF" stroke="#9EBFED" stroke-width="1.5" />
+<text x="650" y="194.4" font-size="24" font-weight="600" fill="#204D91" text-anchor="middle"><tspan x="650" dy="0">建立项目与 release 基线</tspan></text>
+<rect x="380" y="280" width="540" height="82" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="650" y="329.4" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="650" dy="0">导入源码 / 文档 / UI manifest</tspan></text>
+<rect x="380" y="415" width="540" height="90" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="650" y="451.4" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="650" dy="0">安全与一致性校验</tspan><tspan x="650" dy="34">路径 · 权限 · 哈希 · 版本归属</tspan></text>
+<rect x="50" y="575" width="270" height="95" rx="16" fill="#FFF1F2" stroke="#EBC2C7" stroke-width="1.5" />
+<text x="185" y="613.2" font-size="22" font-weight="400" fill="#B84A54" text-anchor="middle"><tspan x="185" dy="0">隔离失败材料</tspan><tspan x="185" dy="34">保留错误报告</tspan></text>
+<rect x="380" y="575" width="540" height="82" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="650" y="624.4" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="650" dy="0">提取节点与可追溯证据</tspan></text>
+<rect x="380" y="710" width="540" height="82" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="650" y="759.4" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="650" dy="0">规则匹配与 AI 候选关联</tspan></text>
+<rect x="380" y="845" width="540" height="82" rx="16" fill="#E8F1FF" stroke="#9EBFED" stroke-width="1.5" />
+<text x="650" y="894.05" font-size="23" font-weight="600" fill="#204D91" text-anchor="middle"><tspan x="650" dy="0">人工审核关键关系与业务解释</tspan></text>
+<rect x="975" y="838" width="275" height="95" rx="16" fill="#FFF6E5" stroke="#EBCF9F" stroke-width="1.5" />
+<text x="1112.5" y="876.2" font-size="22" font-weight="400" fill="#B87512" text-anchor="middle"><tspan x="1112.5" dy="0">记录拒绝理由</tspan><tspan x="1112.5" dy="34">不进入发布集合</tspan></text>
+<rect x="380" y="980" width="540" height="90" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="650" y="1016.4" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="650" dy="0">事务内检查预期版本与权限</tspan><tspan x="650" dy="34">确认所有发布项的审核状态</tspan></text>
+<rect x="50" y="1120" width="270" height="95" rx="16" fill="#FFF1F2" stroke="#EBC2C7" stroke-width="1.5" />
+<text x="185" y="1158.2" font-size="22" font-weight="400" fill="#B84A54" text-anchor="middle"><tspan x="185" dy="0">中止发布</tspan><tspan x="185" dy="34">旧版本继续可用</tspan></text>
+<rect x="380" y="1130" width="540" height="90" rx="16" fill="#E9F7F2" stroke="#AEDBCD" stroke-width="1.5" />
+<text x="650" y="1166.05" font-size="23" font-weight="400" fill="#287D68" text-anchor="middle"><tspan x="650" dy="0">原子发布新 release_version</tspan><tspan x="650" dy="34">记录审计与不可变证据引用</tspan></text>
+<text x="650" y="1302" font-size="21" font-weight="400" fill="#627895" text-anchor="middle"><tspan x="650" dy="0">失败重试沿用任务幂等键；修订材料产生新内容哈希，不改写历史证据。</tspan></text>
+<path d="M48,1385 L1252,1385" fill="none" stroke="#C7D8EF" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"  />
+<text x="48" y="1420" font-size="18" font-weight="400" fill="#627895" text-anchor="start"><tspan x="48" dy="0">范围：已授权资料导入与知识发布；不包含替用户提交生产业务。</tspan></text>
+</g></svg>

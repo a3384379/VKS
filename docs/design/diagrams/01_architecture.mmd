@@ -1,0 +1,30 @@
+flowchart TB
+    subgraph SERVER["私有部署服务域"]
+        G["Web API / MCP 网关"]
+        P["共享领域服务与授权策略 · 项目权限 · 版本基线 · 审核发布"]
+        W["异步任务 / 解析与关联 Worker"]
+        D["PostgreSQL · 节点 · 关系 · 审计"]
+        O["对象 / 文件存储 · 原始材料 · 证据包"]
+    end
+    subgraph RUNNER["授权采集边界"]
+        R["本地采集 Runner · 临时凭证 · 出站连接"]
+        T["白名单测试环境"]
+    end
+    subgraph MODEL["可选模型出口"]
+        L["受控模型网关 · 本地或批准的远端模型"]
+    end
+    A["浏览器知识工作台"]
+    B["AI 客户端 / MCP"]
+    S["只读资料输入：Git / SVN / 目录 / ZIP + Markdown / OpenAPI + 原型 / 录制包"]
+    A --> G
+    B --> G
+    G --> P
+    P --> W
+    W --> D
+    W --> O
+    P -.-> D
+    P -.-> O
+    P -.-> L
+    R -- "脱敏证据" --> G
+    R -- "显式允许的采集" --> T
+    S -- "导入" --> G

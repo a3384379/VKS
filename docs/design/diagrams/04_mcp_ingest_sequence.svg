@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1510" viewBox="0 0 1500 1510"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8BA3C4"/></marker></defs><g font-family="Noto Sans SC, DejaVu Sans, sans-serif">
+<rect x="0" y="0" width="1500" height="1510" rx="0" fill="#F5F9FF" stroke="#F5F9FF" stroke-width="1.5" />
+<rect x="30" y="28" width="60" height="34" rx="10" fill="#246BDA" stroke="#246BDA" stroke-width="1.5" />
+<text x="60" y="53" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle"><tspan x="60" dy="0">04</tspan></text>
+<text x="112" y="56" font-size="31" font-weight="600" fill="#19304F" text-anchor="start"><tspan x="112" dy="0">MCP 导入与审核发布时序</tspan></text>
+<text x="48" y="98" font-size="19" font-weight="400" fill="#627895" text-anchor="start"><tspan x="48" dy="0">AI 可以导入和建议；审核与发布由具备权限的人员通过 Web 完成。</tspan></text>
+<rect x="25" y="145" width="230" height="78" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="140" y="191" font-size="24" font-weight="600" fill="#19304F" text-anchor="middle"><tspan x="140" dy="0">AI 客户端</tspan></text>
+<path d="M140,223 L140,1394" fill="none" stroke="#B6C7DE" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" />
+<rect x="330" y="145" width="230" height="78" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="445" y="191" font-size="24" font-weight="600" fill="#19304F" text-anchor="middle"><tspan x="445" dy="0">MCP / API 入口</tspan></text>
+<path d="M445,223 L445,1394" fill="none" stroke="#B6C7DE" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" />
+<rect x="635" y="145" width="230" height="78" rx="16" fill="#E8F1FF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="750" y="191" font-size="24" font-weight="600" fill="#19304F" text-anchor="middle"><tspan x="750" dy="0">任务与 Worker</tspan></text>
+<path d="M750,223 L750,1394" fill="none" stroke="#B6C7DE" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" />
+<rect x="940" y="145" width="230" height="78" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="1055" y="191" font-size="24" font-weight="600" fill="#19304F" text-anchor="middle"><tspan x="1055" dy="0">知识与证据库</tspan></text>
+<path d="M1055,223 L1055,1394" fill="none" stroke="#B6C7DE" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" />
+<rect x="1245" y="145" width="230" height="78" rx="16" fill="#FFFFFF" stroke="#C7D8EF" stroke-width="1.5" />
+<text x="1360" y="191" font-size="24" font-weight="600" fill="#19304F" text-anchor="middle"><tspan x="1360" dy="0">审核发布者</tspan></text>
+<path d="M1360,223 L1360,1394" fill="none" stroke="#B6C7DE" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" />
+<path d="M140,275 L445,275" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<text x="292.5" y="262" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="292.5" dy="0">import_bundle + 幂等键</tspan></text>
+<path d="M445,340 L1055,340" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<text x="750" y="327" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="750" dy="0">校验 scope、基线与幂等键</tspan></text>
+<path d="M1055,405 L445,405" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="750" y="392" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="750" dy="0">复用已有任务或允许创建</tspan></text>
+<path d="M445,470 L750,470" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<text x="597.5" y="457" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="597.5" dy="0">提交受控异步任务</tspan></text>
+<path d="M445,535 L140,535" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="292.5" y="522" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="292.5" dy="0">立即返回 job_id</tspan></text>
+<path d="M750,600 L1055,600" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<text x="902.5" y="587" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="902.5" dy="0">保存节点、证据和候选关联</tspan></text>
+<path d="M140,665 L445,665" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<text x="292.5" y="652" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="292.5" dy="0">get_job(job_id)</tspan></text>
+<path d="M445,730 L750,730" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<text x="597.5" y="717" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="597.5" dy="0">查询任务状态</tspan></text>
+<path d="M750,795 L445,795" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="597.5" y="782" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="597.5" dy="0">进度及候选 ID</tspan></text>
+<path d="M445,860 L140,860" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="292.5" y="847" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="292.5" dy="0">状态与结果引用</tspan></text>
+<path d="M140,925 L445,925" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<text x="292.5" y="912" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="292.5" dy="0">request_release(待发布草稿)</tspan></text>
+<path d="M445,990 L1360,990" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<text x="902.5" y="977" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="902.5" dy="0">创建审核任务，不自动发布</tspan></text>
+<path d="M1360,1085 L445,1085" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<text x="902.5" y="1072" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="902.5" dy="0">经 Web 审核发布 + expected_manifest_sha256</tspan></text>
+<path d="M445,1170 L1055,1170" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"  marker-end="url(#arrow)"/>
+<text x="750" y="1157" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="750" dy="0">事务校验角色、基线与已审核项</tspan></text>
+<path d="M1055,1235 L445,1235" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="750" y="1222" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="750" dy="0">原子发布并返回 release_id</tspan></text>
+<path d="M445,1300 L1360,1300" fill="none" stroke="#8BA3C4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="902.5" y="1287" font-size="24" font-weight="400" fill="#19304F" text-anchor="middle"><tspan x="902.5" dy="0">发布结果与审计记录</tspan></text>
+<rect x="32" y="1355" width="1436" height="52" rx="10" fill="#FFF6E5" stroke="#E8D4B1" stroke-width="1.5" />
+<text x="750" y="1388" font-size="20" font-weight="400" fill="#B87512" text-anchor="middle"><tspan x="750" dy="0">重试复用同一幂等键；任务取消与失败不回写已发布知识。</tspan></text>
+<path d="M48,1445 L1452,1445" fill="none" stroke="#C7D8EF" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"  />
+<text x="48" y="1480" font-size="18" font-weight="400" fill="#627895" text-anchor="start"><tspan x="48" dy="0">MCP 的写入 scope 不包含自动审批；执行日志不返回密钥或未脱敏业务数据。</tspan></text>
+</g></svg>

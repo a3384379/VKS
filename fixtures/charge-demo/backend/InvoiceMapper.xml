@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic statement. No datasource and no execution. -->
+<mapper namespace="demo.invoice.InvoiceMapper">
+  <insert id="insert" parameterType="double">
+    INSERT INTO demo_invoice_order (amount, state)
+    VALUES (#{amount}, 'SYNTHETIC')
+  </insert>
+</mapper>

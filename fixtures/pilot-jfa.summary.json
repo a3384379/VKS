@@ -1,0 +1,10 @@
+{
+  "fixture": "pilot-jfa.vksbundle.zip",
+  "sha256": "fbab67e3563d4fa18fe821e71ecd7a436ffa7f13d08e494d7ff5a58e2c4d0824",
+  "actions": 30,
+  "normalized_apis": 15,
+  "chapters": 30,
+  "candidate_relations": 111,
+  "independently_human_reviewed": false,
+  "runtime_validated": false
+}

@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.vks/
+.env
+.env.*
+!.env.example
+node_modules/
+apps/web/dist/
+*.tsbuildinfo
+artifacts/
+.DS_Store
+output/
+.playwright/

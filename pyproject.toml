@@ -1,0 +1,22 @@
+[project]
+name = "visual-knowledge-studio"
+version = "1.0.0rc1"
+description = "知境 VKS — evidence-backed interactive project knowledge"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "pydantic>=2.10,<3",
+  "sqlalchemy>=2.0,<2.1", "httpx>=0.28,<1", "jsonschema>=4.23,<5",
+  "PyYAML>=6.0.2,<7", "beautifulsoup4>=4.13,<5", "defusedxml>=0.7.1,<1",
+  "mcp>=1.26,<2", "psycopg[binary]>=3.2,<4", "alembic>=1.15,<2",
+  "tree-sitter>=0.25,<0.26", "tree-sitter-java>=0.23,<0.24",
+  "playwright>=1.56,<2", "markdown-it-py>=3,<5", "celery>=5.5,<6", "PyJWT[crypto]>=2.10,<3", "reportlab>=4,<5", "Pillow>=12,<14"
+]
+[dependency-groups]
+dev = ["pytest>=8.3,<10", "pytest-asyncio>=0.25,<2", "openapi-spec-validator>=0.7,<1", "ruff>=0.11,<1", "pypdf>=6,<7"]
+[tool.pytest.ini_options]
+pythonpath = [".", "services/api", "packages/analyzers"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+[tool.ruff]
+line-length = 120
+exclude = ["docs/design"]

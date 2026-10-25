@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="fixture.billing.InvoiceMapper">
+  <resultMap id="invoice" type="fixture.billing.Invoice">
+    <id column="id" property="id"/>
+    <result column="amount" property="amount"/>
+  </resultMap>
+  <sql id="columns">id, amount, status</sql>
+  <select id="find" resultMap="invoice">
+    SELECT <include refid="columns"/> FROM demo_invoice
+    WHERE customer = #{customer}
+  </select>
+  <insert id="insert">
+    INSERT INTO demo_invoice (amount) VALUES (#{amount})
+  </insert>
+  <update id="note">
+    UPDATE demo_invoice SET note = #{comment}
+  </update>
+  <select id="dynamic">
+    SELECT * FROM ${table}
+    <where><if test="enabled">enabled = 1</if></where>
+  </select>
+</mapper>

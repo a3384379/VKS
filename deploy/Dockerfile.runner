@@ -1,0 +1,6 @@
+# The Compose build context uses the exact API image built for this checkout.
+FROM vks_api_image
+USER root
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/chromium
+RUN python -m playwright install --with-deps chromium && chmod -R a+rX /opt/chromium
+USER vks

@@ -1,0 +1,31 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Synthetic billing fixture",
+    "version": "demo-v1"
+  },
+  "paths": {
+    "/pay/invoice/records": {
+      "get": {
+        "operationId": "queryRecords",
+        "summary": "查询合成缴费记录",
+        "responses": {
+          "200": {
+            "description": "Synthetic records"
+          }
+        }
+      }
+    },
+    "/pay/invoice/openInvoice": {
+      "post": {
+        "operationId": "openInvoice",
+        "summary": "合成开票声明；平台不调用",
+        "responses": {
+          "200": {
+            "description": "Synthetic declaration only"
+          }
+        }
+      }
+    }
+  }
+}

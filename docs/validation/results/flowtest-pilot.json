@@ -1,0 +1,66 @@
+{
+  "project_id": "5f817156-8c17-4d6d-a7ca-e7ee563cfd9d",
+  "source_commit": "cfe3594d055e1feb988df18041ed9dbedda8bc6b",
+  "runtime_revision": "c4e2a5f58fb2f13e4295f2bd790830f5ed8ef073+working-tree",
+  "source_alignment": "unknown",
+  "actions": 30,
+  "api_declarations": 912,
+  "chapters": 118,
+  "captures": [
+    {
+      "case": "success",
+      "capture_id": "cea0b7ad-d7f5-4b5e-af50-760dda200cea",
+      "snapshots": 1,
+      "requests": 57,
+      "unique_request_ids": true,
+      "refresh_status": 200,
+      "business_write_requests": 0,
+      "source_alignment": "unknown"
+    },
+    {
+      "case": "validation",
+      "capture_id": "9bdfa759-b2fa-4c7e-b733-eb9b663152a5",
+      "snapshots": 1,
+      "requests": 57,
+      "unique_request_ids": true,
+      "refresh_status": 200,
+      "business_write_requests": 0,
+      "source_alignment": "unknown"
+    },
+    {
+      "case": "forbidden",
+      "capture_id": "9e341950-bbc0-4a79-b31d-0aed2ab15945",
+      "snapshots": 1,
+      "requests": 57,
+      "unique_request_ids": true,
+      "refresh_status": 200,
+      "business_write_requests": 0,
+      "source_alignment": "unknown"
+    }
+  ],
+  "viewer_api_create_status": 403,
+  "sdk": {
+    "transport": "official MCP SDK + live loopback HTTP API",
+    "tools": 18,
+    "action_context": true,
+    "evidence_read": true,
+    "revocation": true,
+    "analysis_set_id": "5c522463-3d04-46bd-ad8f-b4bc6dd6025d"
+  },
+  "platform_model_calls": 0,
+  "published": false,
+  "independent_human_gold": false,
+  "browser": {
+    "hotspots": 30,
+    "vks_get_requests": 60,
+    "business_write_requests": 0,
+    "external_requests": 0,
+    "page_errors": 0
+  },
+  "cleanup": {
+    "isolated_container_removed": true,
+    "test_environments_disabled": 11,
+    "local_runner_enabled": false,
+    "daily_flowtest_unchanged": true
+  }
+}

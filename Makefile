@@ -1,0 +1,16 @@
+.PHONY: install dev test build check contracts demo
+install:
+	uv sync --frozen
+	npm ci
+dev:
+	bash scripts/dev.sh
+test:
+	uv run pytest -q
+	npm test
+build:
+	npm run build
+check: test build
+contracts:
+	uv run python scripts/build_contracts.py
+demo:
+	uv run python scripts/build_demo.py

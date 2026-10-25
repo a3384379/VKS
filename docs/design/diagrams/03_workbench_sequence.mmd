@@ -1,0 +1,23 @@
+sequenceDiagram
+    participant U as 使用者
+    participant W as 业务工作台
+    participant K as 知识 API
+    participant E as 图谱与证据库
+    participant M as 模型网关
+    U->>W: 选择操作：解释模式
+    W->>K: action_id + release_id
+    K->>K: 鉴权并固定基线
+    K->>E: 读取已发布关联与证据
+    E-->>K: 精确关系 / 待确认 / 缺失
+    K-->>W: 业务、接口、源码与证据
+    W-->>U: 展示内容及其可信状态
+    opt 用户主动请求 AI 解释
+    U->>W: 继续提问
+    W->>K: 问题 + 当前操作上下文
+    K->>M: 最小化、脱敏的证据片段
+    M-->>K: 回答草稿 + 引用
+    K->>K: 检查引用与权限
+    K-->>W: 答案或无充分证据
+    W-->>U: 显示引用与未知项
+    end
+    Note over U,M: 解释模式不请求目标业务后端，不触发开票、退款或删除。

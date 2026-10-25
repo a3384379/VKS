@@ -1,0 +1,84 @@
+{
+  "profile": "AT-35 local PoC; not specified benchmark-machine acceptance",
+  "source_files": 5000,
+  "source_bytes": 104857600,
+  "zip_entries_including_manifest": 5001,
+  "manifest_bytes": 1525432,
+  "transport_bytes": 61959867,
+  "expanded_container_bytes": 106383032,
+  "quotas": {
+    "material_files": 5000,
+    "material_bytes": 104857600,
+    "manifest_bytes": 4194304,
+    "transport_bytes": 134217728
+  },
+  "sha256": "9ecc837e1a368ea6d4b8f3e3262469c442d02065eb0c643a762f49d34f02eb30",
+  "phases_seconds": {
+    "generate": 0.09138662500481587,
+    "package": 1.5863992079976015,
+    "zip_validate_and_read": 0.26232016699941596,
+    "parse_bundle_including_zip_schema_and_static": 2.8228859590017237
+  },
+  "static_metrics": {
+    "java_files": 5000,
+    "xml_files": 0,
+    "parsed_files": 5000,
+    "methods": 5000,
+    "calls": 0,
+    "resolved_calls": 0,
+    "unresolved_calls": 0,
+    "entity_count": 10000,
+    "relation_count": 5000,
+    "unsupported_or_unresolved": 0,
+    "parser_version": "vks-java-spring-mybatis-1"
+  },
+  "cancel": {
+    "cancelled": true,
+    "java_files_started": 369,
+    "checks": 22,
+    "seconds_from_start": 2.161545708004269,
+    "files_after_threshold": 359,
+    "poll_interval_seconds": 0.1,
+    "seconds_after_request": 0.1044155000054161
+  },
+  "external_model_calls": 0,
+  "fixture_complexity": "5000 simple Java classes with one method each; deterministic hex comments pad to 100MiB, not enterprise code complexity",
+  "source_sha256": {
+    "packages/analyzers/vks_ingest.py": "f305a8f80bbbf1438cad06ded698e5f22d25b28bda45d35e3e06fadb6389f5c5",
+    "packages/analyzers/java_spring.py": "81807d7904dcddb0f7f9e51783bcb627260ad0f733990604e801f718532377a3",
+    "packages/analyzers/cancellation.py": "560c481c276a278b8097173bedd1ea059e03bddc8cd8d41c85dd004b612323e4",
+    "packages/analyzers/document_links.py": "f01f94d9a811c25dd0cbfc2f5f3503ec6e46d8531bbc4909470b7b474be9440a",
+    "services/api/vks_api/knowledge.py": "9ce1a9a43bd29430f3ffb7cb62101d1fa71018f9bc4851aa662b8cacc7d21960",
+    "services/api/vks_api/jobs.py": "27e7566f14978ac7a35b8b9c28f9d36b43b7b7e75368aa1bc83af897d6589cb0"
+  },
+  "job": {
+    "transport": "HTTP loopback upload + 20 concurrent submissions",
+    "id": "bfc5382a-6817-451b-b4db-fc34174efde6",
+    "state": "succeeded",
+    "execution_seconds": 11.519439416995738,
+    "upload_seconds": 0.1542097499986994,
+    "submission": {
+      "concurrency": 20,
+      "requests": 20,
+      "p50_seconds": 0.283589,
+      "p95_seconds": 0.563418,
+      "p99_seconds": 0.563418
+    },
+    "issue_count": 0,
+    "result": {
+      "result_refs": [
+        {
+          "kind": "analysis_set",
+          "id": "8ea8fa87-1e13-4c34-9fbf-8dcc46429ab6"
+        }
+      ],
+      "analysis_set_id": "8ea8fa87-1e13-4c34-9fbf-8dcc46429ab6",
+      "accepted_count": 5000,
+      "snapshot_ids": [
+        "4835a456-4a87-4177-9dc2-1b26f529b21a"
+      ],
+      "issues": [],
+      "reused": false
+    }
+  }
+}

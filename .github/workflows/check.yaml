@@ -1,0 +1,50 @@
+name: VKS checks
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: {enable-cache: true}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm}
+      - run: uv sync --frozen
+      - run: npm ci
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run python scripts/build_demo.py
+      - run: uv run pytest -q
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --audit-level=high
+  postgres-and-queue:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
+        env:
+          POSTGRES_USER: vks
+          POSTGRES_PASSWORD: synthetic-ci-database-only
+          POSTGRES_DB: vks
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U vks -d vks" --health-interval 5s --health-timeout 5s --health-retries 20
+      broker:
+        image: rabbitmq:4.1-alpine@sha256:3dd4ce7606f9fbf2e2dbca90a02f29c19c5cdf66bf15cdf5237430e3614128ca
+        env:
+          RABBITMQ_DEFAULT_USER: vks
+          RABBITMQ_DEFAULT_PASS: synthetic-ci-broker-only
+        ports: ["5672:5672"]
+        options: --health-cmd "su-exec rabbitmq rabbitmq-diagnostics -q ping" --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      PYTHONPATH: services/api:.
+      VKS_DATABASE_URL: postgresql+psycopg://vks:synthetic-ci-database-only@127.0.0.1:5432/vks
+      VKS_TEST_POSTGRES_URL: postgresql+psycopg://vks:synthetic-ci-database-only@127.0.0.1:5432/vks
+      VKS_TEST_BROKER_URL: amqp://vks:synthetic-ci-broker-only@127.0.0.1:5672//
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: {enable-cache: true}
+      - run: uv sync --frozen
+      - run: uv run alembic upgrade head
+      - run: uv run alembic check
+      - run: uv run pytest -q tests/backend/test_postgres.py tests/jobs/test_rabbitmq.py

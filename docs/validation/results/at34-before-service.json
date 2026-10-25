@@ -1,0 +1,32 @@
+{
+  "profile": "AT-34 local synthetic PoC; not specified 8vCPU/16GiB/network acceptance",
+  "hardware": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "cpu_count": "10",
+    "memory_bytes": "17179869184"
+  },
+  "dataset": {
+    "relations": 50000,
+    "actions": 1000,
+    "documents": 200
+  },
+  "concurrency": 20,
+  "requested_seconds": 5.0,
+  "elapsed_seconds": 35.106,
+  "sql_queries": 215240,
+  "operations": {
+    "action": {
+      "requests": 20,
+      "p50_ms": 26779.922,
+      "p95_ms": 34233.933,
+      "p99_ms": 34233.933,
+      "errors": {}
+    }
+  },
+  "external_model_calls": 0,
+  "cache": "includes first cold request and subsequent warm requests; no permission cache between transactions",
+  "store": "<isolated temporary synthetic store>",
+  "report_redactions": [
+    "temporary synthetic store path; no metrics removed"
+  ]
+}

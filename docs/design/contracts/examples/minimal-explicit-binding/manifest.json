@@ -1,0 +1,82 @@
+{
+  "schema_version": "1.0",
+  "project_key": "charge-demo",
+  "baseline_key": "explicit-demo-v1",
+  "import_key": "explicit-demo-import-1",
+  "description": "本地合成原型与 Markdown 的最小显式绑定包；没有运行观察或真实业务调用。",
+  "sources": [
+    {
+      "source_id": "preview",
+      "role": "prototype",
+      "provider": "local",
+      "root": "preview",
+      "content_sha256": "4de5f7247795826db9e8318caf5c8a86cd0aa11f0ed707c191ad8422ca2bfdc1"
+    },
+    {
+      "source_id": "docs",
+      "role": "documentation",
+      "provider": "local",
+      "root": "docs",
+      "content_sha256": "99ca3797c7d90b3c638b843a8fabf9b282cd4dc6ad276ae75ff1b834c5f96030"
+    },
+    {
+      "source_id": "knowledge",
+      "role": "documentation",
+      "provider": "local",
+      "root": "knowledge",
+      "content_sha256": "726e657a16aa5cb0807876790502eac02d76ab85346f6bbd909f7830a9f5be85"
+    }
+  ],
+  "artifacts": [
+    {
+      "source_id": "preview",
+      "kind": "prototype",
+      "path": "preview/index.html",
+      "sha256": "f391f82bf9faceb39d9773d384057a3103f476b9f8e545e49e8edb367e82b69a",
+      "size_bytes": 1516,
+      "media_type": "text/html",
+      "encoding": "utf-8",
+      "sensitivity": "public"
+    },
+    {
+      "source_id": "docs",
+      "kind": "markdown",
+      "path": "docs/invoice-rules.md",
+      "sha256": "81765a5dacb3ba4840f3e68dd59dc6d02772dd962834a1d9d7438eeb4749129e",
+      "size_bytes": 437,
+      "media_type": "text/markdown",
+      "encoding": "utf-8",
+      "sensitivity": "public"
+    },
+    {
+      "source_id": "knowledge",
+      "kind": "ui_manifest",
+      "path": "knowledge/ui-manifest.json",
+      "sha256": "1c53c5b8e42906dfd5a060d1c341e7cb0ecce2e36e722d9dadaca170f180d4ae",
+      "size_bytes": 851,
+      "media_type": "application/json",
+      "encoding": "utf-8",
+      "sensitivity": "public"
+    },
+    {
+      "source_id": "knowledge",
+      "kind": "binding_manifest",
+      "path": "knowledge/bindings.json",
+      "sha256": "58d63b37db2fa16165dbae32b4c0a41ac9aafb3f665eb48300daf84eb970fde0",
+      "size_bytes": 1600,
+      "media_type": "application/json",
+      "encoding": "utf-8",
+      "sensitivity": "public"
+    }
+  ],
+  "uiManifest": {
+    "path": "knowledge/ui-manifest.json",
+    "sha256": "1c53c5b8e42906dfd5a060d1c341e7cb0ecce2e36e722d9dadaca170f180d4ae"
+  },
+  "bindings": {
+    "path": "knowledge/bindings.json",
+    "sha256": "58d63b37db2fa16165dbae32b4c0a41ac9aafb3f665eb48300daf84eb970fde0"
+  },
+  "analysis_origin": "external_ai",
+  "allow_platform_llm": false
+}
