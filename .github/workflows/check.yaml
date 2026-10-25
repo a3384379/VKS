@@ -12,6 +12,21 @@ jobs:
       - run: uv sync --frozen
       - run: npm ci
       - run: uv run playwright install --with-deps chromium
+      - name: Allow the isolated Chromium user namespace sandbox
+        shell: bash
+        run: |
+          # Ubuntu restricts downloaded Chromium binaries through AppArmor.
+          # Allow only this installed test browser; keep chromium_sandbox=True.
+          VKS_CI_CHROMIUM="$(uv run python -c 'from playwright.sync_api import sync_playwright; p = sync_playwright().start(); print(p.chromium.executable_path); p.stop()')"
+          test -x "$VKS_CI_CHROMIUM"
+          sudo tee /etc/apparmor.d/vks-playwright-chromium > /dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile vks-playwright-chromium "$VKS_CI_CHROMIUM" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/vks-playwright-chromium
       - run: uv run python scripts/build_demo.py
       - run: uv run pytest -q
       - run: npm test

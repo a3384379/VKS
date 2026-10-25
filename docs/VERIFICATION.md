@@ -75,3 +75,9 @@
 另外隔离了四个前端单测的Vite缓存，实际比较开发服务依赖摘要：运行单测前后完全一致；避免测试覆盖正在运行的依赖预构建，导致React/高亮模块504。当前开发服务已重启，示例项目可直接阅读。
 
 构建保留大型按需分块告警：PlantUML约3.06MB（gzip1.04MB）、Mermaid核心约641KB。它们只在图表需要绘制时加载，未通过提高告警阈值掩盖体积；本次未重新执行600秒读取门禁。图表/公式语法及PDF等范围见[格式说明](MARKDOWN_FORMATS.md)，结果见[本次机器记录](validation/results/markdown-rendering-20261025.json)。
+
+## GitHub 首次交付
+
+源码仓库为 [a3384379/VKS](https://github.com/a3384379/VKS)，默认分支main、私有可见。本地数据库、凭据、原始FlowTest试点资料与运行产物不进入Git；原设计文件在Git中保持原始字节。
+
+首次远端运行暴露Ubuntu AppArmor对下载版Chromium的用户命名空间限制：PG/消息队列通过，14项真实采集测试因浏览器沙箱无法启动而失败。CI按 [Chromium官方说明](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md) 仅为准确的测试浏览器路径加载临时机器内的AppArmor配置；未关闭系统级限制或采集浏览器沙箱。每次提交的最终结果见对应GitHub Actions运行；此前JSON仍记录其原始本地快照。
