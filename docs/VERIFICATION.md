@@ -20,7 +20,7 @@
 | 原设计包 | 44文件大小及SHA-256逐项一致 |
 | 契约与SDK | OpenAPI3.1 / JSON Schema2020-12、18个MCP输出Schema；真实官方SDK stdio/Streamable HTTP、资源/模板、同版闭环、撤销 |
 
-默认Python结果只有上游Starlette TestClient/httpx弃用告警，不影响测试通过。本次容器验收记录固定版本及实际镜像ID；CI配置包含独立Chromium安装和PG/消息队列专项，但本地未运行远端CI。
+默认Python结果只有上游Starlette TestClient/httpx弃用告警，不影响测试通过。本次容器验收记录固定版本及实际镜像ID；CI包含独立Chromium安装和PG/消息队列专项。上表及此前JSON是本地验证快照，远端运行单独记录，计数不叠加。
 
 ## 行为与故障覆盖
 
@@ -52,7 +52,7 @@
 
 ## 尚需外部验收
 
-代码完成及本地验证之外，仍需：与选定源码一致的业务测试构建、FlowTest业务人员审核与独立Gold/用户任务、指定基准机容量、实际模型供应商/IdP联调，以及远端CI/部署发行。当前来源版本不一致保持unknown；试点不自动批准或发布。设计AT逐项对应见[ROADMAP_V1.md](ROADMAP_V1.md)。
+代码完成及自动检查之外，仍需：与选定源码一致的业务测试构建、FlowTest业务人员审核与独立Gold/用户任务、指定基准机容量、实际模型供应商/IdP联调，以及生产部署发行。当前来源版本不一致保持unknown；试点不自动批准或发布。设计AT逐项对应见[ROADMAP_V1.md](ROADMAP_V1.md)。
 
 ## 2026-10-25 前端故障修复
 
