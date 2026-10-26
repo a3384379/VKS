@@ -7,3 +7,7 @@
 本地首迭代新增的登录、上传传输、预检、工作台聚合、令牌、发布人员确认等接口由运行中 `/openapi.json` 描述。首迭代扩展字段与未支持范围见 `docs/IMPLEMENTATION.md`；设计文件并不表示服务器已实现全部内容。
 
 来源摘要使用设计样例冻结的 `vks-file-list-v1`：按包根相对路径排序，将各项 `path/sha256/size_bytes` 按键排序，以 UTF-8 紧凑 JSON 序列化后 SHA-256。导入时检查实际字节与声明一致，不执行源码或访问清单里的远程地址。
+
+审计修复兼容扩展：场景状态可选`pageKey`、`actionKey`、`pageBindingOrigin`/`actionBindingOrigin`（仅declared）及`snapshotIndex`（0–19）；观察状态的captureRef由服务端验证同项目及知识基线后保存为新修订，不提升因果等级。服务端先执行Schema校验再解析状态引用。
+
+action context新增可选`relation_policy`，默认trusted（confirmed+valid），candidate及review分别读取候选/失效关系；rejected不用于讲解。运行API增加项目分页搜索`q`、准确capture详情与`/scenarios/{sid}/capture-bindings`，以后端`/openapi.json`为准；分页`meta`保留cursor/limit。MCP展开契约随场景Schema重新生成。以上均不修改`docs/design/contracts`原件。

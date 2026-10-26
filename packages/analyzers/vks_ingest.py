@@ -281,27 +281,19 @@ class _DOM(HTMLParser):
 
 
 def _headings(text: str) -> list[dict]:
+    from markdown_it import MarkdownIt
+
     out, parents = [], []
-    fence: tuple[str, int] | None = None
-    for line_no, line in enumerate(text.splitlines(), 1):
-        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
-        if marker:
-            run = marker.group(1)
-            if fence is None:
-                fence = (run[0], len(run))
-            elif run[0] == fence[0] and len(run) >= fence[1]:
-                fence = None
+    tokens = MarkdownIt("commonmark").parse(text)
+    for index, token in enumerate(tokens):
+        if token.type != "heading_open" or token.map is None:
             continue
-        if fence:
-            continue
-        match = re.match(r"^ {0,3}(#{1,6})[ \t]+(.+?)\s*#*\s*$", line)
-        if match:
-            level = len(match.group(1))
-            title = match.group(2).strip()
-            while parents and parents[-1][0] >= level:
-                parents.pop()
-            parents.append((level, title))
-            out.append({"level": level, "title": title, "line": line_no, "path": [p[1] for p in parents]})
+        level, title = int(token.tag[1:]), tokens[index + 1].content
+        while parents and parents[-1][0] >= level:
+            parents.pop()
+        parents.append((level, title))
+        out.append({"level": level, "title": title, "line": token.map[0] + 1,
+                    "path": [p[1] for p in parents]})
     return out
 
 

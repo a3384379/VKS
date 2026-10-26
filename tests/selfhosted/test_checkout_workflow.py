@@ -45,6 +45,14 @@ async def test_actual_checkout_actions_api_sources_and_evidence_through_official
         result = s._commit_bundle(db, p["id"], owner.id, s._parse(packed.getvalue(), p["key"]))
     aid = result["analysis_set_id"]
     w = s.workspace(owner, p["id"], aid)
+    # Self-hosted import is still only a proposal. Trusted explanation requires
+    # an explicit synthetic human review, just as the application does.
+    assert not s.action_context(owner, p["id"], w["actions"][0]["entity_id"], aid)["relations"]
+    assert s.action_context(owner, p["id"], w["actions"][0]["entity_id"], aid, relation_policy="candidate")["relations"]
+    for relation in w["relations"]:
+        assert relation["review_status"] == "candidate"
+        s.review_relation(owner, relation["id"], {"decision": "confirm", "reason": "Synthetic self-hosted review",
+            "evidence_ids": relation["evidence_ids"]}, relation["row_version"])
     token = s.create_token(
         owner,
         p["id"],
@@ -69,7 +77,7 @@ async def test_actual_checkout_actions_api_sources_and_evidence_through_official
             assert context["baseline_kind"] == "draft" and context["analysis_set_id"] == aid
             assert any(r["relation_type"] == "documents" for r in context["relations"])
             assert any(r["relation_type"] == "handler_of" for r in context["relations"])
-            assert all(r["review_status"] == "candidate" for r in context["relations"])
+            assert all(r["review_status"] == "confirmed" and r["validity_status"] == "valid" for r in context["relations"])
         sources = [e for e in w["evidence"] if e["locator"]["relative_path"].startswith("backend/")]
         assert len(sources) == 8
         evidence = await sdk.call_tool("get_evidence", {"project_id": p["id"], "evidence_ids": [sources[0]["id"]]})

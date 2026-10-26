@@ -66,8 +66,34 @@ def error(code, message, status=422, details=None):
     raise DomainError(code, message, status, details)
 
 
+def document_origin(s, revision):
+    """Resolve legacy identities through preserved original artifacts, never snapshot IDs."""
+    if revision.metadata_json.get("logical_source_key"):
+        return revision.metadata_json["logical_source_key"]
+    artifact_id = revision.metadata_json.get("original_artifact_id") or revision.artifact_id
+    seen = set()
+    while artifact_id and artifact_id not in seen:
+        seen.add(artifact_id)
+        artifact = s.get(Artifact, artifact_id)
+        if not artifact:
+            break
+        original = artifact.metadata_json.get("original_artifact_id")
+        if original and original != artifact_id:
+            artifact_id = original
+            continue
+        source = s.get(SourceSnapshot, artifact.snapshot_id)
+        return source.source_key if source else None
+    return None
+
+
 def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
     from .service import sha, canonical
+    from .documents import DocumentService, DocumentWorkflow, assert_section_locks, match_sections, parse_sections
+    from copy import deepcopy
+    from .reading import artifact_policy
+
+    # Parser/checkpoint results may be reused; only this transaction's copy is adapted.
+    bundle = deepcopy(bundle)
 
     manifest = bundle.manifest
     fingerprint = sha(canonical(manifest))
@@ -104,6 +130,89 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
         )
         s.add(a)
         s.flush()
+    removed_revisions, aliases, inherited_policies = set(), {}, {}
+    material_sources = {item["path"]: item["source_id"] for item in bundle.artifacts}
+    for item in bundle.entities:
+        if item["type"] != "section":
+            continue
+        entity = s.scalar(select(Entity).where(Entity.project_id == pid, Entity.type == "section",
+                                               Entity.stable_key == item["stable_key"]))
+        choice = s.get(Selection, (a.id, entity.id)) if entity else None
+        previous = (s.get(Revision, choice.entity_revision_id) if choice else
+                    s.scalar(select(Revision).where(Revision.entity_id == entity.id).limit(1)) if entity else None)
+        if previous and previous.metadata_json.get("document_key") != item.get("metadata", {}).get("document_key"):
+            error("VKS_STATE_CONFLICT", "章节逻辑键属于其他文档；请使用来源前缀或明确的身份迁移", 409)
+    for item in bundle.entities:
+        if item["type"] != "document":
+            continue
+        document = s.scalar(select(Entity).where(Entity.project_id == pid, Entity.type == "document",
+                                                 Entity.stable_key == item["stable_key"]))
+        selected = s.get(Selection, (a.id, document.id)) if document else None
+        prior = (s.get(Revision, selected.entity_revision_id) if selected else
+                 s.scalar(select(Revision).where(Revision.entity_id == document.id)
+                          .order_by(Revision.created_at.desc(), Revision.id.desc()).limit(1)) if document else None)
+        incoming_source = material_sources.get(item.get("artifact_path"))
+        if prior and document_origin(s, prior) != incoming_source:
+            error("VKS_STATE_CONFLICT", "文档逻辑键与另一来源冲突；请添加来源前缀，如 backend/README.md 与 frontend/README.md", 409)
+        item["metadata"] = dict(item.get("metadata", {}), logical_source_key=incoming_source)
+        if not prior:
+            continue
+        old = prior
+        previous = DocumentService(service)._sections(s, document, old, a.id if selected else None)
+        rows = parse_sections(item["content"], old.name)
+        matched, _, ambiguities = match_sections(previous, rows)
+        locked = set(old.metadata_json.get("locked_section_ids", []))
+        assert_section_locks(previous, rows, matched, locked)
+        incoming = [row for row in bundle.entities if row["type"] == "section"
+                    and row.get("metadata", {}).get("document_key") == item["stable_key"]]
+        reserved = {s.get(Entity, row.entity_id).stable_key for row in previous}
+        allocated = reserved | {row["stable_key"] for row in incoming}
+        for index, chapter in enumerate(incoming):
+            prior = matched.get(index)
+            original = chapter["stable_key"]
+            stable = original
+            if prior:
+                stable = s.get(Entity, prior.entity_id).stable_key
+            elif stable in reserved:
+                stable = item["stable_key"] + ".section." + uid()
+                while stable in allocated:
+                    stable = item["stable_key"] + ".section." + uid()
+            aliases[original] = stable
+            chapter["stable_key"] = stable
+            chapter["locator"]["sectionKey"] = stable
+            chapter["metadata"]["manual_lock"] = bool(prior and prior.entity_id in locked)
+            reserved.add(stable)
+            allocated.add(stable)
+        retained = {row["stable_key"] for row in incoming}
+        for chapter in previous:
+            if selected and s.get(Entity, chapter.entity_id).stable_key not in retained:
+                removed_revisions.add(chapter.id)
+                s.delete(s.get(Selection, (a.id, chapter.entity_id)))
+        changed = old.content != item["content"]
+        workflow = s.scalar(select(DocumentWorkflow).where(DocumentWorkflow.analysis_set_id == a.id,
+                                                          DocumentWorkflow.document_id == document.id))
+        metadata = dict(old.metadata_json, **item.get("metadata", {}))
+        metadata.update(locked_section_ids=sorted(locked),
+                        governed=bool(changed or workflow or old.metadata_json.get("governed")),
+                        row_version=old.metadata_json.get("row_version", 1) + int(changed),
+                        original_artifact_id=old.metadata_json.get("original_artifact_id", old.artifact_id),
+                        identity_ambiguities=ambiguities)
+        if metadata["governed"]:
+            metadata["workflow_state"] = "editing" if changed else old.metadata_json.get("workflow_state", "editing")
+        item["metadata"] = metadata
+        original_artifact = s.get(Artifact, old.artifact_id)
+        if original_artifact:
+            inherited_policies[item["artifact_path"]] = {
+                flag: bool(artifact_policy(s, original_artifact).get(flag))
+                for flag in ("requires_source_read", "requires_trace_read")
+            }
+    for relation in bundle.relations:
+        relation["from_key"] = aliases.get(relation["from_key"], relation["from_key"])
+        relation["to_key"] = aliases.get(relation["to_key"], relation["to_key"])
+    for evidence in bundle.evidence:
+        loc = evidence.get("locator", {})
+        if loc.get("sectionKey") in aliases:
+            loc["sectionKey"] = aliases[loc["sectionKey"]]
     sources = list(a.sources)
     snapshot_by_source = {}
     for source in bundle.sources:
@@ -195,6 +304,11 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
                 meta.update(parse_status="failed", parse_error_code=item.get("parse_error_code"))
             art.metadata_json = meta
         artifacts[item["path"]] = art
+        if item["path"] in inherited_policies:
+            art.metadata_json = {**art.metadata_json, **{
+                flag: bool(required or art.metadata_json.get(flag))
+                for flag, required in inherited_policies[item["path"]].items()
+            }}
     entity_map = {}
     replaced = {}
     for item in bundle.entities:
@@ -245,13 +359,28 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
         else:
             s.add(Selection(analysis_set_id=a.id, entity_id=entity.id, entity_revision_id=revision.id))
         entity_map[item["stable_key"]] = revision
+        if entity.type == "document" and metadata.get("governed"):
+            workflow = s.scalar(select(DocumentWorkflow).where(DocumentWorkflow.analysis_set_id == a.id,
+                                                              DocumentWorkflow.document_id == entity.id))
+            if not workflow:
+                workflow = DocumentWorkflow(id=uid(), project_id=pid, analysis_set_id=a.id,
+                                            document_id=entity.id, revision_id=revision.id)
+                s.add(workflow)
+            if workflow.revision_id != revision.id or workflow.approval_sha256 != revision.content_sha256:
+                workflow.revision_id = revision.id
+                workflow.state = "editing"
+                workflow.reviewed_by = None
+                workflow.approval_sha256 = None
     s.flush()
     # Retain decisions while changed endpoints become stale. Never mutate another baseline.
     for relation in s.scalars(select(Relation).where(Relation.analysis_set_id == a.id)):
-        if relation.from_revision_id in replaced or relation.to_revision_id in replaced:
+        missing = bool({relation.from_revision_id, relation.to_revision_id} & removed_revisions)
+        if missing or relation.from_revision_id in replaced or relation.to_revision_id in replaced:
             relation.from_revision_id = replaced.get(relation.from_revision_id, relation.from_revision_id)
             relation.to_revision_id = replaced.get(relation.to_revision_id, relation.to_revision_id)
-            relation.validity_status = "stale"
+            relation.validity_status = "broken" if missing else "stale"
+            if relation.causal_basis == "correlated_runtime":
+                relation.causal_basis = "not_established"
             relation.row_version += 1
     evidence_map = {}
     for item in bundle.evidence:

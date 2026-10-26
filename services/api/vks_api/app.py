@@ -163,10 +163,11 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
 
     @app.get(API + "/projects")
     def list_projects(
-        request: Request, cursor: str | None = None, limit: int = Query(20, ge=1, le=100), a: Actor = Depends(actor)
+        request: Request, cursor: str | None = None, limit: int = Query(20, ge=1, le=100),
+        q: str | None = Query(None, max_length=128), a: Actor = Depends(actor)
     ):
-        rows, next_cursor = service.list_projects(a, cursor, limit)
-        return envelope(request, rows, next_cursor=next_cursor)
+        rows, next_cursor = service.list_projects(a, cursor, limit, q)
+        return envelope(request, rows, next_cursor=next_cursor, limit=limit)
 
     @app.post(API + "/projects", status_code=201)
     def create_project(
@@ -316,12 +317,13 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         depth: int = Query(2, ge=1, le=3),
         max_nodes: int = Query(50, ge=1, le=200),
         project_id: str | None = None,
+        relation_policy: str = Query("trusted", pattern="^(trusted|candidate|review)$"),
         a: Actor = Depends(actor),
     ):
         pid = service.find_entity_project(a, eid)
         if project_id and project_id != pid:
             raise DomainError("VKS_NOT_FOUND", "未找到对象", 404)
-        return envelope(request, service.action_context(a, pid, eid, analysis_set_id, release_id, depth, max_nodes))
+        return envelope(request, service.action_context(a, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_policy))
 
     @app.get(API + "/entities/{eid}/relations")
     def graph(

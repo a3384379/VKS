@@ -13,6 +13,16 @@ class NetworkDenied(ValueError):
     pass
 
 
+BUSINESS_HEADERS = {"x-csrf-token", "x-xsrf-token", "requestverificationtoken", "x-requested-with"}
+
+
+class ResponseHeaders(dict):
+    """Only safe headers are public; cookie lines stay in runner memory."""
+    def __init__(self, values, set_cookies):
+        super().__init__(values)
+        self.set_cookies = set_cookies
+
+
 DENIED_PORTS = {22, 25, 53, 111, 135, 139, 445, 2375, 2376, 3306, 5432, 5672, 6379, 8000, 5173, 8788, 9200, 11211}
 DENIED_NETWORKS = [
     ipaddress.ip_network(n)
@@ -34,7 +44,8 @@ def origin(url):
 
 
 class NetworkPolicy:
-    def __init__(self, base_origin, allowed_origins, allowed_cidrs, *, allow_loopback=False, write_paths=()):
+    def __init__(self, base_origin, allowed_origins, allowed_cidrs, *, allow_loopback=False, write_paths=(),
+                 request_headers=None):
         self.base_origin = origin(base_origin)
         self.origins = {origin(o) for o in allowed_origins}
         if self.base_origin not in self.origins or not 1 <= len(self.origins) <= 20:
@@ -44,6 +55,15 @@ class NetworkPolicy:
             raise NetworkDenied("必须设置受控出站网段")
         self.allow_loopback = allow_loopback
         self.write_paths = set(write_paths)
+        self.request_headers = {}
+        if not isinstance(request_headers or {}, dict) or len(request_headers or {}) > 20:
+            raise NetworkDenied("业务请求头策略无效")
+        for target, names in (request_headers or {}).items():
+            target = origin(target)
+            if (target not in self.origins or not isinstance(names, list) or len(names) > 4
+                    or any(not isinstance(n, str) or n.lower() not in BUSINESS_HEADERS for n in names)):
+                raise NetworkDenied("业务请求头需绑定获准来源及有限允许清单")
+            self.request_headers[target] = {n.lower() for n in names}
 
     def resolve(self, url):
         if origin(url) not in self.origins:
@@ -93,8 +113,11 @@ class NetworkPolicy:
         connection = http.client.HTTPConnection(ip, port, timeout=timeout)
         host = (f"[{p.hostname}]" if ":" in p.hostname else p.hostname) + (f":{port}" if port not in (80, 443) else "")
         outgoing = {"Host": host, "Accept-Encoding": "identity", "User-Agent": "VKS-Controlled-Runner/1.0"}
+        permitted_headers = self.request_headers.get(origin(url), set())
         for k, v in (headers or {}).items():
-            if k.lower() in ("content-type", "accept", "accept-language"):
+            if k.lower() in {"content-type", "accept", "accept-language"} | permitted_headers:
+                if not isinstance(v, str) or len(v) > 8192 or any(ord(c) < 32 or ord(c) == 127 for c in v):
+                    raise NetworkDenied("业务请求头格式无效")
                 outgoing[k] = v
         for name, value in (headers or {}).items():
             if (
@@ -112,7 +135,7 @@ class NetworkPolicy:
             except (ValueError, NetworkDenied):
                 pass
         for name, value in (trusted_headers or {}).items():
-            if name.lower() not in ("authorization", "x-api-key", "cookie") or any(c in value for c in "\r\n\0"):
+            if name.lower() not in {"authorization", "x-api-key", "cookie"} | permitted_headers or any(c in value for c in "\r\n\0"):
                 raise NetworkDenied("实例认证头格式无效")
             outgoing[name] = value
         path = urlunsplit(("", "", p.path or "/", p.query, ""))
@@ -149,9 +172,13 @@ class NetworkPolicy:
             if time.monotonic() >= deadline:
                 raise NetworkDenied("响应超过采集时间预算")
             data = b"".join(chunks)
-            safe_headers = {
-                k: v for k, v in response.getheaders() if k.lower() in ("content-type", "location", "cache-control")
-            }
+            received_headers = response.getheaders()
+            safe_headers = ResponseHeaders({
+                k: v for k, v in received_headers if k.lower() in (
+                    "content-type", "location", "cache-control", "access-control-allow-origin",
+                    "access-control-allow-credentials", "access-control-allow-methods",
+                    "access-control-allow-headers", "access-control-expose-headers", "access-control-max-age", "vary")
+            }, [v for k, v in received_headers if k.lower() == "set-cookie"])
             location = next((v for k, v in safe_headers.items() if k.lower() == "location"), None)
             if location:
                 from urllib.parse import urljoin

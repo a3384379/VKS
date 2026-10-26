@@ -28,7 +28,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { api, ApiError, mutation, setCsrf } from "./api";
+import { api, apiPage, ApiError, mutation, setCsrf } from "./api";
 import {
   Button,
   Empty,
@@ -41,6 +41,12 @@ import {
   label,
 } from "./components";
 import { WorkspaceContext } from "./context";
+import {
+  emptyNavigation,
+  resolveExplanation,
+  type ExplanationNavigation,
+  type NavigationIntent,
+} from "./navigation";
 import { hasProjectPermission } from "./permissions";
 import { LoginForm } from "./LoginForm";
 import { RenderBoundary } from "./RenderBoundary";
@@ -120,11 +126,16 @@ function workspaceHash(
   project: string,
   baseline: string,
   entity: string,
+  explanation: ExplanationNavigation = emptyNavigation,
 ) {
   const query = new URLSearchParams({ view });
   if (project) query.set("project", project);
   if (baseline) query.set("baseline", baseline);
   if (entity) query.set("entity", entity);
+  if (explanation.pageId) query.set("ui_page", explanation.pageId);
+  if (explanation.scenarioId) query.set("scenario", explanation.scenarioId);
+  if (explanation.stateKey) query.set("state", explanation.stateKey);
+  if (explanation.actionId) query.set("action", explanation.actionId);
   return `#${query}`;
 }
 export default function App() {
@@ -133,6 +144,7 @@ export default function App() {
     view: View;
     projectId: string;
     baseline: string;
+    navigation: string;
   } | null>(null);
   const [session, setSession] = useState<Session | null>(null),
     [authError, setAuthError] = useState("");
@@ -144,7 +156,7 @@ export default function App() {
         ? initialView
         : "overview") as View,
     ),
-    [selected, setSelected] = useState(initial.get("entity") || "");
+    [selected, setSelectedId] = useState(initial.get("entity") || "");
   const [w, setWorkspace] = useState<Workspace | null>(null),
     [loading, setLoading] = useState(false),
     [error, setError] = useState(""),
@@ -156,6 +168,16 @@ export default function App() {
       null,
     ),
     [hasUnsavedChanges, setUnsavedFlag] = useState(false);
+  const [explanation, setExplanation] = useState<ExplanationNavigation>({
+    pageId: initial.get("ui_page") || "",
+    scenarioId: initial.get("scenario") || "",
+    stateKey: initial.get("state") || "",
+    actionId: initial.get("action") || "",
+  });
+  const explanationRef = useRef(explanation);
+  explanationRef.current = explanation;
+  const workspaceRef = useRef(w);
+  workspaceRef.current = w;
   const unsavedChanges = useRef(false);
   const setUnsavedChanges = useCallback((value: boolean) => {
     unsavedChanges.current = value;
@@ -164,14 +186,141 @@ export default function App() {
   const notify = useCallback((message: string, tone = "success") => {
     setToast({ message, tone });
   }, []);
-  const loadProjects = useCallback(async () => {
-    const response = await api<Project[] | { items: Project[] }>("/projects");
-    const items = Array.isArray(response) ? response : response.items;
-    setProjects(items);
-    setProjectId((previous) =>
-      items.some((p) => p.id === previous) ? previous : items[0]?.id || "",
-    );
-  }, []);
+  const navigateExplanation = useCallback(
+    (intent: NavigationIntent) => {
+      if (!workspaceRef.current) return;
+      if (unsavedChanges.current) {
+        notify("请先保存或还原当前草稿", "error");
+        return;
+      }
+      try {
+        const next = resolveExplanation(
+          workspaceRef.current,
+          explanationRef.current,
+          intent,
+        );
+        explanationRef.current = next;
+        setExplanation(next);
+        setSelectedId(next.actionId);
+      } catch (error) {
+        notify((error as Error).message, "error");
+      }
+    },
+    [notify],
+  );
+  const setSelected = useCallback(
+    (id: string) => {
+      if (workspaceRef.current?.actions.some((action) => action.id === id)) {
+        navigateExplanation({ actionId: id, followTarget: false });
+      } else {
+        setSelectedId(id);
+        if (!id) setExplanation(emptyNavigation);
+      }
+    },
+    [navigateExplanation],
+  );
+  useEffect(() => {
+    if (!w || w.project.id !== projectId) return;
+    if (
+      baseline.startsWith("draft:") &&
+      w.selected_analysis_set?.id !== baseline.slice(6)
+    )
+      return;
+    if (
+      baseline.startsWith("release:") &&
+      w.selected_release?.id !== baseline.slice(8)
+    )
+      return;
+    try {
+      const actionId =
+        explanation.actionId ||
+        (w.actions.some((a) => a.id === selected) ? selected : "");
+      const next = resolveExplanation(w, explanation, {
+        ...explanation,
+        actionId,
+        followTarget: false,
+      });
+      if (JSON.stringify(next) !== JSON.stringify(explanation))
+        setExplanation(next);
+      if (view === "workbench" && selected !== next.actionId)
+        setSelectedId(next.actionId);
+    } catch (error) {
+      notify((error as Error).message, "error");
+      setExplanation(
+        resolveExplanation(w, emptyNavigation, { followTarget: false }),
+      );
+    }
+  }, [w, projectId, baseline, view, selected, explanation, notify]);
+  const [projectSearch, setProjectSearch] = useState("");
+  const [projectCursor, setProjectCursor] = useState<string | null>(null);
+  const [projectLoading, setProjectLoading] = useState(false);
+  const projectRequest = useRef(0);
+  const projectSelection = useRef(projectId);
+  projectSelection.current = projectId;
+  const lastProjectQuery = useRef<string | null>(null);
+  const loadProjects = useCallback(
+    async (query = lastProjectQuery.current || "", cursor?: string) => {
+      const sequence = ++projectRequest.current;
+      lastProjectQuery.current = query;
+      setProjectLoading(true);
+      try {
+        const params = new URLSearchParams({ limit: "20" });
+        if (query.trim()) params.set("q", query.trim());
+        if (cursor) params.set("cursor", cursor);
+        const response = await apiPage<Project[]>(`/projects?${params}`);
+        if (sequence !== projectRequest.current) return;
+        const selectedId = projectSelection.current;
+        let pinned: Project | null = null;
+        let inaccessible = false;
+        if (selectedId && !response.data.some((p) => p.id === selectedId)) {
+          try {
+            pinned = await api<Project>(`/projects/${selectedId}`);
+          } catch (error) {
+            if (error instanceof ApiError && [403, 404].includes(error.status))
+              inaccessible = true;
+            else throw error;
+          }
+        }
+        if (sequence !== projectRequest.current) return;
+        setProjects((previous) => {
+          const combined = [
+            ...(pinned ? [pinned] : []),
+            ...(cursor ? previous : []),
+            ...response.data,
+          ];
+          return combined.filter(
+            (p, index) =>
+              (!inaccessible || p.id !== selectedId) &&
+              combined.findIndex((other) => other.id === p.id) === index,
+          );
+        });
+        setProjectCursor(response.meta.next_cursor || null);
+        if (inaccessible && projectSelection.current === selectedId) {
+          setWorkspace(null);
+          setBaseline("");
+          setSelectedId("");
+          setExplanation(emptyNavigation);
+          setUnsavedChanges(false);
+        }
+        setProjectId((previous) =>
+          inaccessible && previous === selectedId
+            ? response.data[0]?.id || ""
+            : previous || response.data[0]?.id || "",
+        );
+      } finally {
+        if (sequence === projectRequest.current) setProjectLoading(false);
+      }
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!session?.authenticated || lastProjectQuery.current === projectSearch)
+      return;
+    const timer = window.setTimeout(() => {
+      void loadProjects(projectSearch).catch((e) => setError(e.message));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [projectSearch, session?.authenticated, loadProjects]);
   useEffect(() => {
     api<Session>("/auth/session")
       .then((s) => {
@@ -219,6 +368,11 @@ export default function App() {
       throw error;
     }
     if (sequence !== workspaceRequest.current) return;
+    setProjects((previous) =>
+      previous.some((p) => p.id === result.project.id)
+        ? previous
+        : [result.project, ...previous],
+    );
     setWorkspace({
       ...result,
       entities: result.entities || [],
@@ -269,13 +423,20 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [w?.jobs, refresh]);
   useEffect(() => {
-    const hash = workspaceHash(view, projectId, baseline, selected);
+    const hash = workspaceHash(
+      view,
+      projectId,
+      baseline,
+      selected,
+      explanation,
+    );
     const previous = writtenRoute.current;
     const scopeChanged =
       previous &&
       (previous.view !== view ||
         previous.projectId !== projectId ||
-        previous.baseline !== baseline);
+        previous.baseline !== baseline ||
+        previous.navigation !== JSON.stringify(explanation));
     if (window.location.hash !== hash) {
       if (session?.authenticated && previous?.projectId && scopeChanged) {
         history.pushState(null, "", hash);
@@ -283,8 +444,20 @@ export default function App() {
         history.replaceState(null, "", hash);
       }
     }
-    writtenRoute.current = { view, projectId, baseline };
-  }, [view, projectId, baseline, selected, session?.authenticated]);
+    writtenRoute.current = {
+      view,
+      projectId,
+      baseline,
+      navigation: JSON.stringify(explanation),
+    };
+  }, [
+    view,
+    projectId,
+    baseline,
+    selected,
+    explanation,
+    session?.authenticated,
+  ]);
   useEffect(() => {
     function applyLocation() {
       const query = new URLSearchParams(window.location.hash.slice(1));
@@ -299,12 +472,16 @@ export default function App() {
         nextView !== view ||
         nextProject !== projectId ||
         nextBaseline !== baseline ||
-        nextEntity !== selected;
+        nextEntity !== selected ||
+        (query.get("action") || "") !== explanation.actionId ||
+        (query.get("ui_page") || "") !== explanation.pageId ||
+        (query.get("scenario") || "") !== explanation.scenarioId ||
+        (query.get("state") || "") !== explanation.stateKey;
       if (changed && unsavedChanges.current) {
         history.replaceState(
           null,
           "",
-          workspaceHash(view, projectId, baseline, selected),
+          workspaceHash(view, projectId, baseline, selected, explanation),
         );
         notify("文档草稿尚未保存，请先保存或还原本地修改", "error");
         return;
@@ -312,7 +489,13 @@ export default function App() {
       setView(nextView);
       setProjectId(nextProject);
       setBaseline(nextBaseline);
-      setSelected(nextEntity);
+      setSelectedId(nextEntity);
+      setExplanation({
+        pageId: query.get("ui_page") || "",
+        scenarioId: query.get("scenario") || "",
+        stateKey: query.get("state") || "",
+        actionId: query.get("action") || "",
+      });
     }
     window.addEventListener("hashchange", applyLocation);
     window.addEventListener("popstate", applyLocation);
@@ -320,7 +503,15 @@ export default function App() {
       window.removeEventListener("hashchange", applyLocation);
       window.removeEventListener("popstate", applyLocation);
     };
-  }, [view, projectId, baseline, selected, hasUnsavedChanges, notify]);
+  }, [
+    view,
+    projectId,
+    baseline,
+    selected,
+    explanation,
+    hasUnsavedChanges,
+    notify,
+  ]);
   useEffect(() => {
     const prevent = (e: BeforeUnloadEvent) => {
       if (unsavedChanges.current) e.preventDefault();
@@ -504,6 +695,25 @@ export default function App() {
           </select>
           <ChevronDown size={14} />
         </div>
+        <input
+          aria-label="搜索项目"
+          placeholder="搜索项目名称或 key"
+          value={projectSearch}
+          onChange={(e) => setProjectSearch(e.target.value)}
+        />
+        {projectCursor && (
+          <button
+            className="text-button"
+            disabled={projectLoading}
+            onClick={() => {
+              void loadProjects(projectSearch, projectCursor).catch((e) =>
+                setError(e.message),
+              );
+            }}
+          >
+            加载更多项目
+          </button>
+        )}
         <div className="nav-label">工作空间</div>
         <nav aria-label="主导航">
           {nav.map((n) => (
@@ -730,6 +940,8 @@ export default function App() {
                 session,
                 selected,
                 setSelected,
+                explanation,
+                navigateExplanation,
                 navigate,
                 refresh,
                 notify,

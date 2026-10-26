@@ -2,6 +2,8 @@
 
 2026-10-25，1.0.0-rc.1。原设计47个功能点与35个AT是范围和验收要求，文档本身不是通过证据。实现细节见 [IMPLEMENTATION.md](IMPLEMENTATION.md)，实际命令见 [VERIFICATION.md](VERIFICATION.md)，真实项目见 [FLOWTEST_PILOT.md](FLOWTEST_PILOT.md)。
 
+2026-10-26审计验证快照：A01–A11、G01–G02均有代码及合成回归，298项Python和34项前端通过，11个环境专项跳过；GitHub交付以对应PR及提交检查为准，部署和真实业务验收尚未执行。逐项兼容与风险见[审计交付记录](AUDIT_REMEDIATION.md)。
+
 ## 47功能对应
 
 | 设计ID | 已交付行为 | 支持边界与验证 |

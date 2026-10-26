@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import http.client
+import hashlib
 import ssl
 import json
 import os
@@ -328,6 +329,7 @@ class AiService:
 
     def run(self, actor, pid, question, *, analysis_set_id=None, release_id=None, action_id=None, document=False):
         from .service import DomainError
+        from .reading import artifact_policy
 
         w, evidence = self.context(actor, pid, analysis_set_id, release_id, action_id)
         with self.service.db() as s:
@@ -336,13 +338,15 @@ class AiService:
                 failure("VKS_DEPENDENCY_UNAVAILABLE", "平台模型未配置或未启用", 503)
             config = dict(p.settings)
             allowed = []
+            provenance = []
             for e in evidence:
                 artifact = s.get(Artifact, e["artifact_id"])
                 if not artifact or artifact.sensitivity == "confidential":
                     continue
                 if not artifact.metadata_json.get("allow_platform_llm", False):
                     continue
-                if artifact.kind == "source" and not config["allow_source"]:
+                policy = artifact_policy(s, artifact)
+                if (artifact.kind == "source" or policy.get("requires_source_read")) and not config["allow_source"]:
                     continue
                 allowed.append(
                     {
@@ -352,6 +356,12 @@ class AiService:
                         "excerpt": redact_text(e.get("excerpt", ""))[:2000],
                     }
                 )
+                provenance.append({
+                    "evidence_id": e["id"], "artifact_id": artifact.id, "sha256": artifact.sha256,
+                    "requires_source_read": bool(artifact.kind == "source" or policy.get("requires_source_read")),
+                    "requires_trace_read": bool(artifact.kind in ("trace", "capture") or policy.get("requires_trace_read")),
+                    "excerpt_sha256": hashlib.sha256(allowed[-1]["excerpt"].encode()).hexdigest(),
+                })
         if not allowed:
             return {
                 "answer": "当前上下文没有可发送给模型的证据，请补充资料或检查项目模型数据策略。",
@@ -402,6 +412,8 @@ class AiService:
         usage_id = self.reserve(actor, pid, config, len(json.dumps(body, ensure_ascii=False).encode()) + 256)
         input_tokens = output_tokens = None
         try:
+            with self.service.db() as s:
+                self.validate_inputs(s, actor, pid, provenance[:20])
             response = request_model(config, body)
             usage = response.get("usage", {})
             input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
@@ -442,6 +454,7 @@ class AiService:
                 failure("VKS_LIMIT_EXCEEDED", "模型实际用量超过任务限额", 429)
             current = self.service.workspace(actor, pid, analysis_set_id, release_id)
             with self.service.db() as s:
+                self.validate_inputs(s, actor, pid, provenance[:20])
                 latest = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
                 if not latest or not latest.settings.get("enabled") or latest.settings != config:
                     failure("VKS_VERSION_CONFLICT", "模型策略已变化，请重新生成", 412)
@@ -454,6 +467,7 @@ class AiService:
                 "usage_id": usage_id,
                 "analysis_set_id": w["selected_analysis_set"]["id"],
                 "_selection_version": w["selected_analysis_set"]["selection_version"],
+                "_input_provenance": provenance[:20],
             }
         except Exception as exc:
             code = exc.code if isinstance(exc, DomainError) else "VKS_INVALID_INPUT"
@@ -462,12 +476,35 @@ class AiService:
                 raise
             failure("VKS_INVALID_INPUT", "模型响应不满足结构化知识契约")
 
+    def validate_inputs(self, s, actor, pid, provenance):
+        """Check every actually sent input again, independently of citations."""
+        from .models import Evidence
+        from .reading import artifact_policy
+
+        if not provenance:
+            failure("VKS_INVALID_EVIDENCE", "模型输入来源记录缺失")
+        for row in provenance:
+            artifact = s.get(Artifact, row["artifact_id"])
+            evidence = s.get(Evidence, row["evidence_id"])
+            if (not artifact or artifact.project_id != pid or artifact.sha256 != row["sha256"]
+                    or not evidence or evidence.project_id != pid or evidence.artifact_id != artifact.id
+                    or not artifact.metadata_json.get("allow_platform_llm")
+                    or not self.service._visible_evidence(s, actor, pid, evidence)):
+                failure("VKS_FORBIDDEN", "模型输入的当前授权已变化", 403)
+            policy = artifact_policy(s, artifact)
+            if (bool(artifact.kind == "source" or artifact.sensitivity == "confidential" or policy.get("requires_source_read")) != row["requires_source_read"]
+                    or bool(artifact.kind in ("trace", "capture") or policy.get("requires_trace_read")) != row["requires_trace_read"]):
+                failure("VKS_VERSION_CONFLICT", "模型输入的资料分类已变化，请重新生成", 412)
+            for flag, scope in (("requires_source_read", "source:read"), ("requires_trace_read", "trace:read")):
+                if row[flag]:
+                    self.service.require(s, actor, pid, scope)
+
     def prepare_document(self, job_id):
         from .jobs import current_actor
 
         with self.service.db() as s:
             job = s.get(Job, job_id)
-            actor = current_actor(self.service, job.created_by, job.project_id, s)
+            actor = current_actor(self.service, job.created_by, job.project_id, s, job=job)
             self.service.require(s, actor, job.project_id, "knowledge:edit")
             payload = dict(job.input_json)
             pid = job.project_id
@@ -490,13 +527,15 @@ class AiService:
         from packages.collector.snapshots import Snapshot, bundle_bytes
         from packages.analyzers.vks_ingest import parse_bundle
 
-        actor = current_actor(self.service, job.created_by, job.project_id, s)
+        actor = current_actor(self.service, job.created_by, job.project_id, s, job=job)
         self.service.require(s, actor, job.project_id, "knowledge:edit")
         analysis = s.get(Analysis, job.input_json["analysis_set_id"])
         if not analysis or analysis.state == "frozen":
             failure("VKS_STATE_CONFLICT", "不能向发布版生成文档", 409)
         if analysis.selection_version != result.get("_selection_version"):
             failure("VKS_VERSION_CONFLICT", "模型生成后基线变化，请重新生成", 412)
+        provenance = result.get("_input_provenance", [])
+        self.validate_inputs(s, actor, job.project_id, provenance)
         markdown = "# " + result["title"].replace("\n", " ") + "\n\n"
         for i, paragraph in enumerate(result["paragraphs"], 1):
             markdown += "## 段落 " + str(i) + "\n\n" + paragraph["markdown"] + "\n\n"
@@ -527,22 +566,13 @@ class AiService:
             s.scalars(select(Artifact).where(Artifact.project_id == job.project_id, Artifact.relative_path == path))
         )
         artifact = artifacts[-1]
-        refs = {eid for p in result["paragraphs"] for eid in p["evidence_ids"]}
-        originals = [s.get(Evidence, eid) for eid in refs]
-        source_required = any(
-            s.get(Artifact, e.artifact_id).kind == "source"
-            or s.get(Artifact, e.artifact_id).metadata_json.get("requires_source_read")
-            for e in originals
-        )
-        trace_required = any(
-            s.get(Artifact, e.artifact_id).kind in ("trace", "capture")
-            or s.get(Artifact, e.artifact_id).metadata_json.get("requires_trace_read")
-            for e in originals
-        )
+        source_required = any(row["requires_source_read"] for row in provenance)
+        trace_required = any(row["requires_trace_read"] for row in provenance)
         artifact.metadata_json = {
             **artifact.metadata_json,
             "requires_source_read": source_required,
             "requires_trace_read": trace_required,
+            "input_provenance": provenance,
         }
         revisions = list(s.scalars(select(Revision).where(Revision.artifact_id == artifact.id)))
         document = next(r for r in revisions if s.get(Entity, r.entity_id).type == "document")

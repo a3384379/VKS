@@ -35,10 +35,11 @@ def digest(raw):
     return sha256(raw).hexdigest()
 
 
-def allow_artifact(art, capabilities):
+def allow_artifact(art, capabilities, session=None):
     if art is None:
         return True
-    meta = art.metadata_json or {}
+    from .reading import artifact_policy
+    meta = artifact_policy(session, art) if session is not None else art.metadata_json or {}
     return (
         ((art.kind != "source" and not meta.get("requires_source_read")) or capabilities.get("allowed_source"))
         and (art.sensitivity != "confidential" or capabilities.get("allowed_confidential"))
@@ -50,12 +51,13 @@ def allow_artifact(art, capabilities):
 
 
 def visible_release(s, release, capabilities):
+    from .reading import relation_is_visible
     rows = []
     for choice in release.manifest_json["selections"]:
         rev = s.get(Revision, choice["entity_revision_id"])
         entity = s.get(Entity, rev.entity_id)
         art = s.get(Artifact, rev.artifact_id) if rev.artifact_id else None
-        if allow_artifact(art, capabilities) and (
+        if allow_artifact(art, capabilities, s) and (
             entity.type not in SOURCE_TYPES or capabilities.get("allowed_source")
         ):
             rows.append((entity, rev, art))
@@ -68,9 +70,12 @@ def visible_release(s, release, capabilities):
         allowed = []
         for eid in relation["evidence_ids"]:
             ev = s.get(Evidence, eid)
-            if ev and allow_artifact(s.get(Artifact, ev.artifact_id), capabilities):
+            if ev and allow_artifact(s.get(Artifact, ev.artifact_id), capabilities, s):
                 allowed.append(eid)
-                evidence[eid] = ev
+        if not relation_is_visible(relation, ids, set(allowed)):
+            continue
+        for eid in allowed:
+            evidence[eid] = s.get(Evidence, eid)
         relations.append(dict(relation, evidence_ids=allowed, reason=clean(relation.get("reason", ""))))
     return rows, relations, evidence
 
@@ -177,14 +182,20 @@ def export_locator(evidence):
 
 
 def reimport_bundle(service, s, release, capabilities, rows, relations, evidence):
+    from .knowledge import SourceSnapshot, document_origin
+    from .reading import artifact_policy
+
     project = s.get(Project, release.project_id)
     baseline = "export-" + release.id.replace("-", "")
     files, records, art_rows, paths = {}, [], {}, {}
     candidate_artifacts = {art.id: art for _, _, art in rows if art}
+    document_sources = {art.id: document_origin(s, rev) for entity, rev, art in rows
+                        if entity.type == "document" and art}
     for ev in evidence.values():
         candidate_artifacts[ev.artifact_id] = s.get(Artifact, ev.artifact_id)
     for art in candidate_artifacts.values():
-        if not allow_artifact(art, capabilities) or art.metadata_json.get("requires_trace_read"):
+        policy = artifact_policy(s, art)
+        if not allow_artifact(art, capabilities, s) or policy.get("requires_trace_read"):
             continue
         raw = safe_original(service, art)
         if raw is None:
@@ -198,7 +209,8 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             path = "snapshot-" + art.snapshot_id.replace("-", "") + "/" + path
         files[path] = raw
         paths[art.id] = path
-        source_key = "source-" + art.snapshot_id.replace("-", "")
+        snapshot = s.get(SourceSnapshot, art.snapshot_id)
+        source_key = document_sources.get(art.id) or (snapshot.source_key if snapshot else "source-" + art.snapshot_id.replace("-", ""))
         record = {
             "source_id": source_key,
             "kind": art.kind,
@@ -206,7 +218,7 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             "sha256": digest(raw),
             "size_bytes": len(raw),
             "media_type": art.media_type,
-            "sensitivity": "confidential" if art.metadata_json.get("requires_source_read") else art.sensitivity,
+            "sensitivity": "confidential" if policy.get("requires_source_read") else art.sensitivity,
             "encoding": art.metadata_json.get("encoding", "utf-8").replace("utf-8-bom", "utf-8-sig"),
         }
         records.append(record)
@@ -388,7 +400,7 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
     ]
     add_sidecar("export/provenance.json", "fixture", provenance)
     source_metadata = {
-        "source-" + x["source_snapshot_id"].replace("-", ""): x
+        x.get("source_id", "source-" + x["source_snapshot_id"].replace("-", "")): x
         for x in release.manifest_json.get("sources", [])
         if x.get("source_snapshot_id")
     }
@@ -586,7 +598,7 @@ def perform_export(service, s, job):
     from .jobs import current_actor
     from .service import DomainError
 
-    actor = current_actor(service, job.created_by, job.project_id, session=s)
+    actor = current_actor(service, job.created_by, job.project_id, session=s, job=job)
     service.require(s, actor, job.project_id, "knowledge:export")
     capabilities = dict(job.input_json)
     # Authorization is checked again when a queued export actually runs.

@@ -2128,6 +2128,29 @@
                                 "declared"
                               ]
                             },
+                            "pageKey": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 96,
+                              "pattern": "^[a-z][a-z0-9._-]*$"
+                            },
+                            "actionKey": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 96,
+                              "pattern": "^[a-z][a-z0-9._-]*$"
+                            },
+                            "actionBindingOrigin": {
+                              "const": "declared"
+                            },
+                            "pageBindingOrigin": {
+                              "const": "declared"
+                            },
+                            "snapshotIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 19
+                            },
                             "captureRef": {
                               "type": "string",
                               "format": "uuid"
@@ -2394,6 +2417,29 @@
                                 "declared"
                               ]
                             },
+                            "pageKey": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 96,
+                              "pattern": "^[a-z][a-z0-9._-]*$"
+                            },
+                            "actionKey": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 96,
+                              "pattern": "^[a-z][a-z0-9._-]*$"
+                            },
+                            "actionBindingOrigin": {
+                              "const": "declared"
+                            },
+                            "pageBindingOrigin": {
+                              "const": "declared"
+                            },
+                            "snapshotIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 19
+                            },
                             "captureRef": {
                               "type": "string",
                               "format": "uuid"
@@ -2556,6 +2602,29 @@
                           "simulated",
                           "declared"
                         ]
+                      },
+                      "pageKey": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 96,
+                        "pattern": "^[a-z][a-z0-9._-]*$"
+                      },
+                      "actionKey": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 96,
+                        "pattern": "^[a-z][a-z0-9._-]*$"
+                      },
+                      "actionBindingOrigin": {
+                        "const": "declared"
+                      },
+                      "pageBindingOrigin": {
+                        "const": "declared"
+                      },
+                      "snapshotIndex": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 19
                       },
                       "captureRef": {
                         "type": "string",

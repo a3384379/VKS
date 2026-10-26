@@ -315,6 +315,10 @@ paths:
       description: release_id 与 analysis_set_id 必须且只能指定一个；草稿还需 knowledge:edit 权限。两者都传或都不传返回 422。
       x-required-scopes: [knowledge:read]
       parameters:
+        - name: relation_policy
+          in: query
+          description: 默认仅展示confirmed+valid；candidate与review分别查看候选及失效关系，不改变审核或因果字段。
+          schema: {type: string, enum: [trusted, candidate, review], default: trusted}
         - name: release_id
           in: query
           schema: {$ref: '#/components/schemas/UUID'}

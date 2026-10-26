@@ -2,7 +2,46 @@
 
 日期：2026-10-25，版本1.0.0-rc.1。原包QUALITY_CHECK.md是设计交付检查；本文件记录代码与运行验证。以下本地结果及机器记录均绑定各自的源码快照，远端结果以 [GitHub Actions](https://github.com/a3384379/VKS/actions) 对应提交为准；自动检查不代表生产发行或真实业务验收。
 
-## 最终自动检查
+## PR审查补充当前结果（2026-10-26）
+
+审查补充修复：重导保留继承章节key，为冲突的未匹配章节分配新身份；失效项目深链接明确403/404时保留成功列表并清理旧基线/实体/场景，合法后页项目仍单独鉴权。新增一个章节身份回归及两个403/404浏览器回归，先复现失败再修复。
+
+另复现了合成Cookie用例的异步写窗口问题：刷新可能在click步骤结束后才发起，此时Runner按既定规则拒绝写请求。测试改用已有受批`goto + networkidle`等待合成初始化刷新完成，后续断言保持read_only；加入250ms合成延迟验证该边界。没有修改Runner授权、DSL契约、网络隔离、沙箱、超时值或添加重试。Runner文件5项通过，2.22s。
+
+清除继承VKS配置后最终运行`make check`：**301 passed / 11 skipped，111.61s**；前端**34 passed**；TypeScript/Vite构建成功，16.57s。包含13项Web UI浏览器回归。Prettier、基础Ruff及`git diff --check`通过。11项跳过的环境专项、上游弃用告警和既有大型按需图表分块告警仍如实保留。
+
+当前源码摘要与机器记录见[audit-review-source-manifest-20261026.json](validation/results/audit-review-source-manifest-20261026.json)、[audit-review-followup-20261026.json](validation/results/audit-review-followup-20261026.json)。此前各摘要与失败/成功记录均保留；当前head的GitHub门禁、合并及main检查以[PR #1](https://github.com/a3384379/VKS/pull/1)及对应Actions为准。无新增数据库结构迁移、真实业务验收或部署。
+
+## 审计修复当前结果（2026-10-26，本地验证快照）
+
+审计基线`c5c93eec69f25bfc22b0ec9f947c8c7dc94baf64`，本轮从2026-10-25开始。A01–A11、G01–G02逐项原因、文件/函数、回归、兼容和剩余风险见[AUDIT_REMEDIATION.md](AUDIT_REMEDIATION.md)。以下是当前本地源码的结果；后续历史章节不作为本次证据。
+
+| 实际执行 | 结果 |
+| --- | --- |
+| 清除继承的`VKS_*`配置，以隔离数据目录和local任务模式运行`make check` | Python **298 passed / 11 skipped**，109.24s；前端 **34 passed**；TypeScript/Vite构建成功，16.92s |
+| 其中Web UI真实浏览器回归 | 共11项通过，含新增7项：关系拒绝/改选/热点/迁移后的四标签页、跨页面搜索、比较刷新、26项目分页/深链接、统一被动状态导航、采集查看/绑定/恢复；Runner采集用例另计在Python总数中 |
+| `VKS_DATA_DIR=.vks/audit/runtime uv run pytest -q tests/runner/test_cookie_rotation.py tests/audit/test_capture_bindings.py tests/selfhosted` | 16 passed，12.15s；轮换及脱敏、绑定/畸形图、人工确认后的SDK自举闭环 |
+| `VKS_DATA_DIR=.vks/audit/runtime uv run pytest -q tests/audit/test_batch_one.py -k human_output` | 2 passed，13 deselected，0.78s；人工批准前后均保留source/trace限制 |
+| `VKS_DATA_DIR=.vks/audit/runtime uv run pytest -q tests/ui/test_audit_navigation.py -k all_knowledge_tabs` | 1 passed，5 deselected，6.70s；随后纳入最终全量检查 |
+| `npm run format:check` | Prettier通过 |
+| `uv run ruff check --select E9,F63,F7,F82 services packages tests` | 通过 |
+| `npm audit --audit-level=high` | 0 vulnerabilities |
+| `uv run python scripts/build_contracts.py`及全量契约/SDK测试 | 运行Schema和展开MCP契约一致；原设计44文件大小及SHA-256一致 |
+| 编码与差异 | 修改文件保持UTF-8、无BOM、LF；新文件同约定；`git diff --check`通过 |
+
+11个跳过项为PG6、RabbitMQ1、SVN容器1、Compose1、PG恢复1、真实FlowTest1，当前未启用隔离环境或真实项目读取；没有计作通过。没有使用真实凭据、IdP、外部模型、业务网络或客户材料；未运行Maven，未迁移现有数据库。全量仍有上游Starlette弃用告警及既有图表分块体积告警。未重跑600秒容量测试，也没有远端CI或真实业务验收结果。
+
+源码内容摘要（不含文档）及机器记录分别为[audit-source-manifest-20261025.json](validation/results/audit-source-manifest-20261025.json)、[audit-remediation-20261025.json](validation/results/audit-remediation-20261025.json)。私有红/绿日志在忽略目录`.vks/audit/`。机器记录保留审计验证时尚未提交的事实；后续经用户另行授权的GitHub提交、PR与合并以远端记录为准，不改写本地验证快照。未发布或重启现有服务；开发前端HMR不代表API/Worker已同步加载修复。无新增数据库迁移；旧OAuth任务、历史生成品和来源冲突处理见逐项报告。
+
+## GitHub交付补充检查（2026-10-26）
+
+[PR #1](https://github.com/a3384379/VKS/pull/1)的首个head `b2f77ad`：push检查通过；PR检查中297项通过、11项跳过，原有图表超时浏览器用例1项失败。测试用含六张图表的文档，却以任意iframe的出现作为第一张图表15秒超时的起点；第一张图表可能仍在两任务队列后等待。
+
+现通过真实草稿API将该隔离测试文档保存为单图并刷新准确修订，确认仅有一个图表任务，再断言原15秒超时、重试与导航取消。没有修改产品代码、超时值、浏览器沙箱或添加自动重试。清除继承VKS配置后运行`uv run pytest -q tests/ui/test_frontend_browser.py`，**5 passed，25.67s**；基础Ruff及`git diff --check`通过。新head的远端结果以PR当前检查为准。
+
+补充结果见[audit-ci-followup-20261026.json](validation/results/audit-ci-followup-20261026.json)，完整源码摘要见[audit-ci-source-manifest-20261026.json](validation/results/audit-ci-source-manifest-20261026.json)。此前298项本地全量结果仍绑定原摘要，不改写为本次测试修订的验证结果。
+
+## 审计前自动检查（历史快照）
 
 | 项目 | 实际结果 |
 | --- | --- |

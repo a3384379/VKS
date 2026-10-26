@@ -37,6 +37,40 @@ def chromium_path(playwright):
     pytest.skip("独立Chromium未安装；运行 uv run playwright install chromium")
 
 
+def test_a05_workbench_uses_server_relation_policy_after_review(site):
+    url, pid, _, _ = site
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=chromium_path(playwright), headless=True)
+        page = browser.new_page()
+        try:
+            page.goto(url + f"/#view=workbench&project={pid}")
+            page.get_by_label("登录名", exact=True).fill("owner")
+            page.get_by_label("密码", exact=True).fill("owner")
+            page.get_by_role("button", name="打开工作空间").click()
+            expect(page.locator(".knowledge-detail")).to_be_visible()
+            workspace = page.request.get(url + f"/api/v1/projects/{pid}/workspace").json()["data"]
+            action_ids = {e["entity_revision_id"] for e in workspace["actions"]}
+            api_ids = {e["entity_revision_id"] for e in workspace["entities"] if e["type"] == "api"}
+            edge = next(r for r in workspace["relations"] if r["from_revision_id"] in action_ids and r["to_revision_id"] in api_ids)
+            action = next(e for e in workspace["actions"] if e["entity_revision_id"] == edge["from_revision_id"])
+            page.goto(url + f"/#view=workbench&project={pid}&entity={action['entity_id']}")
+            panel = page.locator(".knowledge-detail")
+            panel.get_by_role("button", name="接口", exact=True).click()
+            expect(panel.get_by_text("尚无接口依据", exact=True)).to_be_visible()
+            panel.get_by_role("button", name="候选关联", exact=True).click()
+            expect(panel.locator(".api-card")).not_to_have_count(0)
+            csrf = page.request.get(url + "/api/v1/auth/session").json()["data"]["csrf_token"]
+            reviewed = page.request.post(url + f"/api/v1/relations/{edge['id']}/review", headers={
+                "X-CSRF-Token": csrf, "If-Match": str(edge["row_version"])},
+                data={"decision": "reject", "reason": "Synthetic rejection", "evidence_ids": edge["evidence_ids"]})
+            assert reviewed.ok, reviewed.text()
+            page.reload()
+            panel.get_by_role("button", name="接口", exact=True).click()
+            expect(panel.get_by_text("尚无接口依据", exact=True)).to_be_visible()
+        finally:
+            browser.close()
+
+
 @contextmanager
 def live_api(app):
     sock = socket.socket()
@@ -304,13 +338,29 @@ def test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_na
         page = browser.new_page(viewport={"width": 1586, "height": 992})
         page.route("**/src/diagram-frame.ts*", lambda route: route.abort())
         try:
-            page.goto(url + f"/#view=documents&project={pid}&entity={doc}")
+            page.goto(url + f"/#view=overview&project={pid}")
             page.get_by_label("登录名", exact=True).fill("owner")
             page.get_by_label("密码", exact=True).fill("owner")
             page.get_by_role("button", name="打开工作空间").click()
+            expect(page.get_by_role("navigation", name="主导航")).to_be_visible()
+            workspace = page.request.get(url + f"/api/v1/projects/{pid}/workspace").json()["data"]
+            document = next(d for d in workspace["documents"] if d["entity_id"] == doc)
+            revision = page.request.get(url + f"/api/v1/documents/{doc}/revisions/{document['entity_revision_id']}").json()["data"]
+            csrf = page.request.get(url + "/api/v1/auth/session").json()["data"]["csrf_token"]
+            # One actual document with one render job: another visible diagram's
+            # frame must not start this assertion's per-job timeout window.
+            saved = page.request.put(url + f"/api/v1/documents/{doc}/draft", headers={
+                "X-CSRF-Token": csrf, "If-Match": str(revision["row_version"])}, data={
+                "analysis_set_id": workspace["selected_analysis_set"]["id"],
+                "base_revision_id": revision["entity_revision_id"], "locked_section_ids": [],
+                "markdown": "# Isolated timeout\n\n```mermaid\nflowchart LR\n A[Start] --> B[Finish]\n```\n\n正文仍可阅读\n"})
+            assert saved.ok, saved.text()
+            page.goto(url + f"/#view=documents&project={pid}&entity={doc}")
+            page.reload()  # Reload the revision saved through the fixture API.
+            expect(page.locator(".document-reader .diagram-block")).to_have_count(1)
             first = page.locator(".document-reader .diagram-block").nth(0)
             first.scroll_into_view_if_needed()
-            expect(page.locator("iframe.diagram-render-frame").first).to_be_attached()
+            expect(page.locator("iframe.diagram-render-frame")).to_have_count(1)
             for frame in page.locator("iframe.diagram-render-frame").all():
                 assert frame.get_attribute("sandbox") == "allow-scripts"
                 assert frame.evaluate("frame => frame.contentDocument === null")

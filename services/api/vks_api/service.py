@@ -332,7 +332,7 @@ class Service:
             d["current_release_id"] = p.current_release_id
         return d
 
-    def list_projects(self, actor, cursor=None, limit=20):
+    def list_projects(self, actor, cursor=None, limit=20, query=None):
         with self.db() as s:
             if READ not in actor.scopes:
                 raise DomainError("VKS_FORBIDDEN", "需要 knowledge:read 权限", 403)
@@ -348,7 +348,11 @@ class Service:
                 q = select(Project).where(Project.id.in_(project_ids(self, s, actor)))
             else:
                 q = select(Project).where(Project.id == actor.project_id)
+            # Keep permission filtering before search, pagination and metadata.
             rows = s.scalars(q.order_by(Project.created_at, Project.id)).all()
+            if query and query.strip():
+                search = query.strip().casefold()
+                rows = [p for p in rows if search in p.name.casefold() or search in p.key.casefold()]
             if cursor:
                 ids = [p.id for p in rows]
                 if cursor not in ids:
@@ -415,6 +419,7 @@ class Service:
         }
 
     def _visible_sources(self, s, actor, pid, sources):
+        from .reading import artifact_policy
         visible = []
         for source in sources:
             rows = list(
@@ -430,14 +435,14 @@ class Service:
                 (
                     art.kind == "source"
                     or art.sensitivity == "confidential"
-                    or art.metadata_json.get("requires_source_read")
+                    or artifact_policy(s, art).get("requires_source_read")
                 )
                 and not self._can(s, actor, pid, "source:read")
                 for art in rows
             ):
                 continue
             if any(
-                (art.kind in ("trace", "capture") or art.metadata_json.get("requires_trace_read"))
+                (art.kind in ("trace", "capture") or artifact_policy(s, art).get("requires_trace_read"))
                 and not self._can(s, actor, pid, "trace:read")
                 for art in rows
             ):
@@ -584,36 +589,40 @@ class Service:
         return [self.relation_dto(r) for r in s.scalars(select(Relation).where(Relation.analysis_set_id == a.id)).all()]
 
     def _visible_revision(self, s, actor, pid, r):
+        from .reading import artifact_policy
         art = s.get(Artifact, r.artifact_id) if r.artifact_id else None
+        policy = artifact_policy(s, art) if art else {}
         source_restricted = s.get(Entity, r.entity_id).type in SOURCE_TYPES or (
             art
             and (
                 art.kind == "source"
                 or art.sensitivity == "confidential"
-                or art.metadata_json.get("requires_source_read")
+                or policy.get("requires_source_read")
             )
         )
-        trace_restricted = art and (art.kind in ("trace", "capture") or art.metadata_json.get("requires_trace_read"))
+        trace_restricted = art and (art.kind in ("trace", "capture") or policy.get("requires_trace_read"))
         return (not source_restricted or self._can(s, actor, pid, "source:read")) and (
             not trace_restricted or self._can(s, actor, pid, "trace:read")
         )
 
     def _visible_evidence(self, s, actor, pid, e):
+        from .reading import artifact_policy
         a = s.get(Artifact, e.artifact_id)
+        policy = artifact_policy(s, a)
         return (
             (
-                (a.kind != "source" and not a.metadata_json.get("requires_source_read"))
+                (a.kind != "source" and not policy.get("requires_source_read"))
                 or self._can(s, actor, pid, "source:read")
             )
             and (
-                (a.kind not in ("trace", "capture") and not a.metadata_json.get("requires_trace_read"))
+                (a.kind not in ("trace", "capture") and not policy.get("requires_trace_read"))
                 or self._can(s, actor, pid, "trace:read")
             )
             and (a.sensitivity != "confidential" or self._can(s, actor, pid, "source:read"))
         )
 
     def workspace(self, actor, pid, analysis_set_id=None, release_id=None):
-        from .reading import ReadingService
+        from .reading import ReadingService, relation_is_visible
         from sqlalchemy.orm import load_only
 
         reading = ReadingService(self)
@@ -664,7 +673,7 @@ class Service:
             allowed_e = {e.id for e in evs}
             for r in rels:
                 r["evidence_ids"] = [eid for eid in r["evidence_ids"] if eid in allowed_e]
-            rels = [r for r in rels if r["evidence_ids"]]
+            rels = [r for r in rels if relation_is_visible(r, visible, allowed_e)]
             names = {e["entity_revision_id"]: e["name"] for e in entities}
             rels = [dict(r, from_name=names[r["from_revision_id"]], to_name=names[r["to_revision_id"]]) for r in rels]
             jobs = (
@@ -843,13 +852,18 @@ class Service:
         }
 
     def _new_job(self, s, actor, pid, kind, payload):
+        # Reserved server context: callers cannot inject or widen this ceiling.
+        authorization = {
+            "version": 1, "actor_id": actor.id, "project_id": pid, "kind": kind,
+            "scopes": sorted(scope for scope in actor.scopes if self._can(s, actor, pid, scope)),
+        }
         j = Job(
             id=uid(),
             project_id=pid,
             kind=kind,
             state="queued",
             created_by=actor.id,
-            input_json=payload,
+            input_json=dict(payload, _authorization=authorization),
             attempt=0,
             stage="VALIDATE",
             progress=0,
@@ -1419,10 +1433,11 @@ class Service:
             actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_types, extended
         )
 
-    def action_context(self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50):
+    def action_context(self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50,
+                       relation_policy="trusted"):
         from .reading import ReadingService
 
-        return ReadingService(self).action_context(actor, pid, eid, analysis_set_id, release_id, depth, max_nodes)
+        return ReadingService(self).action_context(actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_policy)
 
     def find_entity_project(self, actor, eid):
         with self.db() as s:
@@ -1731,14 +1746,16 @@ class Service:
             return (self.data_dir / "objects" / j.result_json["object_key"]).read_bytes(), j.result_json["filename"]
 
     def artifact_bytes(self, actor, pid, aid):
+        from .reading import artifact_policy
         with self.db() as s:
             self.require(s, actor, pid)
             a = s.get(Artifact, aid)
             if not a or a.project_id != pid:
                 raise DomainError("VKS_NOT_FOUND", "未找到文件", 404)
-            if a.kind == "source" or a.sensitivity == "confidential" or a.metadata_json.get("requires_source_read"):
+            policy = artifact_policy(s, a)
+            if a.kind == "source" or a.sensitivity == "confidential" or policy.get("requires_source_read"):
                 self.require(s, actor, pid, "source:read")
-            if a.kind in ("trace", "capture") or a.metadata_json.get("requires_trace_read"):
+            if a.kind in ("trace", "capture") or policy.get("requires_trace_read"):
                 self.require(s, actor, pid, "trace:read")
             if not self._can(s, actor, pid, "knowledge:edit"):
                 aids = {
