@@ -402,7 +402,7 @@ def install_oauth(app, service, actor, envelope, API="/api/v1"):
             return envelope(request, {"id": g.id, "active": g.active, "row_version": g.row_version})
 
 
-def actor_for_job(service, s, actor_id, pid):
+def actor_for_job(service, s, actor_id, pid, authorization=None):
     from .service import Actor
 
     principal = s.get(OAuthPrincipal, actor_id)
@@ -412,6 +412,7 @@ def actor_for_job(service, s, actor_id, pid):
             OAuthGrant.principal_id == actor_id, OAuthGrant.project_id == pid, OAuthGrant.active == True
         )
     )
-    if not principal or not principal.active or not issuer or not issuer.active or not grant:
+    if not principal or not principal.active or not issuer or not issuer.active or not grant or not authorization:
         raise denied()
-    return Actor(actor_id, frozenset(_granted(service, s, grant)), False, None, "oauth:" + actor_id)
+    scopes = _granted(service, s, grant) & set(authorization["scopes"])
+    return Actor(actor_id, frozenset(scopes), False, None, "oauth:" + actor_id)

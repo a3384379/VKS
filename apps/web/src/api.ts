@@ -18,7 +18,15 @@ export class ApiError extends Error {
     this.details = details;
   }
 }
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+export type ApiMeta = {
+  next_cursor?: string | null;
+  request_id?: string;
+  [key: string]: unknown;
+};
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ data?: T; meta?: ApiMeta }> {
   const headers = new Headers(init.headers);
   if (
     init.body &&
@@ -53,7 +61,18 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       json.error?.code || "VKS_REQUEST_FAILED",
       json.error?.details || json.detail,
     );
+  return json;
+}
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const json = await request<T>(path, init);
   return (json.data ?? json) as T;
+}
+export async function apiPage<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ data: T; meta: ApiMeta }> {
+  const json = await request<T>(path, init);
+  return { data: (json.data ?? json) as T, meta: json.meta || {} };
 }
 export function mutation(
   method: string,

@@ -206,6 +206,11 @@
             "declared"
           ]
         },
+        "pageKey": {"$ref": "#/$defs/key"},
+        "actionKey": {"$ref": "#/$defs/key"},
+        "actionBindingOrigin": {"const": "declared"},
+        "pageBindingOrigin": {"const": "declared"},
+        "snapshotIndex": {"type": "integer", "minimum": 0, "maximum": 19},
         "captureRef": {
           "type": "string",
           "format": "uuid"

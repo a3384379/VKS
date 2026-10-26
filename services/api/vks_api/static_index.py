@@ -14,7 +14,7 @@ def prepare(service, job_id):
 
     with service.db() as s:
         job = s.get(Job, job_id)
-        actor = current_actor(service, job.created_by, job.project_id, s)
+        actor = current_actor(service, job.created_by, job.project_id, s, job=job)
         service.require(s, actor, job.project_id, "source:read")
         analysis = s.get(Analysis, job.input_json["analysis_set_id"])
         if not analysis or analysis.state == "frozen":

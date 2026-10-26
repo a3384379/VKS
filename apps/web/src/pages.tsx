@@ -62,6 +62,7 @@ import { NewDraftButton } from "./DraftActions";
 import { ArtifactImage } from "./ArtifactImage";
 import { HotspotEditor, HotspotSurface } from "./HotspotEditor";
 import ScenarioStudio from "./ScenarioStudio";
+import { ObservedStateSurface } from "./CaptureResults";
 import { OAuthSettings } from "./OAuthSettings";
 import { ModelSettings } from "./ModelSettings";
 import { DocumentWorkflow } from "./DocumentWorkflow";
@@ -473,8 +474,19 @@ function auditLabel(action: string) {
 export { ImportCenter as Imports } from "./ImportCenter";
 
 export function Workbench() {
-  const { w, selected, setSelected, navigate, notify, run, busy, baseline } =
-    useWorkspace();
+  const {
+    w,
+    selected,
+    navigate,
+    notify,
+    run,
+    busy,
+    baseline,
+    explanation,
+    navigateExplanation,
+  } = useWorkspace();
+  const setSelected = (actionId: string) =>
+    navigateExplanation({ actionId, followTarget: true });
   const [tab, setTab] = useState("业务说明"),
     [question, setQuestion] = useState(""),
     [useModel, setUseModel] = useState(false),
@@ -485,13 +497,38 @@ export function Workbench() {
       model_id?: string;
     } | null>(null),
     [contextError, setContextError] = useState("");
-  const [pageId, setPageId] = useState("");
+  const pageId = explanation?.pageId || "";
+  const stateGraph = (
+    w.scenarios.find((scene) => scene.id === explanation?.scenarioId)?.metadata
+      .dsl as
+      | {
+          explanation_graph?: {
+            states: Array<{
+              stateKey: string;
+              evidenceOrigin: string;
+              captureRef?: string;
+              snapshotIndex?: number;
+            }>;
+          };
+        }
+      | undefined
+  )?.explanation_graph;
+  const explanationState = stateGraph?.states.find(
+    (state) => state.stateKey === explanation?.stateKey,
+  );
   const activeActions = w.actions.filter(
     (item) => item.metadata?.status !== "removed",
   );
   const preferredAction =
     activeActions.find((a) => a.id === selected) || activeActions[0];
+  const explicitlySelectedAction = activeActions.find((a) => a.id === selected);
   const page =
+    w.pages.find(
+      (p) =>
+        explicitlySelectedAction &&
+        (field(explicitlySelectedAction, "page_key") === p.stable_key ||
+          field(explicitlySelectedAction, "pageKey") === p.stable_key),
+    ) ||
     w.pages.find((p) => p.id === pageId) ||
     w.pages.find(
       (p) =>
@@ -510,23 +547,36 @@ export function Workbench() {
   const action =
     availableActions.find((item) => item.id === selected) ||
     availableActions[0];
-  const direct = w.relations.filter(
+  const [relationPolicy, setRelationPolicy] = useState("trusted");
+  const contextKey = [
+    w.project.id,
+    baseline,
+    w.selected_analysis_set?.id,
+    w.selected_analysis_set?.selection_version,
+    action?.entity_revision_id,
+    relationPolicy,
+    w.relations.map((r) => `${r.id}:${r.row_version}`).join(","),
+  ].join("|");
+  const [loadedContext, setLoadedContext] = useState<{
+    key: string;
+    value: {
+      entities: Array<{ entity_id: string }>;
+      relations: Relation[];
+      evidence: Evidence[];
+    };
+  } | null>(null);
+  const context =
+    loadedContext?.key === contextKey ? loadedContext.value : null;
+  const allRelations = context?.relations || [];
+  const direct = allRelations.filter(
     (r) =>
       action &&
       (r.from_revision_id === action.entity_revision_id ||
         r.to_revision_id === action.entity_revision_id),
   );
-  const reachable = new Set(
-    direct.flatMap((r) => [r.from_revision_id, r.to_revision_id]),
-  );
-  const allRelations = w.relations.filter(
-    (r) => reachable.has(r.from_revision_id) || reachable.has(r.to_revision_id),
-  );
-  const entityIds = new Set(
-    allRelations.flatMap((r) => [r.from_revision_id, r.to_revision_id]),
-  );
+  const entityIds = new Set(context?.entities.map((e) => e.entity_id) || []);
   const entities = w.entities.filter(
-    (e) => entityIds.has(e.entity_revision_id) && e.id !== action?.id,
+    (e) => entityIds.has(e.entity_id) && e.id !== action?.id,
   );
   const apis = entities.filter((e) => ["api", "api_endpoint"].includes(e.type)),
     symbols = entities.filter((e) =>
@@ -535,7 +585,7 @@ export function Workbench() {
     sections = entities.filter((e) =>
       ["section", "document_section", "document"].includes(e.type),
     );
-  const evidence = relationEvidence(allRelations, w.evidence);
+  const evidence = context?.evidence || [];
   useEffect(() => {
     setAnswer(null);
     setUseModel(false);
@@ -552,10 +602,22 @@ export function Workbench() {
       query.delete("analysis_set_id");
       query.set("release_id", baseline.slice(8));
     }
-    void api(`/actions/${action.id}/context?${query}`).catch((e) =>
-      setContextError(e.message),
-    );
-  }, [action?.id, w.selected_analysis_set?.id, baseline]);
+    query.set("relation_policy", relationPolicy);
+    const controller = new AbortController();
+    void api<{
+      entities: Array<{ entity_id: string }>;
+      relations: Relation[];
+      evidence: Evidence[];
+    }>(`/actions/${action.id}/context?${query}`, { signal: controller.signal })
+      .then((value) => {
+        if (!controller.signal.aborted)
+          setLoadedContext({ key: contextKey, value });
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setContextError(e.message);
+      });
+    return () => controller.abort();
+  }, [contextKey]);
   if (!w.actions.length && !w.pages.length)
     return (
       <>
@@ -598,11 +660,14 @@ export function Workbench() {
               key={p.id}
               className={`tree-item ${page?.id === p.id ? "selected" : ""}`}
               onClick={() => {
-                setPageId(p.id);
                 const a = w.actions.find(
                   (a) => field(a, "page_key") === p.stable_key,
                 );
-                if (a) setSelected(a.id);
+                navigateExplanation({
+                  pageId: p.id,
+                  actionId: a?.id || "",
+                  followTarget: false,
+                });
               }}
             >
               <FileText size={16} />
@@ -659,37 +724,48 @@ export function Workbench() {
                   </code>
                   <LockKeyhole size={12} />
                 </div>
-                {page && (
-                  <HotspotSurface
-                    page={page}
-                    actions={availableActions}
-                    selected={action?.id}
-                    onSelect={setSelected}
-                  >
-                    {page.artifact_id &&
-                    field(page, "artifact_kind") === "screenshot" ? (
-                      <ArtifactImage
-                        projectId={w.project.id}
-                        artifactId={page.artifact_id}
-                        name={page.name}
-                        bare
-                      />
-                    ) : page?.content ? (
-                      <PreviewBoundary key={page.entity_revision_id}>
-                        <SafePrototype
-                          html={page.content}
-                          actions={availableActions}
-                          selected={action?.id}
-                          onSelect={(a) => setSelected(a.id)}
+                {explanationState?.evidenceOrigin === "observed" &&
+                explanationState.captureRef ? (
+                  <ObservedStateSurface
+                    projectId={w.project.id}
+                    captureId={explanationState.captureRef}
+                    index={explanationState.snapshotIndex || 0}
+                    analysisId={w.selected_analysis_set?.id}
+                    releaseId={w.selected_release?.id}
+                  />
+                ) : (
+                  page && (
+                    <HotspotSurface
+                      page={page}
+                      actions={availableActions}
+                      selected={action?.id}
+                      onSelect={setSelected}
+                    >
+                      {page.artifact_id &&
+                      field(page, "artifact_kind") === "screenshot" ? (
+                        <ArtifactImage
+                          projectId={w.project.id}
+                          artifactId={page.artifact_id}
+                          name={page.name}
+                          bare
                         />
-                      </PreviewBoundary>
-                    ) : (
-                      <Empty
-                        title="当前页面没有可渲染的原型内容"
-                        description="仍可通过下方动作列表查看已关联知识。"
-                      />
-                    )}
-                  </HotspotSurface>
+                      ) : page?.content ? (
+                        <PreviewBoundary key={page.entity_revision_id}>
+                          <SafePrototype
+                            html={page.content}
+                            actions={availableActions}
+                            selected={action?.id}
+                            onSelect={(a) => setSelected(a.id)}
+                          />
+                        </PreviewBoundary>
+                      ) : (
+                        <Empty
+                          title="当前页面没有可渲染的原型内容"
+                          description="仍可通过下方动作列表查看已关联知识。"
+                        />
+                      )}
+                    </HotspotSurface>
+                  )
                 )}
               </div>
               <div className="selected-hotspot">
@@ -733,19 +809,48 @@ export function Workbench() {
             <h2>{action?.name}</h2>
             <div className="row wrap">
               {direct.length ? (
-                <Tag
-                  value={
-                    direct.every((r) => r.review_status === "confirmed")
-                      ? "confirmed"
-                      : "candidate"
-                  }
-                />
+                <Tag>
+                  {relationPolicy === "trusted"
+                    ? "已确认且有效"
+                    : relationPolicy === "candidate"
+                      ? "候选待审核"
+                      : "待复核"}
+                </Tag>
               ) : (
                 <Tag>尚无关联</Tag>
               )}
               <Tag>{direct.length} 条直接关系</Tag>
             </div>
+            {relationPolicy === "review" &&
+              direct.map((relation) => (
+                <div key={relation.id}>
+                  <RelationState relation={relation} />
+                  <Tag value={relation.causal_basis} />
+                </div>
+              ))}
           </div>
+          <div className="row wrap" role="group" aria-label="讲解关联范围">
+            {[
+              ["trusted", "可信知识"],
+              ["candidate", "候选关联"],
+              ["review", "待复核关联"],
+            ].map(([value, name]) => (
+              <Button
+                key={value}
+                kind={relationPolicy === value ? "primary" : "secondary"}
+                onClick={() => setRelationPolicy(value)}
+              >
+                {name}
+              </Button>
+            ))}
+          </div>
+          {relationPolicy !== "trusted" && (
+            <Notice>
+              {relationPolicy === "candidate"
+                ? "候选关联尚未审核，不属于当前可信知识。"
+                : "以下关联已失效或断链，需要人员复核。"}
+            </Notice>
+          )}
           <div className="detail-tabs">
             {["业务说明", "接口", "实现", "文档", "证据"].map((t) => (
               <button
@@ -2167,9 +2272,17 @@ export function Versions() {
     [note, setNote] = useState(""),
     [checked, setChecked] = useState(false);
   useEffect(() => {
-    setTo(w.selected_analysis_set?.id || "");
-    if (!from && w.releases[0]) setFrom(w.releases[0].id);
-  }, [w.selected_analysis_set?.id, w.releases]);
+    setTo((previous) =>
+      w.analysis_sets.some((a) => a.id === previous)
+        ? previous
+        : w.selected_analysis_set?.id || "",
+    );
+    setFrom((previous) =>
+      w.releases.some((r) => r.id === previous)
+        ? previous
+        : w.releases[0]?.id || "",
+    );
+  }, [w.project.id, w.selected_analysis_set?.id, w.analysis_sets, w.releases]);
   async function precheck() {
     if (!w.selected_analysis_set) return;
     const r = await run(() =>
@@ -2203,7 +2316,11 @@ export function Versions() {
     }, "知识版本已发布，来源与审核记录已冻结");
     if (result) setCandidate(null);
   }
-  const changes = (diff?.changes || []) as Dict[];
+  const currentDiff =
+    diff?.from_release_id === from && diff?.to_analysis_set_id === to
+      ? diff
+      : null;
+  const changes = (currentDiff?.changes || []) as Dict[];
   return (
     <>
       <div className="version-summary">
@@ -2235,12 +2352,19 @@ export function Versions() {
           <Button
             disabled={!from || !to || busy}
             onClick={() => {
+              const requestedFrom = from,
+                requestedTo = to;
               void run(() =>
                 api<Dict>(
-                  `/projects/${w.project.id}/releases/${from}/diff?to_analysis_set_id=${to}`,
+                  `/projects/${w.project.id}/releases/${requestedFrom}/diff?to_analysis_set_id=${requestedTo}`,
                 ),
               ).then((r) => {
-                if (r) setDiff(r);
+                if (r)
+                  setDiff({
+                    ...r,
+                    from_release_id: requestedFrom,
+                    to_analysis_set_id: requestedTo,
+                  });
               });
             }}
           >
@@ -2458,8 +2582,17 @@ export function Versions() {
           </Button>
         </Panel>
       </div>
-      {diff && (
+      {currentDiff && (
         <Panel title="版本差异" action={<Tag>{changes.length} 个对象变更</Tag>}>
+          <div aria-label="本次版本对比" role="status">
+            对比：
+            {w.releases.find((r) => r.id === currentDiff.from_release_id)
+              ?.release_no || String(currentDiff.from_release_id)}
+            {" → "}
+            {w.analysis_sets.find(
+              (a) => a.id === currentDiff.to_analysis_set_id,
+            )?.name || String(currentDiff.to_analysis_set_id)}
+          </div>
           {changes.length ? (
             <div className="diff-changes">
               {changes.map((c, i) => {

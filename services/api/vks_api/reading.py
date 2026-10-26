@@ -28,6 +28,47 @@ PUBLIC_FIELDS = (
 )
 
 
+def relation_is_visible(row, revision_ids, evidence_ids):
+    return (row["from_revision_id"] in revision_ids and row["to_revision_id"] in revision_ids
+            and bool(set(row["evidence_ids"]) & evidence_ids))
+
+
+def artifact_policy(s, artifact):
+    """Read-time quarantine for legacy model outputs with unknown input scope."""
+    metadata = dict(artifact.metadata_json or {})
+    root, seen = artifact, set()
+    while root and root.id not in seen:
+        seen.add(root.id)
+        provenance = root.metadata_json.get("input_provenance")
+        if isinstance(provenance, list) and provenance and all(isinstance(row, dict)
+                and {"artifact_id", "evidence_id", "sha256", "requires_source_read", "requires_trace_read"} <= set(row)
+                and type(row["requires_source_read"]) is bool and type(row["requires_trace_read"]) is bool
+                for row in provenance):
+            return dict(metadata,
+                requires_source_read=bool(metadata.get("requires_source_read") or any(row["requires_source_read"] for row in provenance)),
+                requires_trace_read=bool(metadata.get("requires_trace_read") or any(row["requires_trace_read"] for row in provenance)))
+        if root.relative_path.startswith("documents/generated-"):
+            legacy = s.scalar(select(Revision.id).where(Revision.artifact_id == root.id,
+                Revision.metadata_json["source_kind"].as_string().in_(["ai_generated", "generated"])).limit(1))
+            if legacy:
+                return dict(metadata, requires_source_read=True, requires_trace_read=True)
+        original = root.metadata_json.get("original_artifact_id")
+        root = s.get(Artifact, original) if original else None
+    return metadata
+
+
+def explanation_relation(row, policy):
+    if row["review_status"] == "rejected":
+        return False
+    if policy == "trusted":
+        return row["review_status"] == "confirmed" and row["validity_status"] == "valid"
+    if policy == "candidate":
+        return row["review_status"] == "candidate" and row["validity_status"] == "valid"
+    if policy == "review":
+        return row["validity_status"] != "valid"
+    raise ValueError("Unknown explanation relation policy")
+
+
 def chunks(values, size=500):
     values = list(values)
     for start in range(0, len(values), size):
@@ -177,12 +218,16 @@ class ReadingService:
                     Artifact.kind,
                     Artifact.sensitivity,
                     Artifact.metadata_json,
+                    Artifact.id,
+                    Artifact.relative_path,
                 )
                 .join(Entity, Revision.entity_id == Entity.id)
                 .outerjoin(Artifact, Revision.artifact_id == Artifact.id)
                 .where(Revision.project_id == pid, Revision.id.in_(batch))
             )
-            for rid, eid, kind, art_kind, sensitivity, metadata in rows:
+            for rid, eid, kind, art_kind, sensitivity, metadata, artifact_id, path in rows:
+                if artifact_id and ((path or "").startswith("documents/generated-") or (metadata or {}).get("original_artifact_id")):
+                    metadata = artifact_policy(s, s.get(Artifact, artifact_id))
                 if self.policy_visible(art_kind, sensitivity, metadata, source, trace, kind):
                     visible[eid] = rid
         return visible
@@ -202,13 +247,15 @@ class ReadingService:
         batches = chunks(ids) if ids is not None else [None]
         for batch in batches:
             query = (
-                select(Evidence.id, Artifact.kind, Artifact.sensitivity, Artifact.metadata_json)
+                select(Evidence.id, Artifact.kind, Artifact.sensitivity, Artifact.metadata_json, Artifact.id, Artifact.relative_path)
                 .join(Artifact, Artifact.id == Evidence.artifact_id)
                 .where(Evidence.project_id == pid, Evidence.analysis_set_id == aid)
             )
             if batch is not None:
                 query = query.where(Evidence.id.in_(batch))
-            for eid, kind, sensitivity, metadata in s.execute(query):
+            for eid, kind, sensitivity, metadata, artifact_id, path in s.execute(query):
+                if path.startswith("documents/generated-") or metadata.get("original_artifact_id"):
+                    metadata = artifact_policy(s, s.get(Artifact, artifact_id))
                 if self.policy_visible(kind, sensitivity, metadata, source, trace):
                     visible.add(eid)
         return visible
@@ -259,7 +306,8 @@ class ReadingService:
             query = query.where(or_(Relation.from_revision_id.in_(frontier), Relation.to_revision_id.in_(frontier)))
         return [self.service.relation_dto(row) for row in s.scalars(query)]
 
-    def _graph(self, s, actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_types, extended):
+    def _graph(self, s, actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_types, extended,
+               explanation_policy=None):
         from .service import DomainError
 
         if not 1 <= depth <= 3 or not 1 <= max_nodes <= 200:
@@ -277,13 +325,13 @@ class ReadingService:
         truncated = False
 
         def usable(row):
-            return (not relation_types or row["relation_type"] in relation_types) and bool(
-                set(row["evidence_ids"]) & valid_evidence
-            )
+            return ((not relation_types or row["relation_type"] in relation_types)
+                    and relation_is_visible(row, allowed, valid_evidence)
+                    and (explanation_policy is None or explanation_relation(row, explanation_policy)))
 
         for _ in range(depth):
             neighbors = set()
-            if index and not relation_types and index.evidence_ids <= valid_evidence:
+            if index and not relation_types and explanation_policy is None and index.evidence_ids <= valid_evidence:
                 for node in frontier:
                     neighbors.update(index.outgoing.get(node, {}))
                     neighbors.update(index.incoming.get(node, {}))
@@ -330,12 +378,15 @@ class ReadingService:
                 s, actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_types, extended
             )[0]
 
-    def action_context(self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50):
+    def action_context(self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50,
+                       relation_policy="trusted"):
         from .service import DomainError, sha
 
         with self.db() as s:
+            if relation_policy not in ("trusted", "candidate", "review"):
+                raise DomainError("VKS_INVALID_INPUT", "讲解关系策略无效")
             graph, analysis, release = self._graph(
-                s, actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, None, True
+                s, actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, None, True, relation_policy
             )
             action = next(
                 (node for node in graph["nodes"] if node["entity_id"] == eid and node["type"] == "action"), None

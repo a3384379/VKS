@@ -1,0 +1,169 @@
+{
+  "started_on": "2026-10-25",
+  "completed_at": "2026-10-25T16:08:21.195197+00:00",
+  "audit_baseline": "c5c93eec69f25bfc22b0ec9f947c8c7dc94baf64",
+  "head_unchanged": true,
+  "local_uncommitted_changes": true,
+  "source_sha256": "75e03f026a70622ffa23b85b6a4b22af0d0f9d0f2cfaf622a84c309061f7576e",
+  "source_manifest": "audit-source-manifest-20261025.json",
+  "source_manifest_scope": "code, tests, runtime contracts and configuration; documentation excluded",
+  "source_files": 206,
+  "items": {
+    "A01": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "A02": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "A03": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "A04": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "A05": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "A06": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "A07": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "A08": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "A09": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "A10": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "A11": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "G01": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    },
+    "G02": {
+      "code": "implemented locally",
+      "synthetic_regression": "passed",
+      "real_business_acceptance": "not run"
+    }
+  },
+  "final_check": {
+    "command": "make check",
+    "exit_code": 0,
+    "environment": {
+      "inherited_VKS_variables": "removed",
+      "VKS_DATA_DIR": ".vks/audit/runtime",
+      "VKS_TASK_MODE": "local"
+    },
+    "python": {
+      "passed": 298,
+      "skipped": 11,
+      "warnings": 1,
+      "seconds": 109.24
+    },
+    "frontend": {
+      "passed": 34,
+      "failed": 0
+    },
+    "new_regressions": {
+      "python_including_browser": 45,
+      "browser": 7,
+      "frontend": 4
+    },
+    "typescript_vite": {
+      "status": "passed",
+      "vite_seconds": 16.92,
+      "warning": "existing large lazy diagram chunks"
+    },
+    "ui_browser_tests_in_python": 11
+  },
+  "other_executed_checks": {
+    "pytest tests/runner/test_cookie_rotation.py tests/audit/test_capture_bindings.py tests/selfhosted": {
+      "passed": 16,
+      "seconds": 12.15
+    },
+    "pytest tests/audit/test_batch_one.py -k human_output": {
+      "passed": 2,
+      "deselected": 13,
+      "seconds": 0.78
+    },
+    "pytest tests/ui/test_audit_navigation.py -k all_knowledge_tabs": {
+      "passed": 1,
+      "deselected": 5,
+      "seconds": 6.7
+    },
+    "npm run format:check": "passed",
+    "ruff E9/F63/F7/F82 services packages tests": "passed",
+    "npm audit --audit-level=high": {
+      "vulnerabilities": 0
+    },
+    "build_contracts.py": "passed",
+    "git diff --check": "passed",
+    "original_design_sha256_files": 44,
+    "existing_modified_files_encoding_checked": 31,
+    "encoding": "UTF-8, no BOM, LF retained"
+  },
+  "skipped_environment_tests": {
+    "PostgreSQL": 6,
+    "RabbitMQ": 1,
+    "SVN_container": 1,
+    "Compose": 1,
+    "PostgreSQL_restore": 1,
+    "real_FlowTest": 1
+  },
+  "database": {
+    "new_schema_migrations": false,
+    "existing_instance_accessed_or_migrated": false,
+    "temporary_test_databases_only": true
+  },
+  "not_executed": [
+    "Maven",
+    "real business network",
+    "real IdP",
+    "real external model",
+    "real customer material",
+    "remote CI",
+    "600 second capacity gate",
+    "commit",
+    "push",
+    "pull request",
+    "publish",
+    "existing service restart"
+  ],
+  "compatibility": [
+    "Legacy OAuth jobs without server snapshot fail closed and require resubmission",
+    "Legacy generated artifacts without trusted input provenance require source and trace read; regenerate for precise labels",
+    "Cross-source document/section identity conflicts require prefixes or explicit reimport, with no published history rewrite",
+    "Optional scenario state fields and environment header policy require coordinated API/worker/web update"
+  ],
+  "private_logs": ".vks/audit/",
+  "full_report": "../../AUDIT_REMEDIATION.md"
+}

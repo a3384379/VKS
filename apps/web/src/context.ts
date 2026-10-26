@@ -1,11 +1,14 @@
 import { createContext, useContext } from "react";
 import type { Entity, Session, View, Workspace } from "./types";
 import { hasProjectPermission } from "./permissions";
+import type { ExplanationNavigation, NavigationIntent } from "./navigation";
 export interface AppState {
   w: Workspace;
   session: Session;
   selected: string;
   setSelected: (id: string) => void;
+  explanation: ExplanationNavigation;
+  navigateExplanation: (intent: NavigationIntent) => void;
   navigate: (view: View, entity?: Entity) => void;
   refresh: () => Promise<void>;
   notify: (message: string, tone?: string) => void;

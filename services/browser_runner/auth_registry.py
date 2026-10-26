@@ -10,7 +10,7 @@ import re
 import stat
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
-from .network import origin
+from .network import BUSINESS_HEADERS, origin
 
 
 class AuthRegistryError(ValueError):
@@ -100,11 +100,11 @@ def _resolve_auth(auth_ref, base_origin, binding_key, project_key=None):
     if not isinstance(entry.get("headers", {}), dict) or not isinstance(entry.get("headers_env", {}), dict):
         fail()
     for name, value in entry.get("headers", {}).items():
-        if name.lower() not in ("authorization", "x-api-key"):
+        if name.lower() not in {"authorization", "x-api-key"} | BUSINESS_HEADERS:
             fail()
         headers[name] = safe_value(value)
     for name, variable in entry.get("headers_env", {}).items():
-        if name.lower() not in ("authorization", "x-api-key") or not re.fullmatch(
+        if name.lower() not in {"authorization", "x-api-key"} | BUSINESS_HEADERS or not re.fullmatch(
             r"VKS_RUNNER_AUTH_[A-Z0-9_]{1,100}", str(variable)
         ):
             fail()
@@ -192,3 +192,52 @@ def resolve_auth(auth_ref, base_origin, binding_key, *, project_key=None):
         return _resolve_auth(auth_ref, base_origin, binding_key, project_key)
     except (ValueError, TypeError, KeyError, AttributeError, OSError, RecursionError):
         fail()
+
+
+def rotated_cookies(lines, url):
+    """Validate each Set-Cookie separately, reducing scope to the exact auth host."""
+    from http.cookies import SimpleCookie
+    from email.utils import parsedate_to_datetime
+    import time
+
+    parsed = urlsplit(url)
+    output, secrets = [], []
+    if len(lines) > 100:
+        raise AuthRegistryError("认证响应Cookie数量超过限制")
+    for line in lines:
+        if not isinstance(line, str) or len(line) > 8192 or any(ord(c) < 32 or ord(c) == 127 for c in line):
+            continue
+        jar = SimpleCookie()
+        try:
+            jar.load(line)
+        except Exception:
+            continue
+        for name, item in jar.items():
+            value = item.value
+            if value:
+                secrets.append(value)
+            domain, path = item["domain"].lstrip(".").lower(), item["path"]
+            if not path:
+                path = parsed.path.rsplit("/", 1)[0] or "/"
+            secure = bool(item["secure"])
+            same_site = item["samesite"].capitalize() if item["samesite"] else "Lax"
+            if (not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", name) or len(value) > 4096
+                    or any(ord(c) < 32 or ord(c) == 127 for c in value)
+                    or domain and domain != parsed.hostname or not path.startswith("/")
+                    or secure != (parsed.scheme == "https")
+                    or same_site not in ("Strict", "Lax", "None")
+                    or same_site == "None" and not secure
+                    or name.startswith("__Secure-") and not secure
+                    or name.startswith("__Host-") and (not secure or domain or path != "/")):
+                continue
+            cookie = dict(name=name, value=value, domain=parsed.hostname, path=path,
+                          secure=secure, httpOnly=bool(item["httponly"]), sameSite=same_site)
+            try:
+                if item["max-age"]:
+                    cookie["expires"] = max(1, min(time.time() + int(item["max-age"]), time.time() + 365 * 86400))
+                elif item["expires"]:
+                    cookie["expires"] = max(1, parsedate_to_datetime(item["expires"]).timestamp())
+            except (ValueError, TypeError, OverflowError):
+                continue
+            output.append(cookie)
+    return output, secrets

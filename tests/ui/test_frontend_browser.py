@@ -37,6 +37,40 @@ def chromium_path(playwright):
     pytest.skip("独立Chromium未安装；运行 uv run playwright install chromium")
 
 
+def test_a05_workbench_uses_server_relation_policy_after_review(site):
+    url, pid, _, _ = site
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=chromium_path(playwright), headless=True)
+        page = browser.new_page()
+        try:
+            page.goto(url + f"/#view=workbench&project={pid}")
+            page.get_by_label("登录名", exact=True).fill("owner")
+            page.get_by_label("密码", exact=True).fill("owner")
+            page.get_by_role("button", name="打开工作空间").click()
+            expect(page.locator(".knowledge-detail")).to_be_visible()
+            workspace = page.request.get(url + f"/api/v1/projects/{pid}/workspace").json()["data"]
+            action_ids = {e["entity_revision_id"] for e in workspace["actions"]}
+            api_ids = {e["entity_revision_id"] for e in workspace["entities"] if e["type"] == "api"}
+            edge = next(r for r in workspace["relations"] if r["from_revision_id"] in action_ids and r["to_revision_id"] in api_ids)
+            action = next(e for e in workspace["actions"] if e["entity_revision_id"] == edge["from_revision_id"])
+            page.goto(url + f"/#view=workbench&project={pid}&entity={action['entity_id']}")
+            panel = page.locator(".knowledge-detail")
+            panel.get_by_role("button", name="接口", exact=True).click()
+            expect(panel.get_by_text("尚无接口依据", exact=True)).to_be_visible()
+            panel.get_by_role("button", name="候选关联", exact=True).click()
+            expect(panel.locator(".api-card")).not_to_have_count(0)
+            csrf = page.request.get(url + "/api/v1/auth/session").json()["data"]["csrf_token"]
+            reviewed = page.request.post(url + f"/api/v1/relations/{edge['id']}/review", headers={
+                "X-CSRF-Token": csrf, "If-Match": str(edge["row_version"])},
+                data={"decision": "reject", "reason": "Synthetic rejection", "evidence_ids": edge["evidence_ids"]})
+            assert reviewed.ok, reviewed.text()
+            page.reload()
+            panel.get_by_role("button", name="接口", exact=True).click()
+            expect(panel.get_by_text("尚无接口依据", exact=True)).to_be_visible()
+        finally:
+            browser.close()
+
+
 @contextmanager
 def live_api(app):
     sock = socket.socket()

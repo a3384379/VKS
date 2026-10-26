@@ -6,7 +6,7 @@
 
 `VKS_RUNNER_SECRET_REGISTRY` 指向实例管理员维护的私有 JSON 文件。建议将主机文件放在 `.vks/runner-secrets/` 或仓库外，目录权限 0700、文件 0600（容器中只读 0400 也可）。注册表及会话文件必须属于实际运行 API/Runner 的用户，不允许符号链接；Docker 镜像运行用户 UID 为 10001。不要把现有用户浏览器的 Cookie 或个人 profile 复制进去。
 
-注册表格式如下。`headers_env` 读取实例环境变量，名称必须以 `VKS_RUNNER_AUTH_` 开头；值不通过项目接口传递。也可由实例管理员在同一私有文件的 `headers` 对象中登记测试授权头。支持的头仅有 Authorization 和 X-API-Key。
+注册表格式如下。`headers_env` 读取实例环境变量，名称必须以 `VKS_RUNNER_AUTH_` 开头；值不通过项目接口传递。也可由实例管理员在同一私有文件的 `headers` 对象中登记测试授权头。认证头支持 Authorization 和 X-API-Key；有限业务头还须通过下述环境允许策略。
 
 ```json
 {
@@ -35,6 +35,10 @@ API 与负责浏览器的 Worker 需要相同的只读注册表/会话配置，�
 认证头和 Cookie 只转发给完全相同的 origin；其他已允许的资源来源也不会收到这些认证信息。浏览器使用独立临时 HOME/profile 和环境变量白名单，不获得数据库、消息队列或模型密钥。截图、DOM、请求摘要在保存前按模式及实际解析的秘密原值脱敏，不保存原始网络 body、认证头或 Trace。
 
 ## 场景与观察
+
+环境可设置 `allowed_request_headers`，按准确目标origin列出允许转发的业务头；当前支持X-CSRF-Token、X-XSRF-Token、RequestVerificationToken和X-Requested-With。默认不转发这些头。策略进入环境摘要和审批绑定，不允许借此转发Host、Cookie、Authorization或任意其他头。认证引用中的有限业务头同样需要环境允许；原有Authorization/X-API-Key仍只由私有认证引用提供。
+
+同源认证响应的多个Set-Cookie在隔离会话内逐项验证host、path、Secure、SameSite和过期时间，再更新该会话。跨origin不继承认证头和Cookie，也不接收其认证Cookie轮换；新Cookie和获准业务头值加入采集前脱敏集合，不保存到认证注册文件、日志或制品。有限CORS响应头按原服务器结果保留，已登记且正确配置CORS的跨来源只读请求可以成功。
 
 `goto.wait_until` 可选 domcontentloaded（默认）、load、networkidle。认证 SPA 若在 DOMContentLoaded 后才刷新测试会话，可显式选择有超时限制的 networkidle，并仅在该 goto 标记 test_write、环境仅授权精确的刷新路径；后续断言仍保持 read_only。networkidle 不扩大写路径权限，其他 POST 仍被阻断。
 

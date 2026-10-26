@@ -112,6 +112,52 @@ def body_fingerprint(revision: Revision):
     return digest("\n".join(lines).strip())
 
 
+def match_sections(previous, sections):
+    old_path_counts = Counter(canonical(r.metadata_json.get("heading_path", [])) for r in previous)
+    new_path_counts = Counter(canonical(row["heading_path"]) for row in sections)
+    old_bodies = Counter(body_fingerprint(r) for r in previous)
+    new_bodies = Counter(row["body_fingerprint"] for row in sections)
+    matched, used, ambiguities = {}, set(), []
+    for index, row in enumerate(sections):
+        body_candidates = [
+            r
+            for r in previous
+            if old_bodies[body_fingerprint(r)] == 1
+            and new_bodies[row["body_fingerprint"]] == 1
+            and body_fingerprint(r) == row["body_fingerprint"]
+            and row["nonempty_body"]
+        ]
+        path = canonical(row["heading_path"])
+        path_candidates = [
+            r
+            for r in previous
+            if old_path_counts[path] == new_path_counts[path] == 1
+            and canonical(r.metadata_json.get("heading_path", [])) == path
+        ]
+        candidate = body_candidates or path_candidates
+        if len(candidate) == 1 and candidate[0].entity_id not in used:
+            matched[index] = candidate[0]
+            used.add(candidate[0].entity_id)
+        elif any(r.name == row["title"] or body_fingerprint(r) == row["body_fingerprint"] for r in previous):
+            ambiguities.append({"ordinal": index, "reason": "重复章节标题或正文无法唯一继承身份"})
+    return matched, used, ambiguities
+
+
+def assert_section_locks(previous, sections, matched, locked):
+    by_id = {r.entity_id: r for r in previous}
+    for locked_id in locked:
+        current = next(
+            (
+                row
+                for index, row in enumerate(sections)
+                if matched.get(index) and matched[index].entity_id == locked_id
+            ),
+            None,
+        )
+        if current is None or current["content"].rstrip("\r\n") != by_id[locked_id].content.rstrip("\r\n"):
+            fail("VKS_STATE_CONFLICT", "人工锁定章节不可改写；请先由人员解锁", 409)
+
+
 class DocumentService:
     def __init__(self, service):
         self.service = service
@@ -184,12 +230,14 @@ class DocumentService:
         return revision
 
     def _artifact(self, s, analysis, document, old, markdown):
+        from .reading import artifact_policy
         raw = markdown.encode("utf-8")
         content_hash = self.service._put_object(raw)
         source = s.get(Artifact, old.artifact_id) if old.artifact_id else None
+        source_policy = artifact_policy(s, source) if source else {}
         inherited_policy = {
-            "requires_source_read": bool(source and source.metadata_json.get("requires_source_read")),
-            "requires_trace_read": bool(source and source.metadata_json.get("requires_trace_read")),
+            "requires_source_read": bool(source and source_policy.get("requires_source_read")),
+            "requires_trace_read": bool(source and source_policy.get("requires_trace_read")),
             "allow_platform_llm": bool(source and source.metadata_json.get("allow_platform_llm", False)),
             "sensitivity": source.sensitivity if source else "internal",
         }
@@ -261,8 +309,8 @@ class DocumentService:
                     "encoding": "utf-8",
                     "source_kind": "platform_draft",
                     "original_artifact_id": old.metadata_json.get("original_artifact_id", old.artifact_id),
-                    "requires_source_read": bool(source and source.metadata_json.get("requires_source_read")),
-                    "requires_trace_read": bool(source and source.metadata_json.get("requires_trace_read")),
+                    "requires_source_read": bool(source and source_policy.get("requires_source_read")),
+                    "requires_trace_read": bool(source and source_policy.get("requires_trace_read")),
                     "allow_platform_llm": bool(source and source.metadata_json.get("allow_platform_llm", False)),
                 },
             )
@@ -299,46 +347,8 @@ class DocumentService:
             if not actor.human and requested != locked:
                 fail("VKS_FORBIDDEN", "机器身份不能更改人工章节锁", 403)
             sections = parse_sections(markdown, old.name)
-            old_path_counts = Counter(canonical(r.metadata_json.get("heading_path", [])) for r in previous)
-            new_path_counts = Counter(canonical(row["heading_path"]) for row in sections)
-            old_bodies = Counter(body_fingerprint(r) for r in previous)
-            new_bodies = Counter(row["body_fingerprint"] for row in sections)
-            matched, used, ambiguities = {}, set(), []
-            for index, row in enumerate(sections):
-                body_candidates = [
-                    r
-                    for r in previous
-                    if old_bodies[body_fingerprint(r)] == 1
-                    and new_bodies[row["body_fingerprint"]] == 1
-                    and body_fingerprint(r) == row["body_fingerprint"]
-                    and row["nonempty_body"]
-                ]
-                path = canonical(row["heading_path"])
-                path_candidates = [
-                    r
-                    for r in previous
-                    if old_path_counts[path] == new_path_counts[path] == 1
-                    and canonical(r.metadata_json.get("heading_path", [])) == path
-                ]
-                candidate = body_candidates or path_candidates
-                if len(candidate) == 1 and candidate[0].entity_id not in used:
-                    matched[index] = candidate[0]
-                    used.add(candidate[0].entity_id)
-                elif any(r.name == row["title"] or body_fingerprint(r) == row["body_fingerprint"] for r in previous):
-                    ambiguities.append({"ordinal": index, "reason": "重复章节标题或正文无法唯一继承身份"})
-            # Locked sections may remain anywhere in the document but cannot be
-            # changed or deleted until a human explicitly removes their lock.
-            for locked_id in locked & requested:
-                current = next(
-                    (
-                        row
-                        for index, row in enumerate(sections)
-                        if matched.get(index) and matched[index].entity_id == locked_id
-                    ),
-                    None,
-                )
-                if current is None or current["content"].rstrip("\r\n") != by_id[locked_id].content.rstrip("\r\n"):
-                    fail("VKS_STATE_CONFLICT", "人工锁定章节不可改写；请先由人员解锁", 409)
+            matched, used, ambiguities = match_sections(previous, sections)
+            assert_section_locks(previous, sections, matched, locked & requested)
             artifact = self._artifact(s, analysis, document, old, markdown)
             metadata = dict(
                 old.metadata_json,
@@ -641,17 +651,16 @@ class DocumentService:
         for selection in s.scalars(select(Selection).where(Selection.analysis_set_id == analysis.id)):
             revision = s.get(Revision, selection.entity_revision_id)
             entity = s.get(Entity, selection.entity_id)
-            if entity.type != "document" or revision.metadata_json.get("source_kind") not in (
-                "platform_draft",
-                "generated",
-                "ai_generated",
-            ):
+            if entity.type != "document":
                 continue
             workflow = s.scalar(
                 select(DocumentWorkflow).where(
                     DocumentWorkflow.analysis_set_id == analysis.id, DocumentWorkflow.document_id == entity.id
                 )
             )
+            if (not workflow and not revision.metadata_json.get("governed")
+                    and revision.metadata_json.get("source_kind") not in ("platform_draft", "generated", "ai_generated")):
+                continue
             if (
                 not workflow
                 or workflow.state != "approved"

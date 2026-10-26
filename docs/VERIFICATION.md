@@ -2,7 +2,28 @@
 
 日期：2026-10-25，版本1.0.0-rc.1。原包QUALITY_CHECK.md是设计交付检查；本文件记录代码与运行验证。以下本地结果及机器记录均绑定各自的源码快照，远端结果以 [GitHub Actions](https://github.com/a3384379/VKS/actions) 对应提交为准；自动检查不代表生产发行或真实业务验收。
 
-## 最终自动检查
+## 审计修复当前结果（2026-10-26，本地验证快照）
+
+审计基线`c5c93eec69f25bfc22b0ec9f947c8c7dc94baf64`，本轮从2026-10-25开始。A01–A11、G01–G02逐项原因、文件/函数、回归、兼容和剩余风险见[AUDIT_REMEDIATION.md](AUDIT_REMEDIATION.md)。以下是当前本地源码的结果；后续历史章节不作为本次证据。
+
+| 实际执行 | 结果 |
+| --- | --- |
+| 清除继承的`VKS_*`配置，以隔离数据目录和local任务模式运行`make check` | Python **298 passed / 11 skipped**，109.24s；前端 **34 passed**；TypeScript/Vite构建成功，16.92s |
+| 其中Web UI真实浏览器回归 | 共11项通过，含新增7项：关系拒绝/改选/热点/迁移后的四标签页、跨页面搜索、比较刷新、26项目分页/深链接、统一被动状态导航、采集查看/绑定/恢复；Runner采集用例另计在Python总数中 |
+| `VKS_DATA_DIR=.vks/audit/runtime uv run pytest -q tests/runner/test_cookie_rotation.py tests/audit/test_capture_bindings.py tests/selfhosted` | 16 passed，12.15s；轮换及脱敏、绑定/畸形图、人工确认后的SDK自举闭环 |
+| `VKS_DATA_DIR=.vks/audit/runtime uv run pytest -q tests/audit/test_batch_one.py -k human_output` | 2 passed，13 deselected，0.78s；人工批准前后均保留source/trace限制 |
+| `VKS_DATA_DIR=.vks/audit/runtime uv run pytest -q tests/ui/test_audit_navigation.py -k all_knowledge_tabs` | 1 passed，5 deselected，6.70s；随后纳入最终全量检查 |
+| `npm run format:check` | Prettier通过 |
+| `uv run ruff check --select E9,F63,F7,F82 services packages tests` | 通过 |
+| `npm audit --audit-level=high` | 0 vulnerabilities |
+| `uv run python scripts/build_contracts.py`及全量契约/SDK测试 | 运行Schema和展开MCP契约一致；原设计44文件大小及SHA-256一致 |
+| 编码与差异 | 修改文件保持UTF-8、无BOM、LF；新文件同约定；`git diff --check`通过 |
+
+11个跳过项为PG6、RabbitMQ1、SVN容器1、Compose1、PG恢复1、真实FlowTest1，当前未启用隔离环境或真实项目读取；没有计作通过。没有使用真实凭据、IdP、外部模型、业务网络或客户材料；未运行Maven，未迁移现有数据库。全量仍有上游Starlette弃用告警及既有图表分块体积告警。未重跑600秒容量测试，也没有远端CI或真实业务验收结果。
+
+源码内容摘要（不含文档）及机器记录分别为[audit-source-manifest-20261025.json](validation/results/audit-source-manifest-20261025.json)、[audit-remediation-20261025.json](validation/results/audit-remediation-20261025.json)。私有红/绿日志在忽略目录`.vks/audit/`。机器记录保留审计验证时尚未提交的事实；后续经用户另行授权的GitHub提交、PR与合并以远端记录为准，不改写本地验证快照。未发布或重启现有服务；开发前端HMR不代表API/Worker已同步加载修复。无新增数据库迁移；旧OAuth任务、历史生成品和来源冲突处理见逐项报告。
+
+## 审计前自动检查（历史快照）
 
 | 项目 | 实际结果 |
 | --- | --- |

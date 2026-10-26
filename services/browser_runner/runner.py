@@ -94,12 +94,30 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
         environment["allowed_cidrs"],
         allow_loopback=environment.get("allow_loopback", False),
         write_paths=environment.get("allowed_write_paths", []),
+        request_headers=environment.get("allowed_request_headers", {}),
     )
     if environment.get("auth_ref") and auth is None:
         raise CaptureError("VKS_APPROVAL_REQUIRED", "测试认证引用未由服务器解析")
     if auth is not None and auth.origin != policy.base_origin:
         raise CaptureError("VKS_APPROVAL_REQUIRED", "测试认证引用来源不匹配")
-    redactions = auth.redactions if auth else []
+    raw_redactions = set(auth.redactions) if auth else set()
+    redactions = []
+
+    def remember(values):
+        from html import escape
+        from urllib.parse import quote, quote_plus
+
+        raw_redactions.update(v for v in values if v)
+        expanded = set(raw_redactions)
+        for value in raw_redactions:
+            encoded = (escape(value), escape(value, quote=False), quote(value, safe=""), quote_plus(value, safe=""))
+            expanded.update(encoded)
+            expanded.update(re.sub(r"%[A-Fa-f0-9]{2}", lambda match: match[0].lower(), v) for v in encoded)
+        redactions[:] = sorted(expanded, key=len, reverse=True)
+        if len(redactions) > 200 or sum(map(len, redactions)) > 128 * 1024:
+            raise NetworkDenied("认证材料超过隔离会话脱敏预算")
+
+    remember([])
 
     def mask_text(value):
         for secret in redactions:
@@ -182,6 +200,8 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
                         )
                 if cancelled():
                     raise NetworkDenied("请求发送前授权已失效")
+                remember([value for name, value in request.headers.items()
+                          if name.lower() in policy.request_headers.get(origin(request.url), set())])
                 status, headers, body = policy.fetch(
                     request.url,
                     request.method,
@@ -191,6 +211,17 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
                     headers=request.headers,
                     trusted_headers=trusted_headers,
                 )
+                if auth is not None and origin(request.url) == auth.origin:
+                    from .auth_registry import rotated_cookies, AuthRegistryError
+                    try:
+                        cookies, values = rotated_cookies(getattr(headers, "set_cookies", []), request.url)
+                    except AuthRegistryError:
+                        raise NetworkDenied("认证响应Cookie策略不符") from None
+                    remember(values)
+                    if cookies:
+                        if len(context.cookies()) + len(cookies) > 100:
+                            raise NetworkDenied("隔离会话Cookie数量超过限制")
+                        context.add_cookies(cookies)
                 budget["response_bytes"] += len(body)
                 result.requests.append(
                     {

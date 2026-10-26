@@ -88,4 +88,6 @@ npm audit --audit-level=high
 
 CI 会安装独立 Chromium，并另跑 PostgreSQL 与 RabbitMQ 专项。Docker/SVN/恢复/容量用例通过显式开关运行，命令与实际结果见 [验证记录](docs/VERIFICATION.md)。原设计44个文件的 SHA-256、OpenAPI/JSON Schema、真实 MCP SDK 同版闭环均在测试中检查。
 
+基于`c5c93ee`的A01–A11修复及G01–G02闭环见[逐项审计交付](docs/AUDIT_REMEDIATION.md)，包含授权快照、生成品来源限制、重导治理、可信讲解、Runner会话轮换、分页与导航、采集查看及绑定。验证记录绑定审计时的本地源码摘要，GitHub交付状态以对应PR及提交检查为准；未重启或验收现有运行实例，未执行真实业务验收。
+
 [实施记录](docs/IMPLEMENTATION.md) 说明模型、身份、版本和任务边界；[设计原件](docs/design/README.md) 与运行实现分开保留。源码托管于 [GitHub · VKS](https://github.com/a3384379/VKS)，远端检查见 [GitHub Actions](https://github.com/a3384379/VKS/actions)。本地数据库、实例凭据和私有试点原始资料不随仓库分发；自动检查与生产部署、真实业务验收分别记录。

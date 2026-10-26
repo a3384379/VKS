@@ -11,6 +11,7 @@ import {
 import { api, mutation } from "./api";
 import { Button, Modal, Notice, Panel, Tag } from "./components";
 import { useWorkspace, usePermission } from "./context";
+import { CaptureResults, type Capture } from "./CaptureResults";
 import "./scenario-studio.css";
 
 type Origin = "declared" | "simulated" | "observed";
@@ -19,6 +20,10 @@ type State = {
   label: string;
   evidenceOrigin: Origin;
   captureRef?: string;
+  snapshotIndex?: number;
+  pageKey?: string;
+  actionKey?: string;
+  actionBindingOrigin?: "declared";
 };
 type Transition = {
   transitionKey: string;
@@ -71,20 +76,6 @@ type Environment = {
   };
 };
 type Dataset = { id: string; key: string; name: string; synthetic: boolean };
-type Capture = {
-  id: string;
-  scenario_revision_id: string;
-  state: string;
-  source_alignment: string;
-  result: {
-    snapshots?: Array<{
-      name: string;
-      dom_artifact_id: string;
-      png_artifact_id: string;
-    }>;
-    blocked?: unknown[];
-  };
-};
 type Approval = {
   approval_ref: string;
   scenario_revision_id: string;
@@ -97,13 +88,32 @@ const originLabel: Record<Origin, string> = {
 };
 
 export default function ScenarioStudio() {
-  const { w, refresh, notify, navigate, setUnsavedChanges } = useWorkspace();
+  const {
+    w,
+    refresh,
+    notify,
+    navigate,
+    setUnsavedChanges,
+    explanation,
+    navigateExplanation,
+  } = useWorkspace();
   const [items, setItems] = useState<Scenario[]>([]);
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [captures, setCaptures] = useState<Capture[]>([]);
-  const [selected, setSelected] = useState("");
-  const [stateKey, setStateKey] = useState("");
+  const [viewing, setViewing] = useState<Capture | null>(null);
+  const [binding, setBinding] = useState<Capture | null>(null);
+  const [bindingKey, setBindingKey] = useState("");
+  const [bindingLabel, setBindingLabel] = useState("");
+  const [bindingIndex, setBindingIndex] = useState(0);
+  const [bindingAction, setBindingAction] = useState("");
+  const [bindingPage, setBindingPage] = useState("");
+  const selected = explanation?.scenarioId || "";
+  const stateKey = explanation?.stateKey || "";
+  const setSelected = (scenarioId: string) =>
+    navigateExplanation({ scenarioId });
+  const setStateKey = (value: string) =>
+    navigateExplanation({ scenarioId: current?.scenario_id, stateKey: value });
   const [editing, setEditing] = useState<Scenario | "new" | null>(null);
   const [draft, setDraft] = useState<DSL | null>(null);
   const [stepsJSON, setStepsJSON] = useState("");
@@ -128,9 +138,9 @@ export default function ScenarioStudio() {
   const current =
     items.find((item) => item.scenario_id === selected) || items[0];
   const graph = current?.dsl.explanation_graph;
-  const currentState =
-    graph?.states.find((state) => state.stateKey === stateKey) ||
-    graph?.states[0];
+  const currentState = graph?.states.find(
+    (state) => state.stateKey === stateKey,
+  );
   const jobState = w.jobs
     .filter((job) => job.kind === "capture")
     .map((job) => `${job.id}:${job.state}`)
@@ -158,6 +168,7 @@ export default function ScenarioStudio() {
       }
       if (canTrace)
         setCaptures(await api<Capture[]>(`/projects/${w.project.id}/captures`));
+      else setCaptures([]);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -166,7 +177,6 @@ export default function ScenarioStudio() {
     void load();
   }, [load, jobState]);
   useEffect(() => {
-    setStateKey("");
     setApproval((previous) =>
       previous?.scenario_revision_id === current?.scenario_revision_id
         ? previous
@@ -255,9 +265,9 @@ export default function ScenarioStudio() {
               mutation("POST", payload),
             );
       closeEditor();
-      setSelected(saved.scenario_id);
       await refresh();
       await load();
+      setSelected(saved.scenario_id);
       notify("场景已保存为不可变修订");
     });
   }
@@ -351,9 +361,73 @@ export default function ScenarioStudio() {
       notify("受控采集任务已提交，可在任务中心查看");
     });
   }
-  const captureForState = captures.find(
-    (capture) => capture.id === currentState?.captureRef,
-  );
+  function beginBinding(
+    capture: Capture,
+    action: boolean,
+    snapshotIndex?: number,
+  ) {
+    setBinding(capture);
+    const index =
+      snapshotIndex ??
+      (currentState?.captureRef === capture.id
+        ? currentState.snapshotIndex || 0
+        : 0);
+    const sameState =
+      currentState?.captureRef === capture.id &&
+      (currentState.snapshotIndex || 0) === index;
+    setBindingIndex(index);
+    setBindingKey(
+      sameState
+        ? currentState!.stateKey
+        : `capture-${capture.id.slice(0, 8)}-${index}`,
+    );
+    setBindingLabel(
+      currentState?.captureRef === capture.id
+        ? currentState.label
+        : capture.result.snapshots?.[0]?.name || "采集观察",
+    );
+    setBindingAction(
+      action ? explanation?.actionId || w.actions[0]?.id || "" : "",
+    );
+    setBindingPage(explanation?.pageId || "");
+    setViewing(null);
+  }
+  async function saveBinding() {
+    if (!binding || !current || !w.selected_analysis_set) return;
+    await perform(async () => {
+      const saved = await api<Scenario>(
+        `/scenarios/${current.scenario_id}/capture-bindings`,
+        mutation(
+          "POST",
+          {
+            analysis_set_id: w.selected_analysis_set!.id,
+            scenario_revision_id: current.scenario_revision_id,
+            capture_id: binding.id,
+            snapshot_index: bindingIndex,
+            state_key: bindingKey,
+            label: bindingLabel,
+            ...(bindingAction
+              ? { action_id: bindingAction }
+              : bindingPage
+                ? { page_id: bindingPage }
+                : {}),
+          },
+          current.revision_no,
+        ),
+      );
+      await refresh();
+      await load();
+      setBinding(null);
+      navigateExplanation({
+        scenarioId: saved.scenario_id,
+        stateKey: bindingKey,
+      });
+      notify("采集已绑定到新的不可变场景修订；动作关联为人工声明");
+    });
+  }
+  const captureForState = canTrace
+    ? captures.find((capture) => capture.id === currentState?.captureRef)
+    : undefined;
   return (
     <section className="scenario-studio">
       <Panel
@@ -489,7 +563,17 @@ export default function ScenarioStudio() {
                           .map((t) => (
                             <button
                               key={t.transitionKey}
-                              onClick={() => setStateKey(t.toState)}
+                              onClick={() =>
+                                navigateExplanation({
+                                  scenarioId: current.scenario_id,
+                                  stateKey: t.toState,
+                                  actionId:
+                                    w.actions.find(
+                                      (a) => a.stable_key === t.actionKey,
+                                    )?.id || "",
+                                  followTarget: false,
+                                })
+                              }
                             >
                               <span>{t.conditionLabel}</span>
                               <ChevronRight size={15} />
@@ -515,17 +599,19 @@ export default function ScenarioStudio() {
                   ) : (
                     <p className="muted">此场景尚未配置讲解分支。</p>
                   )}
-                  {captureForState?.result.snapshots?.map((snapshot, i) => (
-                    <figure className="scenario-capture" key={i}>
-                      <img
-                        src={`/api/v1/captures/${captureForState.id}/artifacts/${snapshot.png_artifact_id}`}
-                        alt={`${snapshot.name} · 已脱敏的测试环境观察`}
-                      />
-                      <figcaption>
-                        {snapshot.name} · 运行观察 · 已脱敏 · 源码对齐未知
-                      </figcaption>
-                    </figure>
-                  ))}
+                  {captureForState?.result.snapshots
+                    ?.filter((_, i) => i === (currentState?.snapshotIndex || 0))
+                    .map((snapshot, i) => (
+                      <figure className="scenario-capture" key={i}>
+                        <img
+                          src={`/api/v1/captures/${captureForState.id}/artifacts/${snapshot.png_artifact_id}`}
+                          alt={`${snapshot.name} · 已脱敏的测试环境观察`}
+                        />
+                        <figcaption>
+                          {snapshot.name} · 运行观察 · 已脱敏 · 源码对齐未知
+                        </figcaption>
+                      </figure>
+                    ))}
                   <details>
                     <summary>查看固定线性步骤（阅读不会执行）</summary>
                     <pre className="json-block">
@@ -538,8 +624,9 @@ export default function ScenarioStudio() {
                       {captures
                         .filter(
                           (capture) =>
+                            capture.scenario_id === current.scenario_id ||
                             capture.scenario_revision_id ===
-                            current.scenario_revision_id,
+                              current.scenario_revision_id,
                         )
                         .map((capture) => (
                           <div key={capture.id}>
@@ -548,6 +635,28 @@ export default function ScenarioStudio() {
                               {capture.result.snapshots?.length || 0} 个脱敏状态
                             </span>
                             <small>运行与源码版本未核对</small>
+                            <Button
+                              kind="small"
+                              onClick={() => setViewing(capture)}
+                            >
+                              查看采集结果
+                            </Button>
+                            {canEdit && capture.state === "succeeded" && (
+                              <>
+                                <Button
+                                  kind="small"
+                                  onClick={() => beginBinding(capture, false)}
+                                >
+                                  加入讲解状态
+                                </Button>
+                                <Button
+                                  kind="small"
+                                  onClick={() => beginBinding(capture, true)}
+                                >
+                                  关联已有动作
+                                </Button>
+                              </>
+                            )}
                           </div>
                         ))}
                     </div>
@@ -574,6 +683,119 @@ export default function ScenarioStudio() {
           </div>
         )}
       </Panel>
+      {viewing && canTrace && (
+        <CaptureResults
+          key={viewing.id}
+          capture={viewing}
+          onClose={() => setViewing(null)}
+          onBind={
+            canEdit && viewing.state === "succeeded"
+              ? (action, index) => beginBinding(viewing, action, index)
+              : undefined
+          }
+        />
+      )}
+      {binding && canTrace && canEdit && (
+        <Modal title="绑定采集到讲解状态" onClose={() => setBinding(null)}>
+          <Notice>
+            保留原声明和模拟状态。观察来自选定采集；页面及动作关联是人工声明，不核实后端因果。
+          </Notice>
+          {error && <Notice tone="red">{error}</Notice>}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveBinding();
+            }}
+          >
+            <label>
+              采集快照
+              <select
+                aria-label="采集快照"
+                value={bindingIndex}
+                onChange={(e) => {
+                  const index = Number(e.target.value);
+                  setBindingIndex(index);
+                  setBindingKey(`capture-${binding.id.slice(0, 8)}-${index}`);
+                }}
+              >
+                {binding.result.snapshots?.map((item, i) => (
+                  <option value={i} key={i}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              讲解状态键
+              <input
+                value={bindingKey}
+                onChange={(e) => setBindingKey(e.target.value)}
+                required
+                pattern="[a-z][a-z0-9._-]*"
+                maxLength={96}
+              />
+            </label>
+            <label>
+              状态名称
+              <input
+                value={bindingLabel}
+                onChange={(e) => setBindingLabel(e.target.value)}
+                required
+                maxLength={160}
+              />
+            </label>
+            <label>
+              关联页面（人工声明）
+              <select
+                aria-label="关联页面（人工声明）"
+                value={bindingPage}
+                onChange={(e) => {
+                  setBindingPage(e.target.value);
+                  setBindingAction("");
+                }}
+              >
+                <option value="">不绑定页面</option>
+                {w.pages.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              关联动作（人工声明）
+              <select
+                aria-label="关联动作（人工声明）"
+                value={bindingAction}
+                onChange={(e) => {
+                  setBindingAction(e.target.value);
+                  const action = w.actions.find((a) => a.id === e.target.value);
+                  if (action)
+                    setBindingPage(
+                      w.pages.find(
+                        (p) =>
+                          p.stable_key ===
+                          (action.metadata.page_key || action.metadata.pageKey),
+                      )?.id || "",
+                    );
+                }}
+              >
+                <option value="">不绑定动作</option>
+                {w.actions
+                  .filter((a) => a.metadata.status !== "removed")
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <Button type="submit" kind="primary" disabled={busy}>
+              保存采集绑定
+            </Button>
+          </form>
+        </Modal>
+      )}
       {editing && draft && (
         <Modal
           title={editing === "new" ? "创建业务场景" : "编辑场景修订"}

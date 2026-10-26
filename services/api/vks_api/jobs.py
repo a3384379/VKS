@@ -31,23 +31,39 @@ class Checkpoint(Identified, Base):
     result_json: Mapped[dict] = mapped_column(JSON)
 
 
-def current_actor(service, actor_id, pid, session=None):
+def current_actor(service, actor_id, pid, session=None, *, job=None):
+    from dataclasses import replace
     from .identity import UserIdentity, ensure_owner, human_scopes
     from .service import Actor, DomainError
 
     if session is None:
         with service.db() as s:
-            return current_actor(service, actor_id, pid, s)
+            return current_actor(service, actor_id, pid, s, job=job)
+    authorization = job.input_json.get("_authorization") if job else None
+    if authorization is not None and (
+        not isinstance(authorization, dict) or authorization.get("version") != 1
+        or authorization.get("actor_id") != actor_id or authorization.get("project_id") != pid
+        or authorization.get("kind") != job.kind or not isinstance(authorization.get("scopes"), list)
+        or any(not isinstance(scope, str) for scope in authorization["scopes"])
+    ):
+        raise DomainError("VKS_UNAUTHENTICATED", "任务授权快照无效", 401)
+
+    def bounded(actor):
+        if authorization is None:
+            return actor  # Legacy human/platform-token jobs retain their existing checks.
+        scopes = set(actor.scopes) & set(authorization["scopes"])
+        scopes = {scope for scope in scopes if service._can(session, actor, pid, scope)}
+        return replace(actor, scopes=frozenset(scopes))
     ensure_owner(service, session)
     identity = session.get(UserIdentity, actor_id)
     if identity:
         if identity.status != "active":
             raise DomainError("VKS_FORBIDDEN", "任务发起人已停用", 403)
-        return Actor(actor_id, frozenset(human_scopes(service, session, identity)), True)
+        return bounded(Actor(actor_id, frozenset(human_scopes(service, session, identity)), True))
     from .oauth import OAuthPrincipal, actor_for_job
 
     if session.get(OAuthPrincipal, actor_id) is not None:
-        return actor_for_job(service, session, actor_id, pid)
+        return bounded(actor_for_job(service, session, actor_id, pid, authorization))
     credential = session.scalar(
         select(Credential).where(
             Credential.actor_id == actor_id,
@@ -60,7 +76,7 @@ def current_actor(service, actor_id, pid, session=None):
         raise DomainError("VKS_UNAUTHENTICATED", "任务客户端授权已失效", 401)
     actor = Actor(actor_id, frozenset(credential.scopes), False, credential.project_id, credential.id)
     service.require(session, actor, pid)
-    return actor
+    return bounded(actor)
 
 
 @contextmanager
@@ -311,7 +327,7 @@ def save_parse_checkpoint(service, job_id, attempt, input_hash, parsed):
         if not job or job.attempt != attempt or job.cancel_requested or job.state != "running":
             return
         service.require(
-            s, current_actor(service, job.created_by, job.project_id, s), job.project_id, JOB_SCOPES[job.kind]
+            s, current_actor(service, job.created_by, job.project_id, s, job=job), job.project_id, JOB_SCOPES[job.kind]
         )
         existing = s.scalar(
             select(Checkpoint).where(
@@ -348,7 +364,7 @@ def execute_job(service, jid):
         attempt = job.attempt
         try:
             service.require(
-                s, current_actor(service, job.created_by, job.project_id, s), job.project_id, JOB_SCOPES[job.kind]
+                s, current_actor(service, job.created_by, job.project_id, s, job=job), job.project_id, JOB_SCOPES[job.kind]
             )
         except DomainError as error:
             job.state = "failed"
@@ -381,7 +397,7 @@ def execute_job(service, jid):
                 raise DomainError("VKS_CANCELLED", "任务 attempt 已失效，停止解析", 409)
             if active.cancel_requested or (active.lease_until and active.lease_until <= now()):
                 raise DomainError("VKS_CANCELLED", "任务取消或租约失效，停止解析", 409)
-            principal = current_actor(service, owner, pid, session)
+            principal = current_actor(service, owner, pid, session, job=active)
             service.require(session, principal, pid, JOB_SCOPES[kind])
             if kind in ("index", "suggest_links"):
                 service.require(session, principal, pid, "source:read")
@@ -433,7 +449,7 @@ def execute_job(service, jid):
                     return
                 if job.lease_until and job.lease_until <= now():
                     return
-                service.require(s, current_actor(service, owner, pid, s), pid, JOB_SCOPES[kind])
+                service.require(s, current_actor(service, owner, pid, s, job=job), pid, JOB_SCOPES[kind])
                 if kind == "import":
                     result = service._commit_bundle(
                         s, pid, owner, parsed, payload.get("analysis_set_id") if payload["kind"] != "bundle" else None
