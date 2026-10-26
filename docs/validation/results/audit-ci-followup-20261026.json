@@ -1,0 +1,41 @@
+{
+  "recorded_at": "2026-10-26T01:44:37.227864+00:00",
+  "pull_request": "https://github.com/a3384379/VKS/pull/1",
+  "previous_head": "b2f77ad99b4eb1607b178ee70d6ff74f284b2b9f",
+  "previous_remote_runs": [
+    {
+      "id": 40254799353,
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/a3384379/VKS/actions/runs/40254799353"
+    },
+    {
+      "id": 40254826576,
+      "event": "pull_request",
+      "conclusion": "failure",
+      "url": "https://github.com/a3384379/VKS/actions/runs/40254826576",
+      "passed": 297,
+      "skipped": 11,
+      "failed": 1,
+      "failed_test": "test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_navigation"
+    }
+  ],
+  "diagnosis": "The multi-diagram fixture asserted the first diagram timeout after any iframe attached, although the target could still be queued behind two other renders.",
+  "change": "Use the real draft API to save one Mermaid diagram in the isolated fixture, reload that revision, and assert exactly one job before checking the unchanged 15 second timeout, retry and navigation cancellation.",
+  "production_code_changed_since_previous_head": false,
+  "local_validation": {
+    "command": "uv run pytest -q tests/ui/test_frontend_browser.py",
+    "passed": 5,
+    "seconds": 25.67,
+    "inherited_VKS_variables": "removed",
+    "VKS_DATA_DIR": ".vks/audit/runtime",
+    "VKS_TASK_MODE": "local"
+  },
+  "source_sha256": "8d00b14ce04faecf522da66efc57aa75055571eb51ba41bf165c467345efb20e",
+  "source_manifest": "audit-ci-source-manifest-20261026.json",
+  "new_remote_checks": "Consult the PR current head checks; not yet executed at this record time.",
+  "original_audit_local_validation_record": "audit-remediation-20261025.json",
+  "no_timeout_increase_or_test_retry": true,
+  "real_business_acceptance": "not run",
+  "deployment": "not run"
+}

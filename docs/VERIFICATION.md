@@ -23,6 +23,14 @@
 
 源码内容摘要（不含文档）及机器记录分别为[audit-source-manifest-20261025.json](validation/results/audit-source-manifest-20261025.json)、[audit-remediation-20261025.json](validation/results/audit-remediation-20261025.json)。私有红/绿日志在忽略目录`.vks/audit/`。机器记录保留审计验证时尚未提交的事实；后续经用户另行授权的GitHub提交、PR与合并以远端记录为准，不改写本地验证快照。未发布或重启现有服务；开发前端HMR不代表API/Worker已同步加载修复。无新增数据库迁移；旧OAuth任务、历史生成品和来源冲突处理见逐项报告。
 
+## GitHub交付补充检查（2026-10-26）
+
+[PR #1](https://github.com/a3384379/VKS/pull/1)的首个head `b2f77ad`：push检查通过；PR检查中297项通过、11项跳过，原有图表超时浏览器用例1项失败。测试用含六张图表的文档，却以任意iframe的出现作为第一张图表15秒超时的起点；第一张图表可能仍在两任务队列后等待。
+
+现通过真实草稿API将该隔离测试文档保存为单图并刷新准确修订，确认仅有一个图表任务，再断言原15秒超时、重试与导航取消。没有修改产品代码、超时值、浏览器沙箱或添加自动重试。清除继承VKS配置后运行`uv run pytest -q tests/ui/test_frontend_browser.py`，**5 passed，25.67s**；基础Ruff及`git diff --check`通过。新head的远端结果以PR当前检查为准。
+
+补充结果见[audit-ci-followup-20261026.json](validation/results/audit-ci-followup-20261026.json)，完整源码摘要见[audit-ci-source-manifest-20261026.json](validation/results/audit-ci-source-manifest-20261026.json)。此前298项本地全量结果仍绑定原摘要，不改写为本次测试修订的验证结果。
+
 ## 审计前自动检查（历史快照）
 
 | 项目 | 实际结果 |

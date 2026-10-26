@@ -338,13 +338,29 @@ def test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_na
         page = browser.new_page(viewport={"width": 1586, "height": 992})
         page.route("**/src/diagram-frame.ts*", lambda route: route.abort())
         try:
-            page.goto(url + f"/#view=documents&project={pid}&entity={doc}")
+            page.goto(url + f"/#view=overview&project={pid}")
             page.get_by_label("登录名", exact=True).fill("owner")
             page.get_by_label("密码", exact=True).fill("owner")
             page.get_by_role("button", name="打开工作空间").click()
+            expect(page.get_by_role("navigation", name="主导航")).to_be_visible()
+            workspace = page.request.get(url + f"/api/v1/projects/{pid}/workspace").json()["data"]
+            document = next(d for d in workspace["documents"] if d["entity_id"] == doc)
+            revision = page.request.get(url + f"/api/v1/documents/{doc}/revisions/{document['entity_revision_id']}").json()["data"]
+            csrf = page.request.get(url + "/api/v1/auth/session").json()["data"]["csrf_token"]
+            # One actual document with one render job: another visible diagram's
+            # frame must not start this assertion's per-job timeout window.
+            saved = page.request.put(url + f"/api/v1/documents/{doc}/draft", headers={
+                "X-CSRF-Token": csrf, "If-Match": str(revision["row_version"])}, data={
+                "analysis_set_id": workspace["selected_analysis_set"]["id"],
+                "base_revision_id": revision["entity_revision_id"], "locked_section_ids": [],
+                "markdown": "# Isolated timeout\n\n```mermaid\nflowchart LR\n A[Start] --> B[Finish]\n```\n\n正文仍可阅读\n"})
+            assert saved.ok, saved.text()
+            page.goto(url + f"/#view=documents&project={pid}&entity={doc}")
+            page.reload()  # Reload the revision saved through the fixture API.
+            expect(page.locator(".document-reader .diagram-block")).to_have_count(1)
             first = page.locator(".document-reader .diagram-block").nth(0)
             first.scroll_into_view_if_needed()
-            expect(page.locator("iframe.diagram-render-frame").first).to_be_attached()
+            expect(page.locator("iframe.diagram-render-frame")).to_have_count(1)
             for frame in page.locator("iframe.diagram-render-frame").all():
                 assert frame.get_attribute("sandbox") == "allow-scripts"
                 assert frame.evaluate("frame => frame.contentDocument === null")
