@@ -40,14 +40,15 @@ def sites():
                 self.end_headers()
                 self.wfile.write(("private-ok " + session2 + " " + csrf2 if ok else "private-denied").encode())
                 return
-            body = ("""<html><body><p id='result'>ready</p><button id='go' onclick='run()'>Rotate</button>
+            body = ("""<html><body><p id='result'>ready</p>
             <script>function csrf(){return document.cookie.split('; ').find(x=>x.startsWith('csrftoken=')).split('=')[1]}
             async function run(){
+              await new Promise(resolve=>setTimeout(resolve,250));
               await fetch('/refresh',{method:'POST',headers:{'X-CSRF-Token':csrf()}});
               const result=await fetch('/private',{headers:{'X-CSRF-Token':csrf()}}).then(r=>r.text());
               const cross=await fetch('""" + other_url + """/cross').then(r=>r.text()).catch(()=> 'cross-failed');
               document.querySelector('#result').textContent=result+' '+cross;
-            }</script></body></html>""").encode()
+            }run();</script></body></html>""").encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
@@ -83,8 +84,9 @@ def test_a08_csrf_cookie_rotation_multiple_cookies_and_cross_origin_isolation():
         dsl = {"schema_version": "1.0", "scenario_key": "rotation", "name": "Synthetic rotation",
             "environment_ref": "mock", "dataset_ref": "synthetic", "risk_level": "test_write",
             "approval_ref": "11111111-1111-4111-8111-111111111111", "timeout_ms": 15000,
-            "steps": [{"step_key": "open", "kind": "goto", "path": "/", "risk": "read_only", "timeout_ms": 3000},
-                {"step_key": "rotate", "kind": "click", "target": {"by": "css", "value": "#go"}, "risk": "test_write", "timeout_ms": 3000},
+            # The approved navigation owns the async refresh until networkidle;
+            # subsequent assertions stay read-only, as required by the DSL.
+            "steps": [{"step_key": "open", "kind": "goto", "path": "/", "wait_until": "networkidle", "risk": "test_write", "timeout_ms": 3000},
                 {"step_key": "assert", "kind": "assert_text", "target": {"by": "css", "value": "#result"},
                  "expected": {"literal": "private-ok"}, "match": "contains", "risk": "read_only", "timeout_ms": 5000},
                 {"step_key": "snapshot", "kind": "snapshot", "name": "Safe result", "risk": "read_only", "timeout_ms": 3000}]}

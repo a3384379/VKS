@@ -1,0 +1,76 @@
+{
+  "validated_at": "2026-10-26T02:06:37.473860+00:00",
+  "pull_request": "https://github.com/a3384379/VKS/pull/1",
+  "parent_head": "99526f55b83a6e772dea2dd55fc0570f8aaaf21c",
+  "source_sha256": "df561d1fdf8adb9d07cd3e5804832cf7b98b4d1ce76c1f3b5029e53080c4b751",
+  "source_manifest": "audit-review-source-manifest-20261026.json",
+  "review_findings": [
+    {
+      "thread_id": "PRRT_kwDOVWxdKc6wHJxW",
+      "item": "A03",
+      "cause": "An inherited body-matched key could collide with an unmatched parser key.",
+      "fix": "Reserve prior section keys, allocate a fresh key for an unmatched collision, and map aliases before selecting revisions.",
+      "regression": "test_a03_renamed_body_and_reused_heading_keep_distinct_immutable_identities",
+      "before": "failed",
+      "after": "passed"
+    },
+    {
+      "thread_id": "PRRT_kwDOVWxdKc6wHJxY",
+      "item": "A11",
+      "cause": "403/404 from a pinned deep link discarded a successful project list response.",
+      "fix": "Retain the accessible page, clear the inaccessible selection and navigation, and authenticate valid off-page links normally; other errors remain errors.",
+      "regression": "test_a11_inaccessible_pinned_project_retains_accessible_list[403,404]",
+      "before": "2 failed",
+      "after": "2 passed"
+    }
+  ],
+  "prior_ci": [
+    {
+      "head": "99526f55b83a6e772dea2dd55fc0570f8aaaf21c",
+      "run_id": 40255732448,
+      "event": "pull_request",
+      "conclusion": "success"
+    },
+    {
+      "head": "99526f55b83a6e772dea2dd55fc0570f8aaaf21c",
+      "run_id": 40255727277,
+      "event": "push",
+      "conclusion": "failure",
+      "failed_test": "test_a08_csrf_cookie_rotation_multiple_cookies_and_cross_origin_isolation"
+    }
+  ],
+  "runner_fixture_followup": {
+    "cause": "Async refresh could start after the click step had ended and the runner correctly closed its write window.",
+    "deterministic_reproduction": "250 ms synthetic refresh delay reproduces the failure.",
+    "fix": "Use the existing approved goto networkidle phase for fixture initialization; subsequent assertions remain read_only. No runner authorization, DSL contract, timeout, sandbox or isolation change.",
+    "command": "uv run pytest -q tests/runner/test_cookie_rotation.py",
+    "passed": 5,
+    "seconds": 2.22
+  },
+  "local_validation": {
+    "command": "make check",
+    "exit_code": 0,
+    "inherited_VKS_variables": "removed",
+    "VKS_DATA_DIR": ".vks/audit/runtime",
+    "VKS_TASK_MODE": "local",
+    "python": {
+      "passed": 301,
+      "skipped": 11,
+      "warnings": 1,
+      "seconds": 111.61
+    },
+    "frontend": {
+      "passed": 34
+    },
+    "typescript_vite": {
+      "status": "passed",
+      "vite_seconds": 16.57
+    },
+    "ui_browser_tests_in_python": 13
+  },
+  "compatibility": "No schema migration or history rewrite. Prior unmatched heading collisions now receive fresh section identities.",
+  "new_remote_checks": "Consult the PR current head checks; not yet run at this local validation snapshot.",
+  "real_business_acceptance": "not run",
+  "existing_database_migration": "not run",
+  "deployment": "not run"
+}

@@ -165,14 +165,24 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
         assert_section_locks(previous, rows, matched, locked)
         incoming = [row for row in bundle.entities if row["type"] == "section"
                     and row.get("metadata", {}).get("document_key") == item["stable_key"]]
+        reserved = {s.get(Entity, row.entity_id).stable_key for row in previous}
+        allocated = reserved | {row["stable_key"] for row in incoming}
         for index, chapter in enumerate(incoming):
             prior = matched.get(index)
+            original = chapter["stable_key"]
+            stable = original
             if prior:
                 stable = s.get(Entity, prior.entity_id).stable_key
-                aliases[chapter["stable_key"]] = stable
-                chapter["stable_key"] = stable
-                chapter["locator"]["sectionKey"] = stable
-                chapter["metadata"]["manual_lock"] = prior.entity_id in locked
+            elif stable in reserved:
+                stable = item["stable_key"] + ".section." + uid()
+                while stable in allocated:
+                    stable = item["stable_key"] + ".section." + uid()
+            aliases[original] = stable
+            chapter["stable_key"] = stable
+            chapter["locator"]["sectionKey"] = stable
+            chapter["metadata"]["manual_lock"] = bool(prior and prior.entity_id in locked)
+            reserved.add(stable)
+            allocated.add(stable)
         retained = {row["stable_key"] for row in incoming}
         for chapter in previous:
             if selected and s.get(Entity, chapter.entity_id).stable_key not in retained:

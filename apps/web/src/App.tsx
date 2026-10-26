@@ -270,10 +270,17 @@ export default function App() {
         const response = await apiPage<Project[]>(`/projects?${params}`);
         if (sequence !== projectRequest.current) return;
         const selectedId = projectSelection.current;
-        const pinned =
-          selectedId && !response.data.some((p) => p.id === selectedId)
-            ? await api<Project>(`/projects/${selectedId}`)
-            : null;
+        let pinned: Project | null = null;
+        let inaccessible = false;
+        if (selectedId && !response.data.some((p) => p.id === selectedId)) {
+          try {
+            pinned = await api<Project>(`/projects/${selectedId}`);
+          } catch (error) {
+            if (error instanceof ApiError && [403, 404].includes(error.status))
+              inaccessible = true;
+            else throw error;
+          }
+        }
         if (sequence !== projectRequest.current) return;
         setProjects((previous) => {
           const combined = [
@@ -283,11 +290,23 @@ export default function App() {
           ];
           return combined.filter(
             (p, index) =>
+              (!inaccessible || p.id !== selectedId) &&
               combined.findIndex((other) => other.id === p.id) === index,
           );
         });
         setProjectCursor(response.meta.next_cursor || null);
-        setProjectId((previous) => previous || response.data[0]?.id || "");
+        if (inaccessible && projectSelection.current === selectedId) {
+          setWorkspace(null);
+          setBaseline("");
+          setSelectedId("");
+          setExplanation(emptyNavigation);
+          setUnsavedChanges(false);
+        }
+        setProjectId((previous) =>
+          inaccessible && previous === selectedId
+            ? response.data[0]?.id || ""
+            : previous || response.data[0]?.id || "",
+        );
       } finally {
         if (sequence === projectRequest.current) setProjectLoading(false);
       }

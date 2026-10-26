@@ -306,3 +306,32 @@ def test_a03_commonmark_reimport_retains_unchanged_locked_setext_chapter(audit_s
     current = next(d for d in c.s.workspace(c.owner, c.p, c.aid)["documents"] if d["entity_id"] == doc["entity_id"])
     read = docs.read_revision(c.owner, doc["entity_id"], current["entity_revision_id"])
     assert lock in {row["entity_id"] for row in read["sections"]}
+
+
+def test_a03_renamed_body_and_reused_heading_keep_distinct_immutable_identities(audit_store):
+    c = audit_store
+    parsed = c.s._parse(bundle_bytes(Snapshot("local", "initial-heading", {"docs/reused.md": b"# A\nOriginal body\n"}),
+        "charge-demo", "initial-heading", source_key="heading-reuse", role="documentation"), "charge-demo")
+    with c.s.db() as db:
+        c.s._commit_bundle(db, c.p, c.owner.id, parsed, c.aid)
+    doc = next(d for d in c.s.workspace(c.owner, c.p, c.aid)["documents"] if d["name"] == "A")
+    docs = DocumentService(c.s)
+    old = docs.read_revision(c.owner, doc["entity_id"], doc["entity_revision_id"])["sections"][0]
+    replacement_bundle = replacement(c, doc, "# C\nOriginal body\n# A\nNew body\n")
+    identities = None
+    for _ in range(2):
+        with c.s.db() as db:
+            c.s._commit_bundle(db, c.p, c.owner.id, replacement_bundle, c.aid)
+        workspace = c.s.workspace(c.owner, c.p, c.aid)
+        current = next(d for d in workspace["documents"] if d["entity_id"] == doc["entity_id"])
+        chapters = docs.read_revision(c.owner, doc["entity_id"], current["entity_revision_id"])["sections"]
+        assert len(chapters) == 2
+        selected = {row["name"]: row["entity_id"] for row in chapters}
+        assert selected["C"] == old["entity_id"] and selected["A"] != old["entity_id"]
+        current_ids = {e["entity_id"] for e in workspace["entities"] if e["type"] == "section"
+                       and e["metadata"].get("document_key") == doc["stable_key"]}
+        assert current_ids == set(selected.values()) and len(current_ids) == 2
+        assert identities is None or identities == selected
+        identities = selected
+    with c.s.db() as db:
+        assert db.get(Revision, old["entity_revision_id"]).content == "# A\nOriginal body"

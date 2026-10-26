@@ -2,6 +2,16 @@
 
 日期：2026-10-25，版本1.0.0-rc.1。原包QUALITY_CHECK.md是设计交付检查；本文件记录代码与运行验证。以下本地结果及机器记录均绑定各自的源码快照，远端结果以 [GitHub Actions](https://github.com/a3384379/VKS/actions) 对应提交为准；自动检查不代表生产发行或真实业务验收。
 
+## PR审查补充当前结果（2026-10-26）
+
+审查补充修复：重导保留继承章节key，为冲突的未匹配章节分配新身份；失效项目深链接明确403/404时保留成功列表并清理旧基线/实体/场景，合法后页项目仍单独鉴权。新增一个章节身份回归及两个403/404浏览器回归，先复现失败再修复。
+
+另复现了合成Cookie用例的异步写窗口问题：刷新可能在click步骤结束后才发起，此时Runner按既定规则拒绝写请求。测试改用已有受批`goto + networkidle`等待合成初始化刷新完成，后续断言保持read_only；加入250ms合成延迟验证该边界。没有修改Runner授权、DSL契约、网络隔离、沙箱、超时值或添加重试。Runner文件5项通过，2.22s。
+
+清除继承VKS配置后最终运行`make check`：**301 passed / 11 skipped，111.61s**；前端**34 passed**；TypeScript/Vite构建成功，16.57s。包含13项Web UI浏览器回归。Prettier、基础Ruff及`git diff --check`通过。11项跳过的环境专项、上游弃用告警和既有大型按需图表分块告警仍如实保留。
+
+当前源码摘要与机器记录见[audit-review-source-manifest-20261026.json](validation/results/audit-review-source-manifest-20261026.json)、[audit-review-followup-20261026.json](validation/results/audit-review-followup-20261026.json)。此前各摘要与失败/成功记录均保留；当前head的GitHub门禁、合并及main检查以[PR #1](https://github.com/a3384379/VKS/pull/1)及对应Actions为准。无新增数据库结构迁移、真实业务验收或部署。
+
 ## 审计修复当前结果（2026-10-26，本地验证快照）
 
 审计基线`c5c93eec69f25bfc22b0ec9f947c8c7dc94baf64`，本轮从2026-10-25开始。A01–A11、G01–G02逐项原因、文件/函数、回归、兼容和剩余风险见[AUDIT_REMEDIATION.md](AUDIT_REMEDIATION.md)。以下是当前本地源码的结果；后续历史章节不作为本次证据。

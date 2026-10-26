@@ -41,8 +41,8 @@
 ### A03：文档替换共用锁与审核
 
 - 原因：导入直接切换Selection，既不验证已有锁，也能用imported类型绕过工作流。
-- 修改：`documents.py::match_sections/assert_section_locks` 由保存与导入共用；`knowledge.py::persist_bundle` 复用章节身份、保留锁，受治理替换重置为editing；`assert_publishable` 独立检查治理标记及工作流，不依赖可变化的来源类型。Markdown导入改用CommonMark AST，兼容Setext标题。原始上传、旧修订和发布版不覆盖。
-- 回归：同一机器身份直接改写及重导锁定章节均409；重导新增修订阻断发布；原样重导Setext章节保持锁身份。
+- 修改：`documents.py::match_sections/assert_section_locks` 由保存与导入共用；`knowledge.py::persist_bundle` 复用章节身份、保留锁，受治理替换重置为editing；继承身份先保留，未匹配章节与保留key冲突时分配新key，再映射关系/证据别名；`assert_publishable` 独立检查治理标记及工作流，不依赖可变化的来源类型。Markdown导入改用CommonMark AST，兼容Setext标题。原始上传、旧修订和发布版不覆盖。
+- 回归：同一机器身份直接改写及重导锁定章节均409；重导新增修订阻断发布；原样重导Setext章节保持锁身份；标题改名但正文不变、同时新增旧标题时保持两个当前章节及独立身份，重复重导不再次改身份，旧修订不变。
 - 兼容：无迁移。首次导入仍按原流程产生候选；替换已有内容需要新的修订审核。
 
 ### A04：精确撤销消失章节
@@ -110,8 +110,8 @@
 ### A11：项目分页、搜索及深链接
 
 - 原因：前端只读前20个项目并丢弃分页metadata，深链接落在后页时回退首项目。
-- 修改：`api.ts::apiPage`保留完整metadata，原`api`调用语义不变；`App.tsx::loadProjects`增加搜索、加载更多及过时请求保护。深链接项目独立GET鉴权并固定当前选择。`service.py::list_projects`和`app.py`提供授权后的key/name搜索及cursor/limit。
-- 回归：`test_project_pagination.py`、`api-pagination.test.mjs`及浏览器`test_a11_later_project_deep_link_and_project_pagination`；26个合成项目，后页选择、搜索、深链接刷新均保持正确项目。
+- 修改：`api.ts::apiPage`保留完整metadata，原`api`调用语义不变；`App.tsx::loadProjects`增加搜索、加载更多及过时请求保护。深链接项目独立GET鉴权并固定当前选择；只有明确403/404时保留已成功的项目列表、移除失效项目并清理旧基线/实体/场景导航，选择可访问项目；其他错误继续报告。`service.py::list_projects`和`app.py`提供授权后的key/name搜索及cursor/limit。
+- 回归：`test_project_pagination.py`、`api-pagination.test.mjs`及浏览器`test_a11_later_project_deep_link_and_project_pagination`；26个合成项目，后页选择、搜索、深链接刷新均保持正确项目。另覆盖403与真实404失效深链接，恢复列表和有效URL后仍可正常选择其他项目。
 - 兼容/风险：无迁移；查询参数是可选扩展。项目选择只显示当前身份有权限的项目，未扩大授权。
 
 第三批首轮浏览器3项均复现失败，修复后3通过；后端/Runner/任务相关回归34通过、1跳过，前端31项及构建通过。执行：
@@ -144,10 +144,10 @@
 
 | 范围 | 最终执行入口 |
 | --- | --- |
-| A01–A04 | `uv run pytest -q tests/audit/test_batch_one.py`（15项，包含source/trace参数化） |
+| A01–A04 | `uv run pytest -q tests/audit/test_batch_one.py`（审查补充后16项，包含source/trace参数化） |
 | A05–A07 | `uv run pytest -q tests/audit/test_batch_two.py`（8项）；`tests/ui/test_frontend_browser.py`中的A05浏览器用例 |
 | A08 | `uv run pytest -q tests/runner/test_cookie_rotation.py`（5项） |
-| A05、A09–A11、G01–G02浏览器 | `uv run pytest -q tests/ui/test_audit_navigation.py`（6项） |
+| A05、A09–A11、G01–G02浏览器 | `uv run pytest -q tests/ui/test_audit_navigation.py`（审查补充后8项） |
 | A11服务/前端 | `tests/audit/test_project_pagination.py`；`apps/web/tests/api-pagination.test.mjs` |
 | G01–G02后端 | `uv run pytest -q tests/audit/test_capture_bindings.py`（9项） |
 | 全量（包含上述用例、契约和实际MCP SDK） | 清除继承的VKS配置后，以隔离数据目录运行`make check` |
@@ -172,3 +172,5 @@ VKS_TEST_RECOVERY_SOURCE_URL='<隔离恢复演练URL>' uv run pytest -q tests/re
 **完成状态：** A01–A11及G01–G02均已完成本地代码修复/闭环并有合成回归。真实业务验收尚未执行；本次未重启或验收现有API/Worker/Web。开发前端HMR可能读取本地文件，不能据此宣称现有实例已完整加载修复。
 
 后续GitHub交付中修正了原图表超时回归的测试隔离，产品代码不变；补充源码摘要、实际命令和CI状态边界见[验证记录](VERIFICATION.md#github交付补充检查2026-10-26)。原审计验证快照保留，不以重跑覆盖失败记录。
+
+PR审查进一步修复A03章节身份冲突、A11失效深链接恢复，并将合成Cookie刷新放在已有受批导航等待窗口中。最终本地`make check`为**301 passed / 11 skipped**，前端**34 passed**，构建成功；比原审计基线新增48项Python用例，其中9项Web UI浏览器用例。当前源码摘要、实际命令和远端检查边界见[PR审查补充结果](VERIFICATION.md#pr审查补充当前结果2026-10-26)。无新增迁移，不改写历史发布数据。

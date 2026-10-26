@@ -197,6 +197,36 @@ def test_a11_later_project_deep_link_and_project_pagination(audit_site):
         expect(page.get_by_label("当前项目", exact=True).locator("option")).to_contain_text(["Project 25", "Project 24"])
 
 
+@pytest.mark.parametrize("status", [403, 404])
+def test_a11_inaccessible_pinned_project_retains_accessible_list(audit_site, status):
+    site = audit_site
+    missing = "00000000-0000-0000-0000-000000000000"
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=chromium_path(playwright), headless=True)
+        page = browser.new_page()
+        try:
+            if status == 403:
+                page.route(f"**/api/v1/projects/{missing}**", lambda route: route.fulfill(status=403,
+                    content_type="application/json", body='{"error":{"code":"VKS_FORBIDDEN","message":"Synthetic access revoked"}}'))
+            page.goto(site["url"] + f"/#view=overview&project={missing}&baseline=draft:{missing}&entity=missing")
+            page.get_by_label("登录名", exact=True).fill("owner")
+            page.get_by_label("密码", exact=True).fill("owner")
+            page.get_by_role("button", name="打开工作空间", exact=True).click()
+            selector = page.get_by_label("当前项目", exact=True)
+            expect(selector).not_to_have_value(missing)
+            expect(selector.locator("option")).not_to_have_count(0)
+            expect(page.locator(".breadcrumb")).to_contain_text("Audit main")
+            assert "project=" + missing not in page.url
+            assert "baseline=draft%3A" + missing not in page.url and "entity=missing" not in page.url
+            other = selector.locator("option").nth(1)
+            other_id, other_name = other.get_attribute("value"), other.inner_text()
+            selector.select_option(other_id)
+            expect(selector).to_have_value(other_id)
+            expect(page.locator(".breadcrumb")).to_contain_text(other_name)
+        finally:
+            browser.close()
+
+
 def test_g01_hotspot_branch_page_tree_and_url_use_one_passive_context(audit_site):
     s = audit_site
     with signed_page(s, f"/#view=workbench&project={s['pid']}&baseline=draft:{s['a']}&entity={s['action_a']}") as page:
