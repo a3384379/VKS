@@ -3,6 +3,7 @@ on: [push, pull_request]
 jobs:
   windows-collector:
     runs-on: windows-latest
+    timeout-minutes: 15
     env:
       PYTHONUTF8: '1'
       VKS_TASK_MODE: local
@@ -16,12 +17,32 @@ jobs:
       - run: uv run python scripts/build_demo.py
       - run: uv run pytest -q tests/collector tests/v2/test_sync.py tests/v2/test_collector_agent.py tests/v2/test_collector_distribution.py
       - run: uv run python scripts/build_collector_agent.py
+      - name: Install and start the packaged Windows Agent in isolation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packageRoot = Join-Path $env:RUNNER_TEMP "vks-agent-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Path $packageRoot | Out-Null
+          $declared = (Get-Content output/collector/vks-collector-2.0.sha256).Split(' ')[0]
+          $actual = (Get-FileHash output/collector/vks-collector-2.0.zip -Algorithm SHA256).Hash.ToLower()
+          if ($declared -ne $actual) { throw 'Agent archive SHA-256 differs' }
+          Expand-Archive output/collector/vks-collector-2.0.zip -DestinationPath $packageRoot
+          py -3.12 -m venv "$packageRoot/.venv"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$packageRoot/.venv/Scripts/python.exe" -m pip install --require-hashes -r "$packageRoot/requirements.lock.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location $packageRoot
+          & "$packageRoot/.venv/Scripts/python.exe" -c "from pathlib import Path; import tkinter as tk; import packages.collector.agent_gui as gui; assert Path(gui.__file__).resolve().is_relative_to(Path.cwd()); root = tk.Tk(); root.withdraw(); app = gui.CollectorWindow(root, directory=Path('.vks/collector')); app.root.update_idletasks(); app.root.update(); assert not app.consent.get() and not app.schedule.get(); app.close(); print('PACKAGED_AGENT_STARTUP_OK')"
+          $agentExit = $LASTEXITCODE
+          Pop-Location
+          if ($agentExit -ne 0) { exit $agentExit }
       - uses: actions/upload-artifact@v4
         with:
           name: vks-collector-windows
           path: output/collector/*
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -47,12 +68,13 @@ jobs:
           EOF
           sudo apparmor_parser -r /etc/apparmor.d/vks-playwright-chromium
       - run: uv run python scripts/build_demo.py
-      - run: uv run pytest -q
+      - run: uv run pytest -q --durations=15
       - run: npm test
       - run: npm run build
       - run: npm audit --audit-level=high
   postgres-and-queue:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929

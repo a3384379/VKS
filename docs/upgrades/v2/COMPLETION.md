@@ -44,3 +44,11 @@
 - 真实业务、指定硬件、五人独立任务和真实模型配置/费用上限已异步询问，尚待提供。Windows 原生验证待远端 CI；不得把这几类待验收写为已完成。
 
 5000 文件冷/增量重跑已完成，原始指标持久化并通过任务查询：冷 549.622s、1% 变更 121.987s，语法 50 新解析/4950 复用、完整依赖重算 5000。全量在健康字段版本上再次 402 passed / 15 skipped，前端 39 passed，构建成功 18.78s。最后新增只读投影在敏感授权撤销后的真实浏览器回归，完成后再绑定最终源码清单。
+
+## 收尾快照与 Windows CI
+
+- 当前运行代码完整 `make check`：**403 passed / 15 skipped / 0 failed**，185.15s；前端 **39 passed / 0 failed**；构建成功 16.88s。Ruff 关键错误、Prettier 32 个工程文件、工程 UTF-8/无 BOM/LF 检查通过；原件的 Markdown 双空格换行保持原字节，不作工程空白修复。
+- 草稿 [PR #2](https://github.com/a3384379/VKS/pull/2)，首提交 `4913771`。Windows 官方 CPython 3.12.10 原生 CI **25 passed / 1 skipped / 20.42s**；三项 Win32/junction/Tk 实际执行。跳过仅 SVN Docker；已另在隔离容器执行。PG/队列 CI 已通过，Linux 全量仍运行。
+- 首 Windows 制品 `12762796840` 下载后核对 GitHub archive 摘要、Agent ZIP 摘要与 32 项文件清单。Agent ZIP SHA-256 `2c340f339db7b92d5b6a45d76a5e6d5bf06fe6c156225491a8210bc7d9bdb303`。
+- 继续增加干净 Windows 解压目录的锁定依赖安装与 Tk 启动 CI，验证分发包可独立启动，不复用仓库开发虚拟环境。该检查以最终提交的 CI 结果为准。
+- 当前最终源码清单为 `docs/validation/results/v2-final-source-manifest-20261028.json`；汇总为 `v2-final-validation-20261028.json`。先前 completion/development/continuation 快照保持原样。

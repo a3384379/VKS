@@ -1,0 +1,649 @@
+{
+  "schema_version": 2,
+  "date": "2026-10-28",
+  "status": "local_and_isolated_validation_passed_final_ci_and_external_acceptance_pending",
+  "base_commit": "b8926b0d2665034f24d85a534ec258d544398990",
+  "source_manifest": "v2-final-source-manifest-20261028.json",
+  "source_sha256": "9e4d6b67ac9a3d5a6932d568f2037f2690557e494e60f99c8358d52d291d3ea3",
+  "source_files": 322,
+  "new_ddl": false,
+  "production_release": false,
+  "real_external_model_calls": 0,
+  "preexisting_document_reaudit_preserved": true,
+  "full_suite_latest": {
+    "exit_code": 0,
+    "python_passed": 403,
+    "python_skipped": 15,
+    "pytest_seconds": 185.15,
+    "frontend_passed": 39,
+    "frontend_skipped": 0,
+    "frontend_failed": 0,
+    "build_seconds": 16.88,
+    "scope": "complete runtime snapshot 4913771; later edits only CI packaged bootstrap and documentation"
+  },
+  "sensitive_read_scope_browser": {
+    "passed": 10,
+    "seconds": 23.72,
+    "regression_reproduced_before_fix": true
+  },
+  "mcp": {
+    "total_tools": 23,
+    "original_tools": 18,
+    "official_stdio_sdk": true,
+    "official_http_sdk": true,
+    "natural_language_plan_sdk": true,
+    "machine_approval_publish": false
+  },
+  "hardware": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "cpu_count": "10",
+    "memory_bytes": "17179869184",
+    "hardware_model": "Mac16,10",
+    "docker": {
+      "cpus": 10,
+      "memory_bytes": 8321515520,
+      "architecture": "aarch64",
+      "storage_driver": "overlayfs"
+    },
+    "postgres_settings": [
+      "effective_cache_size=5242888kB",
+      "fsync=on",
+      "max_connections=100",
+      "server_version=17.6 (Debian 17.6-2.pgdg13+1)",
+      "shared_buffers=163848kB",
+      "synchronous_commit=on"
+    ],
+    "network": "loopback HTTP; PG on Docker Desktop published localhost port; no production workload",
+    "target_environment_acceptance": false
+  },
+  "reads_600s": {
+    "profile": "AT-34 local synthetic PoC; not specified 8vCPU/16GiB/network acceptance",
+    "transport": "HTTP loopback, machine-token auth and response serialization",
+    "hardware": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit",
+      "cpu_count": "10",
+      "memory_bytes": "17179869184"
+    },
+    "dataset": {
+      "relations": 50000,
+      "actions": 1000,
+      "documents": 200
+    },
+    "concurrency": 20,
+    "requested_seconds": 600.0,
+    "elapsed_seconds": 600.43,
+    "sql_queries": null,
+    "operations": {
+      "action": {
+        "requests": 13480,
+        "p50_ms": 259.19,
+        "p95_ms": 334.983,
+        "p99_ms": 424.003,
+        "errors": {}
+      },
+      "graph": {
+        "requests": 13460,
+        "p50_ms": 327.162,
+        "p95_ms": 413.13,
+        "p99_ms": 487.199,
+        "errors": {}
+      },
+      "search": {
+        "requests": 13461,
+        "p50_ms": 287.608,
+        "p95_ms": 364.65,
+        "p99_ms": 421.962,
+        "errors": {}
+      }
+    },
+    "phases": {
+      "first_wave": {
+        "requests": 20,
+        "p50_ms": 633.495,
+        "p95_ms": 728.598,
+        "p99_ms": 728.598,
+        "errors": {}
+      },
+      "warm": {
+        "requests": 40381,
+        "p50_ms": 287.618,
+        "p95_ms": 389.26,
+        "p99_ms": 449.543,
+        "errors": {}
+      }
+    },
+    "resources": [
+      {
+        "seconds": 0.004,
+        "rss_kib": 121264,
+        "cpu_percent": 59.0
+      },
+      {
+        "seconds": 10.009,
+        "rss_kib": 361680,
+        "cpu_percent": 57.2
+      },
+      {
+        "seconds": 20.013,
+        "rss_kib": 361680,
+        "cpu_percent": 58.2
+      },
+      {
+        "seconds": 30.017,
+        "rss_kib": 298720,
+        "cpu_percent": 59.7
+      },
+      {
+        "seconds": 40.027,
+        "rss_kib": 298784,
+        "cpu_percent": 57.2
+      },
+      {
+        "seconds": 50.031,
+        "rss_kib": 298784,
+        "cpu_percent": 57.6
+      },
+      {
+        "seconds": 60.038,
+        "rss_kib": 219776,
+        "cpu_percent": 55.3
+      },
+      {
+        "seconds": 70.042,
+        "rss_kib": 219776,
+        "cpu_percent": 58.4
+      },
+      {
+        "seconds": 80.047,
+        "rss_kib": 219776,
+        "cpu_percent": 53.6
+      },
+      {
+        "seconds": 90.054,
+        "rss_kib": 219776,
+        "cpu_percent": 60.8
+      },
+      {
+        "seconds": 100.062,
+        "rss_kib": 219776,
+        "cpu_percent": 52.3
+      },
+      {
+        "seconds": 110.068,
+        "rss_kib": 219792,
+        "cpu_percent": 54.9
+      },
+      {
+        "seconds": 120.075,
+        "rss_kib": 219792,
+        "cpu_percent": 52.7
+      },
+      {
+        "seconds": 130.082,
+        "rss_kib": 219792,
+        "cpu_percent": 47.4
+      },
+      {
+        "seconds": 140.086,
+        "rss_kib": 219808,
+        "cpu_percent": 58.6
+      },
+      {
+        "seconds": 150.098,
+        "rss_kib": 219808,
+        "cpu_percent": 55.0
+      },
+      {
+        "seconds": 160.102,
+        "rss_kib": 219808,
+        "cpu_percent": 60.5
+      },
+      {
+        "seconds": 170.108,
+        "rss_kib": 219808,
+        "cpu_percent": 57.6
+      },
+      {
+        "seconds": 180.114,
+        "rss_kib": 219808,
+        "cpu_percent": 51.3
+      },
+      {
+        "seconds": 190.119,
+        "rss_kib": 219808,
+        "cpu_percent": 52.0
+      },
+      {
+        "seconds": 200.13,
+        "rss_kib": 219792,
+        "cpu_percent": 56.1
+      },
+      {
+        "seconds": 210.139,
+        "rss_kib": 219808,
+        "cpu_percent": 60.8
+      },
+      {
+        "seconds": 220.146,
+        "rss_kib": 219808,
+        "cpu_percent": 56.9
+      },
+      {
+        "seconds": 230.155,
+        "rss_kib": 157472,
+        "cpu_percent": 55.6
+      },
+      {
+        "seconds": 240.16,
+        "rss_kib": 157472,
+        "cpu_percent": 55.2
+      },
+      {
+        "seconds": 250.169,
+        "rss_kib": 157472,
+        "cpu_percent": 59.7
+      },
+      {
+        "seconds": 260.173,
+        "rss_kib": 157472,
+        "cpu_percent": 54.2
+      },
+      {
+        "seconds": 270.181,
+        "rss_kib": 157472,
+        "cpu_percent": 51.4
+      },
+      {
+        "seconds": 280.192,
+        "rss_kib": 157488,
+        "cpu_percent": 54.9
+      },
+      {
+        "seconds": 290.206,
+        "rss_kib": 157488,
+        "cpu_percent": 53.3
+      },
+      {
+        "seconds": 300.211,
+        "rss_kib": 157504,
+        "cpu_percent": 57.3
+      },
+      {
+        "seconds": 310.216,
+        "rss_kib": 157504,
+        "cpu_percent": 60.6
+      },
+      {
+        "seconds": 320.221,
+        "rss_kib": 157504,
+        "cpu_percent": 55.6
+      },
+      {
+        "seconds": 330.226,
+        "rss_kib": 157504,
+        "cpu_percent": 57.3
+      },
+      {
+        "seconds": 340.233,
+        "rss_kib": 157504,
+        "cpu_percent": 60.3
+      },
+      {
+        "seconds": 350.237,
+        "rss_kib": 157520,
+        "cpu_percent": 53.1
+      },
+      {
+        "seconds": 360.242,
+        "rss_kib": 157520,
+        "cpu_percent": 60.4
+      },
+      {
+        "seconds": 370.25,
+        "rss_kib": 157520,
+        "cpu_percent": 55.2
+      },
+      {
+        "seconds": 380.254,
+        "rss_kib": 157552,
+        "cpu_percent": 52.6
+      },
+      {
+        "seconds": 390.264,
+        "rss_kib": 157584,
+        "cpu_percent": 52.9
+      },
+      {
+        "seconds": 400.274,
+        "rss_kib": 157584,
+        "cpu_percent": 56.3
+      },
+      {
+        "seconds": 410.281,
+        "rss_kib": 157584,
+        "cpu_percent": 61.4
+      },
+      {
+        "seconds": 420.288,
+        "rss_kib": 157584,
+        "cpu_percent": 51.3
+      },
+      {
+        "seconds": 430.293,
+        "rss_kib": 157584,
+        "cpu_percent": 58.0
+      },
+      {
+        "seconds": 440.3,
+        "rss_kib": 157440,
+        "cpu_percent": 60.1
+      },
+      {
+        "seconds": 450.309,
+        "rss_kib": 157504,
+        "cpu_percent": 52.8
+      },
+      {
+        "seconds": 460.318,
+        "rss_kib": 157504,
+        "cpu_percent": 52.3
+      },
+      {
+        "seconds": 470.327,
+        "rss_kib": 157504,
+        "cpu_percent": 63.3
+      },
+      {
+        "seconds": 480.334,
+        "rss_kib": 157504,
+        "cpu_percent": 56.9
+      },
+      {
+        "seconds": 490.348,
+        "rss_kib": 157504,
+        "cpu_percent": 47.3
+      },
+      {
+        "seconds": 500.354,
+        "rss_kib": 157504,
+        "cpu_percent": 52.7
+      },
+      {
+        "seconds": 510.366,
+        "rss_kib": 157504,
+        "cpu_percent": 49.7
+      },
+      {
+        "seconds": 520.371,
+        "rss_kib": 157504,
+        "cpu_percent": 53.7
+      },
+      {
+        "seconds": 530.375,
+        "rss_kib": 157520,
+        "cpu_percent": 61.6
+      },
+      {
+        "seconds": 540.381,
+        "rss_kib": 157520,
+        "cpu_percent": 64.1
+      },
+      {
+        "seconds": 550.386,
+        "rss_kib": 157520,
+        "cpu_percent": 58.1
+      },
+      {
+        "seconds": 560.4,
+        "rss_kib": 157520,
+        "cpu_percent": 60.2
+      },
+      {
+        "seconds": 570.406,
+        "rss_kib": 157504,
+        "cpu_percent": 58.7
+      },
+      {
+        "seconds": 580.412,
+        "rss_kib": 157504,
+        "cpu_percent": 54.0
+      },
+      {
+        "seconds": 590.416,
+        "rss_kib": 157520,
+        "cpu_percent": 60.2
+      }
+    ],
+    "external_model_calls": 0,
+    "cache": "server release-fact cache cold on start; first concurrent wave reported separately; no grants or policies cached across transactions",
+    "cache_counts": null,
+    "source_sha256": {
+      "services/api/vks_api/reading.py": "7651a6898cfd1ba16618b1e781629bcb1a5bf0cbea85bb0eabbc89ae2a5d135f",
+      "services/api/vks_api/service.py": "192cc02c2b2db7ac8530f08f8eeeb6902e36e7fa6b8790ce4561773c684cd46c",
+      "services/api/vks_api/identity.py": "f83545b00e5e72d8f7d02aa6269270270700b188ea232db0f55a136419e98aa8"
+    },
+    "source_changed_during_run": false
+  },
+  "collector": {
+    "profile": "synthetic filesystem collection, not Windows or enterprise repository acceptance",
+    "files": 5000,
+    "source_bytes": 104857600,
+    "source_inventory_sha256": "f5e7df7a3131d936d501b5ec377e54b176bea0eb40e03a600c953c8edbc9d01e",
+    "bundle_sha256": "9ecc837e1a368ea6d4b8f3e3262469c442d02065eb0c643a762f49d34f02eb30",
+    "transport_bytes": 61959867,
+    "generation_write_seconds": 0.5127401250065304,
+    "readonly_collection_seconds": 1.261959041992668,
+    "package_seconds": 1.5508699170313776,
+    "source_identity": "same deterministic synthetic Java class/padding profile as benchmark_analysis.py",
+    "external_model_calls": 0
+  },
+  "analysis": {
+    "profile": "AT-35 local PoC; not specified benchmark-machine acceptance",
+    "source_files": 5000,
+    "source_bytes": 104857600,
+    "zip_entries_including_manifest": 5001,
+    "manifest_bytes": 1525432,
+    "transport_bytes": 61959867,
+    "expanded_container_bytes": 106383032,
+    "quotas": {
+      "material_files": 5000,
+      "material_bytes": 104857600,
+      "manifest_bytes": 4194304,
+      "transport_bytes": 134217728
+    },
+    "sha256": "9ecc837e1a368ea6d4b8f3e3262469c442d02065eb0c643a762f49d34f02eb30",
+    "phases_seconds": {
+      "generate": 0.09445158299058676,
+      "package": 1.58819137501996,
+      "zip_validate_and_read": 0.27610183402430266,
+      "parse_bundle_including_zip_schema_and_static": 3.2606707499944605
+    },
+    "static_metrics": {
+      "java_files": 5000,
+      "xml_files": 0,
+      "parsed_files": 5000,
+      "methods": 5000,
+      "calls": 0,
+      "resolved_calls": 0,
+      "unresolved_calls": 0,
+      "syntax_parsed_files": 5000,
+      "syntax_reused_files": 0,
+      "entity_count": 10000,
+      "relation_count": 5000,
+      "unsupported_or_unresolved": 0,
+      "parser_version": "vks-java-spring-mybatis-1",
+      "dependency_recomputed_files": 5000
+    },
+    "cancel": {
+      "cancelled": true,
+      "java_files_started": 58,
+      "checks": 22,
+      "seconds_from_start": 2.188840332964901,
+      "files_after_threshold": 48,
+      "poll_interval_seconds": 0.1,
+      "seconds_after_request": 0.030670875043142587
+    },
+    "external_model_calls": 0,
+    "fixture_complexity": "5000 simple Java classes with one method each; deterministic hex comments pad to 100MiB, not enterprise code complexity",
+    "source_sha256": {
+      "packages/analyzers/vks_ingest.py": "07354e042d996f6813d791de9989a0a0bd6c1c85c969672e2d6828fb81baf728",
+      "packages/analyzers/java_spring.py": "eeb0f4ac8379894f2d422aed2dffd85b9a7dd8a4fa3d7b8e4c11ccf119e8268e",
+      "packages/analyzers/cancellation.py": "560c481c276a278b8097173bedd1ea059e03bddc8cd8d41c85dd004b612323e4",
+      "packages/analyzers/document_links.py": "f01f94d9a811c25dd0cbfc2f5f3503ec6e46d8531bbc4909470b7b474be9440a",
+      "services/api/vks_api/knowledge.py": "5f6bff6e2c051c37be342811d12753bcb079e9db4df9765505a14b0c42a3ee79",
+      "services/api/vks_api/jobs.py": "29a72c14d52653a3d8fb0ddad537e4da875ec697358116f0bc0906400803005a"
+    },
+    "job": {
+      "transport": "HTTP loopback upload + 20 concurrent submissions",
+      "id": "5ec912e3-5d41-47c4-9e71-843f87b8e6e1",
+      "state": "succeeded",
+      "execution_seconds": 549.6221647079801,
+      "upload_seconds": 0.29072162497323006,
+      "submission": {
+        "concurrency": 20,
+        "requests": 20,
+        "p50_seconds": 0.530236,
+        "p95_seconds": 0.971441,
+        "p99_seconds": 0.971441
+      },
+      "issue_count": 0,
+      "result": {
+        "result_refs": [
+          {
+            "kind": "analysis_set",
+            "id": "e416500a-15dc-413b-9249-4063df34e185"
+          }
+        ],
+        "analysis_set_id": "e416500a-15dc-413b-9249-4063df34e185",
+        "accepted_count": 5000,
+        "snapshot_ids": [
+          "491d7b24-c34b-4621-aa3f-e4fde15761f7"
+        ],
+        "issues": [],
+        "reused": false,
+        "analysis_metrics": {
+          "java_files": 5000,
+          "xml_files": 0,
+          "parsed_files": 5000,
+          "methods": 5000,
+          "calls": 0,
+          "resolved_calls": 0,
+          "unresolved_calls": 0,
+          "syntax_parsed_files": 5000,
+          "syntax_reused_files": 0,
+          "entity_count": 10000,
+          "relation_count": 5000,
+          "unsupported_or_unresolved": 0,
+          "parser_version": "vks-java-spring-mybatis-1",
+          "dependency_recomputed_files": 5000
+        }
+      }
+    },
+    "incremental": {
+      "changed_files": 50,
+      "total_files": 5000,
+      "source_bytes": 104857600,
+      "submission_seconds": 0.26006758300354704,
+      "execution_seconds": 121.98705612501362,
+      "state": "succeeded",
+      "metrics": {
+        "java_files": 5000,
+        "xml_files": 0,
+        "parsed_files": 5000,
+        "methods": 5000,
+        "calls": 0,
+        "resolved_calls": 0,
+        "unresolved_calls": 0,
+        "syntax_parsed_files": 50,
+        "syntax_reused_files": 4950,
+        "entity_count": 10000,
+        "relation_count": 5000,
+        "unsupported_or_unresolved": 0,
+        "parser_version": "vks-java-spring-mybatis-1",
+        "dependency_recomputed_files": 5000
+      },
+      "dependency_scope": "full current source vector recomputed; only syntax units reused"
+    }
+  },
+  "capture": {
+    "profile": "synthetic ten-step read-only Mock; five saved snapshots; not business branch acceptance",
+    "steps": 10,
+    "snapshots": 5,
+    "elapsed_seconds": 1.4729445409611799,
+    "phases": {
+      "dom_redaction_seconds": 0.05625591706484556,
+      "masked_screenshot_seconds": 0.16210466797929257,
+      "object_storage_seconds": 0.0009980800095945597
+    },
+    "external_model_calls": 0,
+    "phase_scope": "DOM sanitizer, masked screenshot call, object writes separately; DB/network/queue overhead remains in total"
+  },
+  "upgrade": {
+    "status": "pass",
+    "baseline_commit": "b8926b0d2665034f24d85a534ec258d544398990",
+    "baseline_archive_sha256": "ef4a38ecdcd564add157f58bb179f994b6bb9c7b20df4f4c68bea04e6d81cdd0",
+    "original_release_manifest_sha256": "5c1f7fe210b1f6339628eb339a7838efaeaecad0cd2c895111d65760077600e2",
+    "historical_document": {
+      "document_revision_id": "171d0794-5270-46a0-ab27-ce831ee6c4d2",
+      "content_sha256": "c100778de7db82b7e953b63c682a145f96c992427076ef44670a034478cc7ea4",
+      "section_revision_ids": [
+        "6198f7f0-7c5d-45dc-82a8-6dd8de967972",
+        "8bbac1d6-417d-46e9-a7fb-7b6342a60559",
+        "85d8dc10-75aa-4e33-a6c4-6f2e721ab80e",
+        "a5b5da68-e95f-4b5a-8fc7-5611e605099b",
+        "c42eca05-8b93-435e-8e07-a4f5e9233d55"
+      ]
+    },
+    "v2_task_succeeded": true,
+    "rollback_old_binary_read_identical": true,
+    "old_credentials_revoked": true,
+    "backup_sha256": "8daefb836b81f5ca1e5288f351798a9795d21dd9fbc192befb123be071bdf072",
+    "scope": "isolated synthetic PostgreSQL; no production instance changed"
+  },
+  "environment_tests": {
+    "pg_queue_passed": 7,
+    "pg_queue_seconds": 13.47,
+    "pg_v2_restore_passed": 1,
+    "pg_v2_restore_seconds": 7.7,
+    "svn_passed": 1,
+    "svn_seconds": 4.39,
+    "compose_passed": 1,
+    "compose_seconds": 69.32
+  },
+  "pending": [
+    "packaged Windows clean-venv install/start on final CI",
+    "final-head CI",
+    "authorized real-business materials and independent 30-action Gold",
+    "five independent users with paired task records",
+    "real model provider and approved cost limit",
+    "specified benchmark-machine acceptance",
+    "production release and deployment"
+  ],
+  "windows": {
+    "status": "pass",
+    "head_sha": "4913771f515bc774cfd258ad1b005032a68039ca",
+    "run_id": 40565081493,
+    "job_id": 122404108206,
+    "artifact_id": 12762796840,
+    "artifact_archive_sha256": "0814daee1709fb9346fb27789922099eab3861bc9eb6000285427f35b7203568",
+    "agent_zip_sha256": "2c340f339db7b92d5b6a45d76a5e6d5bf06fe6c156225491a8210bc7d9bdb303",
+    "distribution_files": 32,
+    "native_os": "GitHub windows-latest",
+    "python": "official CPython 3.12.10",
+    "tests_passed": 25,
+    "tests_skipped": 1,
+    "tests_seconds": 20.42,
+    "native_windows_handle_junction_and_tk_tests": "passed",
+    "skip": "opt-in SVN Docker fixture",
+    "scope": "synthetic Windows native CI and checked source package; not enterprise device acceptance"
+  },
+  "ci": {
+    "first_head": "4913771f515bc774cfd258ad1b005032a68039ca",
+    "first_run_id": 40565081493,
+    "first_head_source_sha256": "ad4bd88b7761d81fc9cb2f6d98570281b8cbf6d11a82b40ee35d5bf13dc4434e",
+    "first_windows": "success",
+    "first_postgres_queue": "success",
+    "first_linux": "in_progress",
+    "new_packaged_windows_bootstrap": "pending"
+  }
+}
