@@ -1,0 +1,768 @@
+{
+  "schema_version": 3,
+  "date": "2026-10-28",
+  "status": "engineering_and_synthetic_validation_passed_external_acceptance_pending",
+  "base_commit": "b8926b0d2665034f24d85a534ec258d544398990",
+  "source_commit": "0a3becc910fb1c8f97d94aed3927c68014f45c12",
+  "source_manifest": "v2-engineering-source-manifest-20261028.json",
+  "source_sha256": "99293cbe14a2fc2417fc1ef8f85caef6838a08cfcfb514bca6ae6bb287ea27ec",
+  "source_files": 323,
+  "new_ddl": false,
+  "production_release": false,
+  "real_external_model_calls": 0,
+  "pr_url": "https://github.com/a3384379/VKS/pull/2",
+  "full_suite": {
+    "status": "pass",
+    "exit_code": 0,
+    "python_passed": 404,
+    "python_skipped": 15,
+    "pytest_seconds": 192.31,
+    "frontend_passed": 41,
+    "frontend_failed": 0,
+    "frontend_skipped": 0,
+    "build_seconds": 16.45,
+    "total_seconds": 214.592,
+    "isolated_data_dir": true,
+    "inherited_vks_configuration_cleared": true
+  },
+  "ci": {
+    "source_commit": "0a3becc910fb1c8f97d94aed3927c68014f45c12",
+    "run_id": 40570818024,
+    "status": "success",
+    "postgres_and_queue": {
+      "status": "success",
+      "tests_passed": 7,
+      "seconds": 9.23,
+      "v2_restore_passed": 1,
+      "v2_restore_seconds": 6.06
+    },
+    "windows": {
+      "status": "pass",
+      "head_sha": "0a3becc910fb1c8f97d94aed3927c68014f45c12",
+      "run_id": 40570818024,
+      "job_id": 122424204274,
+      "artifact_id": 12764988087,
+      "artifact_archive_sha256": "c7f30ac36b5b242f182c15188967ae1920157b97d362953a920d85b3b87b8c03",
+      "agent_zip_sha256": "2c340f339db7b92d5b6a45d76a5e6d5bf06fe6c156225491a8210bc7d9bdb303",
+      "distribution_files": 32,
+      "scope": "synthetic Windows native CI and independently checked archive; not enterprise device acceptance",
+      "tests_passed": 25,
+      "tests_skipped": 1,
+      "tests_seconds": 19.54,
+      "python": "official CPython 3.12.10",
+      "native_os": "GitHub windows-latest",
+      "packaged_clean_venv_hash_locked_install_and_tk_start": true,
+      "skip": "opt-in SVN Docker fixture, separately passed"
+    },
+    "linux": {
+      "status": "success",
+      "job_id": 122424204385,
+      "python_passed": 404,
+      "python_skipped": 15,
+      "pytest_seconds": 462.69,
+      "frontend_passed": 41,
+      "frontend_failed": 0,
+      "build_seconds": 51.77,
+      "npm_audit_high_vulnerabilities": 0
+    }
+  },
+  "v2_reads_600s": {
+    "profile": "AT-34 local synthetic PoC; not specified 8vCPU/16GiB/network acceptance",
+    "transport": "HTTP loopback, machine-token auth and response serialization",
+    "api_profile": "v2 explanation/100-node map + shared search",
+    "hardware": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit",
+      "cpu_count": "10",
+      "memory_bytes": "17179869184"
+    },
+    "dataset": {
+      "relations": 50000,
+      "actions": 1000,
+      "documents": 200
+    },
+    "concurrency": 20,
+    "requested_seconds": 600.0,
+    "elapsed_seconds": 600.67,
+    "sql_queries": null,
+    "operations": {
+      "action": {
+        "requests": 8922,
+        "p50_ms": 503.553,
+        "p95_ms": 586.891,
+        "p99_ms": 634.715,
+        "errors": {}
+      },
+      "graph": {
+        "requests": 8920,
+        "p50_ms": 389.173,
+        "p95_ms": 452.68,
+        "p99_ms": 488.216,
+        "errors": {}
+      },
+      "search": {
+        "requests": 8920,
+        "p50_ms": 457.634,
+        "p95_ms": 561.803,
+        "p99_ms": 601.539,
+        "errors": {}
+      }
+    },
+    "phases": {
+      "first_wave": {
+        "requests": 20,
+        "p50_ms": 868.465,
+        "p95_ms": 1107.279,
+        "p99_ms": 1107.279,
+        "errors": {}
+      },
+      "warm": {
+        "requests": 26742,
+        "p50_ms": 442.481,
+        "p95_ms": 564.844,
+        "p99_ms": 606.637,
+        "errors": {}
+      }
+    },
+    "resources": [
+      {
+        "seconds": 0.005,
+        "rss_kib": 121392,
+        "cpu_percent": 56.7
+      },
+      {
+        "seconds": 10.021,
+        "rss_kib": 363056,
+        "cpu_percent": 77.0
+      },
+      {
+        "seconds": 20.04,
+        "rss_kib": 363056,
+        "cpu_percent": 63.7
+      },
+      {
+        "seconds": 30.048,
+        "rss_kib": 363056,
+        "cpu_percent": 78.7
+      },
+      {
+        "seconds": 40.055,
+        "rss_kib": 363056,
+        "cpu_percent": 75.5
+      },
+      {
+        "seconds": 50.067,
+        "rss_kib": 363056,
+        "cpu_percent": 77.2
+      },
+      {
+        "seconds": 60.075,
+        "rss_kib": 300096,
+        "cpu_percent": 70.0
+      },
+      {
+        "seconds": 70.085,
+        "rss_kib": 254608,
+        "cpu_percent": 77.7
+      },
+      {
+        "seconds": 80.095,
+        "rss_kib": 254608,
+        "cpu_percent": 79.3
+      },
+      {
+        "seconds": 90.107,
+        "rss_kib": 254608,
+        "cpu_percent": 76.0
+      },
+      {
+        "seconds": 100.118,
+        "rss_kib": 254608,
+        "cpu_percent": 80.8
+      },
+      {
+        "seconds": 110.126,
+        "rss_kib": 254608,
+        "cpu_percent": 68.6
+      },
+      {
+        "seconds": 120.137,
+        "rss_kib": 254608,
+        "cpu_percent": 78.8
+      },
+      {
+        "seconds": 130.149,
+        "rss_kib": 254608,
+        "cpu_percent": 69.0
+      },
+      {
+        "seconds": 140.159,
+        "rss_kib": 255776,
+        "cpu_percent": 78.0
+      },
+      {
+        "seconds": 150.17,
+        "rss_kib": 255776,
+        "cpu_percent": 63.6
+      },
+      {
+        "seconds": 160.181,
+        "rss_kib": 255776,
+        "cpu_percent": 78.4
+      },
+      {
+        "seconds": 170.196,
+        "rss_kib": 255776,
+        "cpu_percent": 60.4
+      },
+      {
+        "seconds": 180.214,
+        "rss_kib": 255776,
+        "cpu_percent": 77.3
+      },
+      {
+        "seconds": 190.226,
+        "rss_kib": 255776,
+        "cpu_percent": 78.0
+      },
+      {
+        "seconds": 200.24,
+        "rss_kib": 255776,
+        "cpu_percent": 70.7
+      },
+      {
+        "seconds": 210.253,
+        "rss_kib": 255776,
+        "cpu_percent": 78.6
+      },
+      {
+        "seconds": 220.264,
+        "rss_kib": 255776,
+        "cpu_percent": 67.1
+      },
+      {
+        "seconds": 230.281,
+        "rss_kib": 255776,
+        "cpu_percent": 78.0
+      },
+      {
+        "seconds": 240.3,
+        "rss_kib": 255776,
+        "cpu_percent": 78.6
+      },
+      {
+        "seconds": 250.322,
+        "rss_kib": 255776,
+        "cpu_percent": 75.3
+      },
+      {
+        "seconds": 260.343,
+        "rss_kib": 240512,
+        "cpu_percent": 80.5
+      },
+      {
+        "seconds": 270.357,
+        "rss_kib": 240512,
+        "cpu_percent": 64.7
+      },
+      {
+        "seconds": 280.376,
+        "rss_kib": 219424,
+        "cpu_percent": 79.1
+      },
+      {
+        "seconds": 290.39,
+        "rss_kib": 219424,
+        "cpu_percent": 69.9
+      },
+      {
+        "seconds": 300.401,
+        "rss_kib": 219424,
+        "cpu_percent": 77.2
+      },
+      {
+        "seconds": 310.417,
+        "rss_kib": 219424,
+        "cpu_percent": 77.7
+      },
+      {
+        "seconds": 320.429,
+        "rss_kib": 219424,
+        "cpu_percent": 75.7
+      },
+      {
+        "seconds": 330.447,
+        "rss_kib": 201376,
+        "cpu_percent": 80.5
+      },
+      {
+        "seconds": 340.468,
+        "rss_kib": 201376,
+        "cpu_percent": 71.6
+      },
+      {
+        "seconds": 350.489,
+        "rss_kib": 201376,
+        "cpu_percent": 77.8
+      },
+      {
+        "seconds": 360.499,
+        "rss_kib": 201376,
+        "cpu_percent": 60.4
+      },
+      {
+        "seconds": 370.518,
+        "rss_kib": 201376,
+        "cpu_percent": 77.4
+      },
+      {
+        "seconds": 380.53,
+        "rss_kib": 201376,
+        "cpu_percent": 69.0
+      },
+      {
+        "seconds": 390.543,
+        "rss_kib": 201376,
+        "cpu_percent": 75.9
+      },
+      {
+        "seconds": 400.557,
+        "rss_kib": 201376,
+        "cpu_percent": 81.5
+      },
+      {
+        "seconds": 410.568,
+        "rss_kib": 201376,
+        "cpu_percent": 74.5
+      },
+      {
+        "seconds": 420.58,
+        "rss_kib": 201376,
+        "cpu_percent": 80.6
+      },
+      {
+        "seconds": 430.593,
+        "rss_kib": 201376,
+        "cpu_percent": 71.1
+      },
+      {
+        "seconds": 440.611,
+        "rss_kib": 201376,
+        "cpu_percent": 78.8
+      },
+      {
+        "seconds": 450.626,
+        "rss_kib": 201376,
+        "cpu_percent": 61.1
+      },
+      {
+        "seconds": 460.637,
+        "rss_kib": 201376,
+        "cpu_percent": 78.7
+      },
+      {
+        "seconds": 470.647,
+        "rss_kib": 201376,
+        "cpu_percent": 79.1
+      },
+      {
+        "seconds": 480.658,
+        "rss_kib": 201376,
+        "cpu_percent": 75.1
+      },
+      {
+        "seconds": 490.67,
+        "rss_kib": 201376,
+        "cpu_percent": 78.8
+      },
+      {
+        "seconds": 500.681,
+        "rss_kib": 201376,
+        "cpu_percent": 63.2
+      },
+      {
+        "seconds": 510.697,
+        "rss_kib": 201376,
+        "cpu_percent": 80.4
+      },
+      {
+        "seconds": 520.708,
+        "rss_kib": 201376,
+        "cpu_percent": 61.7
+      },
+      {
+        "seconds": 530.722,
+        "rss_kib": 201456,
+        "cpu_percent": 80.0
+      },
+      {
+        "seconds": 540.734,
+        "rss_kib": 201456,
+        "cpu_percent": 64.1
+      },
+      {
+        "seconds": 550.745,
+        "rss_kib": 201456,
+        "cpu_percent": 80.2
+      },
+      {
+        "seconds": 560.759,
+        "rss_kib": 201456,
+        "cpu_percent": 67.0
+      },
+      {
+        "seconds": 570.775,
+        "rss_kib": 201456,
+        "cpu_percent": 76.7
+      },
+      {
+        "seconds": 580.798,
+        "rss_kib": 201456,
+        "cpu_percent": 77.8
+      },
+      {
+        "seconds": 590.817,
+        "rss_kib": 201456,
+        "cpu_percent": 69.3
+      }
+    ],
+    "external_model_calls": 0,
+    "cache": "server release-fact cache cold on start; first concurrent wave reported separately; no grants or policies cached across transactions",
+    "cache_counts": null,
+    "source_sha256": {
+      "services/api/vks_api/reading.py": "7651a6898cfd1ba16618b1e781629bcb1a5bf0cbea85bb0eabbc89ae2a5d135f",
+      "services/api/vks_api/service.py": "192cc02c2b2db7ac8530f08f8eeeb6902e36e7fa6b8790ce4561773c684cd46c",
+      "services/api/vks_api/identity.py": "f83545b00e5e72d8f7d02aa6269270270700b188ea232db0f55a136419e98aa8",
+      "services/api/vks_api/workbench_v2.py": "bfabbcc6053235b58114e830502c508889eac2adfe7ab8f677fed61103de2d1c",
+      "services/api/vks_api/journeys.py": "cadae9a7345d284d103bd42394c1c8e363a6599c160446f5189bf74d6f7c80b7",
+      "scripts/benchmark_reads.py": "79b4fb3ee7cecc3b837aef8bdfe1af9af4410730b8da923bb1c436aaa81efa8e"
+    },
+    "source_changed_during_run": false
+  },
+  "hardware": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "cpu_count": "10",
+    "memory_bytes": "17179869184",
+    "hardware_model": "Mac16,10",
+    "docker": {
+      "cpus": 10,
+      "memory_bytes": 8321515520,
+      "architecture": "aarch64",
+      "storage_driver": "overlayfs"
+    },
+    "network": "loopback HTTP; PG on Docker Desktop published localhost port; no production workload",
+    "target_environment_acceptance": false,
+    "postgres_settings_raw_units": {
+      "effective_cache_size": {
+        "setting": 524288,
+        "unit": "8kB",
+        "bytes": 4294967296
+      },
+      "fsync": "on",
+      "max_connections": 100,
+      "server_version": "17.6 (Debian 17.6-2.pgdg13+1)",
+      "shared_buffers": {
+        "setting": 16384,
+        "unit": "8kB",
+        "bytes": 134217728
+      },
+      "synchronous_commit": "on"
+    }
+  },
+  "reused_evidence": {
+    "result_file": "v2-final-validation-20261028.json",
+    "sha256": "55a2d2a0e0df56920a4db9da7803c2de8ee0283a1141156ef4cb644be7275f59",
+    "unchanged_source_hashes_verified": true,
+    "sections": [
+      "reads_600s (legacy v1 profile only)",
+      "collector",
+      "analysis",
+      "capture",
+      "upgrade",
+      "mcp",
+      "environment_tests (before latest V2 Compose extension)"
+    ]
+  },
+  "initial_ci_failures": [
+    {
+      "source_commit": "4913771f515bc774cfd258ad1b005032a68039ca",
+      "run_id": 40565081493,
+      "job_id": 122404108271,
+      "passed": 401,
+      "skipped": 15,
+      "failed": 2,
+      "seconds": 444.7,
+      "tests": [
+        "test_g01_hotspot_branch_page_tree_and_url_use_one_passive_context",
+        "test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_navigation"
+      ]
+    },
+    {
+      "source_commit": "578a0b2f6bd0f4a991539916d40c2741764afd6b",
+      "run_id": 40566535055,
+      "job_id": 122409182974,
+      "passed": 402,
+      "skipped": 15,
+      "failed": 1,
+      "seconds": 475.96,
+      "tests": [
+        "test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_navigation"
+      ]
+    }
+  ],
+  "remediation": {
+    "native_history": "epoch-based user/native synchronization, duplicate event suppression, stale passive effect blocked",
+    "v2_explanation": "single read snapshot, typed Journey reads, bounded adjacency/path payload, no full workspace/body materialization",
+    "regression_tests": [
+      "two deterministic native history event-order tests",
+      "real Chromium Back/Forward and document reload",
+      "V2 closed path/evidence references and current classification/revoked-token checks"
+    ]
+  },
+  "environment_latest": {
+    "compose_v2": {
+      "status": "pass",
+      "tests_passed": 1,
+      "seconds": 103.08,
+      "scope": "new current-source images; V2 knowledge_task model queue, stage checkpoints, candidate journey, unreviewed publication blocked, human approval, frozen read and exports; own stack removed"
+    }
+  },
+  "pending": [
+    "authorized real-business materials and independent 30-action Gold",
+    "five independent users with paired task records",
+    "real model provider and approved cost limit",
+    "specified benchmark-machine acceptance",
+    "enterprise Windows device/site acceptance",
+    "production release and deployment"
+  ],
+  "static_checks": {
+    "ruff_critical": "pass",
+    "prettier_changed_frontend": "pass",
+    "engineering_diff_check": "pass",
+    "original_design_bytes": "pass (44 original v1 files and all 3 v2 attachments, including committed blobs)",
+    "encoding": "pass (148 changed engineering/document text files, UTF-8/no BOM/LF)",
+    "source_manifest_current": "pass (323 files unchanged)"
+  },
+  "skipped_main_suite": {
+    "postgres": 6,
+    "rabbitmq": 1,
+    "windows_native": 3,
+    "svn_container": 1,
+    "compose": 1,
+    "postgres_recovery": 1,
+    "v2_postgres_recovery": 1,
+    "real_flowtest": 1
+  },
+  "skipped_scope": "environment-specific successes are reported separately, not added to the 404 passed count; real FlowTest current rerun not executed",
+  "warnings_preserved": [
+    "Starlette TestClient/httpx deprecation",
+    "Vite SSR-test dependency scanner closed-server diagnostics; all assertions pass",
+    "existing production diagram bundle size warnings"
+  ],
+  "acceptance_matrix": [
+    {
+      "at": "AT01",
+      "scope": "Historical document revision/ordered sections and hashes",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/audit/test_document_reaudit.py",
+      "external_pending": null,
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT02",
+      "scope": "Explicit section identity and cross-document conflict",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/audit/test_document_reaudit.py",
+      "external_pending": null,
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT03",
+      "scope": "Wizard, raw bytes and Windows Agent",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/v2/test_collector_agent.py; tests/ui/test_v2_workspace.py",
+      "external_pending": "enterprise authorized source onboarding",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT04",
+      "scope": "Fixed Git/SVN, read-only, secrets/links/hooks",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/collector; isolated actual SVN container",
+      "external_pending": "enterprise VPN/SVN/Windows target",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT05",
+      "scope": "Visible source vectors and mismatch/unknown diagnostics",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/v2/test_source_alignment.py",
+      "external_pending": "real deployment/source alignment",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT06",
+      "scope": "Module candidates, reasons, accept/reject audit",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/v2/test_knowledge_tasks.py; tests/v2/test_onboarding_report.py",
+      "external_pending": "independent real-business precision/recall Gold",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT07",
+      "scope": "Journey DAG/CAS/undo/merge/import/export",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/v2/test_journeys.py; tests/ui/test_v2_merge.py",
+      "external_pending": "independent complex-flow UX",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT08",
+      "scope": "Passive workbench and no business requests",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/ui/test_v2_workspace.py; tests/ui/test_audit_navigation.py",
+      "external_pending": "real authorized business domain",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT09",
+      "scope": "Saved states/captures/origins and frozen history",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/ui/test_v2_capture_proposals.py",
+      "external_pending": "three real-business branches",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT10",
+      "scope": "Runner policy, network, auth and pre-storage redaction",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/runner",
+      "external_pending": "real approved business Test/Mock environment",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT11",
+      "scope": "Binding/evidence/review/causality stay separate",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/runner/test_runtime_candidates.py; tests/v2",
+      "external_pending": "real aligned Trace when a runtime causal claim is needed",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT12",
+      "scope": "Fixed action/source back-links and native history",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/ui/test_audit_navigation.py; tests/ui/test_v2_workspace.py",
+      "external_pending": "independent business localization Gold",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT13",
+      "scope": "Java/MyBatis/Feign/Kafka/Job and unresolved gaps",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/analyzers/test_java_spring.py; tests/analyzers/test_async_topology.py",
+      "external_pending": "enterprise code patterns outside finite adapters",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT14",
+      "scope": "Bounded plan/tools/candidates/citations/budget",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/models/test_task_planning.py; tests/v2/test_knowledge_tasks.py",
+      "external_pending": "real provider cost/latency/effectiveness",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT15",
+      "scope": "Checkpoint/retry/cancel/authorization/baseline disposal",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/v2/test_task_recovery.py; tests/jobs",
+      "external_pending": "real provider failure compatibility",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT16",
+      "scope": "Official stdio/HTTP SDK and shared permissions",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/mcp; tests/v2/test_mcp_v2.py",
+      "external_pending": "actual external Host/IdP",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT17",
+      "scope": "Raw Markdown/BOM/CRLF/attachments/locks/history",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/documents; tests/audit/test_document_reaudit.py",
+      "external_pending": null,
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT18",
+      "scope": "Delta/lexical changes/cache/decision preservation",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/v2/test_incremental_analysis.py; tests/v2/test_document_diff.py",
+      "external_pending": "full current dependencies still recomputed",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT19",
+      "scope": "Fixed impact/proofs/permission-filtered paths",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/v2/test_document_diff.py; tests/versions/test_versions.py",
+      "external_pending": "independent real-business impact Gold",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT20",
+      "scope": "Human CAS/review/frozen release/default rollback",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/review; tests/v2/test_journeys.py; latest Compose",
+      "external_pending": "external release signature",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT21",
+      "scope": "Five groups/widths/keyboard/states/current permission changes",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/ui",
+      "external_pending": "five-user UX/read-screen/contrast attestation",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT22",
+      "scope": "Actual V2 20 concurrency/600s HTTP and 5000-file import",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "v2_reads_600s and referenced analysis profile",
+      "external_pending": "specified benchmark machine/network acceptance",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT23",
+      "scope": "Real cloud-charging pilot",
+      "engineering_status": "not_run",
+      "evidence": "not executed",
+      "external_pending": "authorized domain, frozen 30-action Gold, three branches, five independent participants",
+      "real_business_acceptance": false
+    },
+    {
+      "at": "AT24",
+      "scope": "Actual isolated PG/queue/object restore and old-binary rollback",
+      "engineering_status": "verified_with_stated_limits",
+      "evidence": "tests/v2/test_postgres_v2.py; scripts/verify_v2_upgrade.py",
+      "external_pending": "production upgrade/rollback signature",
+      "real_business_acceptance": false
+    }
+  ],
+  "private_raw_evidence_sha256": {
+    "make-check-engineering.log": "c68cb1563185e144a5883efbe14670f74d7700eaccd1d1186d1128496172fd3a",
+    "compose-v2-engineering.log": "d18ac5297105aa679f91f76442e1b78e8aa4f30f8c44571060aedac53d181f06",
+    "ci-linux-0a3becc.log": "cff95ca6a34858f683b9c381f294811e279e97763fd9bdf4f3aacf51dd65c776",
+    "ci-windows-packaged-0a3becc.log": "a63a277a8f26fa26d961314f923e8de0002c194aa8f0d3ed551362cdce1a3a78",
+    "ci-pg-0a3becc.log": "0d38a62110c20f8ec393fe9080bc028fc53531b194cde04260a70c7fc2386c77",
+    "ci-linux-4913771-failure.log": "47f1c7682b86d740c4510d130b2ee858c6658b8f326e801a1da813adad27725c",
+    "ci-linux-578a0b2-failure.log": "bdab41d85edb58da152013ba84314498a9b1a037420cb4f59e1bc284b56f879e",
+    "reads-v2-600s.json": "3f731199d8c656323546d468a72026e927fb77fac32ad64eed8467ad97135633"
+  },
+  "full_v2_acceptance": false,
+  "release_stage": "development_preview",
+  "data_and_service_scope": "isolated synthetic stores/containers; no production migration or switch-over; existing user services not restarted"
+}
