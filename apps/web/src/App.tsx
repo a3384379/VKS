@@ -64,6 +64,7 @@ import { ProjectCockpit } from "./ProjectCockpit";
 import { OnboardingWizard } from "./OnboardingWizard";
 import { JourneyCanvas } from "./JourneyCanvas";
 import { AgentWorkspace } from "./AgentWorkspace";
+import { HashRouteSync } from "./route-sync";
 import {
   primaryNavigation,
   navigationGroup,
@@ -162,12 +163,12 @@ function workspaceHash(
 }
 export default function App() {
   const workspaceRequest = useRef(0);
-  const writtenRoute = useRef<{
-    view: View;
-    projectId: string;
-    baseline: string;
-    navigation: string;
-  } | null>(null);
+  const routeSync = useRef(new HashRouteSync(window.location.hash));
+  const [routeEpoch, setRouteEpoch] = useState(0);
+  const beginUserRoute = useCallback(
+    () => setRouteEpoch(routeSync.current.user()),
+    [],
+  );
   const [session, setSession] = useState<Session | null>(null),
     [authError, setAuthError] = useState("");
   const [projects, setProjects] = useState<Project[]>([]),
@@ -221,6 +222,7 @@ export default function App() {
           explanationRef.current,
           intent,
         );
+        beginUserRoute();
         explanationRef.current = next;
         setExplanation(next);
         setSelectedId(next.actionId);
@@ -228,18 +230,19 @@ export default function App() {
         notify((error as Error).message, "error");
       }
     },
-    [notify],
+    [notify, beginUserRoute],
   );
   const setSelected = useCallback(
     (id: string) => {
       if (workspaceRef.current?.actions.some((action) => action.id === id)) {
         navigateExplanation({ actionId: id, followTarget: false });
       } else {
+        beginUserRoute();
         setSelectedId(id);
         if (!id) setExplanation(emptyNavigation);
       }
     },
-    [navigateExplanation],
+    [navigateExplanation, beginUserRoute],
   );
   useEffect(() => {
     if (!w || w.project.id !== projectId) return;
@@ -452,26 +455,13 @@ export default function App() {
       selected,
       explanation,
     );
-    const previous = writtenRoute.current;
-    const scopeChanged =
-      previous &&
-      (previous.view !== view ||
-        previous.projectId !== projectId ||
-        previous.baseline !== baseline ||
-        previous.navigation !== JSON.stringify(explanation));
-    if (window.location.hash !== hash) {
-      if (session?.authenticated && previous?.projectId && scopeChanged) {
-        history.pushState(null, "", hash);
-      } else {
-        history.replaceState(null, "", hash);
-      }
-    }
-    writtenRoute.current = {
-      view,
-      projectId,
-      baseline,
-      navigation: JSON.stringify(explanation),
-    };
+    const mode = routeSync.current.commit(
+      routeEpoch,
+      window.location.hash,
+      hash,
+    );
+    if (mode === "push") history.pushState(null, "", hash);
+    else if (mode === "replace") history.replaceState(null, "", hash);
   }, [
     view,
     projectId,
@@ -479,6 +469,7 @@ export default function App() {
     selected,
     explanation,
     session?.authenticated,
+    routeEpoch,
   ]);
   useEffect(() => {
     function applyLocation() {
@@ -500,6 +491,14 @@ export default function App() {
         (query.get("scenario") || "") !== explanation.scenarioId ||
         (query.get("state") || "") !== explanation.stateKey;
       if (changed && unsavedChanges.current) {
+        const restored = workspaceHash(
+          view,
+          projectId,
+          baseline,
+          selected,
+          explanation,
+        );
+        routeSync.current.restore(restored);
         history.replaceState(
           null,
           "",
@@ -508,6 +507,9 @@ export default function App() {
         notify("草稿尚未保存，请先保存或还原本地修改", "error");
         return;
       }
+      const epoch = routeSync.current.native(window.location.hash);
+      if (epoch === null) return;
+      setRouteEpoch(epoch);
       setView(nextView);
       setProjectId(nextProject);
       setBaseline(nextBaseline);
@@ -588,6 +590,7 @@ export default function App() {
       notify("草稿尚未保存，请先保存或还原本地修改", "error");
       return;
     }
+    beginUserRoute();
     setView(next);
     if (entity) setSelected(entity.id);
   }
@@ -906,7 +909,7 @@ export default function App() {
                     </Button>
                     <Button
                       kind="primary"
-                      onClick={() => setView("imports")}
+                      onClick={() => navigate("imports")}
                       disabled={
                         !projectId ||
                         !hasProjectPermission(
@@ -1090,6 +1093,7 @@ export default function App() {
           onClose={() => setCreateOpen(false)}
           onCreate={async (p) => {
             await loadProjects();
+            beginUserRoute();
             setProjectId(p.id);
             setBaseline("");
             setView("overview");

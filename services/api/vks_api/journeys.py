@@ -206,12 +206,24 @@ class JourneyService:
         with reading.db() as s:
             analysis, release = reading.baseline(s, actor, pid, analysis_set_id, release_id)
             choices, _ = reading.selections(s, analysis, release)
-            visible = reading.visible_ids(s, actor, pid, choices)
-            return [
-                self._dto(s, row)
-                for row in reading.revision_rows(s, visible.values())
-                if s.get(Entity, row.entity_id).type == "journey"
-            ]
+            return self._selected_list(s, actor, pid, choices)
+
+    def _selected_list(self, s, actor, pid, choices):
+        """Read only selected journey bodies, with current reference policies."""
+        from .reading import chunks
+
+        reading = ReadingService(self.service)
+        journey_choices = {}
+        for batch in chunks(choices.values()):
+            journey_choices.update(
+                s.execute(
+                    select(Revision.entity_id, Revision.id)
+                    .join(Entity, Revision.entity_id == Entity.id)
+                    .where(Revision.project_id == pid, Revision.id.in_(batch), Entity.type == "journey")
+                ).all()
+            )
+        visible = reading.visible_ids(s, actor, pid, journey_choices)
+        return [self._dto(s, row) for row in reading.revision_rows(s, visible.values())]
 
     def clone_for_analysis(self, s, actor, target, changed):
         from copy import deepcopy

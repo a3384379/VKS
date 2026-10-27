@@ -87,18 +87,24 @@ def test_report_and_journey_respect_current_artifact_classification(store):
         journeys.get(limited, pid, row["journey_id"], row["revision_id"])
 
 
-def test_coverage_explanation_same_fixed_baseline_and_no_false_trace(store):
+def test_coverage_explanation_same_fixed_baseline_and_no_false_trace(store, monkeypatch):
     service, actor, pid, w, _, _ = store
     aid = w["selected_analysis_set"]["id"]
     result = coverage(service, actor, pid, aid)
     assert result["actions"] == {"confirmed": 0, "total": len(w["actions"])}
     assert result["knowledge_health"]["unverified_runtime_actions"] == len(w["actions"])
     assert result["knowledge_health"]["action_denominator"] == len(w["actions"])
+    monkeypatch.setattr(
+        service,
+        "workspace",
+        lambda *a, **k: pytest.fail("A bounded V2 action read must not materialize the full workspace"),
+    )
     action = w["actions"][0]
     result = explanation(service, actor, pid, action["entity_id"], aid)
     assert result["action_revision_id"] == action["entity_revision_id"]
     assert not result["relations"]
     assert result["source_alignment"] == "unknown"
+    assert all("content" not in row for row in result["entities"])
 
 
 def test_model_call_reservation_survives_failure_retry_without_extra_call(store, monkeypatch):

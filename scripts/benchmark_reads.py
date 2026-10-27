@@ -259,6 +259,9 @@ def run(args):
         "services/api/vks_api/reading.py",
         "services/api/vks_api/service.py",
         "services/api/vks_api/identity.py",
+        "services/api/vks_api/workbench_v2.py",
+        "services/api/vks_api/journeys.py",
+        "scripts/benchmark_reads.py",
     )
     source_hashes = {name: sha256((root / name).read_bytes()).hexdigest() for name in source_names}
     service = Service(folder)
@@ -356,12 +359,20 @@ def run(args):
                 if client:
                     if kind == "action":
                         response = client.get(
-                            f"/api/v1/actions/{action}/context", params={"project_id": pid, "release_id": rid}
+                            f"/api/v2/actions/{action}/explanation" if args.v2 else f"/api/v1/actions/{action}/context",
+                            params={"project_id": pid, "release_id": rid},
                         )
                     elif kind == "graph":
                         response = client.get(
-                            f"/api/v1/entities/{action}/relations",
-                            params={"project_id": pid, "release_id": rid, "depth": 2, "max_nodes": 50},
+                            f"/api/v2/entities/{action}/knowledge-map"
+                            if args.v2
+                            else f"/api/v1/entities/{action}/relations",
+                            params={
+                                "project_id": pid,
+                                "release_id": rid,
+                                "depth": 2,
+                                "max_nodes": 100 if args.v2 else 50,
+                            },
                         )
                     elif kind == "workspace":
                         response = client.get(f"/api/v1/projects/{pid}/workspace", params={"release_id": rid})
@@ -442,6 +453,9 @@ def run(args):
         "transport": "HTTP loopback, machine-token auth and response serialization"
         if args.http
         else "application-service method calls; HTTP/serialization excluded",
+        "api_profile": "v2 explanation/100-node map + shared search"
+        if args.v2
+        else "legacy v1 context/50-node map + shared search",
         "hardware": {
             "platform": platform.platform(),
             "cpu_count": sysctl("hw.ncpu"),
@@ -477,6 +491,12 @@ if __name__ == "__main__":
     parser.add_argument("--operation", choices=["mixed", "action", "search", "graph", "workspace"], default="mixed")
     parser.add_argument("--output", required=True)
     parser.add_argument(
+        "--v2", action="store_true", help="Exercise the V2 action composer and 100-node knowledge map over HTTP"
+    )
+    parser.add_argument(
         "--http", action="store_true", help="Start an isolated loopback API and include auth/serialization"
     )
-    run(parser.parse_args())
+    args = parser.parse_args()
+    if args.v2 and not args.http:
+        parser.error("--v2 requires --http so its measured endpoints cannot fall back to legacy service calls")
+    run(args)

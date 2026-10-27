@@ -14,7 +14,8 @@ let server,
   route,
   merge,
   arrange,
-  layered;
+  layered,
+  HashRouteSync;
 before(async () => {
   cacheDir = await mkdtemp(join(tmpdir(), "vks-journey-"));
   server = await createServer({
@@ -37,6 +38,44 @@ before(async () => {
   ({ layeredMap: layered } = await server.ssrLoadModule(
     "/src/graph-layout.ts",
   ));
+  ({ HashRouteSync } = await server.ssrLoadModule("/src/route-sync.ts"));
+});
+
+test("native history wins over stale passive effects and duplicate browser events", () => {
+  const route = new HashRouteSync("#state=a");
+  const user = route.user();
+  assert.equal(route.commit(0, "#state=a", "#state=a"), null);
+  assert.equal(route.commit(user, "#state=a", "#state=b"), "push");
+  // Back changes location before its event or React's previous passive effect.
+  assert.equal(route.commit(user, "#state=a", "#state=b"), null);
+  const back = route.native("#state=a");
+  assert.equal(route.native("#state=a"), null);
+  assert.equal(route.commit(user, "#state=a", "#state=b"), null);
+  assert.equal(route.commit(back, "#state=a", "#state=a"), "none");
+  // Forward arrives after the Back DOM commits but before its passive effect.
+  assert.equal(route.commit(back, "#state=b", "#state=a"), null);
+  const forward = route.native("#state=b");
+  assert.equal(route.commit(forward, "#state=b", "#state=b"), "none");
+  assert.equal(
+    route.commit(forward, "#state=b", "#state=b&ui_page=exact"),
+    "replace",
+  );
+});
+
+test("document deep links survive stale overview writes and normalize without extra history", () => {
+  const route = new HashRouteSync("#view=overview");
+  const target = "#view=documents&entity=doc";
+  assert.equal(route.commit(0, target, "#view=overview"), null);
+  const epoch = route.native(target);
+  assert.equal(route.commit(0, target, "#view=overview"), null);
+  assert.equal(route.commit(epoch, target, target), "none");
+  assert.equal(
+    route.commit(epoch, target, target + "&baseline=exact"),
+    "replace",
+  );
+  route.restore(target);
+  assert.equal(route.native(target), null);
+  assert.equal(route.commit(epoch, target, target), "none");
 });
 after(async () => {
   await server?.close();

@@ -64,6 +64,45 @@ def test_context_graph_and_search_do_not_load_whole_workspace(ctx, monkeypatch):
     assert service.search(owner, project["id"], {"query": "开票", "analysis_set_id": aid})
 
 
+def test_v2_paths_are_closed_fixed_and_recheck_current_evidence_policies(ctx, monkeypatch):
+    from vks_api.workbench_v2 import explanation
+
+    service, owner, project, workspace, _ = ctx
+    release = publish(ctx)
+    action = workspace["actions"][0]["entity_id"]
+    monkeypatch.setattr(service, "workspace", lambda *a, **k: pytest.fail("V2 explanations must stay bounded"))
+    before = explanation(service, owner, project["id"], action, release_id=release["id"])
+    assert before["release_id"] == release["id"] and before["paths"]
+    nodes = {row["entity_revision_id"] for row in before["entities"]}
+    relations = {row["id"]: row for row in before["relations"]}
+    evidence = {row["id"] for row in before["evidence"]}
+    assert nodes == {before["action_revision_id"]} | {rid for path in before["paths"] for rid in path["revision_ids"]}
+    assert set(relations) == {rid for path in before["paths"] for rid in path["relation_ids"]}
+    for path in before["paths"]:
+        assert 1 <= len(path["relation_ids"]) <= 3
+        assert set(path["evidence_ids"]) <= evidence
+        for i, rid in enumerate(path["relation_ids"]):
+            edge = relations[rid]
+            assert edge["review_status"] == "confirmed" and edge["validity_status"] == "valid"
+            assert set(path["revision_ids"][i : i + 2]) == {edge["from_revision_id"], edge["to_revision_id"]}
+    token = service.create_token(
+        owner, project["id"], {"name": "V2 reader", "scopes": ["knowledge:read"], "expires_in_days": 1}
+    )
+    limited = service.authenticate(token["token"], "token")
+    public_before = explanation(service, limited, project["id"], action, release_id=release["id"])
+    doc = workspace["documents"][0]
+    with service.db() as db:
+        db.get(Artifact, doc["artifact_id"]).sensitivity = "confidential"
+    after = explanation(service, limited, project["id"], action, release_id=release["id"])
+    hidden = {row["entity_revision_id"] for row in public_before["entities"] if row["type"] in ("document", "section")}
+    assert hidden and not hidden & {row["entity_revision_id"] for row in after["entities"]}
+    assert explanation(service, owner, project["id"], action, release_id=release["id"]) == before
+    service.revoke_token(owner, project["id"], token["id"])
+    with pytest.raises(DomainError) as exc:
+        explanation(service, limited, project["id"], action, release_id=release["id"])
+    assert exc.value.status == 401
+
+
 def test_fixed_release_cache_never_caches_grants_or_new_artifact_policies(ctx):
     service, owner, project, workspace, _ = ctx
     release = publish(ctx)

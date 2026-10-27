@@ -81,69 +81,93 @@ def coverage(service, actor, pid, analysis_set_id=None, release_id=None):
 
 
 def explanation(service, actor, pid, eid, analysis_set_id=None, release_id=None):
-    context = service.action_context(actor, pid, eid, analysis_set_id, release_id, depth=3, max_nodes=100)
-    w = service.workspace(
-        actor, pid, context["analysis_set_id"] if not context.get("release_id") else None, context.get("release_id")
-    )
-    by_revision = {row["entity_revision_id"]: row for row in w["entities"]}
-    selected = {row["entity_revision_id"] for row in context["entities"]}
-    nodes = [row for rid, row in by_revision.items() if rid in selected]
-    seed = context["action"]["entity_revision_id"]
-    paths = []
-    frontier = [(seed, [seed], [])]
-    truncated = len(selected) >= 100
-    while frontier and len(paths) < 120:
-        current, visited, relations = frontier.pop(0)
-        if len(relations) >= 3:
-            continue
-        for edge in context["relations"]:
-            if current not in (edge["from_revision_id"], edge["to_revision_id"]):
+    from collections import defaultdict, deque
+    from sqlalchemy import select
+    from .models import Evidence
+    from .reading import ReadingService, chunks
+
+    reading = ReadingService(service)
+    with reading.db() as s:
+        graph, analysis, release = reading._graph(
+            s, actor, pid, eid, analysis_set_id, release_id, 3, 100, None, True, "trusted"
+        )
+        action = next((row for row in graph["nodes"] if row["entity_id"] == eid and row["type"] == "action"), None)
+        if not action:
+            raise DomainError("VKS_NOT_FOUND", "未找到当前版本操作", 404)
+        seed = action["entity_revision_id"]
+        adjacent = defaultdict(list)
+        for edge in graph["edges"]:
+            adjacent[edge["from_revision_id"]].append(edge)
+            adjacent[edge["to_revision_id"]].append(edge)
+        paths = []
+        frontier = deque([(seed, [seed], [])])
+        truncated = graph["truncated"]
+        while frontier and len(paths) < 120:
+            current, visited, relations = frontier.popleft()
+            if len(relations) >= 3:
                 continue
-            target = edge["to_revision_id"] if edge["from_revision_id"] == current else edge["from_revision_id"]
-            if target in visited:
-                continue
-            edges = [*relations, edge]
-            path = [*visited, target]
-            paths.append(
-                dict(
-                    revision_ids=path,
-                    relation_ids=[r["id"] for r in edges],
-                    causal_basis=[r["causal_basis"] for r in edges],
-                    review_status=[r["review_status"] for r in edges],
-                    evidence_ids=sorted({eid for r in edges for eid in r["evidence_ids"]}),
-                    interpretation="知识关联路径；不表示完整运行调用链",
+            for edge in adjacent[current]:
+                target = edge["to_revision_id"] if edge["from_revision_id"] == current else edge["from_revision_id"]
+                if target in visited:
+                    continue
+                edges = [*relations, edge]
+                path = [*visited, target]
+                paths.append(
+                    dict(
+                        revision_ids=path,
+                        relation_ids=[r["id"] for r in edges],
+                        causal_basis=[r["causal_basis"] for r in edges],
+                        review_status=[r["review_status"] for r in edges],
+                        evidence_ids=sorted({key for r in edges for key in r["evidence_ids"]}),
+                        interpretation="知识关联路径；不表示完整运行调用链",
+                    )
+                )
+                if len(paths) >= 120:
+                    truncated = True
+                    break
+                frontier.append((target, path, edges))
+        choices, _ = reading.selections(s, analysis, release)
+        journeys = [
+            row
+            for row in JourneyService(service)._selected_list(s, actor, pid, choices)
+            if any(node.get("binding", {}).get("revision_id") == seed for node in row["dsl"]["nodes"])
+        ]
+        path_relations = {rid for path in paths for rid in path["relation_ids"]}
+        path_nodes = {seed} | {rid for path in paths for rid in path["revision_ids"]}
+        relations = [row for row in graph["edges"] if row["id"] in path_relations]
+        needed_evidence = {key for row in relations for key in row["evidence_ids"]}
+        evidence = []
+        for batch in chunks(needed_evidence):
+            evidence.extend(
+                service.evidence_dto(row)
+                for row in s.scalars(
+                    select(Evidence).where(
+                        Evidence.project_id == pid, Evidence.analysis_set_id == analysis.id, Evidence.id.in_(batch)
+                    )
                 )
             )
-            if len(paths) >= 120:
-                truncated = True
-                break
-            frontier.append((target, path, edges))
-    journeys = [
-        row
-        for row in JourneyService(service).list(
-            actor,
-            pid,
-            w["selected_analysis_set"]["id"] if not w["selected_release"] else None,
-            (w["selected_release"] or {}).get("id"),
+        omitted = len(relations) < len(graph["edges"])
+        return dict(
+            project_id=pid,
+            analysis_set_id=analysis.id,
+            release_id=release.id if release else None,
+            action_id=eid,
+            action_revision_id=seed,
+            source_vector=service._visible_sources(s, actor, pid, analysis.sources),
+            source_alignment=analysis.runtime_alignment,
+            entities=[
+                {key: value for key, value in row.items() if key != "content"}
+                for row in graph["nodes"]
+                if row["entity_revision_id"] in path_nodes
+            ],
+            paths=paths,
+            journeys=journeys,
+            relations=relations,
+            evidence=evidence,
+            is_truncated=truncated or omitted,
+            unknowns=[*graph["unknowns"], "没有经核验且与源码版本对齐的 Trace 时，不能宣称完整运行因果链"]
+            + (["有限路径仅返回已列出路径涉及的关联；循环、其他分支或超限关联需在局部图中继续核对"] if omitted else []),
         )
-        if any(node.get("binding", {}).get("revision_id") == seed for node in row["dsl"]["nodes"])
-    ]
-    return dict(
-        project_id=pid,
-        analysis_set_id=context["analysis_set_id"],
-        release_id=context.get("release_id"),
-        action_id=eid,
-        action_revision_id=seed,
-        source_vector=w["sources"],
-        source_alignment=context["runtime_alignment"],
-        entities=nodes,
-        paths=paths,
-        journeys=journeys,
-        relations=context["relations"],
-        evidence=context["evidence"],
-        is_truncated=truncated,
-        unknowns=[*context["unknowns"], "没有经核验且与源码版本对齐的 Trace 时，不能宣称完整运行因果链"],
-    )
 
 
 def install_workbench(app, service, actor, envelope):
