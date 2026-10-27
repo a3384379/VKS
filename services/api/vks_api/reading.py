@@ -10,6 +10,7 @@ from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import RLock
+import re
 
 from sqlalchemy import Text, cast, func, literal, or_, select
 from sqlalchemy.orm import load_only
@@ -29,27 +30,116 @@ PUBLIC_FIELDS = (
 
 
 def relation_is_visible(row, revision_ids, evidence_ids):
-    return (row["from_revision_id"] in revision_ids and row["to_revision_id"] in revision_ids
-            and bool(set(row["evidence_ids"]) & evidence_ids))
+    return (
+        row["from_revision_id"] in revision_ids
+        and row["to_revision_id"] in revision_ids
+        and bool(set(row["evidence_ids"]) & evidence_ids)
+    )
+
+
+def scenario_trace_required(metadata):
+    graph = (metadata or {}).get("dsl", {}).get("explanation_graph", {})
+    return any(
+        item.get("evidenceOrigin") == "observed" for item in [*graph.get("states", []), *graph.get("transitions", [])]
+    )
+
+
+def capture_source_required(s, pid, capture_ids):
+    if not capture_ids:
+        return False
+    rows = s.scalars(select(Artifact).where(Artifact.project_id == pid, Artifact.snapshot_id.in_(capture_ids)))
+    return any(
+        art.kind == "source"
+        or art.sensitivity == "confidential"
+        or (art.metadata_json or {}).get("requires_source_read")
+        for art in rows
+    )
+
+
+def scenario_source_required(s, pid, metadata):
+    graph = (metadata or {}).get("dsl", {}).get("explanation_graph", {})
+    ids = {
+        row["captureRef"]
+        for row in [*graph.get("states", []), *graph.get("transitions", [])]
+        if row.get("evidenceOrigin") == "observed" and row.get("captureRef")
+    }
+    return capture_source_required(s, pid, ids)
 
 
 def artifact_policy(s, artifact):
     """Read-time quarantine for legacy model outputs with unknown input scope."""
     metadata = dict(artifact.metadata_json or {})
+    if artifact.relative_path.startswith(("journeys/", "task-reports/")):
+        source, trace = False, False
+        for rid in metadata.get("journey_binding_revisions", []):
+            revision = s.get(Revision, rid)
+            if not revision:
+                source, trace = True, True
+                continue
+            target = s.get(Artifact, revision.artifact_id) if revision.artifact_id else None
+            policy = artifact_policy(s, target) if target else {}
+            source = (
+                source
+                or s.get(Entity, revision.entity_id).type in ("symbol", "sql", "table")
+                or bool(target and (target.kind == "source" or target.sensitivity == "confidential"))
+                or policy.get("requires_source_read", False)
+            )
+            trace = (
+                trace
+                or bool(target and target.kind in ("trace", "capture"))
+                or policy.get("requires_trace_read", False)
+            )
+            if s.get(Entity, revision.entity_id).type == "scenario":
+                trace = trace or scenario_trace_required(revision.metadata_json)
+                source = source or scenario_source_required(s, revision.project_id, revision.metadata_json)
+        for aid in metadata.get("journey_capture_artifacts", []):
+            target = s.get(Artifact, aid)
+            trace = True
+            source = (
+                source
+                or not target
+                or target.sensitivity == "confidential"
+                or target.kind == "source"
+                or (target.metadata_json or {}).get("requires_source_read", False)
+            )
+        return dict(
+            metadata,
+            requires_source_read=bool(source or metadata.get("requires_source_read")),
+            requires_trace_read=bool(trace or metadata.get("requires_trace_read")),
+        )
     root, seen = artifact, set()
     while root and root.id not in seen:
         seen.add(root.id)
         provenance = root.metadata_json.get("input_provenance")
-        if isinstance(provenance, list) and provenance and all(isinstance(row, dict)
+        if (
+            isinstance(provenance, list)
+            and provenance
+            and all(
+                isinstance(row, dict)
                 and {"artifact_id", "evidence_id", "sha256", "requires_source_read", "requires_trace_read"} <= set(row)
-                and type(row["requires_source_read"]) is bool and type(row["requires_trace_read"]) is bool
-                for row in provenance):
-            return dict(metadata,
-                requires_source_read=bool(metadata.get("requires_source_read") or any(row["requires_source_read"] for row in provenance)),
-                requires_trace_read=bool(metadata.get("requires_trace_read") or any(row["requires_trace_read"] for row in provenance)))
+                and type(row["requires_source_read"]) is bool
+                and type(row["requires_trace_read"]) is bool
+                for row in provenance
+            )
+        ):
+            return dict(
+                metadata,
+                requires_source_read=bool(
+                    metadata.get("requires_source_read") or any(row["requires_source_read"] for row in provenance)
+                ),
+                requires_trace_read=bool(
+                    metadata.get("requires_trace_read") or any(row["requires_trace_read"] for row in provenance)
+                ),
+            )
         if root.relative_path.startswith("documents/generated-"):
-            legacy = s.scalar(select(Revision.id).where(Revision.artifact_id == root.id,
-                Revision.metadata_json["source_kind"].as_string().in_(["ai_generated", "generated"])).limit(1))
+            legacy = s.scalar(
+                select(Revision.id)
+                .where(
+                    Revision.artifact_id == root.id,
+                    Revision.metadata_json["source_kind"].as_string().in_(["ai_generated", "generated"]),
+                )
+                .limit(1)
+            )
             if legacy:
                 return dict(metadata, requires_source_read=True, requires_trace_read=True)
         original = root.metadata_json.get("original_artifact_id")
@@ -66,6 +156,8 @@ def explanation_relation(row, policy):
         return row["review_status"] == "candidate" and row["validity_status"] == "valid"
     if policy == "review":
         return row["validity_status"] != "valid"
+    if policy == "map":
+        return True  # All visible, non-rejected relationships; UI keeps review/validity labels.
     raise ValueError("Unknown explanation relation policy")
 
 
@@ -81,6 +173,7 @@ class FrozenIndex:
     outgoing: dict
     incoming: dict
     evidence_ids: set
+    neighbors_by_policy: dict
 
     @classmethod
     def build(cls, manifest):
@@ -88,12 +181,18 @@ class FrozenIndex:
         outgoing = defaultdict(dict)
         incoming = defaultdict(dict)
         evidence = set()
+        neighbors = {policy: defaultdict(set) for policy in (None, "trusted", "candidate", "review", "map")}
         for value in manifest["relations"]:
             row = dict(value, evidence_ids=tuple(value["evidence_ids"]))
             outgoing[row["from_revision_id"]].setdefault(row["to_revision_id"], []).append(row)
             incoming[row["to_revision_id"]].setdefault(row["from_revision_id"], []).append(row)
             evidence.update(row["evidence_ids"])
-        return cls(selections, dict(outgoing), dict(incoming), evidence)
+            if row["evidence_ids"]:
+                for policy, adjacent in neighbors.items():
+                    if policy is None or explanation_relation(row, policy):
+                        adjacent[row["from_revision_id"]].add(row["to_revision_id"])
+                        adjacent[row["to_revision_id"]].add(row["from_revision_id"])
+        return cls(selections, dict(outgoing), dict(incoming), evidence, {p: dict(v) for p, v in neighbors.items()})
 
 
 class ReadingService:
@@ -220,14 +319,24 @@ class ReadingService:
                     Artifact.metadata_json,
                     Artifact.id,
                     Artifact.relative_path,
+                    Revision.metadata_json,
                 )
                 .join(Entity, Revision.entity_id == Entity.id)
                 .outerjoin(Artifact, Revision.artifact_id == Artifact.id)
                 .where(Revision.project_id == pid, Revision.id.in_(batch))
             )
-            for rid, eid, kind, art_kind, sensitivity, metadata, artifact_id, path in rows:
-                if artifact_id and ((path or "").startswith("documents/generated-") or (metadata or {}).get("original_artifact_id")):
+            for rid, eid, kind, art_kind, sensitivity, metadata, artifact_id, path, revision_metadata in rows:
+                if artifact_id and (
+                    (path or "").startswith(("documents/generated-", "journeys/"))
+                    or (metadata or {}).get("original_artifact_id")
+                ):
                     metadata = artifact_policy(s, s.get(Artifact, artifact_id))
+                if kind == "scenario" and scenario_trace_required(revision_metadata):
+                    metadata = dict(
+                        metadata or {},
+                        requires_trace_read=True,
+                        requires_source_read=scenario_source_required(s, pid, revision_metadata),
+                    )
                 if self.policy_visible(art_kind, sensitivity, metadata, source, trace, kind):
                     visible[eid] = rid
         return visible
@@ -247,7 +356,14 @@ class ReadingService:
         batches = chunks(ids) if ids is not None else [None]
         for batch in batches:
             query = (
-                select(Evidence.id, Artifact.kind, Artifact.sensitivity, Artifact.metadata_json, Artifact.id, Artifact.relative_path)
+                select(
+                    Evidence.id,
+                    Artifact.kind,
+                    Artifact.sensitivity,
+                    Artifact.metadata_json,
+                    Artifact.id,
+                    Artifact.relative_path,
+                )
                 .join(Artifact, Artifact.id == Evidence.artifact_id)
                 .where(Evidence.project_id == pid, Evidence.analysis_set_id == aid)
             )
@@ -306,8 +422,20 @@ class ReadingService:
             query = query.where(or_(Relation.from_revision_id.in_(frontier), Relation.to_revision_id.in_(frontier)))
         return [self.service.relation_dto(row) for row in s.scalars(query)]
 
-    def _graph(self, s, actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_types, extended,
-               explanation_policy=None):
+    def _graph(
+        self,
+        s,
+        actor,
+        pid,
+        eid,
+        analysis_set_id,
+        release_id,
+        depth,
+        max_nodes,
+        relation_types,
+        extended,
+        explanation_policy=None,
+    ):
         from .service import DomainError
 
         if not 1 <= depth <= 3 or not 1 <= max_nodes <= 200:
@@ -325,16 +453,18 @@ class ReadingService:
         truncated = False
 
         def usable(row):
-            return ((not relation_types or row["relation_type"] in relation_types)
-                    and relation_is_visible(row, allowed, valid_evidence)
-                    and (explanation_policy is None or explanation_relation(row, explanation_policy)))
+            return (
+                (not relation_types or row["relation_type"] in relation_types)
+                and relation_is_visible(row, allowed, valid_evidence)
+                and (explanation_policy is None or explanation_relation(row, explanation_policy))
+            )
 
         for _ in range(depth):
             neighbors = set()
-            if index and not relation_types and explanation_policy is None and index.evidence_ids <= valid_evidence:
+            if index and not relation_types and index.evidence_ids <= valid_evidence:
+                adjacent = index.neighbors_by_policy[explanation_policy]
                 for node in frontier:
-                    neighbors.update(index.outgoing.get(node, {}))
-                    neighbors.update(index.incoming.get(node, {}))
+                    neighbors.update(adjacent.get(node, ()))
             else:
                 for row in self.edge_rows(s, analysis.id, index, frontier=frontier):
                     if usable(row) and row["from_revision_id"] in allowed and row["to_revision_id"] in allowed:
@@ -378,8 +508,9 @@ class ReadingService:
                 s, actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_types, extended
             )[0]
 
-    def action_context(self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50,
-                       relation_policy="trusted"):
+    def action_context(
+        self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50, relation_policy="trusted"
+    ):
         from .service import DomainError, sha
 
         with self.db() as s:
@@ -558,6 +689,30 @@ class ReadingService:
                                 func.vks_json_casefold(cast(column, Text)).contains(query, autoescape=True)
                                 for column in (Revision.metadata_json, Revision.locator)
                             ),
+                        )
+                    )
+                elif self.service.engine.dialect.name == "postgresql" and re.fullmatch(r"[A-Za-z0-9_./-]+", query):
+                    # Conservative SQL candidates only. Unicode/escaped JSON
+                    # always falls back to the exact Python casefold below.
+                    columns = (
+                        Revision.name,
+                        Entity.stable_key,
+                        Revision.content,
+                        Artifact.relative_path,
+                        cast(Revision.metadata_json, Text),
+                        cast(Revision.locator, Text),
+                    )
+                    statement = statement.where(
+                        or_(
+                            *(
+                                clause
+                                for column in columns
+                                for clause in (
+                                    func.lower(column).contains(query, autoescape=True),
+                                    column.op("~")(r"[^\x20-\x7e]"),
+                                    column.contains("\\u", autoescape=True),
+                                )
+                            )
                         )
                     )
                 for (

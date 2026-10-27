@@ -55,6 +55,7 @@ ROLE_SCOPES = {
 }
 SOURCE_TYPES = {"symbol", "sql", "table"}
 JOB_SCOPES = {
+    "knowledge_task": "analysis:run",
     "import": "source:import",
     "index": "analysis:run",
     "generate_documents": "analysis:run",
@@ -420,6 +421,7 @@ class Service:
 
     def _visible_sources(self, s, actor, pid, sources):
         from .reading import artifact_policy
+
         visible = []
         for source in sources:
             rows = list(
@@ -589,31 +591,30 @@ class Service:
         return [self.relation_dto(r) for r in s.scalars(select(Relation).where(Relation.analysis_set_id == a.id)).all()]
 
     def _visible_revision(self, s, actor, pid, r):
-        from .reading import artifact_policy
+        from .reading import artifact_policy, scenario_trace_required, scenario_source_required
+
+        if not r:
+            return False
         art = s.get(Artifact, r.artifact_id) if r.artifact_id else None
         policy = artifact_policy(s, art) if art else {}
         source_restricted = s.get(Entity, r.entity_id).type in SOURCE_TYPES or (
-            art
-            and (
-                art.kind == "source"
-                or art.sensitivity == "confidential"
-                or policy.get("requires_source_read")
-            )
+            art and (art.kind == "source" or art.sensitivity == "confidential" or policy.get("requires_source_read"))
         )
         trace_restricted = art and (art.kind in ("trace", "capture") or policy.get("requires_trace_read"))
+        if s.get(Entity, r.entity_id).type == "scenario" and scenario_trace_required(r.metadata_json):
+            trace_restricted = True
+            source_restricted = source_restricted or scenario_source_required(s, pid, r.metadata_json)
         return (not source_restricted or self._can(s, actor, pid, "source:read")) and (
             not trace_restricted or self._can(s, actor, pid, "trace:read")
         )
 
     def _visible_evidence(self, s, actor, pid, e):
         from .reading import artifact_policy
+
         a = s.get(Artifact, e.artifact_id)
         policy = artifact_policy(s, a)
         return (
-            (
-                (a.kind != "source" and not policy.get("requires_source_read"))
-                or self._can(s, actor, pid, "source:read")
-            )
+            ((a.kind != "source" and not policy.get("requires_source_read")) or self._can(s, actor, pid, "source:read"))
             and (
                 (a.kind not in ("trace", "capture") and not policy.get("requires_trace_read"))
                 or self._can(s, actor, pid, "trace:read")
@@ -781,7 +782,7 @@ class Service:
     def _put_object(self, data):
         h = sha(data)
         p = self.data_dir / "objects" / h
-        if not p.exists():
+        if not p.exists() or p.is_symlink() or p.stat().st_size != len(data) or sha(p.read_bytes()) != h:
             tmp = p.with_name(h + "." + secrets.token_hex(8))
             tmp.write_bytes(data)
             tmp.chmod(0o600)
@@ -854,7 +855,10 @@ class Service:
     def _new_job(self, s, actor, pid, kind, payload):
         # Reserved server context: callers cannot inject or widen this ceiling.
         authorization = {
-            "version": 1, "actor_id": actor.id, "project_id": pid, "kind": kind,
+            "version": 1,
+            "actor_id": actor.id,
+            "project_id": pid,
+            "kind": kind,
             "scopes": sorted(scope for scope in actor.scopes if self._can(s, actor, pid, scope)),
         }
         j = Job(
@@ -1000,7 +1004,7 @@ class Service:
             if j.kind == "detect_drift" and "result" in dto:
                 from .versions import VersionService
 
-                dto["result"] = VersionService(self).public_report(actor, j.project_id, dto["result"])
+                dto["result"] = VersionService(self).public_report(actor, j.project_id, dto["result"], s)
             return dto
 
     def cancel_job(self, actor, jid, reason="用户取消", pid=None):
@@ -1249,11 +1253,13 @@ class Service:
                 from .documents import DocumentService
                 from .versions import VersionService
                 from .scenarios import ScenarioService
+                from .journeys import JourneyService
 
                 blockers = (
                     DocumentService.assert_publishable(s, a)
                     + VersionService.assert_publishable(s, a)
                     + ScenarioService(self).assert_publishable(s, a)
+                    + JourneyService(self).assert_publishable(s, a)
                 )
                 if not all(self._visible_revision(s, actor, pid, r) for r in self._revisions(s, a.id)):
                     raise DomainError("VKS_FORBIDDEN", "需要读取全部待发布材料的权限", 403)
@@ -1341,12 +1347,14 @@ class Service:
                 from .documents import DocumentService
                 from .versions import VersionService
                 from .scenarios import ScenarioService
+                from .journeys import JourneyService
 
                 blockers = (
                     c.blockers
                     + DocumentService.assert_publishable(s, a)
                     + VersionService.assert_publishable(s, a)
                     + ScenarioService(self).assert_publishable(s, a)
+                    + JourneyService(self).assert_publishable(s, a)
                 )
                 if blockers:
                     raise DomainError("VKS_STATE_CONFLICT", "存在发布阻断项", 409, {"blockers": blockers})
@@ -1433,11 +1441,14 @@ class Service:
             actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_types, extended
         )
 
-    def action_context(self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50,
-                       relation_policy="trusted"):
+    def action_context(
+        self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50, relation_policy="trusted"
+    ):
         from .reading import ReadingService
 
-        return ReadingService(self).action_context(actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_policy)
+        return ReadingService(self).action_context(
+            actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_policy
+        )
 
     def find_entity_project(self, actor, eid):
         with self.db() as s:
@@ -1747,6 +1758,7 @@ class Service:
 
     def artifact_bytes(self, actor, pid, aid):
         from .reading import artifact_policy
+
         with self.db() as s:
             self.require(s, actor, pid)
             a = s.get(Artifact, aid)

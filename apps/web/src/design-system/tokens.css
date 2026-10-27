@@ -1,0 +1,14 @@
+:root {
+  --blue: #2868ef;
+  --ink: #112744;
+  --muted: #5b708e;
+  --border: #dce8f7;
+  --soft: #f3f8ff;
+  --v2-surface: #fff;
+  --v2-secondary: #ecf4ff;
+  --v2-selected: #e7f1ff;
+  --v2-shadow: 0 12px 40px #28508709, 0 2px 8px #28508704;
+  --v2-radius: 16px;
+  color: var(--ink);
+  background: var(--soft);
+}

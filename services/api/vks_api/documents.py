@@ -15,7 +15,7 @@ from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, sele
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .knowledge import AnalysisSource, SourceSnapshot
-from .models import Analysis, Artifact, Base, Entity, Evidence, Identified, Relation, Revision, Selection, now, uid
+from .models import Analysis, Artifact, Base, Entity, Evidence, Identified, Relation, Release, Revision, Selection, now, uid
 
 
 def digest(value):
@@ -174,29 +174,101 @@ class DocumentService:
             fail("VKS_NOT_FOUND", "未找到当前版本文档", 404)
         return entity, analysis, selection, revision
 
-    def _sections(self, s, document, revision, aid=None):
+    @staticmethod
+    def _section_gap(reason):
+        fail("VKS_DOCUMENT_SECTIONS_UNRESOLVED", "文档修订的章节映射不完整或存在歧义；请核对冻结发布清单，不能以最新章节替代历史内容",
+             409, {"reason": reason})
+
+    @classmethod
+    def _mapped_sections(cls, s, document, artifact_id, ids):
+        if not isinstance(ids, list) or any(not isinstance(rid, str) for rid in ids) or len(ids) != len(set(ids)):
+            cls._section_gap("invalid_mapping")
+        rows = [s.get(Revision, rid) for rid in ids]
+        identities = set()
+        for row in rows:
+            entity = s.get(Entity, row.entity_id) if row else None
+            if (not row or not entity or entity.type != "section" or entity.project_id != document.project_id
+                    or row.project_id != document.project_id
+                    or row.artifact_id != artifact_id or row.metadata_json.get("document_key") != document.stable_key
+                    or row.entity_id in identities):
+                cls._section_gap("invalid_mapping")
+            identities.add(row.entity_id)
+        return rows
+
+    @classmethod
+    def with_sections(cls, s, document, artifact, rows, metadata):
+        """Membership participates in the immutable document revision's full hash."""
+        ids = [row.id for row in rows]
+        cls._mapped_sections(s, document, artifact.id if artifact else None, ids)
+        return dict(metadata, section_revision_ids=ids, section_count=len(ids))
+
+    @classmethod
+    def _legacy_sections(cls, s, document, revision, rows):
+        # A legacy set must be complete and match this exact document's bytes
+        # and locators. Multiple revisions of one entity are never collapsed.
+        rows = [row for row in rows if s.get(Entity, row.entity_id).type == "section"
+                and row.metadata_json.get("document_key") == document.stable_key]
+        expected = revision.metadata_json.get("section_count")
+        if expected == 0 and not rows:
+            return []
+        headings = parse_sections(revision.content, revision.name)
+        if len(rows) != len(headings) or (expected is not None and len(rows) != expected):
+            cls._section_gap("ambiguous_legacy_sections")
+        ordinals = [row.metadata_json.get("ordinal") for row in rows]
+        if (any(type(index) is not int for index in ordinals) or set(ordinals) != set(range(len(headings)))
+                or len(set(ordinals)) != len(ordinals)):
+            cls._section_gap("ambiguous_legacy_sections")
+        rows.sort(key=lambda row: row.metadata_json["ordinal"])
+        cls._mapped_sections(s, document, revision.artifact_id, [row.id for row in rows])
+        lines = revision.content.splitlines()
+        for row, heading in zip(rows, headings):
+            start, end = row.locator.get("startLine"), row.locator.get("endLine")
+            if (not isinstance(start, int) or not isinstance(end, int) or start != heading["startLine"]
+                    or end < start or end > max(1, len(lines))
+                    or row.metadata_json.get("heading_path") != heading["heading_path"]
+                    or row.metadata_json.get("document_revision_id") not in (None, revision.id)
+                    or row.content.rstrip("\r\n") != "\n".join(lines[start - 1:end]).rstrip("\r\n")):
+                cls._section_gap("invalid_legacy_sections")
+        return rows
+
+    @classmethod
+    def _sections(cls, s, document, revision, aid=None):
+        if "section_revision_ids" in revision.metadata_json:
+            rows = cls._mapped_sections(s, document, revision.artifact_id, revision.metadata_json["section_revision_ids"])
+            if revision.metadata_json.get("section_count") != len(rows):
+                cls._section_gap("invalid_mapping")
+            return rows
+        # Frozen releases are authoritative for legacy revisions. All matching
+        # releases must agree; neither newest nor earliest wins a conflict.
+        frozen_sets = {}
+        for release in s.scalars(select(Release).where(Release.project_id == document.project_id)):
+            choices = release.manifest_json["selections"]
+            if any(choice["entity_revision_id"] == revision.id for choice in choices):
+                if digest(canonical(release.manifest_json)) != release.manifest_sha256:
+                    cls._section_gap("invalid_release_mapping")
+                rows = [s.get(Revision, choice["entity_revision_id"]) for choice in choices]
+                if any(row is None for row in rows):
+                    cls._section_gap("invalid_release_mapping")
+                rows = cls._legacy_sections(s, document, revision, rows)
+                frozen_sets[tuple(row.id for row in rows)] = rows
+        if len(frozen_sets) > 1:
+            cls._section_gap("conflicting_release_mappings")
+        if frozen_sets:
+            return next(iter(frozen_sets.values()))
+        candidates = list(s.scalars(select(Revision).where(
+            Revision.project_id == document.project_id, Revision.artifact_id == revision.artifact_id)))
+        linked = [row for row in candidates if row.metadata_json.get("document_revision_id") == revision.id]
+        if linked:
+            return cls._legacy_sections(s, document, revision, linked)
         if aid:
-            rows = self.service._revisions(s, aid)
-        else:
-            rows = list(
-                s.scalars(
-                    select(Revision).where(
-                        Revision.project_id == document.project_id, Revision.artifact_id == revision.artifact_id
-                    )
-                )
-            )
-        return [
-            r
-            for r in rows
-            if (
-                s.get(Entity, r.entity_id).type == "section"
-                and r.metadata_json.get("document_key") == document.stable_key
-                and (
-                    not r.metadata_json.get("document_revision_id")
-                    or r.metadata_json.get("document_revision_id") == revision.id
-                )
-            )
-        ]
+            # Only a writer explicitly operating on this selected draft may
+            # use its selections to construct a NEW mapped document revision.
+            selected = s.get(Selection, (aid, document.id))
+            if selected and selected.entity_revision_id == revision.id:
+                rows = list(s.scalars(select(Revision).join(Selection, Selection.entity_revision_id == Revision.id)
+                                      .where(Selection.analysis_set_id == aid)))
+                return cls._legacy_sections(s, document, revision, rows)
+        return cls._legacy_sections(s, document, revision, candidates)
 
     def _revision(self, s, entity, artifact, name, content, locator, metadata):
         payload = {
@@ -360,17 +432,7 @@ class DocumentService:
                 workflow_state="editing",
                 identity_ambiguities=ambiguities,
             )
-            new = self._revision(
-                s,
-                document,
-                artifact,
-                sections[0]["title"],
-                markdown,
-                {"kind": "file", "path": artifact.relative_path},
-                metadata,
-            )
-            selection.entity_revision_id = new.id
-            old_to_new, evidence_for_revision = {old.id: new.id}, {}
+            old_to_new, evidence_for_revision, chapters = {}, {}, []
             for index, row in enumerate(sections):
                 prior = matched.get(index)
                 entity = (
@@ -388,7 +450,6 @@ class DocumentService:
                     s.flush()
                 chapter_metadata = {
                     "document_key": document.stable_key,
-                    "document_revision_id": new.id,
                     "heading_path": row["heading_path"],
                     "ordinal": row["ordinal"],
                     "body_fingerprint": row["body_fingerprint"],
@@ -402,6 +463,7 @@ class DocumentService:
                     "endLine": row["endLine"],
                 }
                 chapter = self._revision(s, entity, artifact, row["title"], row["content"], locator, chapter_metadata)
+                chapters.append(chapter)
                 selected = s.get(Selection, (analysis.id, entity.id))
                 if selected:
                     selected.entity_revision_id = chapter.id
@@ -428,6 +490,11 @@ class DocumentService:
                 s.add(evidence)
                 s.flush()
                 evidence_for_revision[chapter.id] = evidence.id
+            metadata = self.with_sections(s, document, artifact, chapters, metadata)
+            new = self._revision(s, document, artifact, sections[0]["title"], markdown,
+                                 {"kind": "file", "path": artifact.relative_path}, metadata)
+            selection.entity_revision_id = new.id
+            old_to_new[old.id] = new.id
             removed = [r for r in previous if r.entity_id not in used]
             for removed_revision in removed:
                 old_selection = s.get(Selection, (analysis.id, removed_revision.entity_id))
@@ -496,7 +563,7 @@ class DocumentService:
             "markdown": revision.content,
             "sections": [
                 self.service.entity_dto(s, r, True)
-                for r in sorted(sections, key=lambda r: r.metadata_json.get("ordinal", 0))
+                for r in sections
             ],
             "row_version": revision.metadata_json.get("row_version", 1),
             "original_artifact_id": revision.metadata_json.get("original_artifact_id", revision.artifact_id),
@@ -647,12 +714,26 @@ class DocumentService:
 
     @staticmethod
     def assert_publishable(s, analysis):
+        from .service import DomainError
         blockers = []
+        selected_sections = {}
+        for row in s.scalars(select(Revision).join(Selection, Selection.entity_revision_id == Revision.id)
+                             .where(Selection.analysis_set_id == analysis.id)):
+            key = row.metadata_json.get("document_key")
+            if key and s.get(Entity, row.entity_id).type == "section":
+                selected_sections.setdefault(key, set()).add(row.id)
         for selection in s.scalars(select(Selection).where(Selection.analysis_set_id == analysis.id)):
             revision = s.get(Revision, selection.entity_revision_id)
             entity = s.get(Entity, selection.entity_id)
             if entity.type != "document":
                 continue
+            try:
+                expected = {row.id for row in DocumentService._sections(s, entity, revision)}
+                current = selected_sections.get(entity.stable_key, set())
+                if expected != current:
+                    blockers.append("文档修订与当前章节选择不一致：" + entity.id)
+            except DomainError:
+                blockers.append("文档历史章节映射存在缺口：" + entity.id)
             workflow = s.scalar(
                 select(DocumentWorkflow).where(
                     DocumentWorkflow.analysis_set_id == analysis.id, DocumentWorkflow.document_id == entity.id

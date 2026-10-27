@@ -136,6 +136,8 @@ def markdown_zip(service, release, capabilities, rows, relations, evidence):
             path = f"source-excerpts/{entity.id}.txt"
         elif entity.type == "scenario":
             path = f"scenarios/{entity.id}.json"
+        elif entity.type == "journey":
+            path = f"journeys/{entity.id}.json"
         else:
             continue
         raw = clean(rev.content).encode()
@@ -367,6 +369,12 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
         return {"path": path, "sha256": digest(raw)}
 
     for entity, revision, _ in rows:
+        if entity.type == "journey":
+            add_sidecar("export/journeys/" + entity.id + ".json", "fixture", {
+                "kind": "passive_journey_definition", "schema_version": "2.0", "review_required": True,
+                "approval_transferred": False, "definition": json.loads(clean(revision.content)),
+                "reimport_policy": "Preserved as data; rebind exact destination revisions before creating a candidate journey.",
+            })
         if entity.type == "scenario":
             add_sidecar(
                 "export/scenarios/" + entity.id + ".json",
@@ -554,7 +562,7 @@ def pdf_report(service, release, rows, relations):
         Spacer(1, 12),
     ]
     for entity, rev, _ in rows:
-        if entity.type not in ("document", "scenario"):
+        if entity.type not in ("document", "scenario", "journey"):
             continue
         story.append(Paragraph(escape(clean(rev.name)), heading))
         story.append(Paragraph(f"类型：{entity.type} / 修订：{rev.id}", note))

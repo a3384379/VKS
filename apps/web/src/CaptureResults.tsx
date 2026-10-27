@@ -33,12 +33,14 @@ export function ObservedStateSurface({
   index,
   analysisId,
   releaseId,
+  ariaLabel = "当前观察状态快照",
 }: {
   projectId: string;
   captureId: string;
   index: number;
   analysisId?: string;
   releaseId?: string;
+  ariaLabel?: string;
 }) {
   const query = new URLSearchParams(
     releaseId
@@ -69,7 +71,7 @@ export function ObservedStateSurface({
   const snapshot =
     loaded?.key === key ? loaded.value.result.snapshots?.[index] : null;
   return (
-    <div aria-label="当前观察状态快照">
+    <div aria-label={ariaLabel}>
       <Notice>
         运行观察 · 已脱敏 · 页面和动作关联为人工声明，未核实后端因果。
       </Notice>
@@ -93,12 +95,14 @@ export function CaptureResults({
   capture,
   onClose,
   onBind,
+  initialIndex = 0,
 }: {
   capture: Capture;
   onClose: () => void;
   onBind?: (action: boolean, index: number) => void;
+  initialIndex?: number;
 }) {
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(initialIndex);
   const snapshot = capture.result.snapshots?.[index];
   const source = snapshot
     ? `/api/v1/captures/${capture.id}/artifacts/${snapshot.dom_artifact_id}`

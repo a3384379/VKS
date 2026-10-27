@@ -246,7 +246,15 @@ def test_authored_hotspots_and_scenario_definitions_export_as_explicit_derivativ
     parsed = parse_bundle(exported, p["key"])
     assert any(e["stable_key"] == "manual.exported" and e["type"] == "action" for e in parsed.entities)
     assert any(a["content"] == raw for a in parsed.artifacts)
-    assert parsed.relations and all(e["kind"] == "manual" for e in parsed.evidence)
+    evidence = {item["stable_key"]: item for item in parsed.evidence}
+    manual_relations = [row for row in parsed.relations if row["to_key"] == "manual.exported"]
+    assert manual_relations and all(
+        evidence[eid]["kind"] == "manual" for row in manual_relations for eid in row["evidence_keys"]
+    )
+    # The new unique-ID discovery stays static across a page metadata annotation
+    # and export; a person's separate hotspot must not relabel that provenance.
+    assert any(item["kind"] == "static" for item in parsed.evidence)
+    assert all(row["causal_basis"] != "correlated_runtime" for row in parsed.relations)
     definition = next(
         json.loads(a["content"])
         for a in parsed.artifacts

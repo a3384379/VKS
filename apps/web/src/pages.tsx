@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { layeredMap } from "./graph-layout";
+import { BusinessReferences } from "./BusinessReferences";
+import { ReviewInbox } from "./ReviewInbox";
+import { StateReplay } from "./StateReplay";
+import { ActionChain } from "./ActionChain";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -55,7 +60,7 @@ import {
   issueText,
   label,
 } from "./components";
-import { useWorkspace, usePermission } from "./context";
+import { ReadScope, useWorkspace, usePermission } from "./context";
 import { TeamSettings } from "./TeamSettings";
 import { SourceManagement } from "./SourceManagement";
 import { NewDraftButton } from "./DraftActions";
@@ -639,6 +644,9 @@ export function Workbench() {
   return (
     <>
       <ScenarioStudio />
+      <ReadScope>
+        <StateReplay />
+      </ReadScope>
       <Notice>
         <strong>讲解模式只选择知识对象</strong>
         <span className="notice-detail">
@@ -852,7 +860,7 @@ export function Workbench() {
             </Notice>
           )}
           <div className="detail-tabs">
-            {["业务说明", "接口", "实现", "文档", "证据"].map((t) => (
+            {["业务说明", "接口", "实现", "数据", "文档", "证据"].map((t) => (
               <button
                 key={t}
                 className={tab === t ? "active" : ""}
@@ -1047,6 +1055,27 @@ export function Workbench() {
                   />
                 )}
               </>
+            ) : tab === "数据" ? (
+              <>
+                {entities
+                  .filter((e) => ["sql", "table"].includes(e.type))
+                  .map((e) => (
+                    <div className="code-evidence" key={e.id}>
+                      <strong>{e.name}</strong>
+                      <code>{e.stable_key}</code>
+                      <pre>{e.content}</pre>
+                      <ArrowLink onClick={() => navigate("graph", e)}>
+                        查看原始定位
+                      </ArrowLink>
+                    </div>
+                  ))}
+                {!entities.some((e) => ["sql", "table"].includes(e.type)) && (
+                  <Empty
+                    title="尚无数据对象依据"
+                    description="动态 SQL 与参数不按接口名称推断。"
+                  />
+                )}
+              </>
             ) : tab === "文档" ? (
               <>
                 {sections.map((e) => (
@@ -1097,6 +1126,11 @@ export function Workbench() {
           </div>
         </Panel>
       </div>
+      {action && (
+        <ReadScope>
+          <ActionChain actionId={action.id} />
+        </ReadScope>
+      )}
     </>
   );
 }
@@ -1903,65 +1937,68 @@ export function Graph() {
     [zoom, setZoom] = useState(1);
   const center =
     w.entities.find((e) => e.id === selected) || w.actions[0] || w.entities[0];
-  const graph = useMemo(() => {
-    if (!center)
-      return { nodes: [] as Entity[], edges: [] as Relation[], total: 0 };
-    const all = w.relations.filter(
-      (r) => !confirmedOnly || r.review_status === "confirmed",
-    );
-    const reached = new Set([center.entity_revision_id]);
-    let frontier = new Set(reached);
-    for (let i = 0; i < depth; i++) {
-      const next = new Set<string>();
-      for (const r of all) {
-        if (frontier.has(r.from_revision_id)) next.add(r.to_revision_id);
-        if (frontier.has(r.to_revision_id)) next.add(r.from_revision_id);
-      }
-      for (const n of next) reached.add(n);
-      frontier = next;
-    }
-    const nodes = [
-      center,
-      ...w.entities.filter(
-        (e) => e.id !== center.id && reached.has(e.entity_revision_id),
-      ),
-    ];
-    const shown = nodes.slice(0, 13);
-    const ids = new Set(shown.map((e) => e.entity_revision_id));
-    return {
-      nodes: shown,
-      edges: all.filter(
-        (r) => ids.has(r.from_revision_id) && ids.has(r.to_revision_id),
-      ),
-      total: nodes.length,
-    };
-  }, [center?.id, w.entities, w.relations, depth, confirmedOnly]);
-  const points = new Map(
-    graph.nodes.map((n, i) => [
-      n.entity_revision_id,
-      i === 0
-        ? { x: 450, y: 330 }
-        : {
-            x:
-              450 +
-              300 *
-                Math.cos(
-                  -Math.PI / 2 +
-                    ((i - 1) * 2 * Math.PI) /
-                      Math.max(graph.nodes.length - 1, 1),
-                ),
-            y:
-              330 +
-              225 *
-                Math.sin(
-                  -Math.PI / 2 +
-                    ((i - 1) * 2 * Math.PI) /
-                      Math.max(graph.nodes.length - 1, 1),
-                ),
-          },
-    ]),
+  type MapData = {
+    nodes: Entity[];
+    edges: Relation[];
+    truncated: boolean;
+    unknowns: string[];
+  };
+  const [mapResult, setMapResult] = useState<{
+      key: string;
+      value: MapData;
+    } | null>(null),
+    [mapError, setMapError] = useState("");
+  const visibility = w.entities.map((row) => row.entity_revision_id).join(",");
+  const mapKey = `${w.project.id}:${w.selected_analysis_set?.id}:${w.selected_analysis_set?.selection_version}:${w.selected_release?.id}:${center?.entity_revision_id}:${depth}:${confirmedOnly}:${visibility}`;
+  useEffect(() => {
+    const controller = new AbortController();
+    setMapResult(null);
+    setMapError("");
+    if (!center) return;
+    const q = new URLSearchParams({
+      project_id: w.project.id,
+      depth: String(depth),
+      max_nodes: "100",
+      confirmed_only: String(confirmedOnly),
+      ...(w.selected_release
+        ? { release_id: w.selected_release.id }
+        : { analysis_set_id: w.selected_analysis_set?.id || "" }),
+    });
+    void api<MapData>(`/api/v2/entities/${center.id}/knowledge-map?${q}`, {
+      signal: controller.signal,
+    })
+      .then((value) => {
+        if (!controller.signal.aborted) setMapResult({ key: mapKey, value });
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setMapError(e.message);
+      });
+    return () => controller.abort();
+  }, [mapKey]);
+  const mapData = mapResult?.key === mapKey ? mapResult.value : null;
+  const graph = {
+    nodes: mapData?.nodes || [],
+    edges: mapData?.edges || [],
+    total: mapData?.nodes.length || 0,
+    truncated: mapData?.truncated || false,
+  };
+  const layout = layeredMap(
+    graph.nodes.map((row) => row.entity_revision_id),
+    graph.edges,
+    center?.entity_revision_id || "",
   );
-  const related = w.relations.filter(
+  const points = layout.points;
+  const mapScroller = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (mapData && mapScroller.current) {
+      mapScroller.current.scrollTop = Math.max(
+        0,
+        (points.get(center?.entity_revision_id || "")?.y || 0) - 300,
+      );
+      mapScroller.current.scrollLeft = 0;
+    }
+  }, [mapResult?.key]);
+  const related = graph.edges.filter(
     (r) =>
       center &&
       (r.from_revision_id === center.entity_revision_id ||
@@ -2052,6 +2089,10 @@ export function Graph() {
             ))}
         </Panel>
       )}
+      {mapError && <Notice tone="red">{mapError}</Notice>}
+      {!mapData && !mapError && (
+        <p role="status">正在读取最多 100 个同版可见图谱节点…</p>
+      )}
       <div className="graph-layout">
         <div className="graph-canvas">
           <div className="graph-baseline">
@@ -2059,100 +2100,139 @@ export function Graph() {
             {w.selected_analysis_set?.name}
             <Tag>局部视图</Tag>
           </div>
-          <div className="graph-inner" style={{ transform: `scale(${zoom})` }}>
-            <svg
-              className="graph-edges"
-              width="900"
-              height="660"
-              viewBox="0 0 900 660"
+          <div
+            className="v2-graph-scroll"
+            ref={mapScroller}
+            tabIndex={0}
+            aria-label="可滚动知识图谱"
+          >
+            <div
+              className="graph-inner"
+              style={{
+                transform: `scale(${zoom})`,
+                width: layout.width,
+                height: layout.height,
+              }}
             >
-              <defs>
-                <marker
-                  id="arrow"
-                  viewBox="0 0 10 10"
-                  refX="9"
-                  refY="5"
-                  markerWidth="6"
-                  markerHeight="6"
-                  orient="auto-start-reverse"
-                >
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#8ca3c7" />
-                </marker>
-                <marker
-                  id="arrow-pending"
-                  viewBox="0 0 10 10"
-                  refX="9"
-                  refY="5"
-                  markerWidth="6"
-                  markerHeight="6"
-                  orient="auto-start-reverse"
-                >
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#dc981f" />
-                </marker>
-              </defs>
-              {graph.edges.map((r) => {
-                const from = points.get(r.from_revision_id),
-                  to = points.get(r.to_revision_id);
-                if (!from || !to) return null;
-                const dx = to.x - from.x,
-                  dy = to.y - from.y,
-                  l = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-                const x1 = from.x + (dx / l) * 65,
-                  y1 = from.y + (dy / l) * 40,
-                  x2 = to.x - (dx / l) * 80,
-                  y2 = to.y - (dy / l) * 45;
-                return (
-                  <g
-                    key={r.id}
-                    className={r.review_status === "candidate" ? "pending" : ""}
+              <svg
+                className="graph-edges"
+                width={layout.width}
+                height={layout.height}
+                viewBox={`0 0 ${layout.width} ${layout.height}`}
+              >
+                <defs>
+                  <marker
+                    id="arrow"
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
                   >
-                    <line
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      markerEnd={
-                        r.review_status === "candidate"
-                          ? "url(#arrow-pending)"
-                          : "url(#arrow)"
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#8ca3c7" />
+                  </marker>
+                  <marker
+                    id="arrow-pending"
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#dc981f" />
+                  </marker>
+                </defs>
+                {graph.edges.map((r) => {
+                  const verifiedRuntime =
+                    r.causal_basis === "correlated_runtime" &&
+                    r.review_status === "confirmed" &&
+                    r.validity_status === "valid" &&
+                    w.selected_analysis_set?.runtime_alignment === "matched";
+                  const from = points.get(r.from_revision_id),
+                    to = points.get(r.to_revision_id);
+                  if (!from || !to) return null;
+                  const dx = to.x - from.x,
+                    dy = to.y - from.y,
+                    l = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+                  const x1 = from.x + (dx / l) * 65,
+                    y1 = from.y + (dy / l) * 40,
+                    x2 = to.x - (dx / l) * 80,
+                    y2 = to.y - (dy / l) * 45;
+                  return (
+                    <g
+                      key={r.id}
+                      className={
+                        r.review_status === "candidate" ? "pending" : ""
                       }
-                    />
-                    <rect
-                      x={(x1 + x2) / 2 - 33}
-                      y={(y1 + y2) / 2 - 11}
-                      width="66"
-                      height="22"
-                      rx="11"
-                    />
-                    <text
-                      x={(x1 + x2) / 2}
-                      y={(y1 + y2) / 2 + 4}
-                      textAnchor="middle"
                     >
-                      {label(relationType(r))}
-                    </text>
-                  </g>
+                      <line
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        strokeDasharray={
+                          verifiedRuntime
+                            ? undefined
+                            : r.causal_basis === "static_potential"
+                              ? "6 4"
+                              : "2 5"
+                        }
+                        style={{
+                          stroke:
+                            r.validity_status !== "valid" ||
+                            r.review_status === "rejected"
+                              ? "#c65d67"
+                              : verifiedRuntime
+                                ? "#138a72"
+                                : r.causal_basis === "static_potential"
+                                  ? "#6293d5"
+                                  : "#8c6cbb",
+                        }}
+                        markerEnd={
+                          r.review_status === "candidate"
+                            ? "url(#arrow-pending)"
+                            : "url(#arrow)"
+                        }
+                      />
+                      <rect
+                        x={(x1 + x2) / 2 - 33}
+                        y={(y1 + y2) / 2 - 11}
+                        width="66"
+                        height="22"
+                        rx="11"
+                      />
+                      <text
+                        x={(x1 + x2) / 2}
+                        y={(y1 + y2) / 2 + 4}
+                        textAnchor="middle"
+                      >
+                        {label(relationType(r))}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+              {graph.nodes.map((e) => {
+                const pos = points.get(e.entity_revision_id)!;
+                return (
+                  <button
+                    className={`graph-node ${e.entity_revision_id === center.entity_revision_id ? "central" : ""} ${e.type}`}
+                    key={e.id}
+                    style={{ left: pos.x, top: pos.y }}
+                    onClick={() => setSelected(e.id)}
+                  >
+                    <span className="graph-node-type">
+                      {entityIcon(e.type, 15)}
+                      {label(e.type)}
+                    </span>
+                    <strong>{e.name}</strong>
+                    <small>{e.stable_key}</small>
+                  </button>
                 );
               })}
-            </svg>
-            {graph.nodes.map((e, i) => {
-              const pos = points.get(e.entity_revision_id)!;
-              return (
-                <button
-                  className={`graph-node ${i === 0 ? "central" : ""} ${e.type}`}
-                  key={e.id}
-                  style={{ left: pos.x, top: pos.y }}
-                  onClick={() => setSelected(e.id)}
-                >
-                  <span className="graph-node-type">
-                    {entityIcon(e.type, 15)}
-                    {label(e.type)}
-                  </span>
-                  <strong>{e.name}</strong>
-                  <small>{e.stable_key}</small>
-                </button>
-              );
-            })}
+            </div>
           </div>
           <div className="graph-controls">
             <button
@@ -2175,8 +2255,8 @@ export function Graph() {
           <div className="graph-count">
             显示 {graph.nodes.length} / {graph.total} 个局部节点 ·{" "}
             {graph.edges.length} 条关系
-            {graph.total > graph.nodes.length &&
-              ` · ${graph.total - graph.nodes.length} 个可见节点因显示上限收起，可通过搜索定位`}
+            {graph.truncated &&
+              " · 已达到 100 节点上限，结果已截断，可通过搜索重新定位"}
           </div>
         </div>
         <div>
@@ -2185,6 +2265,9 @@ export function Graph() {
             title="当前对象"
             action={<Tag>{label(center.type)}</Tag>}
           >
+            <ReadScope>
+              <BusinessReferences entityId={center.id} />
+            </ReadScope>
             <h2>{center.name}</h2>
             <code className="logical-key">{center.stable_key}</code>
             {center.content && (
@@ -2233,15 +2316,17 @@ export function Graph() {
               <div>
                 <span className="legend-line" />
                 <section>
-                  <strong>已确认关系</strong>
-                  <small>审核轴为 confirmed，仍需查看有效性</small>
+                  <strong>已核对运行关联</strong>
+                  <small>已确认、有效且运行版本匹配；不表示完整执行链</small>
                 </section>
               </div>
               <div>
                 <span className="legend-line dashed" />
                 <section>
-                  <strong>待审核候选</strong>
-                  <small>需人工检查业务含义和证据</small>
+                  <strong>静态候选 / 未知关联</strong>
+                  <small>
+                    虚线为静态潜在关联，点线为未建立运行依据；审核状态独立显示
+                  </small>
                 </section>
               </div>
               <div>
@@ -2414,6 +2499,9 @@ export function Versions() {
           发布将冻结当前实体修订、关系审核与来源清单；后续修改需要新的草稿。
         </span>
       </Notice>
+      <ReadScope>
+        <ReviewInbox />
+      </ReadScope>
       <ChangeProposals />
       <div className="versions-layout">
         <Panel
@@ -2614,6 +2702,8 @@ export function Versions() {
                           removed: "删除",
                           modified: "内容变化",
                           moved: "位置变化",
+                          renamed: "名称变化",
+                          non_semantic: "纯注释 / 格式变化",
                         } as Record<string, string>
                       )[String(c.change_kind)] || String(c.change_kind)}
                     </Tag>

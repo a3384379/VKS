@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-27",
+  "status": "development_preview_local_synthetic_passed_not_v2_release",
+  "branch": "codex/vks-2-upgrade",
+  "base_commit": "b8926b0d2665034f24d85a534ec258d544398990",
+  "source_manifest": "v2-development-source-manifest-20261027.json",
+  "source_sha256": "3b43d481e990b6edeb8953fdd03cb10fa5c69bc817f52d1214293f09d1576d64",
+  "working_tree": "uncommitted_includes_preexisting_document_reaudit",
+  "make_check": {
+    "exit_code": 0,
+    "duration_seconds": 149.41,
+    "python": {
+      "passed": 334,
+      "skipped": 11,
+      "failed": 0,
+      "duration_seconds": 128.06
+    },
+    "frontend": {
+      "passed": 36,
+      "failed": 0,
+      "duration_ms": 743.417958
+    },
+    "build": {
+      "passed": true,
+      "duration_seconds": 16.2
+    }
+  },
+  "static_checks": {
+    "prettier": true,
+    "ruff_E9_F63_F7_F82": true,
+    "git_diff_check": true,
+    "utf8_without_bom_lf": true,
+    "original_v1_design_44_files": true,
+    "original_v2_design_3_files": true
+  },
+  "mcp": {
+    "original_tools": 18,
+    "additive_tools": 5,
+    "total_tools": 23,
+    "official_stdio_sdk": true,
+    "official_streamable_http_sdk": true,
+    "machine_approval_publish": false
+  },
+  "browser": {
+    "isolated": true,
+    "widths": [
+      1600,
+      1440,
+      1024,
+      768,
+      375
+    ],
+    "concurrent_edit_preserved": true,
+    "network_scope": "synthetic_local_fixture_only",
+    "cli_walkthrough": true,
+    "passive_state_origins_tested": [
+      "declared",
+      "simulated",
+      "observed"
+    ],
+    "manual_three_state_comparison_origin": "declared",
+    "preview_and_browser_stopped": true
+  },
+  "prior_failures": {
+    "initial_journey": 3,
+    "first_full_check": {
+      "passed": 327,
+      "skipped": 11,
+      "failed": 4
+    },
+    "fixed_regressions": [
+      "oauth_metadata_v1_prefix",
+      "capture_accessible_name_ambiguity",
+      "dirty_document_copy",
+      "hidden_upload_overflow",
+      "narrow_navigation_accessible_name",
+      "mcp_job_enums"
+    ]
+  },
+  "database": {
+    "new_ddl": false,
+    "local_test_engine": "SQLite",
+    "postgres_environment_tests_rerun": false
+  },
+  "not_executed": [
+    "real_model_provider",
+    "real_business_trial",
+    "independent_30_action_gold",
+    "five_user_ux_trial",
+    "production_capacity",
+    "postgres_upgrade_restore",
+    "rabbitmq_environment",
+    "enterprise_idp_acceptance",
+    "github_push_ci",
+    "deployment"
+  ],
+  "remaining_engineering": [
+    "Windows_collector_agent_UI",
+    "file_level_incremental_parser_cache",
+    "natural_language_tool_planning",
+    "generic_stage_resume",
+    "capture_to_branch_journey_automation",
+    "Kafka_XXLJob_adapters",
+    "full_multi_source_alignment_diagnostics"
+  ],
+  "real_external_model_calls": 0,
+  "production_release": false,
+  "v2_originals": [
+    {
+      "path": "docs/upgrades/v2/design/VKS_2.0_Codex_任务拆解与实施提示词.md",
+      "size_bytes": 7870,
+      "sha256": "1989e229ce94f800d5ca900ba63e2b5b2f0d931666dc99c7db7682efe534f3c1"
+    },
+    {
+      "path": "docs/upgrades/v2/design/VKS_2.0_UI_概念原型.html",
+      "size_bytes": 54844,
+      "sha256": "dfdfa214d8a9eee5dd51479b0eed7fda4164a30fe0232023fe7e2141f73c5f6c"
+    },
+    {
+      "path": "docs/upgrades/v2/design/VKS_2.0_完整产品升级与技术设计.md",
+      "size_bytes": 56260,
+      "sha256": "5d3559e429ceea120cb65e3a8f9e1553779a8405bff0e65347604c9e283eebf6"
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import { api, mutation } from "./api";
 import { Button, Modal, Notice, Panel, Tag } from "./components";
 import { useWorkspace, usePermission } from "./context";
 import { CaptureResults, type Capture } from "./CaptureResults";
+import { CaptureJourneyBuilder } from "./CaptureJourneyBuilder";
 import "./scenario-studio.css";
 
 type Origin = "declared" | "simulated" | "observed";
@@ -665,6 +666,14 @@ export default function ScenarioStudio() {
               )}
             </div>
           </div>
+        )}
+        {canEdit && current && (
+          <CaptureJourneyBuilder
+            key={current.entity_revision_id}
+            scenario={current}
+            captures={captures}
+            hasStates={!!current.dsl.explanation_graph?.states.length}
+          />
         )}
         {canManage && (
           <div className="row scenario-admin-actions">

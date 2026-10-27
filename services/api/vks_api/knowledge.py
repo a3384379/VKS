@@ -135,43 +135,91 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
     for item in bundle.entities:
         if item["type"] != "section":
             continue
-        entity = s.scalar(select(Entity).where(Entity.project_id == pid, Entity.type == "section",
-                                               Entity.stable_key == item["stable_key"]))
+        entity = s.scalar(
+            select(Entity).where(
+                Entity.project_id == pid, Entity.type == "section", Entity.stable_key == item["stable_key"]
+            )
+        )
         choice = s.get(Selection, (a.id, entity.id)) if entity else None
-        previous = (s.get(Revision, choice.entity_revision_id) if choice else
-                    s.scalar(select(Revision).where(Revision.entity_id == entity.id).limit(1)) if entity else None)
+        previous = (
+            s.get(Revision, choice.entity_revision_id)
+            if choice
+            else s.scalar(select(Revision).where(Revision.entity_id == entity.id).limit(1))
+            if entity
+            else None
+        )
         if previous and previous.metadata_json.get("document_key") != item.get("metadata", {}).get("document_key"):
             error("VKS_STATE_CONFLICT", "章节逻辑键属于其他文档；请使用来源前缀或明确的身份迁移", 409)
     for item in bundle.entities:
         if item["type"] != "document":
             continue
-        document = s.scalar(select(Entity).where(Entity.project_id == pid, Entity.type == "document",
-                                                 Entity.stable_key == item["stable_key"]))
+        document = s.scalar(
+            select(Entity).where(
+                Entity.project_id == pid, Entity.type == "document", Entity.stable_key == item["stable_key"]
+            )
+        )
         selected = s.get(Selection, (a.id, document.id)) if document else None
-        prior = (s.get(Revision, selected.entity_revision_id) if selected else
-                 s.scalar(select(Revision).where(Revision.entity_id == document.id)
-                          .order_by(Revision.created_at.desc(), Revision.id.desc()).limit(1)) if document else None)
+        prior = (
+            s.get(Revision, selected.entity_revision_id)
+            if selected
+            else s.scalar(
+                select(Revision)
+                .where(Revision.entity_id == document.id)
+                .order_by(Revision.created_at.desc(), Revision.id.desc())
+                .limit(1)
+            )
+            if document
+            else None
+        )
         incoming_source = material_sources.get(item.get("artifact_path"))
         if prior and document_origin(s, prior) != incoming_source:
-            error("VKS_STATE_CONFLICT", "文档逻辑键与另一来源冲突；请添加来源前缀，如 backend/README.md 与 frontend/README.md", 409)
+            error(
+                "VKS_STATE_CONFLICT",
+                "文档逻辑键与另一来源冲突；请添加来源前缀，如 backend/README.md 与 frontend/README.md",
+                409,
+            )
         item["metadata"] = dict(item.get("metadata", {}), logical_source_key=incoming_source)
         if not prior:
             continue
         old = prior
         previous = DocumentService(service)._sections(s, document, old, a.id if selected else None)
         rows = parse_sections(item["content"], old.name)
-        matched, _, ambiguities = match_sections(previous, rows)
+        incoming = [
+            row
+            for row in bundle.entities
+            if row["type"] == "section" and row.get("metadata", {}).get("document_key") == item["stable_key"]
+        ]
+        by_key = {s.get(Entity, row.entity_id).stable_key: row for row in previous}
+        explicit = {
+            index
+            for index, chapter in enumerate(incoming)
+            if chapter.get("metadata", {}).get("identity_origin") == "explicit"
+        }
+        matched = {
+            index: by_key[incoming[index]["stable_key"]]
+            for index in explicit
+            if incoming[index]["stable_key"] in by_key
+        }
+        claimed = {row.entity_id for row in matched.values()}
+        inferred_indices = [index for index in range(len(rows)) if index not in explicit]
+        inferred, _, ambiguities = match_sections(
+            [row for row in previous if row.entity_id not in claimed], [rows[index] for index in inferred_indices]
+        )
+        matched.update({inferred_indices[index]: row for index, row in inferred.items()})
+        ambiguities = [dict(row, ordinal=inferred_indices[row["ordinal"]]) for row in ambiguities]
+        for index in explicit:
+            rows[index]["content"] = incoming[index]["content"]  # Declared ranges may span child headings.
         locked = set(old.metadata_json.get("locked_section_ids", []))
         assert_section_locks(previous, rows, matched, locked)
-        incoming = [row for row in bundle.entities if row["type"] == "section"
-                    and row.get("metadata", {}).get("document_key") == item["stable_key"]]
         reserved = {s.get(Entity, row.entity_id).stable_key for row in previous}
         allocated = reserved | {row["stable_key"] for row in incoming}
         for index, chapter in enumerate(incoming):
             prior = matched.get(index)
             original = chapter["stable_key"]
             stable = original
-            if prior:
+            if index in explicit:
+                stable = original
+            elif prior:
                 stable = s.get(Entity, prior.entity_id).stable_key
             elif stable in reserved:
                 stable = item["stable_key"] + ".section." + uid()
@@ -189,14 +237,19 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
                 removed_revisions.add(chapter.id)
                 s.delete(s.get(Selection, (a.id, chapter.entity_id)))
         changed = old.content != item["content"]
-        workflow = s.scalar(select(DocumentWorkflow).where(DocumentWorkflow.analysis_set_id == a.id,
-                                                          DocumentWorkflow.document_id == document.id))
+        workflow = s.scalar(
+            select(DocumentWorkflow).where(
+                DocumentWorkflow.analysis_set_id == a.id, DocumentWorkflow.document_id == document.id
+            )
+        )
         metadata = dict(old.metadata_json, **item.get("metadata", {}))
-        metadata.update(locked_section_ids=sorted(locked),
-                        governed=bool(changed or workflow or old.metadata_json.get("governed")),
-                        row_version=old.metadata_json.get("row_version", 1) + int(changed),
-                        original_artifact_id=old.metadata_json.get("original_artifact_id", old.artifact_id),
-                        identity_ambiguities=ambiguities)
+        metadata.update(
+            locked_section_ids=sorted(locked),
+            governed=bool(changed or workflow or old.metadata_json.get("governed")),
+            row_version=old.metadata_json.get("row_version", 1) + int(changed),
+            original_artifact_id=old.metadata_json.get("original_artifact_id", old.artifact_id),
+            identity_ambiguities=ambiguities,
+        )
         if metadata["governed"]:
             metadata["workflow_state"] = "editing" if changed else old.metadata_json.get("workflow_state", "editing")
         item["metadata"] = metadata
@@ -252,6 +305,11 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
             "service_key": source.get("service_key", source["source_id"]),
             "import_manifest_sha256": fingerprint,
         }
+        if source.get("version_labels"):
+            row["version_labels"] = dict(source["version_labels"])
+        existing_vector = next((x for x in sources if x.get("source_snapshot_id") == snapshot.id), None)
+        if existing_vector and existing_vector.get("version_labels", {}) != row.get("version_labels", {}):
+            error("VKS_VERSION_CONFLICT", "相同来源快照的版本标签发生冲突，请建立新基线", 412)
         if not any(x.get("source_snapshot_id") == snapshot.id for x in sources):
             sources.append(row)
     a.sources = sources
@@ -305,13 +363,18 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
             art.metadata_json = meta
         artifacts[item["path"]] = art
         if item["path"] in inherited_policies:
-            art.metadata_json = {**art.metadata_json, **{
-                flag: bool(required or art.metadata_json.get(flag))
-                for flag, required in inherited_policies[item["path"]].items()
-            }}
+            art.metadata_json = {
+                **art.metadata_json,
+                **{
+                    flag: bool(required or art.metadata_json.get(flag))
+                    for flag, required in inherited_policies[item["path"]].items()
+                },
+            }
     entity_map = {}
     replaced = {}
-    for item in bundle.entities:
+    # Sections are immutable first; a document's full hash then includes their
+    # exact ordered revision IDs, without circular section->document hashes.
+    for item in sorted(bundle.entities, key=lambda row: row["type"] == "document"):
         entity = s.scalar(
             select(Entity).where(
                 Entity.project_id == pid, Entity.type == item["type"], Entity.stable_key == item["stable_key"]
@@ -324,6 +387,18 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
         art = artifacts.get(item.get("artifact_path"))
         content = item.get("content", "")
         metadata = item.get("metadata", {})
+        if item["type"] == "document":
+            chapters = sorted(
+                (
+                    row
+                    for row in bundle.entities
+                    if row["type"] == "section" and row.get("metadata", {}).get("document_key") == item["stable_key"]
+                ),
+                key=lambda row: row["metadata"]["ordinal"],
+            )
+            metadata = DocumentService(service).with_sections(
+                s, entity, art, [entity_map[row["stable_key"]] for row in chapters], metadata
+            )
         locator = item.get("locator", {})
         name = item.get("display_name") or item["stable_key"]
         full = {
@@ -360,11 +435,15 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
             s.add(Selection(analysis_set_id=a.id, entity_id=entity.id, entity_revision_id=revision.id))
         entity_map[item["stable_key"]] = revision
         if entity.type == "document" and metadata.get("governed"):
-            workflow = s.scalar(select(DocumentWorkflow).where(DocumentWorkflow.analysis_set_id == a.id,
-                                                              DocumentWorkflow.document_id == entity.id))
+            workflow = s.scalar(
+                select(DocumentWorkflow).where(
+                    DocumentWorkflow.analysis_set_id == a.id, DocumentWorkflow.document_id == entity.id
+                )
+            )
             if not workflow:
-                workflow = DocumentWorkflow(id=uid(), project_id=pid, analysis_set_id=a.id,
-                                            document_id=entity.id, revision_id=revision.id)
+                workflow = DocumentWorkflow(
+                    id=uid(), project_id=pid, analysis_set_id=a.id, document_id=entity.id, revision_id=revision.id
+                )
                 s.add(workflow)
             if workflow.revision_id != revision.id or workflow.approval_sha256 != revision.content_sha256:
                 workflow.revision_id = revision.id
@@ -403,13 +482,24 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
             if old in loc:
                 locator[new] = loc[old]
         content_hash = item.get("sha256", art.sha256)
-        ev = s.scalar(
+        candidates = s.scalars(
             select(Evidence).where(
                 Evidence.analysis_set_id == a.id,
                 Evidence.stable_key == item["stable_key"],
                 Evidence.artifact_id == art.id,
                 Evidence.content_sha256 == content_hash,
             )
+        )
+        ev = next(
+            (
+                row
+                for row in candidates
+                if row.locator == locator
+                and row.evidence_kind == item["kind"]
+                and row.excerpt == item.get("content", "")[:30000]
+                and row.claim == item.get("claim", "")
+            ),
+            None,
         )
         if not ev:
             ev = Evidence(
@@ -439,6 +529,13 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None):
             )
         )
         if existing:
+            current_evidence = [evidence_map[key].id for key in item["evidence_keys"]]
+            if existing.evidence_ids != current_evidence:
+                existing.evidence_ids = current_evidence
+                existing.validity_status = "stale"
+                if existing.causal_basis == "correlated_runtime":
+                    existing.causal_basis = "not_established"
+                existing.row_version += 1
             continue
         rel = Relation(
             id=uid(),
@@ -715,7 +812,10 @@ class KnowledgeService:
                 s.flush()
                 from .scenarios import ScenarioService
 
-                ScenarioService(service).clone_for_analysis(s, actor, old, target)
+                changed = ScenarioService(service).clone_for_analysis(s, actor, old, target)
+                from .journeys import JourneyService
+
+                JourneyService(service).clone_for_analysis(s, actor, target, changed)
                 service.audit(s, actor, pid, "analysis.clone", target.id, metadata={"from_analysis_set_id": aid})
                 return service.analysis_public(s, actor, target)
 

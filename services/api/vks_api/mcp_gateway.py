@@ -42,7 +42,7 @@ class GatewayError(Exception):
 
 class APIBridge:
     def __init__(self, base_url: str, token: str = "", transport=None):
-        self.base_url = base_url.rstrip("/") + "/api/v1"
+        self.base_url = base_url.rstrip("/")
         self.token = token
         self.transport = transport
 
@@ -59,7 +59,8 @@ class APIBridge:
             base_url=self.base_url, transport=self.transport, timeout=30, follow_redirects=False
         ) as client:
             try:
-                response = await client.request(method, path, json=body, params=params, headers=headers)
+                target = path if path.startswith('/api/') else '/api/v1' + path
+                response = await client.request(method, target, json=body, params=params, headers=headers)
             except httpx.RequestError:
                 raise GatewayError(
                     {
@@ -80,6 +81,18 @@ class APIBridge:
         project = a.pop("project_id", None)
         key = a.pop("idempotency_key", None)
         prefix = f"/projects/{project}"
+        if name == 'propose_journey':
+            return await self.request('POST', f'/api/v2/projects/{project}/journeys', body=a, key=key)
+        if name == 'create_knowledge_task':
+            return await self.request('POST', f'/api/v2/projects/{project}/knowledge-tasks', body=a, key=key)
+        if name == 'get_knowledge_task':
+            job = a.pop('job_id')
+            return await self.request('GET', f'/api/v2/knowledge-tasks/{job}', params={'project_id': project})
+        if name == 'get_knowledge_coverage':
+            return await self.request('GET', f'/api/v2/projects/{project}/knowledge-coverage', params=a)
+        if name == 'get_change_impact_report':
+            job = a.pop('job_id')
+            return await self.request('GET', f'/api/v2/projects/{project}/change-impacts/{job}')
         if name == "list_projects":
             return await self.request("GET", "/projects", params=a)
         if name == "get_project_context":
@@ -304,7 +317,7 @@ def create_http_app(bridge=None):
 
     async def metadata(request):
         async with httpx.AsyncClient(timeout=10, follow_redirects=False, transport=bridge.transport) as client:
-            response = await client.get(bridge.base_url + "/oauth/resource-metadata")
+            response = await client.get(bridge.base_url + "/api/v1/oauth/resource-metadata")
         if response.is_error:
             return JSONResponse({"error": "resource_metadata_unavailable"}, 503)
         return JSONResponse(response.json())

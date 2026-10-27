@@ -30,11 +30,27 @@ def test_standard_schema_and_openapi_validation():
 
 def test_mcp_contracts_are_self_contained_and_do_not_approve():
     catalog = build()
-    assert len(catalog["tools"]) == 18
-    assert len({t["name"] for t in catalog["tools"]}) == 18
+    original = json.loads((ROOT / "packages/contracts/mcp_tools.json").read_text())
+    assert len(original["tools"]) == 18
+    assert {t["name"] for t in original["tools"]} <= {t["name"] for t in catalog["tools"]}
+    assert len(catalog["tools"]) == 23
+    assert len({t["name"] for t in catalog["tools"]}) == 23
     for tool in catalog["tools"]:
         Draft202012Validator.check_schema(tool["inputSchema"])
         Draft202012Validator.check_schema(tool["outputSchema"])
         assert '"$ref"' not in json.dumps(tool["outputSchema"])
         assert tool["name"] not in {"approve", "publish", "review_relation"}
     assert catalog["authorization"]["annotations_are_security_boundary"] is False
+
+
+def test_v2_openapi_snapshot_and_journey_contract_match_runtime():
+    from scripts.freeze_v2_contracts import document
+    from packages.journey_dsl import Journey
+    root = ROOT / 'packages/contracts'
+    frozen = json.loads((root / 'openapi_2.0.json').read_text())
+    assert frozen == document()
+    validate(frozen)
+    assert json.loads((root / 'journey.schema.json').read_text()) == Journey.model_json_schema()
+    assert all(path.startswith('/api/v2/') for path in frozen['paths'])
+    from vks_api.task_planning import PLAN_SCHEMA
+    assert json.loads((root / 'knowledge_plan.schema.json').read_text()) == PLAN_SCHEMA

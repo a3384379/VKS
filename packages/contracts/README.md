@@ -1,5 +1,7 @@
 # 契约基线
 
+2.0 开发预览新增 `journey.schema.json`、`openapi_2.0.json` 和 `mcp_tools.v2.json`。V2 HTTP 使用 `v2_contracts.py` 的输入/输出模型，冻结文件通过 `VKS_DATA_DIR=<隔离目录> uv run python scripts/freeze_v2_contracts.py` 重建并与运行定义比对。MCP 构建器合并原 18 工具和新增 5 工具，并追加 Journey/knowledge_task/结果引用枚举；原始 `mcp_tools.json` 和 `docs/design/` 保持原字节。新增工具只有读、提案和受限任务权限，不包含审核或发布。
+
 `docs/design/contracts` 保留用户设计包原件，不随实现修改。本目录以该契约为基线；`scenario.schema.json` 兼容扩展了可选 `role` 和 `expected_results`，分别表示合成测试角色说明和人员核对的预期结果，不赋予权限或执行表达式；只读 `wait_for.state` 支持 `disabled` 断言；`goto.wait_until` 可选择有界页面等待阶段（默认 domcontentloaded）。其他原始契约保持基线格式。
 
 `mcp_tools.resolved.json` 由 `uv run python scripts/build_contracts.py` 构建，展开全部本地引用后用于 SDK 注册。MCP 输入严格校验；输出从 REST 工作台扩展中投影到设计 DTO 后再次校验。错误会明确返回，不能用错误数据伪装成功。

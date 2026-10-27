@@ -292,8 +292,7 @@ def _headings(text: str) -> list[dict]:
         while parents and parents[-1][0] >= level:
             parents.pop()
         parents.append((level, title))
-        out.append({"level": level, "title": title, "line": token.map[0] + 1,
-                    "path": [p[1] for p in parents]})
+        out.append({"level": level, "title": title, "line": token.map[0] + 1, "path": [p[1] for p in parents]})
     return out
 
 
@@ -622,6 +621,11 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
             _fail("VKS_BASELINE_MISMATCH", "侧车清单与项目或基线不一致")
         sidecars[field] = sidecar
     ui = sidecars.get("uiManifest", {"pages": [], "actions": [], "documentSections": [], "codeEntities": []})
+    if "uiManifest" not in sidecars:
+        from .ui_discovery import discover
+
+        ui, discovered_issues = discover({p: a for p, a in artifacts.items() if p not in failed_paths}, texts)
+        result.issues.extend(discovered_issues)
     entity_map: dict[str, dict] = {}
 
     def add(entity: dict) -> None:
@@ -671,7 +675,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
     for page in ui["pages"]:
         artifact, text = referenced_artifact(page, ("prototype", "source"))
         dom = doms.setdefault(page["artifactPath"], _DOM(text))
-        if page["logicalKey"] not in dom.pages:
+        if not page.get("_discovered") and page["logicalKey"] not in dom.pages:
             _fail("VKS_LOCATOR_INVALID", "页面 logicalKey 无法在 DOM 属性定位")
         add(
             _entity(
@@ -680,11 +684,20 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 page["name"],
                 text,
                 page["artifactPath"],
-                {"kind": "dom_attribute", "pageKey": page["logicalKey"]},
+                (
+                    {"kind": "file_lines", "startLine": page["_line"], "endLine": page["_line"]}
+                    if page.get("_discovered")
+                    else {"kind": "dom_attribute", "pageKey": page["logicalKey"]}
+                ),
                 {
                     "preview_mode": "snapshot",
                     "state_key": page.get("stateKey"),
-                    "source_kind": "manual",
+                    "source_kind": "platform_analyzer" if page.get("_discovered") else "manual",
+                    **(
+                        {"discovery_basis": page["_discovery_basis"], "requires_review": True}
+                        if page.get("_discovered")
+                        else {}
+                    ),
                     "runtime_source_alignment": "unknown",
                     "script_content_blocked": dom.external_or_script,
                 },
@@ -704,7 +717,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         if not page or page["type"] != "page":
             _fail("VKS_REFERENCE_INVALID", "动作所属页面不存在")
         dom = doms[page["artifact_path"]]
-        if dom.actions.get(action["logicalKey"]) != {action["pageKey"]}:
+        if not action.get("_discovered") and dom.actions.get(action["logicalKey"]) != {action["pageKey"]}:
             _fail("VKS_LOCATOR_INVALID", "动作无法唯一归属声明页面的 DOM 属性")
         add(
             _entity(
@@ -713,11 +726,24 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 action["label"],
                 action["label"],
                 page["artifact_path"],
-                {"kind": "dom_attribute", "pageKey": action["pageKey"], "actionKey": action["logicalKey"]},
+                (
+                    {"kind": "file_lines", "startLine": action["_line"], "endLine": action["_line"]}
+                    if action.get("_discovered")
+                    else {"kind": "dom_attribute", "pageKey": action["pageKey"], "actionKey": action["logicalKey"]}
+                ),
                 {
                     "page_key": action["pageKey"],
                     "event": action["event"],
-                    "evidence_origin": "manual",
+                    "evidence_origin": "static" if action.get("_discovered") else "manual",
+                    **(
+                        {
+                            "selector": action["_selector"],
+                            "discovery_basis": action["_discovery_basis"],
+                            "requires_review": True,
+                        }
+                        if action.get("_discovered")
+                        else {}
+                    ),
                     "runtime_source_alignment": "unknown",
                 },
             )
@@ -824,6 +850,39 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 "reason": relation.get("reason", ""),
                 "causal_basis": "not_established",
             }
+        )
+    for action in ui["actions"]:
+        if not action.get("_discovered"):
+            continue
+        target = entity_map[action["logicalKey"]]
+        path, locator = target["artifact_path"], target["locator"]
+        key = (
+            "ui.discovery."
+            + sha256(canonical_json([path, action["logicalKey"], artifacts[path]["sha256"]])).hexdigest()[:40]
+        )
+        if key in evidence_map:
+            _fail("VKS_DUPLICATE_LOGICAL_KEY", "显式证据与发现证据的 key 冲突")
+        evidence = dict(
+            stable_key=key,
+            kind="static",
+            artifact_path=path,
+            locator=locator,
+            sha256=artifacts[path]["sha256"],
+            claim="原始静态 DOM 中存在唯一动作锚点及所属页面范围，业务含义待审核",
+            content=texts[path].splitlines()[locator["startLine"] - 1][:2000],
+            extractor_version=ANALYZER_VERSION,
+        )
+        evidence_map[key] = evidence
+        result.evidence.append(evidence)
+        result.relations.append(
+            dict(
+                from_key=action["pageKey"],
+                to_key=action["logicalKey"],
+                type="contains",
+                evidence_keys=[key],
+                reason="静态 DOM 页面范围内的锚点；未执行页面或推断业务调用",
+                causal_basis="not_established",
+            )
         )
     from .java_spring import analyze_sources
 

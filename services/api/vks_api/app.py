@@ -557,6 +557,32 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     from .project_profile import install_project_profile
 
     install_project_profile(app, service, actor, envelope, API)
+    from .journeys import install_journeys
+    from .workbench_v2 import install_workbench
+
+    install_journeys(app, service, actor, envelope)
+    install_workbench(app, service, actor, envelope)
+    from .onboarding_report import install as install_onboarding_report
+
+    install_onboarding_report(app, service, actor, envelope)
+    from .source_alignment import install_source_alignment
+
+    install_source_alignment(app, service, actor, envelope)
+    from .source_sync import install_source_sync
+
+    install_source_sync(app, service, actor, envelope)
+    from .trajectory_comparison import install_trajectory_comparison
+
+    install_trajectory_comparison(app, service, actor, envelope)
+    from .document_diff import install_document_diff
+
+    install_document_diff(app, service, actor, envelope)
+    from .knowledge_tasks import install_tasks
+
+    install_tasks(app, service, actor, envelope)
+    from .capture_proposals import install_capture_proposals
+
+    install_capture_proposals(app,service,actor,envelope)
     return app
 
 

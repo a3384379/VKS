@@ -213,27 +213,24 @@ def test_owner_login_documents_all_pages_and_failed_highlight_stays_readable(sit
                 assert blocked_chunks
             # A missing optional chunk must not unmount the reader or sidebar.
             for label in (
-                "项目总览",
-                "接入与任务",
-                "业务工作台",
-                "文档中心",
-                "关联审核",
-                "知识地图",
-                "版本与变更",
-                "MCP 与设置",
+                "项目空间",
+                "知识构建",
+                "业务探索",
+                "变更与审核",
+                "项目设置",
             ):
                 page.get_by_role("navigation", name="主导航").get_by_role("button", name=label).click()
                 expect(page.locator(".app-body > main")).not_to_be_empty()
                 expect(page.get_by_text("当前页面暂时无法显示", exact=True)).to_have_count(0)
             page.go_back()
-            expect(page.get_by_role("heading", name="版本与变更", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="变更与审核", exact=True)).to_be_visible()
             page.go_forward()
-            expect(page.get_by_role("heading", name="MCP 与设置", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="项目设置", exact=True)).to_be_visible()
             page.goto(url + f"/#view=documents&project={empty}")
             expect(page.get_by_text("文档知识，从一份 Markdown 开始", exact=True)).to_be_visible()
             page.go_back()
             expect(page.get_by_label("当前项目", exact=True)).to_have_value(pid)
-            expect(page.get_by_role("heading", name="MCP 与设置", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="项目设置", exact=True)).to_be_visible()
             page.goto(url + f"/#view=documents&project={pid}&entity={doc}")
             expect(page.locator(".document-reader")).to_contain_text(CODE)
             page.get_by_role("button", name="编辑", exact=True).click()
@@ -241,7 +238,7 @@ def test_owner_login_documents_all_pages_and_failed_highlight_stays_readable(sit
             changed = editor.input_value() + "\nUnsaved local text\n"
             editor.fill(changed)
             page.goto(url + f"/#view=documents&project={empty}")
-            expect(page.get_by_text("文档草稿尚未保存，请先保存或还原本地修改", exact=True)).to_be_visible()
+            expect(page.get_by_text("草稿尚未保存，请先保存或还原本地修改", exact=True)).to_be_visible()
             expect(editor).to_have_value(changed)
             expect(page.get_by_label("当前项目", exact=True)).to_have_value(pid)
             page.get_by_role("button", name="还原修改", exact=True).click()
@@ -370,7 +367,7 @@ def test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_na
             page.unroute("**/src/diagram-frame.ts*")
             first.get_by_role("button", name="重新渲染").click()
             expect(first.locator(".diagram-image img")).to_be_visible(timeout=20000)
-            page.get_by_role("navigation", name="主导航").get_by_role("button", name="项目总览").click()
+            page.get_by_role("navigation", name="主导航").get_by_role("button", name="项目空间").click()
             expect(page.locator("iframe.diagram-render-frame")).to_have_count(0)
         finally:
             browser.close()

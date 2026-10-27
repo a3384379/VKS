@@ -40,7 +40,7 @@ import {
   entityIcon,
   label,
 } from "./components";
-import { WorkspaceContext } from "./context";
+import { ReadScope, WorkspaceContext } from "./context";
 import {
   emptyNavigation,
   resolveExplanation,
@@ -52,8 +52,6 @@ import { LoginForm } from "./LoginForm";
 import { RenderBoundary } from "./RenderBoundary";
 import { flattenModules, moduleBaseline, type ModuleNode } from "./ModuleTree";
 import {
-  Overview,
-  Imports,
   Workbench,
   Documents,
   Reviews,
@@ -62,6 +60,15 @@ import {
   Settings,
 } from "./pages";
 import type { Entity, Project, Session, View, Workspace } from "./types";
+import { ProjectCockpit } from "./ProjectCockpit";
+import { OnboardingWizard } from "./OnboardingWizard";
+import { JourneyCanvas } from "./JourneyCanvas";
+import { AgentWorkspace } from "./AgentWorkspace";
+import {
+  primaryNavigation,
+  navigationGroup,
+  routeParameters,
+} from "./workspace-navigation";
 const nav: {
   id: View;
   title: string;
@@ -70,19 +77,19 @@ const nav: {
 }[] = [
   {
     id: "overview",
-    title: "项目总览",
+    title: "项目空间",
     icon: House,
     description: "从业务操作出发，让每一份项目知识都有依据。",
   },
   {
     id: "imports",
-    title: "接入与任务",
+    title: "知识构建",
     icon: Upload,
     description: "保留资料的原始版本，让知识从可靠来源开始。",
   },
   {
     id: "workbench",
-    title: "业务工作台",
+    title: "业务探索",
     icon: Boxes,
     description: "选择页面中的操作，探索背后的文档、接口与实现。",
   },
@@ -106,18 +113,33 @@ const nav: {
   },
   {
     id: "versions",
-    title: "版本与变更",
+    title: "变更与审核",
     icon: GitCompareArrows,
     description: "固定来源组合，审核并发布可追溯的知识版本。",
   },
   {
     id: "settings",
-    title: "MCP 与设置",
+    title: "项目设置",
     icon: Settings2,
     description: "让 AI 在明确的项目范围和权限内协助整理知识。",
   },
 ];
-const initial = new URLSearchParams(
+nav.push(
+  {
+    id: "journeys",
+    title: "业务流程画布",
+    icon: Network,
+    description: "固定每个业务步骤的知识修订，编辑和审核被动流程。",
+  },
+  {
+    id: "agent",
+    title: "知识任务",
+    icon: Command,
+    description:
+      "按固定范围生成报告和候选，阶段可见、可取消，所有产物由人员审核。",
+  },
+);
+const initial = routeParameters(
   window.location.hash.slice(1) || window.location.search.slice(1),
 );
 const initialView = initial.get("view") || initial.get("page") || "overview";
@@ -460,7 +482,7 @@ export default function App() {
   ]);
   useEffect(() => {
     function applyLocation() {
-      const query = new URLSearchParams(window.location.hash.slice(1));
+      const query = routeParameters(window.location.hash.slice(1));
       const requested = query.get("view") || query.get("page") || "overview";
       const nextView = (
         nav.some((item) => item.id === requested) ? requested : "overview"
@@ -483,7 +505,7 @@ export default function App() {
           "",
           workspaceHash(view, projectId, baseline, selected, explanation),
         );
-        notify("文档草稿尚未保存，请先保存或还原本地修改", "error");
+        notify("草稿尚未保存，请先保存或还原本地修改", "error");
         return;
       }
       setView(nextView);
@@ -562,8 +584,8 @@ export default function App() {
     }
   }
   function navigate(next: View, entity?: Entity) {
-    if (unsavedChanges.current && next !== "documents") {
-      notify("文档草稿尚未保存，请先保存或还原本地修改", "error");
+    if (unsavedChanges.current && next !== view) {
+      notify("草稿尚未保存，请先保存或还原本地修改", "error");
       return;
     }
     setView(next);
@@ -678,7 +700,7 @@ export default function App() {
             value={projectId}
             onChange={(e) => {
               if (hasUnsavedChanges) {
-                notify("文档草稿尚未保存，请先保存或还原本地修改", "error");
+                notify("草稿尚未保存，请先保存或还原本地修改", "error");
                 return;
               }
               setProjectId(e.target.value);
@@ -716,15 +738,20 @@ export default function App() {
         )}
         <div className="nav-label">工作空间</div>
         <nav aria-label="主导航">
-          {nav.map((n) => (
+          {primaryNavigation.map((n) => (
             <button
               key={n.id}
-              className={`nav-item ${view === n.id ? "active" : ""}`}
+              aria-label={n.title}
+              className={`nav-item ${navigationGroup(view) === n.id ? "active" : ""}`}
+              aria-current={navigationGroup(view) === n.id ? "page" : undefined}
               onClick={() => navigate(n.id)}
             >
-              <n.icon size={19} />
+              {(() => {
+                const Icon = nav.find((item) => item.id === n.id)!.icon;
+                return <Icon size={19} />;
+              })()}
               <span>{n.title}</span>
-              {n.id === "reviews" &&
+              {n.id === "versions" &&
                 !!w?.relations.filter((r) => r.review_status === "candidate")
                   .length && (
                   <b>
@@ -745,7 +772,7 @@ export default function App() {
         )}
         <div className="sidebar-bottom">
           <div className="local-mode">
-            <span className="status-dot" /> 本地工作空间 <Tag>1.0 候选</Tag>
+            <span className="status-dot" /> 本地工作空间 <Tag>2.0 开发</Tag>
           </div>
           <button className="help-button" onClick={() => setHelpOpen(true)}>
             <CircleHelp size={17} />
@@ -808,7 +835,7 @@ export default function App() {
                 value={baseline}
                 onChange={(e) => {
                   if (hasUnsavedChanges) {
-                    notify("文档草稿尚未保存，请先保存或还原本地修改", "error");
+                    notify("草稿尚未保存，请先保存或还原本地修改", "error");
                     return;
                   }
                   setBaseline(e.target.value);
@@ -950,7 +977,7 @@ export default function App() {
                 baseline,
                 setBaseline: (value) => {
                   if (hasUnsavedChanges) {
-                    notify("请先保存或还原文档修改", "error");
+                    notify("请先保存或还原草稿修改", "error");
                     return;
                   }
                   setBaseline(value);
@@ -960,18 +987,79 @@ export default function App() {
                 setUnsavedChanges,
               }}
             >
+              <nav className="context-navigation" aria-label="上下文导航">
+                {(navigationGroup(view) === "overview"
+                  ? [
+                      { id: "overview" as View, title: "项目驾驶舱" },
+                      { id: "graph" as View, title: "知识地图" },
+                    ]
+                  : navigationGroup(view) === "workbench"
+                    ? [
+                        { id: "workbench" as View, title: "页面与状态" },
+                        { id: "journeys" as View, title: "业务流程画布" },
+                        { id: "graph" as View, title: "知识地图" },
+                      ]
+                    : navigationGroup(view) === "imports"
+                      ? [
+                          { id: "imports" as View, title: "智能接入" },
+                          { id: "agent" as View, title: "知识任务" },
+                          { id: "documents" as View, title: "文档中心" },
+                        ]
+                      : navigationGroup(view) === "versions"
+                        ? [
+                            { id: "versions" as View, title: "版本与变更" },
+                            { id: "reviews" as View, title: "关联审核" },
+                          ]
+                        : [
+                            {
+                              id: "settings" as View,
+                              title: "来源、团队与策略",
+                            },
+                          ]
+                ).map((n) => (
+                  <button
+                    key={n.id}
+                    aria-current={view === n.id ? "page" : undefined}
+                    onClick={() => navigate(n.id)}
+                  >
+                    {n.title}
+                  </button>
+                ))}
+              </nav>
+              {["documents", "graph"].includes(view) &&
+                explanation.actionId && (
+                  <div className="v2-return-context">
+                    <Button
+                      onClick={() => {
+                        setSelected(explanation.actionId);
+                        navigate("workbench");
+                      }}
+                    >
+                      返回业务动作 ·{" "}
+                      {w.actions.find((a) => a.id === explanation.actionId)
+                        ?.name || "原上下文"}
+                    </Button>
+                    <small>项目与知识版本保持固定</small>
+                  </div>
+                )}
               {view === "overview" ? (
-                <Overview />
+                <ProjectCockpit />
               ) : view === "imports" ? (
-                <Imports />
+                <OnboardingWizard key={`${w.project.id}:${baseline}`} />
               ) : view === "workbench" ? (
                 <Workbench />
+              ) : view === "journeys" ? (
+                <JourneyCanvas key={`${w.project.id}:${baseline}`} />
+              ) : view === "agent" ? (
+                <AgentWorkspace key={`${w.project.id}:${baseline}`} />
               ) : view === "documents" ? (
                 <Documents />
               ) : view === "reviews" ? (
                 <Reviews />
               ) : view === "graph" ? (
-                <Graph />
+                <ReadScope>
+                  <Graph />
+                </ReadScope>
               ) : view === "versions" ? (
                 <Versions />
               ) : (
@@ -984,7 +1072,7 @@ export default function App() {
               <ShieldCheck size={12} />
               所有知识均在所选版本中查询
             </span>
-            <span>知境 VKS · 1.0 候选版</span>
+            <span>知境 VKS · 2.0 开发预览</span>
           </footer>
         </main>
       </div>
@@ -1015,7 +1103,7 @@ export default function App() {
           onClose={() => setSearchOpen(false)}
           onSelect={(e) => {
             if (hasUnsavedChanges) {
-              notify("文档草稿尚未保存，请先保存或还原本地修改", "error");
+              notify("草稿尚未保存，请先保存或还原本地修改", "error");
               return;
             }
             setSelected(e.id);

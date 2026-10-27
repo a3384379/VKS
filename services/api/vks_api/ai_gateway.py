@@ -21,7 +21,7 @@ from jsonschema import Draft202012Validator
 from fastapi import Depends, Request, Header
 from services.browser_runner.network import NetworkPolicy, NetworkDenied, origin
 from services.browser_runner.runner import redact_text
-from .models import Base, Identified, Project, Analysis, Artifact, Job, uid
+from .models import Base, Identified, Project, Analysis, Artifact, Entity, Job, uid
 
 
 class ModelPolicy(Identified, Base):
@@ -327,7 +327,20 @@ class AiService:
             usage.state = state
             usage.error_code = error
 
-    def run(self, actor, pid, question, *, analysis_set_id=None, release_id=None, action_id=None, document=False):
+    def run(
+        self,
+        actor,
+        pid,
+        question,
+        *,
+        analysis_set_id=None,
+        release_id=None,
+        action_id=None,
+        document=False,
+        knowledge_plan=False,
+        plan_tools=None,
+        plan_entity_limit=100,
+    ):
         from .service import DomainError
         from .reading import artifact_policy
 
@@ -356,12 +369,18 @@ class AiService:
                         "excerpt": redact_text(e.get("excerpt", ""))[:2000],
                     }
                 )
-                provenance.append({
-                    "evidence_id": e["id"], "artifact_id": artifact.id, "sha256": artifact.sha256,
-                    "requires_source_read": bool(artifact.kind == "source" or policy.get("requires_source_read")),
-                    "requires_trace_read": bool(artifact.kind in ("trace", "capture") or policy.get("requires_trace_read")),
-                    "excerpt_sha256": hashlib.sha256(allowed[-1]["excerpt"].encode()).hexdigest(),
-                })
+                provenance.append(
+                    {
+                        "evidence_id": e["id"],
+                        "artifact_id": artifact.id,
+                        "sha256": artifact.sha256,
+                        "requires_source_read": bool(artifact.kind == "source" or policy.get("requires_source_read")),
+                        "requires_trace_read": bool(
+                            artifact.kind in ("trace", "capture") or policy.get("requires_trace_read")
+                        ),
+                        "excerpt_sha256": hashlib.sha256(allowed[-1]["excerpt"].encode()).hexdigest(),
+                    }
+                )
         if not allowed:
             return {
                 "answer": "当前上下文没有可发送给模型的证据，请补充资料或检查项目模型数据策略。",
@@ -369,13 +388,42 @@ class AiService:
                 "unknowns": ["没有充分且获准的当前版本证据"],
                 "model_id": "none:insufficient-evidence",
             }
-        schema = DOCUMENT_SCHEMA if document else ANSWER_SCHEMA
+        from .task_planning import PLAN_SCHEMA, validate_plan
+
+        schema = PLAN_SCHEMA if knowledge_plan else DOCUMENT_SCHEMA if document else ANSWER_SCHEMA
+        schema_name = "vks_plan" if knowledge_plan else "vks_document" if document else "vks_answer"
+        catalog = []
+        if knowledge_plan:
+            permitted_artifacts = {row["artifact_id"] for row in provenance[:20]}
+            with self.service.db() as s:
+                for row in self.service._revisions(s, w["selected_analysis_set"]["id"]):
+                    if row.artifact_id not in permitted_artifacts or not self.service._visible_revision(
+                        s, actor, pid, row
+                    ):
+                        continue
+                    catalog.append(
+                        dict(
+                            entity_id=row.entity_id,
+                            revision_id=row.id,
+                            type=s.get(Entity, row.entity_id).type,
+                            name=redact_text(row.name)[:200],
+                        )
+                    )
+                    if len(catalog) >= min(100, plan_entity_limit):
+                        break
         data = {
             "project_id": pid,
             "analysis_set_id": w["selected_analysis_set"]["id"],
             "question": redact_text(question),
             "evidence": allowed[:20],
         }
+        if knowledge_plan:
+            data.update(
+                entities=catalog,
+                allowed_tools=plan_tools or [],
+                max_steps=8,
+                constraints="工具名只表示待服务器复核的数据；只用提供的准确修订和证据，候选不能批准发布，未知项必须保留。",
+            )
         messages = [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": json.dumps(data, ensure_ascii=False)},
@@ -387,7 +435,7 @@ class AiService:
                 "text": {
                     "format": {
                         "type": "json_schema",
-                        "name": "vks_document" if document else "vks_answer",
+                        "name": schema_name,
                         "strict": True,
                         "schema": schema,
                     }
@@ -402,7 +450,7 @@ class AiService:
                 "response_format": {
                     "type": "json_schema",
                     "json_schema": {
-                        "name": "vks_document" if document else "vks_answer",
+                        "name": schema_name,
                         "strict": True,
                         "schema": schema,
                     },
@@ -442,13 +490,19 @@ class AiService:
             Draft202012Validator(schema).validate(answer)
             allowed_ids = {e["evidence_id"] for e in allowed[:20]}
             citations = (
-                [eid for p in answer["paragraphs"] for eid in p["evidence_ids"]] if document else answer["evidence_ids"]
+                [eid for step in answer["steps"] for eid in step["evidence_ids"]]
+                if knowledge_plan
+                else [eid for p in answer["paragraphs"] for eid in p["evidence_ids"]]
+                if document
+                else answer["evidence_ids"]
             )
             if set(citations) - allowed_ids:
                 failure("VKS_INVALID_EVIDENCE", "模型引用了不存在或无权的证据")
             if document and (not answer["paragraphs"] or any(not p["evidence_ids"] for p in answer["paragraphs"])):
                 failure("VKS_INVALID_EVIDENCE", "生成文档的每段必须有来源证据")
-            if not document and answer["answer"].strip() and not citations:
+            if knowledge_plan:
+                validate_plan(answer, catalog, allowed_ids, plan_tools or [])
+            if not knowledge_plan and not document and answer["answer"].strip() and not citations:
                 failure("VKS_INVALID_EVIDENCE", "模型关键结论缺少证据引用")
             if output_tokens > config["max_output_tokens"] or input_tokens > config["max_input_tokens"]:
                 failure("VKS_LIMIT_EXCEEDED", "模型实际用量超过任务限额", 429)
@@ -468,6 +522,7 @@ class AiService:
                 "analysis_set_id": w["selected_analysis_set"]["id"],
                 "_selection_version": w["selected_analysis_set"]["selection_version"],
                 "_input_provenance": provenance[:20],
+                **({"_catalog": catalog} if knowledge_plan else {}),
             }
         except Exception as exc:
             code = exc.code if isinstance(exc, DomainError) else "VKS_INVALID_INPUT"
@@ -486,14 +541,28 @@ class AiService:
         for row in provenance:
             artifact = s.get(Artifact, row["artifact_id"])
             evidence = s.get(Evidence, row["evidence_id"])
-            if (not artifact or artifact.project_id != pid or artifact.sha256 != row["sha256"]
-                    or not evidence or evidence.project_id != pid or evidence.artifact_id != artifact.id
-                    or not artifact.metadata_json.get("allow_platform_llm")
-                    or not self.service._visible_evidence(s, actor, pid, evidence)):
+            if (
+                not artifact
+                or artifact.project_id != pid
+                or artifact.sha256 != row["sha256"]
+                or not evidence
+                or evidence.project_id != pid
+                or evidence.artifact_id != artifact.id
+                or not artifact.metadata_json.get("allow_platform_llm")
+                or not self.service._visible_evidence(s, actor, pid, evidence)
+            ):
                 failure("VKS_FORBIDDEN", "模型输入的当前授权已变化", 403)
             policy = artifact_policy(s, artifact)
-            if (bool(artifact.kind == "source" or artifact.sensitivity == "confidential" or policy.get("requires_source_read")) != row["requires_source_read"]
-                    or bool(artifact.kind in ("trace", "capture") or policy.get("requires_trace_read")) != row["requires_trace_read"]):
+            if (
+                bool(
+                    artifact.kind == "source"
+                    or artifact.sensitivity == "confidential"
+                    or policy.get("requires_source_read")
+                )
+                != row["requires_source_read"]
+                or bool(artifact.kind in ("trace", "capture") or policy.get("requires_trace_read"))
+                != row["requires_trace_read"]
+            ):
                 failure("VKS_VERSION_CONFLICT", "模型输入的资料分类已变化，请重新生成", 412)
             for flag, scope in (("requires_source_read", "source:read"), ("requires_trace_read", "trace:read")):
                 if row[flag]:
@@ -574,13 +643,16 @@ class AiService:
             "requires_trace_read": trace_required,
             "input_provenance": provenance,
         }
-        revisions = list(s.scalars(select(Revision).where(Revision.artifact_id == artifact.id)))
+        revisions = [row for row in self.service._revisions(s, analysis.id) if row.artifact_id == artifact.id]
         document = next(r for r in revisions if s.get(Entity, r.entity_id).type == "document")
+        from .documents import DocumentService
+
+        sections = DocumentService(self.service)._sections(s, s.get(Entity, document.entity_id), document)
         for index, paragraph in enumerate(result["paragraphs"], 1):
             section = next(
                 (
                     r
-                    for r in revisions
+                    for r in sections
                     if s.get(Entity, r.entity_id).type == "section" and r.name == "段落 " + str(index)
                 ),
                 None,

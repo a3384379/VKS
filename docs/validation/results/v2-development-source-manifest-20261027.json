@@ -1,0 +1,1315 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-27",
+  "base_commit": "b8926b0d2665034f24d85a534ec258d544398990",
+  "branch": "codex/vks-2-upgrade",
+  "working_tree": "uncommitted_includes_preexisting_R01_R02_fixes",
+  "aggregate_sha256": "3b43d481e990b6edeb8953fdd03cb10fa5c69bc817f52d1214293f09d1576d64",
+  "files": [
+    {
+      "path": ".python-version",
+      "size_bytes": 5,
+      "sha256": "7b55f8e67b5623c4bef3fa691288da9437d79d3aba156de48d481db32ac7d16d"
+    },
+    {
+      "path": "AGENTS.md",
+      "size_bytes": 948,
+      "sha256": "6b033c954a474c1938ad27a399fd27acdf6bc9688774ef7d692b2dcc336542d5"
+    },
+    {
+      "path": "Makefile",
+      "size_bytes": 283,
+      "sha256": "9b422717ee9719cf9de84999aff428ec5dad7240ec9b24974d141a5fbe59013b"
+    },
+    {
+      "path": "alembic.ini",
+      "size_bytes": 142,
+      "sha256": "d8747e2caf0eed1f3c2f1cf87b9112cd7f095e23c49cd356baba140fee823e1a"
+    },
+    {
+      "path": "apps/web/diagram-frame.html",
+      "size_bytes": 428,
+      "sha256": "0689ab1da5b9da31bd70f7560c5ee9059ccf5bb9ecdd9cf38072927616cecc6f"
+    },
+    {
+      "path": "apps/web/index.html",
+      "size_bytes": 492,
+      "sha256": "bb346160b80c41200ccd485f0b9b3bdebf71237a603e9a0a5de0f6ca9cbffd57"
+    },
+    {
+      "path": "apps/web/package.json",
+      "size_bytes": 916,
+      "sha256": "87765f3ecf63d0399a466577fd7e5a759cfe5c15a4914a9ae5a67a691c215d89"
+    },
+    {
+      "path": "apps/web/public/diagram-licenses.txt",
+      "size_bytes": 17270,
+      "sha256": "df5a2db1c7f5f19ab68bc235384ffe8523db96e656649dcde87e73fe50f8a110"
+    },
+    {
+      "path": "apps/web/public/favicon.svg",
+      "size_bytes": 344,
+      "sha256": "41fd04a8bf9182208c90b59eb744b7a61f9543463ab1da654a7a38db02d4adcf"
+    },
+    {
+      "path": "apps/web/src/ActionChain.tsx",
+      "size_bytes": 4215,
+      "sha256": "894e80556ffb5cb9c2c3ef9ea2b2039c2045fb7ad740e9907b550f37fc1a85b0"
+    },
+    {
+      "path": "apps/web/src/AgentWorkspace.tsx",
+      "size_bytes": 12583,
+      "sha256": "fdae86384bce4be34162f4381a9f6764a3ade81c9608b800d72dd6c7f73238b8"
+    },
+    {
+      "path": "apps/web/src/App.tsx",
+      "size_bytes": 48191,
+      "sha256": "6c7b58edce5a111f257877df0cfc090fbad52223473308fee93c05757b2646ab"
+    },
+    {
+      "path": "apps/web/src/ArtifactImage.tsx",
+      "size_bytes": 1737,
+      "sha256": "910dbd699aacf273d93f87d049f7d038b0a58a04e0bfa0cff07bffa96367e495"
+    },
+    {
+      "path": "apps/web/src/AuditSearch.tsx",
+      "size_bytes": 8928,
+      "sha256": "b5b34ee4dd25dbef3ec627d621dd34a44fb66cee046afd5dd7b67ed1312d88a5"
+    },
+    {
+      "path": "apps/web/src/BusinessReferences.tsx",
+      "size_bytes": 2032,
+      "sha256": "a1b28a2765b3e7d580af2dc4f0a8606fc2ef85f5ae9382c4c11932b89a89e4ef"
+    },
+    {
+      "path": "apps/web/src/CaptureResults.tsx",
+      "size_bytes": 6073,
+      "sha256": "006db1e9c1740876719115a18d77a211370b3474759b2c5b8374bdc70c4ba716"
+    },
+    {
+      "path": "apps/web/src/ChangeProposals.tsx",
+      "size_bytes": 13099,
+      "sha256": "a58eb361d69602e9f91690029256b9f900f98fa8a379523d3eeeb4201455f52e"
+    },
+    {
+      "path": "apps/web/src/CodeHighlight.tsx",
+      "size_bytes": 1390,
+      "sha256": "72090261c08ead453943af87348480eeb5a7f51e940de41862b4c212c4b502c9"
+    },
+    {
+      "path": "apps/web/src/DiagramBlock.tsx",
+      "size_bytes": 4352,
+      "sha256": "441bc7e411b1c50c098ff0d02ee79412c9c6616b5b4295090909d369ab313a07"
+    },
+    {
+      "path": "apps/web/src/DocumentWorkflow.tsx",
+      "size_bytes": 8040,
+      "sha256": "c3e784a2505a0ab0ab190f23fe660ee0669e3efa97dbbd68af4147fbe074916c"
+    },
+    {
+      "path": "apps/web/src/DraftActions.tsx",
+      "size_bytes": 3125,
+      "sha256": "9a74bd70496ff11624317c4bf845bd178b0a7b9096667b50956dced864603c1c"
+    },
+    {
+      "path": "apps/web/src/HotspotEditor.tsx",
+      "size_bytes": 14763,
+      "sha256": "3180142d1c67e35ec792d820aa83e4932769ab7889d8addbc7e818fdfedb1279"
+    },
+    {
+      "path": "apps/web/src/ImportCenter.tsx",
+      "size_bytes": 19749,
+      "sha256": "d12851f63035658f34632a600f785ef667a17123abd7ce6d731a2580d4145367"
+    },
+    {
+      "path": "apps/web/src/JourneyCanvas.tsx",
+      "size_bytes": 27088,
+      "sha256": "e6e6de1bfc334be003134b428db5a339c84dd1ac608090d660a75d6abece0ab3"
+    },
+    {
+      "path": "apps/web/src/LoginForm.tsx",
+      "size_bytes": 3500,
+      "sha256": "7bdbe4616970e47858ff59635ace65561e0c0a89508d1701b061371f32a0d1e6"
+    },
+    {
+      "path": "apps/web/src/MarkdownAttachment.tsx",
+      "size_bytes": 3149,
+      "sha256": "70d44a12d232f90d1017701b17ff1bac6d069f4f8d756a63f4d6c3aac37e947b"
+    },
+    {
+      "path": "apps/web/src/ModelSettings.tsx",
+      "size_bytes": 13029,
+      "sha256": "7971ff95b56a98631669f7de29b79e162a3df8eff93485995cb9051935dc1d39"
+    },
+    {
+      "path": "apps/web/src/ModuleTree.tsx",
+      "size_bytes": 15927,
+      "sha256": "e84c6e27f67652d9201937ce93fbfee2d36ad825fe610c92d50cd3c91af5a1c6"
+    },
+    {
+      "path": "apps/web/src/OAuthSettings.tsx",
+      "size_bytes": 19481,
+      "sha256": "b60ab8790fac27ac08b8c15bc6d3f8898b5d9a9bde3a881f1919c86e1b022896"
+    },
+    {
+      "path": "apps/web/src/OnboardingWizard.tsx",
+      "size_bytes": 6095,
+      "sha256": "8fabf8b80c1cd7fe125f7b1b0250fd49c0d8a4e3907f6ea96d80dcba9b6b63b0"
+    },
+    {
+      "path": "apps/web/src/ProjectCockpit.tsx",
+      "size_bytes": 6723,
+      "sha256": "d93fc6172568c5f8077c668e7261759d2d9710d1a31dd0750703f9a503dbbcc6"
+    },
+    {
+      "path": "apps/web/src/ProjectProfile.tsx",
+      "size_bytes": 7566,
+      "sha256": "e7d74983bde77dbb91d244c5b1fecd019bde6c1445beee22fab10261dafe505c"
+    },
+    {
+      "path": "apps/web/src/RelationOperations.tsx",
+      "size_bytes": 21546,
+      "sha256": "19e9f19731735a08e9405c341d73df69a81b6838310f6bec5d90d18f7f2e4a88"
+    },
+    {
+      "path": "apps/web/src/RenderBoundary.tsx",
+      "size_bytes": 438,
+      "sha256": "fc3e5c93689db0effeb1d811ca3eb27b94ed138372a8360e666668bd00f9c89d"
+    },
+    {
+      "path": "apps/web/src/ReviewInbox.tsx",
+      "size_bytes": 2476,
+      "sha256": "ee0615f74f0663252dc8ecbc992047e746df202731433446cb6e871eee6c22c7"
+    },
+    {
+      "path": "apps/web/src/ScenarioStudio.tsx",
+      "size_bytes": 45747,
+      "sha256": "8103da990b1f65192d27801abdbaac1a5cb73584ec51067d970cb4c48bcf98c0"
+    },
+    {
+      "path": "apps/web/src/SourceManagement.tsx",
+      "size_bytes": 10027,
+      "sha256": "a643b8a2dbfa42f1c7e15446448f0c1b5a1d4ea5938baee0a225104a8f57e024"
+    },
+    {
+      "path": "apps/web/src/StateReplay.tsx",
+      "size_bytes": 6012,
+      "sha256": "30f468f53c0072a34287ea4b26e5bd45e5ccad1c9af0426616ddd373917d582e"
+    },
+    {
+      "path": "apps/web/src/TeamSettings.tsx",
+      "size_bytes": 27115,
+      "sha256": "5e5d076f6df8c22dcb20a603ee76fe7dd26b40e57f34dfd9219434c1ba144a64"
+    },
+    {
+      "path": "apps/web/src/api.ts",
+      "size_bytes": 3191,
+      "sha256": "bcd0f0efcf8f83272b0031db48fca051180fc00a13ba131fef685be8cbc1ca21"
+    },
+    {
+      "path": "apps/web/src/components.tsx",
+      "size_bytes": 15688,
+      "sha256": "a915b4012099f8970a6e44b8300d7c59375e51f5ae7bd7afc769ffe3983f0f82"
+    },
+    {
+      "path": "apps/web/src/configuration.css",
+      "size_bytes": 5765,
+      "sha256": "2d653ca23742162d25d093298478f2600bb49fff44ce5ea15fbe1fdbf53b26a2"
+    },
+    {
+      "path": "apps/web/src/context.ts",
+      "size_bytes": 1228,
+      "sha256": "8c8a36708322253cfeccb056b5a506dabddd1743de0bd05d33b9d69ee26b35ec"
+    },
+    {
+      "path": "apps/web/src/design-system/Surface.tsx",
+      "size_bytes": 416,
+      "sha256": "cd897f892a5be3ee1cee7d121e749f5cfbda4c07f9bff2dffda92f512ebe7670"
+    },
+    {
+      "path": "apps/web/src/design-system/tokens.css",
+      "size_bytes": 310,
+      "sha256": "049b1a70b95686aec1902f78051dbea69a60d3c824f0fa5951c22351572c2118"
+    },
+    {
+      "path": "apps/web/src/diagram-frame.ts",
+      "size_bytes": 3699,
+      "sha256": "3967e86a2e9cd6c18fb768affce43b89cff3e8498ee95d82491d8e9f45d54047"
+    },
+    {
+      "path": "apps/web/src/diagram-policy.ts",
+      "size_bytes": 1387,
+      "sha256": "9d55a3554da1d754577fddca6bb00175bdb85013164bea1172aa5c99e0998b2e"
+    },
+    {
+      "path": "apps/web/src/diagram-renderer.ts",
+      "size_bytes": 5360,
+      "sha256": "d8572f31a3d3412ddc3ffc3b17247510a22e311115ed6bb6a86e495b0725116f"
+    },
+    {
+      "path": "apps/web/src/diagrams.css",
+      "size_bytes": 1436,
+      "sha256": "7b247fc53c3428fea636a11148c0cc2f0f8191e086cd427edfe388639bd65017"
+    },
+    {
+      "path": "apps/web/src/hotspot-editor.css",
+      "size_bytes": 2239,
+      "sha256": "447d7b2a907c6933c4ea4eb65f4a1d064373105770fbe706c9144b6a62447ac7"
+    },
+    {
+      "path": "apps/web/src/hotspots.ts",
+      "size_bytes": 2311,
+      "sha256": "300353257cd453e136083a4db0c19815003350a118963d0f9589bee50f9997c1"
+    },
+    {
+      "path": "apps/web/src/imports.ts",
+      "size_bytes": 1569,
+      "sha256": "1c8da813e47ede9a9ef28156b26d25a03812285e73be3820049be6e874e6ecb7"
+    },
+    {
+      "path": "apps/web/src/journeys.ts",
+      "size_bytes": 2289,
+      "sha256": "23e9215b4c97ec6c51eaa4ff4ce030d62f118bf4e4de280943983cfa54b69420"
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "size_bytes": 260,
+      "sha256": "4fd76f5b429eabf67ecf5cfe91a4b6de6bf117656ad11ad673d6808e2e6355bf"
+    },
+    {
+      "path": "apps/web/src/markdown-extras.css",
+      "size_bytes": 870,
+      "sha256": "cdd61b2ae598822dc9866ccbf791ae5950949d7a032c50cce4ea0a2e8aba3a76"
+    },
+    {
+      "path": "apps/web/src/math-plugins.ts",
+      "size_bytes": 1201,
+      "sha256": "96be0835bc34dbd7ec1b6fbbfbe72234d19b9a87303a4fd210b6072b0ac6ed6e"
+    },
+    {
+      "path": "apps/web/src/navigation.ts",
+      "size_bytes": 5575,
+      "sha256": "7704f96afdc24c350bd5213d7d357b97edd45e9fa450f9c84565415e367393c9"
+    },
+    {
+      "path": "apps/web/src/pages.tsx",
+      "size_bytes": 119652,
+      "sha256": "f2c73d31e273866d47c1fdda34ac919123089f467e408c60a79cef204001c576"
+    },
+    {
+      "path": "apps/web/src/permissions.ts",
+      "size_bytes": 355,
+      "sha256": "f07e86ad2db1d7648cf2ea9c3f06c3fc7c51b68e838200b3e4c5ad71440ece8d"
+    },
+    {
+      "path": "apps/web/src/plantuml.d.ts",
+      "size_bytes": 231,
+      "sha256": "16af59b061fd8004f2092b6f2e6761a9c8eac4ee61a6572dfe21f7051958eac5"
+    },
+    {
+      "path": "apps/web/src/scenario-studio.css",
+      "size_bytes": 3152,
+      "sha256": "320830f67630a07f6df2cfe3c65aa73310f0d1680137e89732e0776471306e69"
+    },
+    {
+      "path": "apps/web/src/styles.css",
+      "size_bytes": 109048,
+      "sha256": "0af71c0f0816a75e02b7a307a895ca93667b1a20a06b6834059c4e35ada0ad88"
+    },
+    {
+      "path": "apps/web/src/team-settings.css",
+      "size_bytes": 4048,
+      "sha256": "0dcb740aaebd698374310e37273865d96cfe636a525527d8e9468abd6dc64d7c"
+    },
+    {
+      "path": "apps/web/src/types.ts",
+      "size_bytes": 4758,
+      "sha256": "d9c01a3c798ce278717c32de4425518b96e8eb91c37691c83c6cd944e70fa7ed"
+    },
+    {
+      "path": "apps/web/src/vite-env.d.ts",
+      "size_bytes": 38,
+      "sha256": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5"
+    },
+    {
+      "path": "apps/web/src/workspace-navigation.ts",
+      "size_bytes": 1046,
+      "sha256": "5d8e470b4e8920c32e1773367191a68bbc34817ab847223bcde1b6a890ffea97"
+    },
+    {
+      "path": "apps/web/src/workspace-v2.css",
+      "size_bytes": 13322,
+      "sha256": "b904a58ce2807b407cbd4491be703d8021d005fee8ae715b07aabbb3c491d60e"
+    },
+    {
+      "path": "apps/web/tests/api-pagination.test.mjs",
+      "size_bytes": 1056,
+      "sha256": "f38e982563e7962da21f40acb386a6028019219ed0422843aa22016cffe543d5"
+    },
+    {
+      "path": "apps/web/tests/configuration.test.mjs",
+      "size_bytes": 8923,
+      "sha256": "a1581d941c48a0bf0b089ac63eddb1da09b61444ae831581fcf6a79f315f62d2"
+    },
+    {
+      "path": "apps/web/tests/journeys.test.mjs",
+      "size_bytes": 2213,
+      "sha256": "fcc8a2866dc17b1f72f7dfc9426791b7de3239ba3e73e736ca21dc8e9d78036f"
+    },
+    {
+      "path": "apps/web/tests/markdown.test.mjs",
+      "size_bytes": 7782,
+      "sha256": "ed48549c93e61bb2526cb64137d62a25f81d9f81b7797b3056fa4885e3658500"
+    },
+    {
+      "path": "apps/web/tests/navigation.test.mjs",
+      "size_bytes": 2296,
+      "sha256": "780a4be902227bb65ffbc87eec2704d2bba3d13b11e3fcc5e01466ce0c0aca98"
+    },
+    {
+      "path": "apps/web/tests/preview.test.mjs",
+      "size_bytes": 5598,
+      "sha256": "1a81402c24988bd3c8d9f2f558c51324ffa5bf90102d413400242133c38685d9"
+    },
+    {
+      "path": "apps/web/tests/team-and-imports.test.mjs",
+      "size_bytes": 4482,
+      "sha256": "86b2706328aa688c6a7bc71ba8e9a39bd857d4af5ecac30cfb0cf60d1a2f23ba"
+    },
+    {
+      "path": "apps/web/tsconfig.json",
+      "size_bytes": 415,
+      "sha256": "64c159909e518ac94f52162f4f60162546151f5fa01f23d33d3766be641352ed"
+    },
+    {
+      "path": "apps/web/vite.config.ts",
+      "size_bytes": 3011,
+      "sha256": "6e212995e2ec93229d6636a366de593f0e3b801034dae7beda54794d44f44c2a"
+    },
+    {
+      "path": "deploy/.env.example",
+      "size_bytes": 654,
+      "sha256": "9619f3be99cb0ded8e61c64130c9bf55ecb93e73c283b28abae6cdee231dd32a"
+    },
+    {
+      "path": "deploy/Dockerfile.api",
+      "size_bytes": 648,
+      "sha256": "8a9d71a99db4814e3c25806ddc6aa8e302b9c49784c1b86a2b0a4b5512f326c6"
+    },
+    {
+      "path": "deploy/Dockerfile.runner",
+      "size_bytes": 244,
+      "sha256": "c219acfd489ff7336bf8d8d96956eba0c1e5388fea13ded807212b4c5769c997"
+    },
+    {
+      "path": "deploy/Dockerfile.web",
+      "size_bytes": 340,
+      "sha256": "aca4d23e920db3ee6b1c8108130b7bdbef64314a91c1f5e1684a2bdf7632a06b"
+    },
+    {
+      "path": "deploy/README.md",
+      "size_bytes": 5828,
+      "sha256": "35e9c7468ff4caeb4134e3521fd9d133dc7c9ff85f4385f1087090c792933046"
+    },
+    {
+      "path": "deploy/compose.yaml",
+      "size_bytes": 4189,
+      "sha256": "32b997b14f9a3ef76e3b3bfaf0f497fc8e1eaf48497e74524397fa9f3f71fe74"
+    },
+    {
+      "path": "deploy/migrations/env.py",
+      "size_bytes": 1242,
+      "sha256": "39592acff864fe926884b8bfaa5b607f7804610486ab9a5faa06999fa1964172"
+    },
+    {
+      "path": "deploy/migrations/script.py.mako",
+      "size_bytes": 421,
+      "sha256": "279902f4984e843cac28e91694c671bc8cb084f245d9a5b9ca940de9df2de063"
+    },
+    {
+      "path": "deploy/migrations/versions/ad8c03345211_initial_knowledge_core.py",
+      "size_bytes": 18086,
+      "sha256": "265b793b8e9fa6f4384c9b3394bbe2b2861d05130bdfb390784e8a0d8f9b77b0"
+    },
+    {
+      "path": "deploy/migrations/versions/b19d44aa1201_team_identity.py",
+      "size_bytes": 2415,
+      "sha256": "59c3bb35fcfcb17fc11f1645107df51156ad6915f666dd70f30deaca39a79b61"
+    },
+    {
+      "path": "deploy/migrations/versions/c21e55bb2302_scenarios_capture.py",
+      "size_bytes": 713,
+      "sha256": "3cde49a35664e6906224b05ea4d5101c76baed5e11ea887f484a23a23a85d3cb"
+    },
+    {
+      "path": "deploy/migrations/versions/d31f66cc3403_source_snapshots_and_durable_dispatch.py",
+      "size_bytes": 4523,
+      "sha256": "8df699f3115cc88d3e89c540f6e2fee3c6cf0d42e6166ad225dd634e501cb2e1"
+    },
+    {
+      "path": "deploy/migrations/versions/e41f77dd4504_documents_and_change_proposals.py",
+      "size_bytes": 6407,
+      "sha256": "ea9d6d3228fab8ad66d35d4b27c45f4a23ec5196da4d57469f72e2fbb0461c08"
+    },
+    {
+      "path": "deploy/migrations/versions/f51f88ee5605_business_modules.py",
+      "size_bytes": 3200,
+      "sha256": "c317b822f6c3a1e3823f6c1ef3b721a6a424041c6a37adc465d2dc13f50e4c8c"
+    },
+    {
+      "path": "deploy/migrations/versions/g61a99ff6706_oauth_model_budget_and_relationship_.py",
+      "size_bytes": 6504,
+      "sha256": "470025e826cf59273df73b53e00a37e894c282ccc916a0da955b206873fc6883"
+    },
+    {
+      "path": "deploy/migrations/versions/h71baa007807_project_business_metadata.py",
+      "size_bytes": 1092,
+      "sha256": "fdeddebb0db305cc70041e1d7e72228897809c057d80d8897dacadd1dfa116d0"
+    },
+    {
+      "path": "deploy/nginx.conf",
+      "size_bytes": 770,
+      "sha256": "db568168c464baad2fa6e1320adad7c3064fce7c042f485fd015fb1c71137dea"
+    },
+    {
+      "path": "deploy/requirements.lock.txt",
+      "size_bytes": 46433,
+      "sha256": "b36b0b5a1b008a7b1f07f7396272a6efe70dcbe9001b7791b9cbc2c99156b227"
+    },
+    {
+      "path": "fixtures/charge-demo.vksbundle.zip",
+      "size_bytes": 9505,
+      "sha256": "b6e7296142f2242b0c1f3ae34958aa3d0c6df054aff237e878d289bb2811124d"
+    },
+    {
+      "path": "fixtures/charge-demo/api/openapi.json",
+      "size_bytes": 665,
+      "sha256": "5446ef640685a508402daf66011bc216c55d4731df3bfd33c91d8e2586ecad9c"
+    },
+    {
+      "path": "fixtures/charge-demo/backend/InvoiceController.java",
+      "size_bytes": 744,
+      "sha256": "fd5d8b181c0e9e574b9dfcd8c11315ed7de717d2fcf0108e40f982ff770964dd"
+    },
+    {
+      "path": "fixtures/charge-demo/backend/InvoiceMapper.java",
+      "size_bytes": 134,
+      "sha256": "c308bb8a2acf25460434eb69d08b8682a529fd103204d023df8e9107df0a6387"
+    },
+    {
+      "path": "fixtures/charge-demo/backend/InvoiceMapper.xml",
+      "size_bytes": 304,
+      "sha256": "a83e9d7e21a462de64b1c952b64c2b0d8a7ad5546b8455e0b3a4271ca011fda9"
+    },
+    {
+      "path": "fixtures/charge-demo/backend/InvoiceService.java",
+      "size_bytes": 434,
+      "sha256": "81d109e8d459929bdaa30e4eb62c4942ec399907596674de4b1f39f33444804e"
+    },
+    {
+      "path": "fixtures/charge-demo/docs/invoice-rules.md",
+      "size_bytes": 1532,
+      "sha256": "f25d8f73e01ef741a52a573d4db209cb02584e32b18d1daf78e89d2ca7c656d6"
+    },
+    {
+      "path": "fixtures/charge-demo/knowledge/bindings.json",
+      "size_bytes": 9120,
+      "sha256": "240f64155cd24a7e92c8836f2358be8ea04cf8869588e415ba62f5bae3e0ba9c"
+    },
+    {
+      "path": "fixtures/charge-demo/knowledge/ui-manifest.json",
+      "size_bytes": 3110,
+      "sha256": "d824103894c354fbac4ac7ab1cf3e58387ae263d9ef9c0156cbd530fcffbc27a"
+    },
+    {
+      "path": "fixtures/charge-demo/manifest.json",
+      "size_bytes": 3615,
+      "sha256": "47212d21549a52752fb8165aa0176331ad99651360f3ac184b28c43ac9411fea"
+    },
+    {
+      "path": "fixtures/charge-demo/preview/index.html",
+      "size_bytes": 4054,
+      "sha256": "8bca4cf5b2cd620bcd0e85234e863f68b994f629e3237330837ad867f021949b"
+    },
+    {
+      "path": "fixtures/java-gold/README.md",
+      "size_bytes": 1327,
+      "sha256": "c1152ad93262e9de4e98327e37eb136696ff6058b98d5fa224f52dc82785a2ff"
+    },
+    {
+      "path": "fixtures/java-gold/gold.json",
+      "size_bytes": 9564,
+      "sha256": "920e3edd6478652687383e7424ab2e5a50de0504dd7b9a67e22f1679fcb3af58"
+    },
+    {
+      "path": "fixtures/java-gold/v1/billing/InvoiceController.java",
+      "size_bytes": 929,
+      "sha256": "45cac1890c13300af88d7ace94c9d8cc62c063591a2b250b6c950d75d7a9626e"
+    },
+    {
+      "path": "fixtures/java-gold/v1/billing/InvoiceMapper.java",
+      "size_bytes": 189,
+      "sha256": "eb37baa332dd4b52b245ee2a33eb5e42f9b2dc57be28cd0e9f5314d57f9d5e6c"
+    },
+    {
+      "path": "fixtures/java-gold/v1/billing/InvoiceMapper.xml",
+      "size_bytes": 834,
+      "sha256": "5dea3f636d8202fd54089f270b3081e29e94e3e306db2917c7b8b786786965eb"
+    },
+    {
+      "path": "fixtures/java-gold/v1/billing/InvoiceService.java",
+      "size_bytes": 611,
+      "sha256": "fde9c28a032a0da7fd28907e5495349ead5fbe49c15b99414591584876512bc6"
+    },
+    {
+      "path": "fixtures/java-gold/v1/support/InvoiceController.java",
+      "size_bytes": 360,
+      "sha256": "776cf90666414a04ddf8153cb1063a6cea7873f557d363cd28ff6d0b5202b409"
+    },
+    {
+      "path": "fixtures/java-gold/v2/billing/InvoiceController.java",
+      "size_bytes": 935,
+      "sha256": "11de98d5d004a722a48ea4ffcb193b60ac7e19b2b3fcc55e68dd246377a9c65f"
+    },
+    {
+      "path": "fixtures/java-gold/v2/billing/InvoiceMapper.java",
+      "size_bytes": 189,
+      "sha256": "eb37baa332dd4b52b245ee2a33eb5e42f9b2dc57be28cd0e9f5314d57f9d5e6c"
+    },
+    {
+      "path": "fixtures/java-gold/v2/billing/InvoiceMapper.xml",
+      "size_bytes": 842,
+      "sha256": "df00cff99ad83f7a8e228e0ecf11edeeff6dedb62bb579791f4c8b5996b20849"
+    },
+    {
+      "path": "fixtures/java-gold/v2/billing/moved/InvoiceService.java",
+      "size_bytes": 680,
+      "sha256": "ad029de54b22c4aeca906e6b1b45d5fd44eae79bd673aa8e7283cae8b63b7c06"
+    },
+    {
+      "path": "fixtures/java-gold/v2/support/InvoiceController.java",
+      "size_bytes": 360,
+      "sha256": "776cf90666414a04ddf8153cb1063a6cea7873f557d363cd28ff6d0b5202b409"
+    },
+    {
+      "path": "fixtures/markdown-visuals.md",
+      "size_bytes": 1240,
+      "sha256": "cdc214268d4fba22e95a68fcd6d4bf99ba8cd02cdb175c0577de7b040bea22ee"
+    },
+    {
+      "path": "fixtures/minimal.vksbundle.zip",
+      "size_bytes": 4042,
+      "sha256": "c9be49fd90bd095396e87182b8067e9d4f6a6cd8c7bfb3048a23503ebaa12a0f"
+    },
+    {
+      "path": "fixtures/pilot-jfa.summary.json",
+      "size_bytes": 284,
+      "sha256": "1a7a1d352da7422cd181872bf06ad41a884b6a901bd16cee3198fe9b8eefb095"
+    },
+    {
+      "path": "fixtures/pilot-jfa.vksbundle.zip",
+      "size_bytes": 9010,
+      "sha256": "fbab67e3563d4fa18fe821e71ecd7a436ffa7f13d08e494d7ff5a58e2c4d0824"
+    },
+    {
+      "path": "fixtures/vks-selfhosted.summary.json",
+      "size_bytes": 198,
+      "sha256": "955cb4b4141d98b2773c402cbc553e6083a6840ef9cbefde62af6427c4c0c56d"
+    },
+    {
+      "path": "fixtures/vks-selfhosted.vksbundle.zip",
+      "size_bytes": 44160,
+      "sha256": "50f339a756be048a1fa65dc2980c63edaf7e565e45f9c46effabc4c2336257f6"
+    },
+    {
+      "path": "package-lock.json",
+      "size_bytes": 181675,
+      "sha256": "5ee69b8185bb861a4d90b507a9c30fa2da2c0fc45aa48ca70d38685aeacd6af0"
+    },
+    {
+      "path": "package.json",
+      "size_bytes": 618,
+      "sha256": "20be54594839805f478fc7200f168cdf7d7163d2d6c86bccc7011415fc0bbd82"
+    },
+    {
+      "path": "packages/__init__.py",
+      "size_bytes": 42,
+      "sha256": "01e6a76caeb2d5ff534dda15c118db21194dbd4d0287e1f4363f2f77335e3224"
+    },
+    {
+      "path": "packages/analyzers/__init__.py",
+      "size_bytes": 173,
+      "sha256": "3bd4e362104cdd6cd89b44940713a13ec99e80fe3299827d58b7b1d01a5e702f"
+    },
+    {
+      "path": "packages/analyzers/cancellation.py",
+      "size_bytes": 1043,
+      "sha256": "560c481c276a278b8097173bedd1ea059e03bddc8cd8d41c85dd004b612323e4"
+    },
+    {
+      "path": "packages/analyzers/document_links.py",
+      "size_bytes": 4714,
+      "sha256": "f01f94d9a811c25dd0cbfc2f5f3503ec6e46d8531bbc4909470b7b474be9440a"
+    },
+    {
+      "path": "packages/analyzers/evaluate_java.py",
+      "size_bytes": 3496,
+      "sha256": "cbea539d243d45f7d80bc74c84edb3204f02400d57616067798c94216941c839"
+    },
+    {
+      "path": "packages/analyzers/java_spring.py",
+      "size_bytes": 49844,
+      "sha256": "81807d7904dcddb0f7f9e51783bcb627260ad0f733990604e801f718532377a3"
+    },
+    {
+      "path": "packages/analyzers/vks_ingest.py",
+      "size_bytes": 42238,
+      "sha256": "900634e66142c104473ab8fccb43534ffb78711c9f0e20f3c0a8a0c5e8a92dac"
+    },
+    {
+      "path": "packages/collector/__init__.py",
+      "size_bytes": 59,
+      "sha256": "65ec16a1e83187ac619877126539f01c6a2add7eafa884a8fa6173116cc73a5f"
+    },
+    {
+      "path": "packages/collector/__main__.py",
+      "size_bytes": 1311,
+      "sha256": "26c2b386e412cdd1e9fddfedafbe051b42ac992121a12c305e1c5ba625d7c094"
+    },
+    {
+      "path": "packages/collector/snapshots.py",
+      "size_bytes": 13663,
+      "sha256": "69a94df10d7c8b36181b51332dd80d30ad2038555924325469b166842cb5e820"
+    },
+    {
+      "path": "packages/collector/sync.py",
+      "size_bytes": 5086,
+      "sha256": "a9c74aebb65728ce566e6d1aff879a77a88d215cb6e5aa000a52f73e3fc92a14"
+    },
+    {
+      "path": "packages/contracts/README.md",
+      "size_bytes": 2613,
+      "sha256": "eae1f2a54e0feb02626095ba12914cfe76f40fa4a20a4e39880e7ebfa2c80930"
+    },
+    {
+      "path": "packages/contracts/binding_manifest.schema.json",
+      "size_bytes": 4611,
+      "sha256": "a2b957a322f1ad5dbee0e913812c8dfa9f24495e96f3746c7fa06286fde7267d"
+    },
+    {
+      "path": "packages/contracts/import_manifest.schema.json",
+      "size_bytes": 8788,
+      "sha256": "381cdd7e9827aa31b1a4c60e039498d454aeca968741aa277bb6a42478494006"
+    },
+    {
+      "path": "packages/contracts/journey.schema.json",
+      "size_bytes": 3470,
+      "sha256": "b5911e2f1a2cf33038312a767925aadf1a4979a1ef0cdd6962341ea11facac0d"
+    },
+    {
+      "path": "packages/contracts/mcp_tools.json",
+      "size_bytes": 19698,
+      "sha256": "b4de707867f09c740d1bb2de64a5f625ae479665ca3864b05e35293c7452ded9"
+    },
+    {
+      "path": "packages/contracts/mcp_tools.resolved.json",
+      "size_bytes": 319351,
+      "sha256": "e2a4e45b62c59bf42455879b1bfce5cbefb950c6c1d3a55c9f2f36ba802f030e"
+    },
+    {
+      "path": "packages/contracts/mcp_tools.v2.json",
+      "size_bytes": 49446,
+      "sha256": "1ab659ee2a0b30119e74fbe4939483e4dea6ff4cc2395a3c1d4627d2a9147e3b"
+    },
+    {
+      "path": "packages/contracts/openapi_1.0.yaml",
+      "size_bytes": 58388,
+      "sha256": "c683ba56895a47a7736bdc2efca67cc6dc940f317ca5ed946ef86b812ef9a30a"
+    },
+    {
+      "path": "packages/contracts/openapi_2.0.json",
+      "size_bytes": 115599,
+      "sha256": "9cd1466bf3117a94098b1afce2b7d64cd7da59177a1cb5f0fbd4de45165adca5"
+    },
+    {
+      "path": "packages/contracts/scenario.schema.json",
+      "size_bytes": 19820,
+      "sha256": "4ae4809fbb81ccba447f94b7937b8f03c61ab3e48a4452148a70a37bbd4e414c"
+    },
+    {
+      "path": "packages/journey_dsl/__init__.py",
+      "size_bytes": 3507,
+      "sha256": "3dc178bdb888b6962d396654019af72b478a4f0ec9987332515830391ab18fdb"
+    },
+    {
+      "path": "packages/scenario_dsl/__init__.py",
+      "size_bytes": 4598,
+      "sha256": "63c57e1846b432a435851227feaf53403443384b43ba692a26ad0e847e0fe603"
+    },
+    {
+      "path": "pyproject.toml",
+      "size_bytes": 974,
+      "sha256": "9b7b5ea3c1d7ba76cb395b78126c0b7fb20136834d359b7015c0c487e3947dc0"
+    },
+    {
+      "path": "scripts/backup_restore.py",
+      "size_bytes": 18600,
+      "sha256": "2bda461726e3be35a6e8124d373e05fe451064f92abbe4ff0dc8db06ae100353"
+    },
+    {
+      "path": "scripts/benchmark_analysis.py",
+      "size_bytes": 11557,
+      "sha256": "90f31ddc9d6a5c9c5083eb14cda4c6f1f372f0e5c45f602012a7ae23375dce7e"
+    },
+    {
+      "path": "scripts/benchmark_reads.py",
+      "size_bytes": 18198,
+      "sha256": "51d27f37fae185178154dcf8051ff6c2a9a85657781eaf2c27c06dff0d1d1308"
+    },
+    {
+      "path": "scripts/build_contracts.py",
+      "size_bytes": 3241,
+      "sha256": "5465e2e96395f3a2de67d0d86f466a136b766c6879869ee7def8c16b8ee2f8b5"
+    },
+    {
+      "path": "scripts/build_demo.py",
+      "size_bytes": 23290,
+      "sha256": "2c496c200e1fffb37d8520c45d6bdbcb6d11607dc78aae0ec0ecc9fe6ab41a1d"
+    },
+    {
+      "path": "scripts/build_flowtest_pilot.py",
+      "size_bytes": 20886,
+      "sha256": "dcc9ba4aa079a7ae682f0648c94840cec469b691790169a161dfb8f24dee8524"
+    },
+    {
+      "path": "scripts/build_pilot.py",
+      "size_bytes": 8620,
+      "sha256": "c8da442fef78648a9c1840c813c195ea9babc1865ca4c3f436c9db953f55662a"
+    },
+    {
+      "path": "scripts/build_selfhosted.py",
+      "size_bytes": 12044,
+      "sha256": "d140c04030d8ed2695f3adc1aefd81e1e357020d959173d18368832009658202"
+    },
+    {
+      "path": "scripts/dev.sh",
+      "size_bytes": 1488,
+      "sha256": "31e342e529c2e6d3160a5a3e2e09bf5effc0349c2ab3d8912bdac0ab29966e04"
+    },
+    {
+      "path": "scripts/freeze_v2_contracts.py",
+      "size_bytes": 1082,
+      "sha256": "451d206e0b025d5c38e27183bdfa73ea680002ba6282769e8aeee1e81ddc5e05"
+    },
+    {
+      "path": "scripts/seed_flowtest_pilot.py",
+      "size_bytes": 6340,
+      "sha256": "bb5236532d91a28116d2a56dc4176c2d08f430e8943b9855725bfa2106b659b6"
+    },
+    {
+      "path": "scripts/seed_validation.py",
+      "size_bytes": 3982,
+      "sha256": "4c4b364c8456c3852b3bdcfb138c7ee178e13337f78264df3ba251b2b19ae34c"
+    },
+    {
+      "path": "services/api/vks_api/__init__.py",
+      "size_bytes": 27,
+      "sha256": "fb0ff58446e9636711bd2702111dd6f5ad711a9d69d33910e78649f3ed5165cb"
+    },
+    {
+      "path": "services/api/vks_api/ai_gateway.py",
+      "size_bytes": 31684,
+      "sha256": "c253b7ad429f79ba1b9ec67be4b6ed7948e270c5f164b2b0224ae561c17df2cb"
+    },
+    {
+      "path": "services/api/vks_api/app.py",
+      "size_bytes": 23222,
+      "sha256": "bd1072acee12ed403e58eb8751bfe6f2a0a764fade4319012ac946065345e877"
+    },
+    {
+      "path": "services/api/vks_api/attachments.py",
+      "size_bytes": 4706,
+      "sha256": "9ae16c01eced12dd29a9466aabebbad416f47784f99d5263035da32deaeb36b2"
+    },
+    {
+      "path": "services/api/vks_api/connection.py",
+      "size_bytes": 1417,
+      "sha256": "63d59234433989dedb27f67a392498262bc0d14cc8b067048c6076e5432b6795"
+    },
+    {
+      "path": "services/api/vks_api/documents.py",
+      "size_bytes": 38031,
+      "sha256": "0062cb0d4c9867a7836cbb15cafad9ec1dc35b81aebaa687bbc4eb169c63db5e"
+    },
+    {
+      "path": "services/api/vks_api/exports.py",
+      "size_bytes": 27527,
+      "sha256": "4fc9126231ca648001d506200cc57340bcc1b31590cf439abfdf9cbac9d14daa"
+    },
+    {
+      "path": "services/api/vks_api/hotspots.py",
+      "size_bytes": 20011,
+      "sha256": "f47e254eab60f64e310802cc41a6c6fd0c60e3b445f88df726dafa167380a04f"
+    },
+    {
+      "path": "services/api/vks_api/identity.py",
+      "size_bytes": 32095,
+      "sha256": "f83545b00e5e72d8f7d02aa6269270270700b188ea232db0f55a136419e98aa8"
+    },
+    {
+      "path": "services/api/vks_api/jobs.py",
+      "size_bytes": 22368,
+      "sha256": "34068f298740992ef5b05e86773605af1a2dd6675f516ee04e761e059dd37ebf"
+    },
+    {
+      "path": "services/api/vks_api/journeys.py",
+      "size_bytes": 15363,
+      "sha256": "0067daa43e8e6d25865079b304d5df2651542638aa675d5544cc26385cfa813f"
+    },
+    {
+      "path": "services/api/vks_api/knowledge.py",
+      "size_bytes": 39584,
+      "sha256": "eaeb5de6c1110d4dabad41619dcd5498187bc241f9e4e594bcb1079a674c39c4"
+    },
+    {
+      "path": "services/api/vks_api/knowledge_tasks.py",
+      "size_bytes": 22338,
+      "sha256": "58defa44c1f0ba5bcdc65bf89c76268ed1db1513ccefd94b0ad80c3b2c7160ec"
+    },
+    {
+      "path": "services/api/vks_api/mcp_gateway.py",
+      "size_bytes": 16895,
+      "sha256": "b71e6142e9893fe3983422960a26612589ab86c0dc079c8a27ade95ac92b20a9"
+    },
+    {
+      "path": "services/api/vks_api/models.py",
+      "size_bytes": 11741,
+      "sha256": "7a4e68095ba07d6aad5e3d60554a0f6e08ea2d4dccc7e6d2df4d96a1bfb4a236"
+    },
+    {
+      "path": "services/api/vks_api/modules.py",
+      "size_bytes": 17763,
+      "sha256": "70d6fcc017badca8e65b325587c8c502871f457c2c52de17f29c97ba2c0ce07b"
+    },
+    {
+      "path": "services/api/vks_api/oauth.py",
+      "size_bytes": 17258,
+      "sha256": "b1c181e6b19ab81afc667ea5474ed61ac800db7eb607e5312645d96271e0e283"
+    },
+    {
+      "path": "services/api/vks_api/project_profile.py",
+      "size_bytes": 3628,
+      "sha256": "eaf4758d2b7a64b56502218118ea4049f5cb666a9126d5dde232a8e81fe5d926"
+    },
+    {
+      "path": "services/api/vks_api/reading.py",
+      "size_bytes": 32536,
+      "sha256": "092a508cf5d23e0f352ff45402b3c8a4886b22533ab65becf88647cbb5c6dae2"
+    },
+    {
+      "path": "services/api/vks_api/relationships.py",
+      "size_bytes": 13723,
+      "sha256": "f97074f201c3d90bbae52b4b5a9611ecca04ea3d09298e453044d4248004e763"
+    },
+    {
+      "path": "services/api/vks_api/runtime.py",
+      "size_bytes": 1155,
+      "sha256": "f82b9196a76f63a53a7cf20e7c5c8cbf518ad1a154a7c22b15275a7e0b801da0"
+    },
+    {
+      "path": "services/api/vks_api/scenarios.py",
+      "size_bytes": 61140,
+      "sha256": "f1357db463f159b158f3d65a46479772a43f379a6037a37c0b08fd63bcc62c5e"
+    },
+    {
+      "path": "services/api/vks_api/schemas.py",
+      "size_bytes": 4023,
+      "sha256": "a1b58aea0d96af2b5f0b56e3bf761a7b58fb706e88c04fcfeae687121d27f8b3"
+    },
+    {
+      "path": "services/api/vks_api/service.py",
+      "size_bytes": 76936,
+      "sha256": "bcabe54ef614e01627d00af5dfd70e4ff8e17356e282876d497b8cccc460441e"
+    },
+    {
+      "path": "services/api/vks_api/static_index.py",
+      "size_bytes": 5485,
+      "sha256": "c6dc580b1f6bf70ed56d03c48523b59c8ed1341da3f5d54a71907a0ef63435d8"
+    },
+    {
+      "path": "services/api/vks_api/v2_contracts.py",
+      "size_bytes": 3660,
+      "sha256": "b18e7ecbe9d17c5e22d7f0c85b5ec0701d8596179172fe554add6deddaff5756"
+    },
+    {
+      "path": "services/api/vks_api/version.py",
+      "size_bytes": 23,
+      "sha256": "b9713b54d8136ebd3b6f838e3ad42fa60ab53b668f3d25a4667d24071ec5a7ca"
+    },
+    {
+      "path": "services/api/vks_api/versions.py",
+      "size_bytes": 30746,
+      "sha256": "f8c811d6c601c23b3ee65f9d66d8e7efe991346cc06f583460fb47e0a71419c0"
+    },
+    {
+      "path": "services/api/vks_api/workbench_v2.py",
+      "size_bytes": 14130,
+      "sha256": "ff3e9520991e99890c56f8ba1ec703cabb4a41f85559f5da602432a9c03dc603"
+    },
+    {
+      "path": "services/browser_runner/__init__.py",
+      "size_bytes": 85,
+      "sha256": "67400e8840bc17004dbc09152de6a6ef7332f6191722048369fb183e2c971b61"
+    },
+    {
+      "path": "services/browser_runner/auth_registry.py",
+      "size_bytes": 9608,
+      "sha256": "af703d1490246cd8c2d1319efba61a30a9b6d1085f91d896c5064ae705e8359b"
+    },
+    {
+      "path": "services/browser_runner/network.py",
+      "size_bytes": 8983,
+      "sha256": "7e8abbc27fe30199aee4b8a743151f8d03e9836408691b42561867ab3caed278"
+    },
+    {
+      "path": "services/browser_runner/runner.py",
+      "size_bytes": 18276,
+      "sha256": "60c00083076836ed3ad895e1a3a79e800ca0001f6c693d9e4a8169f6d430905e"
+    },
+    {
+      "path": "services/worker/__init__.py",
+      "size_bytes": 71,
+      "sha256": "f4952144a8b18768299990f53c35886b5cc9fbc208e8800d8522bdec3a2027d0"
+    },
+    {
+      "path": "services/worker/celery_app.py",
+      "size_bytes": 1272,
+      "sha256": "cc17ea245eace0740dc16277275fb04c5a682b6ad37f1c2290e47da63693a0cc"
+    },
+    {
+      "path": "services/worker/dispatcher.py",
+      "size_bytes": 549,
+      "sha256": "2427ecea8deec698401277688e451b3352b9564716cb0d56ff9192ba61d4abf7"
+    },
+    {
+      "path": "tests/analyzers/test_cancellation.py",
+      "size_bytes": 3096,
+      "sha256": "58757f91647bddfeb376f8567502270cd46ba3a7387fa5fcb36e38c8c646cb5c"
+    },
+    {
+      "path": "tests/analyzers/test_document_links.py",
+      "size_bytes": 2697,
+      "sha256": "0703fab39711049bf7faefef7662d99c28c4bb51c04840f02d8ca6f6736eca6c"
+    },
+    {
+      "path": "tests/analyzers/test_java_spring.py",
+      "size_bytes": 14192,
+      "sha256": "82d0fb71c8373ade1c402d8eeed7b6680857e698e130ed618062468f7ce5ba28"
+    },
+    {
+      "path": "tests/audit/conftest.py",
+      "size_bytes": 796,
+      "sha256": "c8afb9adb542a256e46f05c82f4972d6d290bd27afcb45fac7ba1ab16951aa56"
+    },
+    {
+      "path": "tests/audit/test_batch_one.py",
+      "size_bytes": 18186,
+      "sha256": "8a2b4da277a8023896761975a139e24056d8c5f38a606ace18e3993519e6b705"
+    },
+    {
+      "path": "tests/audit/test_batch_two.py",
+      "size_bytes": 5579,
+      "sha256": "776f706f5bfee122f4426804b53b94a07a839c795d2392873d612b7a2950c6c6"
+    },
+    {
+      "path": "tests/audit/test_capture_bindings.py",
+      "size_bytes": 7587,
+      "sha256": "b4a754a8092f24c8b0a23039f00b7e3018f657e76c1d9c8033419d17fe416e43"
+    },
+    {
+      "path": "tests/audit/test_document_reaudit.py",
+      "size_bytes": 19669,
+      "sha256": "b1656409a92732635d76fb216409a7e592843ff5640860c934f842532eff9af4"
+    },
+    {
+      "path": "tests/audit/test_project_pagination.py",
+      "size_bytes": 1040,
+      "sha256": "30a5d1db49a0044cbe8ccf34082bb45386381b360a814f93889dafc9671cc736"
+    },
+    {
+      "path": "tests/backend/test_application.py",
+      "size_bytes": 13857,
+      "sha256": "bb465ff3213d274885a8af318296e0316408895cbb77f8e043f48debf1c1f9bc"
+    },
+    {
+      "path": "tests/backend/test_postgres.py",
+      "size_bytes": 9350,
+      "sha256": "b4c83a68c04e33067c91a706bad8668d202b99160fe5ad776c75b96af3afb779"
+    },
+    {
+      "path": "tests/collector/test_snapshots.py",
+      "size_bytes": 5814,
+      "sha256": "556ccb929b3d0d61835464a8ffcac2af3931931b70ffc53f87dc0062acd9b4ab"
+    },
+    {
+      "path": "tests/collector/test_svn_container.py",
+      "size_bytes": 3466,
+      "sha256": "eb60737ed84e335aaa9c0951fffaabd0198bfb0dea0f89d699057012f569d2b3"
+    },
+    {
+      "path": "tests/contracts/test_contracts.py",
+      "size_bytes": 2295,
+      "sha256": "6696d238e0814bb07436f18a446e563e377b40d4dcb155c09a2ac4ae7810cebe"
+    },
+    {
+      "path": "tests/deployment/test_compose.py",
+      "size_bytes": 8571,
+      "sha256": "12f741709e602e5bd1609ed8523d56aa84d8b7159475e9e60a9090b2fd9d632c"
+    },
+    {
+      "path": "tests/deployment/test_configuration.py",
+      "size_bytes": 1021,
+      "sha256": "1a1aa0e2821db4e52a8b292ec0850888a9962ae939ed7dbe62fd2c8f24d243b4"
+    },
+    {
+      "path": "tests/documents/test_attachments.py",
+      "size_bytes": 3145,
+      "sha256": "c88c5655f7d9fbcecb0e36d9fe57f6bdf3abc666b814bfa84ab1c575ba6081b3"
+    },
+    {
+      "path": "tests/documents/test_document_migration.py",
+      "size_bytes": 1598,
+      "sha256": "06862641667d12c6da71b857a97185509e1a036ccbe3ec83988c65179392f47b"
+    },
+    {
+      "path": "tests/documents/test_documents.py",
+      "size_bytes": 11799,
+      "sha256": "2f0da91d98e6d14c46072d707346e540fb2539e5e4c23cc2b04f49d56fd6e802"
+    },
+    {
+      "path": "tests/exports/test_release_exports.py",
+      "size_bytes": 11173,
+      "sha256": "8fdcf1a4d55e55f72ff1cd249e8791abdcdd3852c96429fcbfc8051024506c9b"
+    },
+    {
+      "path": "tests/hotspots/test_hotspots.py",
+      "size_bytes": 9915,
+      "sha256": "aaa0ec3b75fc24158d1d3cfcccb3899ffc69f1d5af19e842dccd7e64b8d7b7dd"
+    },
+    {
+      "path": "tests/identity/test_audit_filters.py",
+      "size_bytes": 1924,
+      "sha256": "19a0c35d7117ea30f5fe06b8bfea46cf02e5cfc2284cf8b908df723732119111"
+    },
+    {
+      "path": "tests/identity/test_migration.py",
+      "size_bytes": 2020,
+      "sha256": "0a8f1c88ab05c8991b4187e297424df41e3baa02531d7a9e90ed2aa002daa3b8"
+    },
+    {
+      "path": "tests/identity/test_project_profile.py",
+      "size_bytes": 1386,
+      "sha256": "b8432a7117b3dcb886533b160471368777d67bedca275749927445471c42fff0"
+    },
+    {
+      "path": "tests/identity/test_team_identity.py",
+      "size_bytes": 23001,
+      "sha256": "0ba4a0a22c4d3d15ed5925795e62839e2936421197c252da62301053e02d2498"
+    },
+    {
+      "path": "tests/ingest/test_bundles.py",
+      "size_bytes": 16228,
+      "sha256": "89036d6e7d01ceb9fd1149f36c0f9fc818847c47070b600bb981ae3324de605b"
+    },
+    {
+      "path": "tests/jobs/test_connections.py",
+      "size_bytes": 1383,
+      "sha256": "d36ed37c912df3f318f4439ab4ad3af56b1aa551e73a416640ef3934eb9f637c"
+    },
+    {
+      "path": "tests/jobs/test_durable_dispatch.py",
+      "size_bytes": 7559,
+      "sha256": "fcb2b614211e9b703c7c4c0f7a8cc74af18f237749c94cb87b1702bf5ea6a73d"
+    },
+    {
+      "path": "tests/jobs/test_rabbitmq.py",
+      "size_bytes": 3003,
+      "sha256": "d5275ec2f8751de318d6e106faac36c50c18beef1dec5aaff4c137b51ab9876a"
+    },
+    {
+      "path": "tests/knowledge/test_imports.py",
+      "size_bytes": 3036,
+      "sha256": "6b9df8b12d867706d27eafff6fa256be4dd17924f132491bbb195df949d351fa"
+    },
+    {
+      "path": "tests/knowledge/test_partial_import.py",
+      "size_bytes": 7501,
+      "sha256": "939f17f9d0ac33eccafb7d747fb08f5bc612060d074366436884f7386971182f"
+    },
+    {
+      "path": "tests/mcp/test_http.py",
+      "size_bytes": 2579,
+      "sha256": "220ca71e38cc7f6a5ce9b967f896b8526749d9113d7b418a7c93bbc3d15bd920"
+    },
+    {
+      "path": "tests/mcp/test_sdk.py",
+      "size_bytes": 1662,
+      "sha256": "bc78aacd086df68fba9139d1ef0deb77858f5ea6266fa39cce8134394088449b"
+    },
+    {
+      "path": "tests/mcp/test_workflow.py",
+      "size_bytes": 7997,
+      "sha256": "2509b8e03e313eba8e1b8dd272483bd9b2d0d0bdccd9308541b15f8a06856fe7"
+    },
+    {
+      "path": "tests/models/test_model_gateway.py",
+      "size_bytes": 8037,
+      "sha256": "6e54a1cbb9d271139f011b03e916ed1117b95e72ee797e9175573f304e4b3326"
+    },
+    {
+      "path": "tests/modules/test_mcp_modules.py",
+      "size_bytes": 4927,
+      "sha256": "b2927913226141d50f82a3680d0315c5814856d3b5e792d8b577d3aa37ebaf48"
+    },
+    {
+      "path": "tests/modules/test_module_migration.py",
+      "size_bytes": 1097,
+      "sha256": "9ffcf735b9bec0d48e1c7d67a10d7c3461ce9b93a977fb057c9e7bac6128446d"
+    },
+    {
+      "path": "tests/modules/test_modules.py",
+      "size_bytes": 8984,
+      "sha256": "456ec3cf2e2ec71a85f20dcac405026ed8c87ab92e95bced92986327f5924611"
+    },
+    {
+      "path": "tests/oauth/test_resource_server.py",
+      "size_bytes": 8789,
+      "sha256": "d90adb3c540738fd2fa42b6f96cb5f39a1b89e9ef2fea20a41da725d4ba6b020"
+    },
+    {
+      "path": "tests/performance/test_reading.py",
+      "size_bytes": 11474,
+      "sha256": "5923748d55574e779c4933b9e4b9333b5b04a33d8a0cc6b2ca68c45d455347c9"
+    },
+    {
+      "path": "tests/pilot/test_flowtest_pilot.py",
+      "size_bytes": 1997,
+      "sha256": "1a886646d476ba55564dccaf3a695185af4573cc2d5726c8289d55b67f3dc469"
+    },
+    {
+      "path": "tests/recovery/test_backup_restore.py",
+      "size_bytes": 6069,
+      "sha256": "c9a18ddceac04b838e9752fa49192d80a83f8a6ae2df05abd71a68c8b2cf5701"
+    },
+    {
+      "path": "tests/recovery/test_postgres_backup.py",
+      "size_bytes": 2414,
+      "sha256": "5a5abfbfbd314c41394a18c94818e61847491f5d90b893dd0c3a995e368bef64"
+    },
+    {
+      "path": "tests/review/test_access_boundaries.py",
+      "size_bytes": 10357,
+      "sha256": "dc56ec097999db6c8dc31df486aa399b772f22b8794178ae50ebc5fe8d005352"
+    },
+    {
+      "path": "tests/review/test_relationship_operations.py",
+      "size_bytes": 5942,
+      "sha256": "afc98e4e00d639afba823c989e92e9c7fd4d7c097b3aeb736faff8615a0aadca"
+    },
+    {
+      "path": "tests/runner/test_auth_registry.py",
+      "size_bytes": 12994,
+      "sha256": "2fdf9037cb7cff3bbf615da9fb69a1ab832170be295d2ac8490b247e6e1835a9"
+    },
+    {
+      "path": "tests/runner/test_browser_capture.py",
+      "size_bytes": 19358,
+      "sha256": "25acac6e5c0ac12b7b15ca8eebbcd7f247dfa6e4225ce61df78ec5eb4bee1548"
+    },
+    {
+      "path": "tests/runner/test_cookie_rotation.py",
+      "size_bytes": 7864,
+      "sha256": "403c03e12fa727197e1c52cc4c91ea4a877642ec4c9901d28eccf2945ef84a3b"
+    },
+    {
+      "path": "tests/runner/test_network.py",
+      "size_bytes": 4966,
+      "sha256": "4a2e3bbc813f6219059a8dce73755ed2009eef6e5de479bbac169db2dbdbd482"
+    },
+    {
+      "path": "tests/runner/test_parallel_requests.py",
+      "size_bytes": 3561,
+      "sha256": "29b932ff8ee8be779169eb4794051d212c33489693884baa03a1c8ac5ccd2f97"
+    },
+    {
+      "path": "tests/runner/test_runtime_candidates.py",
+      "size_bytes": 8617,
+      "sha256": "191e855206a98ced4571d8780725c1bd60dddf1376d98ee3dd2a378659826b74"
+    },
+    {
+      "path": "tests/runner/test_spa_initialization.py",
+      "size_bytes": 4573,
+      "sha256": "3eccc477e33930c5e4e92ee494df3ebed6ff28f73925bcba112f5e6c41b3f355"
+    },
+    {
+      "path": "tests/scenarios/test_mcp_scenarios.py",
+      "size_bytes": 2842,
+      "sha256": "234a6d521716ad98bf4db9bf26605bb545b1ad36e2aa929181117c2eae3bf79b"
+    },
+    {
+      "path": "tests/scenarios/test_scenarios.py",
+      "size_bytes": 9533,
+      "sha256": "50113da728c3fe7a1a04b6f6580468381c05b6d1ddab30ddd82afa5141c61a0a"
+    },
+    {
+      "path": "tests/selfhosted/test_checkout_workflow.py",
+      "size_bytes": 4315,
+      "sha256": "5b00856afd2b7f664f523c3a5d92e1e0c887e9e2019aadb526fe3e852dd95705"
+    },
+    {
+      "path": "tests/ui/test_audit_navigation.py",
+      "size_bytes": 25133,
+      "sha256": "c1adc53752bc1f60f5f41af1ac39b0853bbf2600980f96232c6e86d5edbd3d69"
+    },
+    {
+      "path": "tests/ui/test_frontend_browser.py",
+      "size_bytes": 19568,
+      "sha256": "2d4f2958cc8946445014c6c7c41ee58efff3231896558d3aebbe1d97a6729dc3"
+    },
+    {
+      "path": "tests/ui/test_v2_workspace.py",
+      "size_bytes": 7018,
+      "sha256": "084012ef8a5d44935ff3abf737125736af1954ca0104039444c851791b235bf1"
+    },
+    {
+      "path": "tests/v2/test_journeys.py",
+      "size_bytes": 7098,
+      "sha256": "0f0b54425d5396e92e69dcaccee57adb9331ffc62bef2e72b3b06b5529cb9841"
+    },
+    {
+      "path": "tests/v2/test_knowledge_tasks.py",
+      "size_bytes": 8910,
+      "sha256": "894c47058e870b0a2115a5fbd44f2bb05a2785adaca950b5998804a28bda92db"
+    },
+    {
+      "path": "tests/v2/test_mcp_v2.py",
+      "size_bytes": 3387,
+      "sha256": "c2b19e654403c185ded1e2197ae91f25a7292ab821018929c789f4cce3d50a42"
+    },
+    {
+      "path": "tests/v2/test_sync.py",
+      "size_bytes": 1422,
+      "sha256": "b8bec531c345eebe783e59517a188318442e71bf4a9b2a285d042bce73192d85"
+    },
+    {
+      "path": "tests/versions/test_versions.py",
+      "size_bytes": 11073,
+      "sha256": "1a4689619b781a2c4d43c254e21642a6ddb957e929cf934feb84527c399ed7ff"
+    },
+    {
+      "path": "uv.lock",
+      "size_bytes": 194013,
+      "sha256": "9561fe990182e8c8c84d839c57cc6847f2bb7fceda879f0f2d41f759f04dfe6c"
+    }
+  ]
+}

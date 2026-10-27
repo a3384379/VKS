@@ -41,9 +41,12 @@ def current_actor(service, actor_id, pid, session=None, *, job=None):
             return current_actor(service, actor_id, pid, s, job=job)
     authorization = job.input_json.get("_authorization") if job else None
     if authorization is not None and (
-        not isinstance(authorization, dict) or authorization.get("version") != 1
-        or authorization.get("actor_id") != actor_id or authorization.get("project_id") != pid
-        or authorization.get("kind") != job.kind or not isinstance(authorization.get("scopes"), list)
+        not isinstance(authorization, dict)
+        or authorization.get("version") != 1
+        or authorization.get("actor_id") != actor_id
+        or authorization.get("project_id") != pid
+        or authorization.get("kind") != job.kind
+        or not isinstance(authorization.get("scopes"), list)
         or any(not isinstance(scope, str) for scope in authorization["scopes"])
     ):
         raise DomainError("VKS_UNAUTHENTICATED", "任务授权快照无效", 401)
@@ -54,6 +57,7 @@ def current_actor(service, actor_id, pid, session=None, *, job=None):
         scopes = set(actor.scopes) & set(authorization["scopes"])
         scopes = {scope for scope in scopes if service._can(session, actor, pid, scope)}
         return replace(actor, scopes=frozenset(scopes))
+
     ensure_owner(service, session)
     identity = session.get(UserIdentity, actor_id)
     if identity:
@@ -165,7 +169,13 @@ def publish_job(job_id, kind):
     """Only a UUID is sent to the broker; content/identity remain in the database."""
     from services.worker.celery_app import celery
 
-    queue = "vks-browser" if kind == "capture" else "vks-model" if kind == "generate_documents" else "vks-index"
+    queue = (
+        "vks-browser"
+        if kind == "capture"
+        else "vks-model"
+        if kind in ("generate_documents", "knowledge_task")
+        else "vks-index"
+    )
     celery.send_task("vks.execute_job", args=[job_id], queue=queue, serializer="json", retry=False)
 
 
@@ -249,9 +259,16 @@ def _processor_version():
     files = [
         root / "packages/analyzers/vks_ingest.py",
         root / "services/api/vks_api/knowledge.py",
+        root / "services/api/vks_api/jobs.py",
         root / "packages/analyzers/java_spring.py",
+        root / "packages/analyzers/async_topology.py",
+        root / "packages/analyzers/ui_discovery.py",
+        root / "packages/contracts/import_manifest.schema.json",
+        root / "packages/contracts/binding_manifest.schema.json",
         root / "packages/analyzers/document_links.py",
         root / "packages/analyzers/cancellation.py",
+        root / "packages/analyzers/syntax_cache.py",
+        root / "services/api/vks_api/source_cache.py",
     ]
     h = hashlib.sha256()
     for path in files:
@@ -300,6 +317,7 @@ def load_parse_checkpoint(service, job_id, input_hash):
             evidence=payload["evidence"],
             relations=payload["relations"],
             issues=payload["issues"],
+            analysis_metrics=payload.get("analysis_metrics", {}),
         )
     except (OSError, KeyError, ValueError, TypeError):
         return None
@@ -317,7 +335,8 @@ def save_parse_checkpoint(service, job_id, attempt, input_hash, parsed):
         artifact["content_ref"] = service._put_object(item["content"])
         artifacts.append(artifact)
     payload = {
-        name: getattr(parsed, name) for name in ("manifest", "sources", "entities", "evidence", "relations", "issues")
+        name: getattr(parsed, name)
+        for name in ("manifest", "sources", "entities", "evidence", "relations", "issues", "analysis_metrics")
     }
     payload["artifacts"] = artifacts
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -364,7 +383,10 @@ def execute_job(service, jid):
         attempt = job.attempt
         try:
             service.require(
-                s, current_actor(service, job.created_by, job.project_id, s, job=job), job.project_id, JOB_SCOPES[job.kind]
+                s,
+                current_actor(service, job.created_by, job.project_id, s, job=job),
+                job.project_id,
+                JOB_SCOPES[job.kind],
             )
         except DomainError as error:
             job.state = "failed"
@@ -404,10 +426,12 @@ def execute_job(service, jid):
         return False
 
     from packages.analyzers.cancellation import cancellation_scope
+    from packages.analyzers.syntax_cache import cache_scope
+    from .source_cache import SourceUnitCache
 
     try:
         with heartbeat(service, jid, attempt):
-            with cancellation_scope(processing_cancelled):
+            with cancellation_scope(processing_cancelled), cache_scope(SourceUnitCache(service, jid, attempt)):
                 if kind == "capture":
                     capture_output = ScenarioService(service).execute_capture(jid)
                 if kind in ("index", "suggest_links"):
@@ -418,6 +442,10 @@ def execute_job(service, jid):
                     from .ai_gateway import AiService
 
                     document_output = AiService(service).prepare_document(jid)
+                if kind == "knowledge_task":
+                    from .knowledge_tasks import KnowledgeTaskService
+
+                    task_output = KnowledgeTaskService(service).prepare(jid)
                 if kind == "import":
                     parsed = load_parse_checkpoint(service, jid, input_hash)
                     if parsed is None:
@@ -452,14 +480,31 @@ def execute_job(service, jid):
                 service.require(s, current_actor(service, owner, pid, s, job=job), pid, JOB_SCOPES[kind])
                 if kind == "import":
                     result = service._commit_bundle(
-                        s, pid, owner, parsed, payload.get("analysis_set_id") if payload["kind"] != "bundle" else None
+                        s,
+                        pid,
+                        owner,
+                        parsed,
+                        payload.get("analysis_set_id")
+                        if payload["kind"] != "bundle" or payload.get("_source_sync")
+                        else None,
                     )
+                    if parsed.analysis_metrics:
+                        result["analysis_metrics"] = parsed.analysis_metrics
+                    if payload.get("_source_sync"):
+                        from .source_sync import SourceSyncService
+
+                        actor = current_actor(service, owner, pid, s, job=job)
+                        result = SourceSyncService(service).finalize(s, job, actor, result)
                 elif kind == "capture":
                     result = ScenarioService(service).finalize_capture(s, job, capture_output)
                 elif kind == "generate_documents":
                     from .ai_gateway import AiService
 
                     result = AiService(service).finalize_document(s, job, document_output)
+                elif kind == "knowledge_task":
+                    from .knowledge_tasks import KnowledgeTaskService
+
+                    result = KnowledgeTaskService(service).finalize(s, job, task_output)
                 elif kind == "export":
                     result = service._perform_export(s, job)
                 elif kind == "detect_drift":
@@ -476,7 +521,7 @@ def execute_job(service, jid):
                     raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", "平台模型尚未配置，不能生成文档", 503)
                 job.result_json = result
                 job.state = "succeeded"
-                job.stage = "READY_FOR_REVIEW" if kind == "import" else "COMPLETE"
+                job.stage = "READY_FOR_REVIEW" if kind in ("import", "knowledge_task") else "COMPLETE"
                 job.progress = 100
                 job.issue_count = len(result.get("issues", []))
                 job.completeness = "partial" if job.issue_count else "complete"
@@ -497,6 +542,11 @@ def execute_job(service, jid):
             if job and job.attempt == attempt and job.state in ("running", "cancelling"):
                 retry = error.retryable and kind != "capture" and attempt < 3 and dispatch_mode() == "celery"
                 job.state = "cancelled" if job.cancel_requested else "retry_wait" if retry else "failed"
+                if kind == "knowledge_task":
+                    history = [dict(row) for row in job.input_json.get("_stage_history", [])]
+                    if history and history[-1]["state"] == "running":
+                        history[-1]["state"] = job.state
+                    job.input_json = dict(job.input_json, _stage_history=history)
                 job.stage = job.state.upper()
                 job.error_json = {
                     "code": error.code,

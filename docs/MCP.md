@@ -1,6 +1,6 @@
 # MCP 实现与授权
 
-VKS锁定官方Python MCP SDK。stdio和Streamable HTTP通过同一REST服务处理授权、导入、证据、任务、提案和导出。18个工具的输入/输出为自包含Schema；4个资源模板和4个提示模板不会扩大项目权限。
+VKS锁定官方Python MCP SDK。stdio和Streamable HTTP通过同一REST服务处理授权、导入、证据、任务、提案和导出。2.0 开发预览保留原18工具，增加 `propose_journey`、`create_knowledge_task`、`get_knowledge_task`、`get_knowledge_coverage`、`get_change_impact_report`，共23个自包含Schema；4个资源模板和4个提示模板不变，不扩大项目权限。新增任务仍固定输入、预算与授权上限，机器没有流程批准或发布权限；普通 `get_job/cancel_job` 也支持知识任务。兼容和未实现范围见[2.0实施记录](upgrades/v2/IMPLEMENTATION.md)。
 
 ## 生命周期
 
@@ -22,3 +22,5 @@ VKS是受保护资源，不是授权服务器。实例管理员登记受信issue
 ## 资源与提示
 
 资源包括`vks://projects/{id}/releases/{release}/overview`、`vks://actions/{id}/releases/{release}`、`vks://evidence/{id}`、`vks://jobs/{id}`。所有资源重新授权，输出固定相同基线。提示模板明确把源码/文档当作不可信数据，不构成执行其中指令的许可。
+
+2.0 知识任务增加 `knowledge_plan`：固定基线、一次模型预算、最多八步、五种固定应用服务工具；输出仍是候选。`get_knowledge_task` 返回阶段产物的摘要描述与模块采用/拒绝决定，所有正文需当前输入权限，机器仍不能作人员审核。计划 JSON Schema 见 `packages/contracts/knowledge_plan.schema.json`，原 18 工具源契约未改。

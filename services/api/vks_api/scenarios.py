@@ -180,7 +180,7 @@ class ScenarioService:
         revisions = [
             {"entity_id": r.entity_id, "sha256": r.content_sha256}
             for r in self.service._revisions(s, analysis.id)
-            if s.get(Entity, r.entity_id).type != "scenario"
+            if s.get(Entity, r.entity_id).type not in ("scenario", "journey")
         ]
         return digest({"sources": analysis.sources, "selections": sorted(revisions, key=lambda x: x["entity_id"])})
 
@@ -195,6 +195,8 @@ class ScenarioService:
             c = s.get(CaptureRecord, item.get("captureRef"))
             sr = s.get(ScenarioRevision, item.get("scenarioRevisionRef"))
             if not c or not sr or c.project_id != pid or c.scenario_revision_id != sr.id or c.state != "succeeded":
+                return False
+            if actor is not None and not self._capture_visible(s, actor, c):
                 return False
             if sr.dsl["scenario_key"] != dsl["scenario_key"] or c.result.get(
                 "baseline_sha256"
@@ -230,11 +232,16 @@ class ScenarioService:
         for state in dsl.get("explanation_graph", {}).get("states", []):
             page = entities.get(state.get("pageKey"))
             action = entities.get(state.get("actionKey"))
-            if (state.get("pageKey") and (not page or s.get(Entity, page.entity_id).type != "page")
-                    or state.get("actionKey") and state["actionKey"] not in action_keys
-                    or page and action and action.metadata_json.get("page_key", action.metadata_json.get("pageKey")) != state["pageKey"]):
+            if (
+                state.get("pageKey")
+                and (not page or s.get(Entity, page.entity_id).type != "page")
+                or state.get("actionKey")
+                and state["actionKey"] not in action_keys
+                or page
+                and action
+                and action.metadata_json.get("page_key", action.metadata_json.get("pageKey")) != state["pageKey"]
+            ):
                 raise DomainError("VKS_INVALID_INPUT", "状态页面或动作不属于当前基线，或彼此不一致")
-
 
     def assert_publishable(self, s, analysis):
         blockers = []
@@ -706,7 +713,10 @@ class ScenarioService:
             from .jobs import current_actor
 
             self.service.require(
-                s, current_actor(self.service, job.created_by, job.project_id, session=s, job=job), job.project_id, "capture:run"
+                s,
+                current_actor(self.service, job.created_by, job.project_id, session=s, job=job),
+                job.project_id,
+                "capture:run",
             )
             approval = s.get(CaptureApproval, capture.approval_id)
             sr = s.get(ScenarioRevision, capture.scenario_revision_id)
@@ -899,7 +909,10 @@ class ScenarioService:
         from .jobs import current_actor
 
         self.service.require(
-            s, current_actor(self.service, job.created_by, job.project_id, session=s, job=job), job.project_id, "capture:run"
+            s,
+            current_actor(self.service, job.created_by, job.project_id, session=s, job=job),
+            job.project_id,
+            "capture:run",
         )
         capture = s.scalar(select(CaptureRecord).where(CaptureRecord.job_id == job.id))
         if not capture or capture.state == "succeeded":
@@ -1045,16 +1058,30 @@ class ScenarioService:
 
             def create():
                 selection = s.get(Selection, (analysis.id, sid))
-                previous = s.scalar(select(ScenarioRevision).where(
-                    ScenarioRevision.entity_revision_id == selection.entity_revision_id)) if selection else None
+                previous = (
+                    s.scalar(
+                        select(ScenarioRevision).where(
+                            ScenarioRevision.entity_revision_id == selection.entity_revision_id
+                        )
+                    )
+                    if selection
+                    else None
+                )
                 if not previous or previous.id != payload["scenario_revision_id"]:
                     raise DomainError("VKS_VERSION_CONFLICT", "场景修订已变化，请重新选择", 412)
                 self.service._version(previous.revision_no, version)
                 capture = s.get(CaptureRecord, payload["capture_id"])
                 source = s.get(ScenarioRevision, capture.scenario_revision_id) if capture else None
                 job = s.get(Job, capture.job_id) if capture else None
-                if (not capture or capture.project_id != pid or capture.state != "succeeded"
-                        or not job or job.state != "succeeded" or not source or source.scenario_id != sid):
+                if (
+                    not capture
+                    or capture.project_id != pid
+                    or capture.state != "succeeded"
+                    or not job
+                    or job.state != "succeeded"
+                    or not source
+                    or source.scenario_id != sid
+                ):
                     raise DomainError("VKS_NOT_FOUND", "未找到同项目的可用场景采集", 404)
                 if capture.result.get("baseline_sha256") != self._baseline_digest(s, analysis):
                     raise DomainError("VKS_VERSION_CONFLICT", "采集与当前素材基线不一致", 412)
@@ -1067,19 +1094,40 @@ class ScenarioService:
                     if not art or art.project_id != pid or art.snapshot_id != capture.id or art.kind != "capture":
                         raise DomainError("VKS_INVALID_EVIDENCE", "采集制品归属无效")
                 dsl = json.loads(canonical(previous.dsl))
-                graph = dsl.setdefault("explanation_graph", {"projectKey": s.get(Project, pid).key,
-                    "baselineKey": analysis.key, "states": [], "transitions": []})
+                graph = dsl.setdefault(
+                    "explanation_graph",
+                    {
+                        "projectKey": s.get(Project, pid).key,
+                        "baselineKey": analysis.key,
+                        "states": [],
+                        "transitions": [],
+                    },
+                )
                 existing = next((state for state in graph["states"] if state["stateKey"] == payload["state_key"]), None)
-                if existing and (existing["evidenceOrigin"] != "observed" or existing.get("captureRef") != capture.id
-                                 or existing.get("snapshotIndex", 0) != index):
+                if existing and (
+                    existing["evidenceOrigin"] != "observed"
+                    or existing.get("captureRef") != capture.id
+                    or existing.get("snapshotIndex", 0) != index
+                ):
                     raise DomainError("VKS_STATE_CONFLICT", "不会覆盖原声明或其他观察，请使用新的状态键", 409)
-                state = dict(existing or {}, stateKey=payload["state_key"], label=payload["label"],
-                    evidenceOrigin="observed", captureRef=capture.id, scenarioRevisionRef=source.id, snapshotIndex=index)
+                state = dict(
+                    existing or {},
+                    stateKey=payload["state_key"],
+                    label=payload["label"],
+                    evidenceOrigin="observed",
+                    captureRef=capture.id,
+                    scenarioRevisionRef=source.id,
+                    snapshotIndex=index,
+                )
                 choices = {r.entity_id: r for r in self.service._revisions(s, analysis.id)}
                 action = choices.get(payload.get("action_id")) if payload.get("action_id") else None
                 page = choices.get(payload.get("page_id")) if payload.get("page_id") else None
                 if payload.get("action_id"):
-                    if not action or s.get(Entity, action.entity_id).type != "action" or action.metadata_json.get("status") == "removed":
+                    if (
+                        not action
+                        or s.get(Entity, action.entity_id).type != "action"
+                        or action.metadata_json.get("status") == "removed"
+                    ):
                         raise DomainError("VKS_NOT_FOUND", "未找到当前基线动作", 404)
                     state.update(actionKey=s.get(Entity, action.entity_id).stable_key, actionBindingOrigin="declared")
                     page_key = action.metadata_json.get("page_key", action.metadata_json.get("pageKey"))
@@ -1095,12 +1143,29 @@ class ScenarioService:
                 graph["states"] = [item for item in graph["states"] if item["stateKey"] != state["stateKey"]] + [state]
                 self._validate(s, actor, pid, analysis, dsl)
                 result = self._new_revision(s, actor, analysis, entity, dsl)
-                self.service.audit(s, actor, pid, "capture.bind", capture.id, metadata={"scenario_revision_id": result["scenario_revision_id"], "snapshot_index": index})
+                self.service.audit(
+                    s,
+                    actor,
+                    pid,
+                    "capture.bind",
+                    capture.id,
+                    metadata={"scenario_revision_id": result["scenario_revision_id"], "snapshot_index": index},
+                )
                 return result
 
-            return self.service.idem(s, actor, pid, "capture.bind", key, dict(payload, expected_version=str(version)), create)
+            return self.service.idem(
+                s, actor, pid, "capture.bind", key, dict(payload, expected_version=str(version)), create
+            )
 
     def _capture_visible(self, s, actor, capture):
+        from .reading import capture_source_required
+
+        if not self.service._can(s, actor, capture.project_id, "trace:read"):
+            return False
+        if not self.service._can(s, actor, capture.project_id, "source:read") and capture_source_required(
+            s, capture.project_id, {capture.id}
+        ):
+            return False
         if self.service._can(s, actor, capture.project_id, "knowledge:edit"):
             return True
         from .models import Release
@@ -1209,8 +1274,14 @@ def install_scenarios(app, service, actor, envelope, API="/api/v1"):
         return envelope(request, scenarios.captures(a, pid))
 
     @app.get(API + "/projects/{pid}/captures/{cid}")
-    def capture_result(pid: str, cid: str, request: Request, analysis_set_id: str | None = None,
-                       release_id: str | None = None, a=Depends(actor)):
+    def capture_result(
+        pid: str,
+        cid: str,
+        request: Request,
+        analysis_set_id: str | None = None,
+        release_id: str | None = None,
+        a=Depends(actor),
+    ):
         with service.db() as s:
             service.require(s, a, pid, "trace:read")
             capture = s.get(CaptureRecord, cid)
@@ -1218,14 +1289,21 @@ def install_scenarios(app, service, actor, envelope, API="/api/v1"):
                 raise DomainError("VKS_NOT_FOUND", "未找到采集", 404)
             if analysis_set_id or release_id:
                 from .reading import ReadingService
+
                 analysis, _ = ReadingService(service).baseline(s, a, pid, analysis_set_id, release_id)
                 if not analysis or capture.result.get("baseline_sha256") != scenarios._baseline_digest(s, analysis):
                     raise DomainError("VKS_VERSION_CONFLICT", "观察快照与所选基线不一致，需要复核", 412)
             return envelope(request, scenarios._capture_dto(s, capture, a))
 
     @app.post(API + "/scenarios/{sid}/capture-bindings", status_code=201)
-    def bind_capture(sid: str, payload: CaptureBindingInput, request: Request, a=Depends(actor),
-                     if_match: str = Header(...), idempotency_key: str = Header(...)):
+    def bind_capture(
+        sid: str,
+        payload: CaptureBindingInput,
+        request: Request,
+        a=Depends(actor),
+        if_match: str = Header(...),
+        idempotency_key: str = Header(...),
+    ):
         return envelope(request, scenarios.bind_capture(a, sid, payload.model_dump(), if_match, idempotency_key))
 
     @app.get(API + "/captures/{cid}/artifacts/{aid}")

@@ -7,7 +7,9 @@ export type View =
   | "reviews"
   | "graph"
   | "versions"
-  | "settings";
+  | "settings"
+  | "journeys"
+  | "agent";
 export interface Project {
   id: string;
   key: string;

@@ -5,153 +5,578 @@
   "description": "设计契约：导入包只声明制品，不授权执行代码或录制。JSON Schema 检查结构；安全解压、路径归一化、引用归属、文件大小和内容哈希由服务端重新校验。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "project_key", "baseline_key", "import_key", "sources", "artifacts"],
+  "required": [
+    "schema_version",
+    "project_key",
+    "baseline_key",
+    "import_key",
+    "sources",
+    "artifacts"
+  ],
   "properties": {
-    "schema_version": {"const": "1.0"},
-    "project_key": {"$ref": "#/$defs/key"},
-    "baseline_key": {"$ref": "#/$defs/key"},
-    "import_key": {"type": "string", "minLength": 1, "maxLength": 128},
-    "description": {"type": "string", "maxLength": 2000},
+    "schema_version": {
+      "const": "1.0"
+    },
+    "project_key": {
+      "$ref": "#/$defs/key"
+    },
+    "baseline_key": {
+      "$ref": "#/$defs/key"
+    },
+    "import_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 2000
+    },
     "sources": {
-      "type": "array", "minItems": 1, "maxItems": 64,
-      "items": {"$ref": "#/$defs/source"}
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/source"
+      }
     },
     "artifacts": {
-      "type": "array", "minItems": 1, "maxItems": 50000,
-      "items": {"$ref": "#/$defs/artifact"}
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50000,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
     },
-    "capture": {"$ref": "#/$defs/captureMetadata"},
-    "uiManifest": {"$ref": "#/$defs/manifestReference"},
-    "bindings": {"$ref": "#/$defs/manifestReference"},
-    "analysis_origin": {"enum": ["external_ai", "platform_analyzer", "manual", "mixed"], "default": "manual"},
-    "allow_platform_llm": {"type": "boolean", "default": false}
+    "capture": {
+      "$ref": "#/$defs/captureMetadata"
+    },
+    "uiManifest": {
+      "$ref": "#/$defs/manifestReference"
+    },
+    "bindings": {
+      "$ref": "#/$defs/manifestReference"
+    },
+    "analysis_origin": {
+      "enum": [
+        "external_ai",
+        "platform_analyzer",
+        "manual",
+        "mixed"
+      ],
+      "default": "manual"
+    },
+    "allow_platform_llm": {
+      "type": "boolean",
+      "default": false
+    }
   },
   "allOf": [
-    {"if": {"required": ["bindings"]}, "then": {"required": ["uiManifest"]}}
+    {
+      "if": {
+        "required": [
+          "bindings"
+        ]
+      },
+      "then": {
+        "required": [
+          "uiManifest"
+        ]
+      }
+    }
   ],
   "$defs": {
     "key": {
-      "type": "string", "minLength": 1, "maxLength": 96,
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
       "pattern": "^[a-z][a-z0-9._-]*$"
     },
     "sha256": {
-      "type": "string", "pattern": "^[a-f0-9]{64}$",
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
       "description": "64 位小写十六进制 SHA-256。服务端重新计算并比较，不能信任客户端声明。"
     },
     "relativePath": {
-      "type": "string", "minLength": 1, "maxLength": 1024,
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
       "pattern": "^[^\\u0000-\\u001F\\u007F]+$",
       "description": "包内相对路径，以 / 分隔。服务端拒绝绝对路径、Windows 盘符、反斜杠混淆、..、符号链接和归一化重复路径；此 Schema 不是路径安全边界。"
     },
     "source": {
-      "type": "object", "additionalProperties": false,
-      "required": ["source_id", "role", "provider", "root", "content_sha256"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "role",
+        "provider",
+        "root",
+        "content_sha256"
+      ],
       "properties": {
-        "source_id": {"$ref": "#/$defs/key"},
-        "role": {"enum": ["frontend", "backend", "documentation", "api", "prototype", "runtime-evidence"]},
-        "service_key": {"$ref": "#/$defs/key"},
-        "provider": {"enum": ["git", "svn", "local"]},
-        "root": {"$ref": "#/$defs/relativePath"},
-        "revision": {"type": "string", "minLength": 1, "maxLength": 128},
-        "content_sha256": {"$ref": "#/$defs/sha256"},
-        "dirty": {"type": "boolean", "default": false},
-        "dirty_manifest_sha256": {"$ref": "#/$defs/sha256"},
-        "connector_ref": {"$ref": "#/$defs/key"}
+        "source_id": {
+          "$ref": "#/$defs/key"
+        },
+        "role": {
+          "enum": [
+            "frontend",
+            "backend",
+            "documentation",
+            "api",
+            "prototype",
+            "runtime-evidence"
+          ]
+        },
+        "service_key": {
+          "$ref": "#/$defs/key"
+        },
+        "provider": {
+          "enum": [
+            "git",
+            "svn",
+            "local"
+          ]
+        },
+        "root": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "content_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "dirty": {
+          "type": "boolean",
+          "default": false
+        },
+        "dirty_manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "connector_ref": {
+          "$ref": "#/$defs/key"
+        },
+        "version_labels": {
+          "type": "object",
+          "additionalProperties": false,
+          "maxProperties": 4,
+          "properties": {
+            "code_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:/+@-]+$"
+            },
+            "build_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:/+@-]+$"
+            },
+            "artifact_version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:/+@-]+$"
+            },
+            "deployment_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:/+@-]+$"
+            }
+          },
+          "description": "材料声明的版本标签；不证明实际部署或运行因果，不合并同名接口身份。"
+        }
       },
       "allOf": [
         {
-          "if": {"properties": {"provider": {"const": "git"}}, "required": ["provider"]},
-          "then": {"required": ["revision"], "properties": {"revision": {"pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"}}}
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "git"
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          },
+          "then": {
+            "required": [
+              "revision"
+            ],
+            "properties": {
+              "revision": {
+                "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+              }
+            }
+          }
         },
         {
-          "if": {"properties": {"provider": {"const": "svn"}}, "required": ["provider"]},
-          "then": {"required": ["revision"], "properties": {"revision": {"pattern": "^r[0-9]+$"}}}
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "svn"
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          },
+          "then": {
+            "required": [
+              "revision"
+            ],
+            "properties": {
+              "revision": {
+                "pattern": "^r[0-9]+$"
+              }
+            }
+          }
         },
         {
-          "if": {"properties": {"dirty": {"const": true}}, "required": ["dirty"]},
-          "then": {"required": ["dirty_manifest_sha256"]}
+          "if": {
+            "properties": {
+              "dirty": {
+                "const": true
+              }
+            },
+            "required": [
+              "dirty"
+            ]
+          },
+          "then": {
+            "required": [
+              "dirty_manifest_sha256"
+            ]
+          }
         }
       ]
     },
     "artifact": {
-      "type": "object", "additionalProperties": false,
-      "required": ["source_id", "kind", "path", "sha256", "size_bytes", "media_type", "sensitivity"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "kind",
+        "path",
+        "sha256",
+        "size_bytes",
+        "media_type",
+        "sensitivity"
+      ],
       "properties": {
-        "source_id": {"$ref": "#/$defs/key"},
-        "kind": {"enum": ["source", "markdown", "openapi", "prototype", "screenshot", "capture", "trace", "fixture", "ui_manifest", "binding_manifest"]},
-        "path": {"$ref": "#/$defs/relativePath"},
-        "sha256": {"$ref": "#/$defs/sha256"},
-        "size_bytes": {"type": "integer", "minimum": 0, "maximum": 268435456},
-        "media_type": {"type": "string", "minLength": 3, "maxLength": 128},
-        "encoding": {"type": "string", "maxLength": 40},
-        "sensitivity": {"enum": ["public", "internal", "confidential"]},
-        "redaction_policy_ref": {"$ref": "#/$defs/key"}
+        "source_id": {
+          "$ref": "#/$defs/key"
+        },
+        "kind": {
+          "enum": [
+            "source",
+            "markdown",
+            "openapi",
+            "prototype",
+            "screenshot",
+            "capture",
+            "trace",
+            "fixture",
+            "ui_manifest",
+            "binding_manifest"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 268435456
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "encoding": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "sensitivity": {
+          "enum": [
+            "public",
+            "internal",
+            "confidential"
+          ]
+        },
+        "redaction_policy_ref": {
+          "$ref": "#/$defs/key"
+        }
       }
     },
     "manifestReference": {
-      "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
-      "properties": {"path": {"$ref": "#/$defs/relativePath"}, "sha256": {"$ref": "#/$defs/sha256"}},
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
       "description": "相对于导入包根目录的文件引用；服务端重新校验文件和哈希，并要求其出现在 artifacts 中。"
     },
     "uiManifestDocument": {
-      "type": "object", "additionalProperties": false,
-      "required": ["schemaVersion", "projectKey", "baselineKey", "pages", "actions", "documentSections"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectKey",
+        "baselineKey",
+        "pages",
+        "actions",
+        "documentSections"
+      ],
       "properties": {
-        "schemaVersion": {"const": "1.0"},
-        "projectKey": {"$ref": "#/$defs/key"},
-        "baselineKey": {"$ref": "#/$defs/key"},
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "projectKey": {
+          "$ref": "#/$defs/key"
+        },
+        "baselineKey": {
+          "$ref": "#/$defs/key"
+        },
         "pages": {
-          "type": "array", "maxItems": 5000,
+          "type": "array",
+          "maxItems": 5000,
           "items": {
-            "type": "object", "additionalProperties": false,
-            "required": ["logicalKey", "name", "artifactPath", "sha256"],
-            "properties": {"logicalKey": {"$ref": "#/$defs/key"}, "name": {"type": "string", "maxLength": 160}, "artifactPath": {"$ref": "#/$defs/relativePath"}, "sha256": {"$ref": "#/$defs/sha256"}, "stateKey": {"$ref": "#/$defs/key"}}
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "logicalKey",
+              "name",
+              "artifactPath",
+              "sha256"
+            ],
+            "properties": {
+              "logicalKey": {
+                "$ref": "#/$defs/key"
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 160
+              },
+              "artifactPath": {
+                "$ref": "#/$defs/relativePath"
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "stateKey": {
+                "$ref": "#/$defs/key"
+              }
+            }
           }
         },
         "actions": {
-          "type": "array", "maxItems": 20000,
+          "type": "array",
+          "maxItems": 20000,
           "items": {
-            "type": "object", "additionalProperties": false,
-            "required": ["logicalKey", "pageKey", "label", "event"],
-            "properties": {"logicalKey": {"$ref": "#/$defs/key"}, "pageKey": {"$ref": "#/$defs/key"}, "label": {"type": "string", "maxLength": 200}, "event": {"enum": ["click", "input", "change", "submit", "open", "close"]}},
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "logicalKey",
+              "pageKey",
+              "label",
+              "event"
+            ],
+            "properties": {
+              "logicalKey": {
+                "$ref": "#/$defs/key"
+              },
+              "pageKey": {
+                "$ref": "#/$defs/key"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "event": {
+                "enum": [
+                  "click",
+                  "input",
+                  "change",
+                  "submit",
+                  "open",
+                  "close"
+                ]
+              }
+            },
             "description": "HTML 对应元素应提供 data-vks-action=logicalKey，所属页面提供 data-vks-page=pageKey。事件名称仅描述业务动作，不授权执行。"
           }
         },
         "documentSections": {
-          "type": "array", "maxItems": 20000,
+          "type": "array",
+          "maxItems": 20000,
           "items": {
-            "type": "object", "additionalProperties": false,
-            "required": ["sectionKey", "artifactPath", "sha256", "headingPath", "startLine", "endLine"],
-            "properties": {"sectionKey": {"$ref": "#/$defs/key"}, "artifactPath": {"$ref": "#/$defs/relativePath"}, "sha256": {"$ref": "#/$defs/sha256"}, "headingPath": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 300}}, "startLine": {"type": "integer", "minimum": 1}, "endLine": {"type": "integer", "minimum": 1}},
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sectionKey",
+              "artifactPath",
+              "sha256",
+              "headingPath",
+              "startLine",
+              "endLine"
+            ],
+            "properties": {
+              "sectionKey": {
+                "$ref": "#/$defs/key"
+              },
+              "artifactPath": {
+                "$ref": "#/$defs/relativePath"
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "headingPath": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                }
+              },
+              "startLine": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "endLine": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
             "description": "sectionKey 是 sidecar 中的稳定逻辑身份。标题与行号只定位当前文件修订，不能作为永久身份。"
           }
         },
         "codeEntities": {
-          "type": "array", "maxItems": 50000,
+          "type": "array",
+          "maxItems": 50000,
           "items": {
-            "type": "object", "additionalProperties": false,
-            "required": ["logicalKey", "entityType", "artifactPath", "sha256", "qualifiedName", "startLine", "endLine"],
-            "properties": {"logicalKey": {"$ref": "#/$defs/key"}, "entityType": {"enum": ["api", "symbol", "sql", "table", "rule"]}, "artifactPath": {"$ref": "#/$defs/relativePath"}, "sha256": {"$ref": "#/$defs/sha256"}, "qualifiedName": {"type": "string", "minLength": 1, "maxLength": 1000}, "startLine": {"type": "integer", "minimum": 1}, "endLine": {"type": "integer", "minimum": 1}},
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "logicalKey",
+              "entityType",
+              "artifactPath",
+              "sha256",
+              "qualifiedName",
+              "startLine",
+              "endLine"
+            ],
+            "properties": {
+              "logicalKey": {
+                "$ref": "#/$defs/key"
+              },
+              "entityType": {
+                "enum": [
+                  "api",
+                  "symbol",
+                  "sql",
+                  "table",
+                  "rule"
+                ]
+              },
+              "artifactPath": {
+                "$ref": "#/$defs/relativePath"
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "qualifiedName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "startLine": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "endLine": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
             "description": "外部分析器可提供代码实体候选。服务端验证文件范围与限定名称，不能只因模型给出名称就当作解析证据。"
           }
         }
       }
     },
     "captureMetadata": {
-      "type": "object", "additionalProperties": false,
-      "required": ["environment_ref", "source_alignment"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment_ref",
+        "source_alignment"
+      ],
       "properties": {
-        "environment_ref": {"$ref": "#/$defs/key"},
-        "source_alignment": {"enum": ["unknown", "matched", "mismatched"]},
-        "deployment_id": {"type": "string", "minLength": 1, "maxLength": 128},
-        "analysis_set_id": {"type": "string", "format": "uuid"},
-        "captured_at": {"type": "string", "format": "date-time"},
-        "alignment_evidence_path": {"$ref": "#/$defs/relativePath"}
+        "environment_ref": {
+          "$ref": "#/$defs/key"
+        },
+        "source_alignment": {
+          "enum": [
+            "unknown",
+            "matched",
+            "mismatched"
+          ]
+        },
+        "deployment_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "analysis_set_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "alignment_evidence_path": {
+          "$ref": "#/$defs/relativePath"
+        }
       },
       "allOf": [
         {
-          "if": {"properties": {"source_alignment": {"const": "matched"}}, "required": ["source_alignment"]},
-          "then": {"required": ["deployment_id", "alignment_evidence_path"]}
+          "if": {
+            "properties": {
+              "source_alignment": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "source_alignment"
+            ]
+          },
+          "then": {
+            "required": [
+              "deployment_id",
+              "alignment_evidence_path"
+            ]
+          }
         }
       ]
     }

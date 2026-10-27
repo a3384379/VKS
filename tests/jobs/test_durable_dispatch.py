@@ -81,7 +81,7 @@ def test_parse_checkpoint_retries_without_reparsing_and_validates_cache_hash(set
     service.process_job(job["id"])
     assert service.get_job(owner, job["id"])["state"] == "failed"
     with service.db() as s:
-        point = s.scalar(select(Checkpoint).where(Checkpoint.job_id == job["id"]))
+        point = s.scalar(select(Checkpoint).where(Checkpoint.job_id == job["id"], Checkpoint.stage == 'PARSE'))
         assert point and "object_key" in point.result_json
         key = point.result_json["object_key"]
         input_hash = point.input_hash

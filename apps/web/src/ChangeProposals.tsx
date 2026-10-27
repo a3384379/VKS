@@ -13,8 +13,9 @@ import {
   Spinner,
   Tag,
 } from "./components";
-import { usePermission, useWorkspace } from "./context";
+import { ReadScope, usePermission, useWorkspace } from "./context";
 import type { Dict, Relation } from "./types";
+import { DocumentSectionDiff } from "./DocumentSectionDiff";
 
 interface Proposal {
   id: string;
@@ -22,6 +23,8 @@ interface Proposal {
   status: string;
   row_version: number;
   entity_id?: string;
+  entity_type?: string;
+  from_release_id?: string;
   old_revision_id?: string;
   new_revision_id?: string;
   source_relation_id?: string;
@@ -163,6 +166,17 @@ export function ChangeProposals() {
                   )}
                 </div>
                 {target && <RelationState relation={target} />}
+                {row.entity_type === "document" &&
+                  row.entity_id &&
+                  row.from_release_id && (
+                    <ReadScope>
+                      <DocumentSectionDiff
+                        documentId={row.entity_id}
+                        fromRelease={row.from_release_id}
+                        expectedRevision={row.new_revision_id}
+                      />
+                    </ReadScope>
+                  )}
                 {(row.details || row.metadata) && (
                   <details>
                     <summary>查看变更定位与影响信息</summary>

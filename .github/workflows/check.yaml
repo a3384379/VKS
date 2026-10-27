@@ -1,6 +1,25 @@
 name: VKS checks
 on: [push, pull_request]
 jobs:
+  windows-collector:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: '1'
+      VKS_TASK_MODE: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: astral-sh/setup-uv@v6
+        with: {enable-cache: true}
+      - run: uv sync --frozen --python "$env:pythonLocation/python.exe"
+      - run: uv run python scripts/build_demo.py
+      - run: uv run pytest -q tests/collector tests/v2/test_sync.py tests/v2/test_collector_agent.py tests/v2/test_collector_distribution.py
+      - run: uv run python scripts/build_collector_agent.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vks-collector-windows
+          path: output/collector/*
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -63,3 +82,17 @@ jobs:
       - run: uv run alembic upgrade head
       - run: uv run alembic check
       - run: uv run pytest -q tests/backend/test_postgres.py tests/jobs/test_rabbitmq.py
+      - name: Create isolated V2 recovery databases
+        run: |
+          uv run python - <<'PY'
+          import os, psycopg
+          with psycopg.connect(os.environ['VKS_DATABASE_URL'].replace('postgresql+psycopg://', 'postgresql://'), autocommit=True) as db:
+              db.execute('CREATE DATABASE vks2_recovery_source')
+              db.execute('CREATE DATABASE vks2_recovery_target')
+          PY
+      - name: V2 concurrent edits and PostgreSQL checkpoint restore
+        env:
+          VKS_TEST_V2_POSTGRES_URL: postgresql+psycopg://vks:synthetic-ci-database-only@127.0.0.1:5432/vks2_recovery_source
+          VKS_TEST_V2_RECOVERY_TARGET_URL: postgresql+psycopg://vks:synthetic-ci-database-only@127.0.0.1:5432/vks2_recovery_target
+          VKS_TEST_PG_TOOLS_CONTAINER: ${{ job.services.postgres.id }}
+        run: uv run pytest -q tests/v2/test_postgres_v2.py

@@ -21,6 +21,7 @@ from defusedxml.common import DefusedXmlException
 from tree_sitter import Language, Node, Parser
 
 from .cancellation import checkpoint
+from .syntax_cache import unit, encode_java, decode_java, encode_xml, decode_xml
 
 VERSION = "vks-java-spring-mybatis-1"
 HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE")
@@ -33,6 +34,33 @@ JAVA_LANGUAGE = Language(tree_sitter_java.language())
 
 def canonical(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def java_lexical_sha(raw: bytes):
+    """Whole-file Java token identity; comments/spacing change no executable tokens."""
+    if len(raw) > MAX_SOURCE_BYTES:
+        return None
+    try:
+        source = raw.decode("utf-8-sig").encode()
+    except UnicodeError:
+        return None
+    root = Parser(JAVA_LANGUAGE).parse(source).root_node
+    if root.has_error:
+        return None
+    pending = [root]
+    tokens = []
+    while pending:
+        checkpoint()
+        node = pending.pop()
+        if node.type in ("line_comment", "block_comment"):
+            continue
+        if node.children:
+            pending.extend(reversed(node.children))
+        else:
+            tokens.append((node.type, source[node.start_byte : node.end_byte].decode()))
+        if len(tokens) > 250000:
+            return None
+    return sha256(canonical(tokens)).hexdigest()
 
 
 def stable_key(kind: str, *identity: Any) -> str:
@@ -152,6 +180,8 @@ class Analyzer:
             "calls": 0,
             "resolved_calls": 0,
             "unresolved_calls": 0,
+            "syntax_parsed_files": 0,
+            "syntax_reused_files": 0,
         }
 
     def issue(self, code: str, path: str, message: str, state="unsupported", **details):
@@ -236,7 +266,10 @@ class Analyzer:
         if len(source) > MAX_SOURCE_BYTES:
             self.issue("VKS_JAVA_LIMIT", path, "单个 Java 文件超过静态解析范围")
             return
-        root = Parser(JAVA_LANGUAGE).parse(source).root_node
+        root, reused = unit(
+            "java", source, lambda: Parser(JAVA_LANGUAGE).parse(source).root_node, encode_java, decode_java
+        )
+        self.metrics["syntax_reused_files" if reused else "syntax_parsed_files"] += 1
         if root.has_error:
             self.issue("VKS_JAVA_SYNTAX", path, "Java 语法不完整；保留原始文件但不猜测声明")
             return
@@ -802,7 +835,17 @@ class Analyzer:
                 self.issue("VKS_MYBATIS_LIMIT", path, "单个 XML 文件超过解析范围")
                 continue
             try:
-                root = SafeXML.fromstring(text, forbid_dtd=False, forbid_entities=True, forbid_external=True)
+                (root, spans), reused = unit(
+                    "xml",
+                    text.encode(),
+                    lambda: (
+                        SafeXML.fromstring(text, forbid_dtd=False, forbid_entities=True, forbid_external=True),
+                        self.xml_spans(text),
+                    ),
+                    encode_xml,
+                    decode_xml,
+                )
+                self.metrics["syntax_reused_files" if reused else "syntax_parsed_files"] += 1
             except (SafeXML.ParseError, DefusedXmlException):
                 self.issue("VKS_MYBATIS_UNSAFE_XML", path, "XML 含不安全实体或语法错误；不解析其内容")
                 continue
@@ -816,7 +859,7 @@ class Analyzer:
                 self.issue("VKS_MYBATIS_NAMESPACE", path, "Mapper namespace 缺失或无效")
                 continue
             service = self.sources[artifact["source_id"]].get("service_key", artifact["source_id"])
-            documents.append((path, service, namespace, root, text))
+            documents.append((path, service, namespace, root, text, spans))
             for fragment in root.findall("sql"):
                 fragment_id = fragment.attrib.get("id", "")
                 if fragment_id:
@@ -824,14 +867,13 @@ class Analyzer:
             self.result.supported_paths.add(path)
             self.metrics["parsed_files"] += 1
         statement_counts = {}
-        for _, service, namespace, root, _ in documents:
+        for _, service, namespace, root, _, _ in documents:
             checkpoint()
             for statement in root:
                 if statement.tag in ("select", "insert", "update", "delete"):
                     identity = (service, namespace, statement.attrib.get("id"))
                     statement_counts[identity] = statement_counts.get(identity, 0) + 1
-        for path, service, namespace, root, text in documents:
-            spans = self.xml_spans(text)
+        for path, service, namespace, root, text, spans in documents:
             for statement in root:
                 if statement.tag not in ("select", "insert", "update", "delete"):
                     continue
@@ -1043,6 +1085,9 @@ class Analyzer:
             self.classes_by_identity.setdefault((cls.service, cls.qualified), []).append(cls)
         self.spring()
         self.calls()
+        from .async_topology import analyze_async
+
+        analyze_async(self)
         self.mybatis()
         self.result.metrics = dict(
             self.metrics,
@@ -1050,6 +1095,7 @@ class Analyzer:
             relation_count=len(self.result.relations),
             unsupported_or_unresolved=len(self.result.issues),
             parser_version=VERSION,
+            dependency_recomputed_files=len(self.result.supported_paths),
         )
         return self.result
 
