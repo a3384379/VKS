@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -447,7 +448,7 @@ export default function App() {
     }, 1700);
     return () => window.clearInterval(timer);
   }, [w?.jobs, refresh]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const hash = workspaceHash(
       view,
       projectId,
@@ -471,7 +472,7 @@ export default function App() {
     session?.authenticated,
     routeEpoch,
   ]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     function applyLocation() {
       const query = routeParameters(window.location.hash.slice(1));
       const requested = query.get("view") || query.get("page") || "overview";

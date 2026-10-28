@@ -231,7 +231,23 @@ def test_a11_inaccessible_pinned_project_retains_accessible_list(audit_site, sta
 
 def test_g01_hotspot_branch_page_tree_and_url_use_one_passive_context(audit_site):
     s = audit_site
-    with signed_page(s, f"/#view=workbench&project={s['pid']}&baseline=draft:{s['a']}&entity={s['action_a']}") as page:
+
+    def prepare(page):
+        page.add_init_script("""(() => {
+          window.__navigationEvidence = [];
+          const record = event => {
+            window.__navigationEvidence.push({event, hash:location.hash,
+              selected:document.querySelector('.scenario-states button.selected')?.textContent || ''});
+            window.__navigationEvidence = window.__navigationEvidence.slice(-30);
+          };
+          for (const name of ['pushState','replaceState']) {
+            const original = history[name].bind(history);
+            history[name] = (...args) => { const result = original(...args); record(name); return result; };
+          }
+          for (const event of ['popstate','hashchange']) addEventListener(event, () => record(event));
+        })()""")
+
+    with signed_page(s, f"/#view=workbench&project={s['pid']}&baseline=draft:{s['a']}&entity={s['action_a']}", prepare=prepare) as page:
         external = []
         page.on("request", lambda request: external.append(request.url) if request.url.startswith("http") and not request.url.startswith(s["url"]) else None)
         expect(page.locator(".scenario-states button.selected")).to_contain_text("Ready state")
@@ -241,7 +257,11 @@ def test_g01_hotspot_branch_page_tree_and_url_use_one_passive_context(audit_site
         expect(page.locator(".selected-hotspot")).to_contain_text("Audit B action")
         assert "state=b" in page.url and "scenario=" + s["scenario"] in page.url
         page.go_back()
-        expect(page.locator(".scenario-states button.selected")).to_contain_text("Ready state")
+        try:
+            expect(page.locator(".scenario-states button.selected")).to_contain_text("Ready state")
+        except AssertionError as error:
+            evidence = page.evaluate("window.__navigationEvidence")
+            raise AssertionError(f"{error}\nURL: {page.url}\nNavigation events: {evidence}") from error
         page.go_forward()
         expect(page.locator(".scenario-states button.selected")).to_contain_text("B simulated state")
         page.reload()
@@ -255,6 +275,27 @@ def test_g01_hotspot_branch_page_tree_and_url_use_one_passive_context(audit_site
         expect(page.locator(".preview-toolbar")).to_contain_text("Audit empty page")
         expect(page.locator(".action-tree-item")).to_have_count(0)
         assert not external
+
+
+def test_g01_native_back_at_first_branch_dom_commit_restores_same_ready_context(audit_site):
+    s = audit_site
+    with signed_page(s, f"/#view=workbench&project={s['pid']}&baseline=draft:{s['a']}&entity={s['action_a']}") as page:
+        expect(page.locator(".scenario-states button.selected")).to_contain_text("Ready state")
+        page.evaluate("""() => {
+          const observer = new MutationObserver(() => {
+            if (!document.querySelector('.scenario-states button.selected')?.textContent.includes('B simulated state')) return;
+            observer.disconnect();
+            window.__branchCommitHash = location.hash;
+            history.back();
+          });
+          observer.observe(document.body, {subtree:true, childList:true, attributes:true});
+        }""")
+        page.locator(".authored-hotspot").click()
+        page.wait_for_function("window.__branchCommitHash !== undefined", timeout=5000)
+        assert "state=b" in page.evaluate("window.__branchCommitHash")
+        expect(page.locator(".scenario-states button.selected")).to_contain_text("Ready state")
+        expect(page.locator(".selected-hotspot")).to_contain_text(s["action_a_name"])
+        assert "state=ready" in page.url
 
 
 def test_g02_view_capture_bind_action_and_restore_observed_state(audit_site):

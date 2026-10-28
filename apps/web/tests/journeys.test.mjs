@@ -77,6 +77,20 @@ test("document deep links survive stale overview writes and normalize without ex
   assert.equal(route.native(target), null);
   assert.equal(route.commit(epoch, target, target), "none");
 });
+
+test("completed Back and Forward commits reject every older render effect", () => {
+  const route = new HashRouteSync("#state=ready");
+  const user = route.user();
+  assert.equal(route.commit(user, "#state=ready", "#state=b"), "push");
+  const back = route.native("#state=ready");
+  assert.equal(route.commit(back, "#state=ready", "#state=ready"), "none");
+  // The native pending marker is now clear. An old passive effect must still
+  // be rejected, otherwise it replaces the restored entry with stale state.
+  assert.equal(route.commit(user, "#state=ready", "#state=b"), null);
+  const forward = route.native("#state=b");
+  assert.equal(route.commit(forward, "#state=b", "#state=b"), "none");
+  assert.equal(route.commit(back, "#state=b", "#state=ready"), null);
+});
 after(async () => {
   await server?.close();
   await rm(cacheDir, { recursive: true, force: true });

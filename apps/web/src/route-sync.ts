@@ -25,11 +25,7 @@ export class HashRouteSync {
   commit(renderEpoch: number, actualHash: string, nextHash: string) {
     // A native URL change may precede its event, and passive effects may belong
     // to an older render. Neither may overwrite the new location.
-    if (
-      actualHash !== this.known ||
-      (this.pending && this.pending.epoch !== renderEpoch)
-    )
-      return null;
+    if (actualHash !== this.known || renderEpoch !== this.epoch) return null;
     const mode = this.pending?.mode ?? "replace";
     this.pending = null;
     this.known = nextHash;
