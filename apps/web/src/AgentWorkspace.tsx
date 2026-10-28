@@ -17,6 +17,7 @@ const templates = {
   difference_review: "差异复核准备",
 };
 type Task = Job & {
+  attempt: number;
   task_kind: string;
   analysis_set_id: string;
   stage_history: {
@@ -31,9 +32,22 @@ type Task = Job & {
   diagnostics_restricted?: boolean;
   stage_artifacts: { stage: string; sha256: string; size_bytes: number }[];
   module_decisions: Record<string, string>;
+  pause_requested: boolean;
+  plan_confirmation_required: boolean;
+  plan_preview_unavailable?: boolean;
+  plan_preview: {
+    sha256: string;
+    title: string;
+    analysis_set_id: string;
+    selection_version: number;
+    steps: Dict[];
+    unknowns: string[];
+    catalog: Dict[];
+    model_calls_reserved: number;
+  } | null;
 };
 export function AgentWorkspace() {
-  const { w, run, notify, navigate } = useWorkspace();
+  const { w, run, notify, navigate, session } = useWorkspace();
   const canRun = usePermission("analysis:run");
   const readScope = useReadScope();
   const [kind, setKind] = useState<keyof typeof templates>("project_overview"),
@@ -45,7 +59,10 @@ export function AgentWorkspace() {
       null,
     ),
     [taskId, setTaskId] = useState(""),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [controlBusy, setControlBusy] = useState(false),
+    [planReason, setPlanReason] = useState(""),
+    [checkedPlan, setCheckedPlan] = useState(false);
   const task = taskRow?.scope === readScope ? taskRow.value : null;
   const setTask = (value: Task | null) =>
     setTaskRow(value ? { scope: readScope, value } : null);
@@ -62,9 +79,15 @@ export function AgentWorkspace() {
         .then((t) => {
           setTask(t);
           if (
-            ["queued", "running", "retry_wait", "cancelling"].includes(t.state)
+            [
+              "queued",
+              "running",
+              "retry_wait",
+              "cancelling",
+              "paused",
+            ].includes(t.state)
           )
-            timer = window.setTimeout(load, 1500);
+            timer = window.setTimeout(load, t.state === "paused" ? 4000 : 1500);
         })
         .catch((e) => {
           if (!controller.signal.aborted) setError(e.message);
@@ -83,6 +106,7 @@ export function AgentWorkspace() {
         `/api/v2/projects/${w.project.id}/knowledge-tasks`,
         mutation("POST", {
           analysis_set_id: w.selected_analysis_set.id,
+          selection_version: w.selected_analysis_set.selection_version,
           task_kind: kind,
           instruction,
           action_ids: actions,
@@ -100,6 +124,50 @@ export function AgentWorkspace() {
       notify("知识任务已进入持久队列");
     } catch (e) {
       setError((e as Error).message);
+    }
+  }
+  async function control(action: "pause" | "resume") {
+    if (!task) return;
+    setControlBusy(true);
+    setError("");
+    try {
+      await api(
+        `/api/v2/knowledge-tasks/${task.id}/control`,
+        mutation("POST", { action, expected_state: task.state }, task.attempt),
+      );
+      setTask(await api<Task>(`/api/v2/knowledge-tasks/${task.id}`));
+      notify(
+        action === "pause"
+          ? "已请求在阶段边界暂停"
+          : "已复核当前授权并继续任务",
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setControlBusy(false);
+    }
+  }
+  async function confirmPlan() {
+    if (!task?.plan_preview) return;
+    setControlBusy(true);
+    setError("");
+    try {
+      await api(
+        `/api/v2/knowledge-tasks/${task.id}/confirm-plan`,
+        mutation(
+          "POST",
+          { plan_sha256: task.plan_preview.sha256, reason: planReason.trim() },
+          task.attempt,
+        ),
+      );
+      setTask(await api<Task>(`/api/v2/knowledge-tasks/${task.id}`));
+      setCheckedPlan(false);
+      setPlanReason("");
+      notify("已确认准确计划范围，任务将复用计划继续生成候选");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setControlBusy(false);
     }
   }
   return (
@@ -244,7 +312,9 @@ export function AgentWorkspace() {
                 .filter((x) => x.stage === stage)
                 .at(-1);
               const started = !!entry;
-              const current = task.stage.toLowerCase() === stage.toLowerCase();
+              const current =
+                task.stage.toLowerCase() === stage.toLowerCase() ||
+                (stage === "Plan" && task.plan_confirmation_required);
               return (
                 <div
                   key={stage}
@@ -252,21 +322,23 @@ export function AgentWorkspace() {
                 >
                   <strong>{stage}</strong>
                   <small>
-                    {entry?.state === "failed"
-                      ? "失败"
-                      : entry?.state === "cancelled"
-                        ? "已取消"
-                        : entry?.state === "retry_wait"
-                          ? "等待重试"
-                          : entry?.state === "waiting_for_human"
-                            ? "等待人员审核"
-                            : entry?.state === "complete"
-                              ? entry.cached === "true"
-                                ? "复用已验证检查点"
-                                : "已完成"
-                              : current
-                                ? "当前阶段"
-                                : "待执行"}
+                    {stage === "Plan" && task.plan_confirmation_required
+                      ? "等待人员确认范围"
+                      : entry?.state === "failed"
+                        ? "失败"
+                        : entry?.state === "cancelled"
+                          ? "已取消"
+                          : entry?.state === "retry_wait"
+                            ? "等待重试"
+                            : entry?.state === "waiting_for_human"
+                              ? "等待人员审核"
+                              : entry?.state === "complete"
+                                ? entry.cached === "true"
+                                  ? "复用已验证检查点"
+                                  : "已完成"
+                                : current
+                                  ? "当前阶段"
+                                  : "待执行"}
                   </small>
                 </div>
               );
@@ -278,6 +350,24 @@ export function AgentWorkspace() {
           </p>
           <div className="row wrap">
             {["queued", "running", "retry_wait"].includes(task.state) && (
+              <Button
+                disabled={!canRun || controlBusy || task.pause_requested}
+                onClick={() => void control("pause")}
+              >
+                {task.pause_requested ? "等待当前阶段完成后暂停" : "暂停任务"}
+              </Button>
+            )}
+            {task.state === "paused" && !task.plan_confirmation_required && (
+              <Button
+                disabled={!canRun || controlBusy}
+                onClick={() => void control("resume")}
+              >
+                继续任务
+              </Button>
+            )}
+            {["queued", "running", "retry_wait", "paused"].includes(
+              task.state,
+            ) && (
               <Button
                 onClick={() => {
                   void run(
@@ -313,6 +403,95 @@ export function AgentWorkspace() {
             <Button onClick={() => navigate("journeys")}>查看流程草稿</Button>
             <Button onClick={() => navigate("reviews")}>打开人工审核</Button>
           </div>
+          {task.state === "paused" && (
+            <Notice>
+              {task.plan_confirmation_required
+                ? "模型已生成计划，尚未执行工具或创建知识候选。请核对准确来源、步骤与范围后确认。"
+                : "任务已在阶段边界暂停，继续时将重新验证来源、基线与当前权限。"}
+            </Notice>
+          )}
+          {task.plan_preview_unavailable && (
+            <Notice tone="red">
+              计划检查点无法验证；请取消后重新创建任务。
+            </Notice>
+          )}
+          {task.plan_preview && (
+            <section
+              className="v2-plan-confirmation"
+              aria-label="待确认的模型计划"
+            >
+              <h3>{task.plan_preview.title}</h3>
+              <p>
+                固定基线 {task.plan_preview.analysis_set_id.slice(0, 12)} ·
+                选择版本 {task.plan_preview.selection_version} ·{" "}
+                {task.plan_preview.catalog.length} 个准确输入修订
+              </p>
+              <p>
+                计划阶段已占用 {task.plan_preview.model_calls_reserved}{" "}
+                次模型调用，确认后复用同一计划。知识产物仍需后续审核。
+              </p>
+              <ol>
+                {task.plan_preview.steps.map((step, i) => (
+                  <li key={String(step.id || i)}>
+                    <strong>{String(step.tool)}</strong> ·{" "}
+                    {String(step.rationale)}
+                    <pre className="v2-json">
+                      {JSON.stringify(
+                        {
+                          target_revision_ids: step.target_revision_ids,
+                          evidence_ids: step.evidence_ids,
+                        },
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  </li>
+                ))}
+              </ol>
+              {task.plan_preview.unknowns.map((text, i) => (
+                <p key={i} className="muted">
+                  {text}
+                </p>
+              ))}
+              <details>
+                <summary>核对准确输入范围</summary>
+                <pre className="v2-json">
+                  {JSON.stringify(task.plan_preview.catalog, null, 2)}
+                </pre>
+              </details>
+              <label>
+                <input
+                  type="checkbox"
+                  aria-label="已核对模型计划范围"
+                  checked={checkedPlan}
+                  onChange={(e) => setCheckedPlan(e.target.checked)}
+                />
+                已核对以上步骤、来源与业务范围
+              </label>
+              <label>
+                计划范围确认依据
+                <textarea
+                  aria-label="计划范围确认依据"
+                  maxLength={2000}
+                  value={planReason}
+                  onChange={(e) => setPlanReason(e.target.value)}
+                />
+              </label>
+              <Button
+                kind="primary"
+                disabled={
+                  !session.human ||
+                  !canRun ||
+                  controlBusy ||
+                  !checkedPlan ||
+                  !planReason.trim()
+                }
+                onClick={() => void confirmPlan()}
+              >
+                确认计划并继续
+              </Button>
+            </section>
+          )}
           {task.error && <Notice tone="red">{task.error.message}</Notice>}
           {task.diagnostics_restricted && (
             <Notice>任务产物包含当前无权资料，已隐藏正文和统计。</Notice>

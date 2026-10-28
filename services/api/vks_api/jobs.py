@@ -268,6 +268,7 @@ def _processor_version():
         root / "packages/analyzers/document_links.py",
         root / "packages/analyzers/cancellation.py",
         root / "packages/analyzers/syntax_cache.py",
+        root / "packages/analyzers/incremental.py",
         root / "services/api/vks_api/source_cache.py",
     ]
     h = hashlib.sha256()
@@ -532,6 +533,20 @@ def execute_job(service, jid):
                     out.dispatched = True
                 service.audit(s, owner, pid, "job.succeeded", jid)
     except Exception as e:
+        from .knowledge_tasks import TaskPause
+
+        if isinstance(e, TaskPause):
+            with service.db() as s:
+                job = s.scalar(select(Job).where(Job.id == jid).with_for_update())
+                if job and job.attempt == attempt and job.state in ("running", "cancelling"):
+                    job.state = "cancelled" if job.cancel_requested else "paused"
+                    job.stage = "CANCELLED" if job.cancel_requested else e.stage
+                    job.lease_until = None
+                    job.completeness = "partial"
+                    job.input_json = dict(job.input_json, _pause_requested=False)
+                    job.updated_at = now()
+                    service.audit(s, owner, pid, "job.paused", jid, metadata={"stage": job.stage})
+            return
         error = (
             e
             if isinstance(e, DomainError)

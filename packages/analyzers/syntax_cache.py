@@ -1,7 +1,7 @@
 """Content-addressed syntax units, encoded as bounded JSON data, never pickle.
 
-Only syntax is reusable. Service names, paths, symbols, calls and SQL dependencies
-are recomputed against the entire current authorized source vector.
+Syntax and dependency-scoped semantic packets are disposable JSON data. Semantic
+reuse additionally binds the complete current dependency closure and file identity.
 """
 
 from contextlib import contextmanager
@@ -24,7 +24,7 @@ _ACTIVE = ContextVar("vks_syntax_cache", default=None)
 @lru_cache(maxsize=1)
 def processor_version():
     digest = sha256()
-    for filename in ("java_spring.py", "syntax_cache.py"):
+    for filename in ("java_spring.py", "syntax_cache.py", "async_topology.py", "incremental.py"):
         digest.update(Path(__file__).with_name(filename).read_bytes())
     for package in ("tree-sitter", "tree-sitter-java", "defusedxml"):
         digest.update(version(package).encode())
@@ -51,8 +51,14 @@ def cache_scope(backend):
     token = _ACTIVE.set(backend)
     try:
         yield
+        if hasattr(backend, "flush"):
+            backend.flush()
     finally:
         _ACTIVE.reset(token)
+
+
+def active_cache():
+    return _ACTIVE.get()
 
 
 def unit(kind, source, parse, encode, decode):

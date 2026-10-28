@@ -39,25 +39,29 @@ class TaskCheckpoints:
         self.tasks._validate(s, job)
         return job
 
+    @staticmethod
+    def input_hash(job, inputs):
+        plan = {key: value for key, value in job.input_json.items() if not key.startswith("_")}
+        return sha(
+            canonical(
+                dict(
+                    plan=plan,
+                    inputs=inputs,
+                    authorization=job.input_json.get("_authorization"),
+                    selection_version=job.input_json["_selection_version"],
+                    model_policy_sha256=job.input_json.get("_model_policy_sha256"),
+                    historical=job.input_json.get("_historical_revision_ids", []),
+                )
+            )
+        )
+
     def run(self, stage, inputs, operation, *, track=True):
         if track:
             self.tasks._stage(self.jid, stage, self.attempt)
         processor = processor_version()
         with self.service.db() as s:
             job = self._job(s)
-            plan = {key: value for key, value in job.input_json.items() if not key.startswith("_")}
-            input_hash = sha(
-                canonical(
-                    dict(
-                        plan=plan,
-                        inputs=inputs,
-                        authorization=job.input_json.get("_authorization"),
-                        selection_version=job.input_json["_selection_version"],
-                        model_policy_sha256=job.input_json.get("_model_policy_sha256"),
-                        historical=job.input_json.get("_historical_revision_ids", []),
-                    )
-                )
-            )
+            input_hash = self.input_hash(job, inputs)
             point = s.scalar(
                 select(Checkpoint).where(
                     Checkpoint.job_id == self.jid,

@@ -58,9 +58,28 @@ def create(system, key="plan"):
     return tasks, job
 
 
+def confirm_current_plan(tasks, service, actor, jid):
+    waiting = tasks.get(actor, jid)
+    assert waiting["state"] == "paused" and waiting["plan_confirmation_required"]
+    assert waiting["report"] is None and waiting["plan_preview"]
+    tasks.confirm_plan(
+        actor,
+        jid,
+        dict(
+            plan_sha256=waiting["plan_preview"]["sha256"],
+            reason="Human checked the exact synthetic input scope and steps",
+        ),
+        waiting["attempt"],
+        "confirm-" + jid,
+    )
+
+
 def test_real_synthetic_http_plan_executes_bounded_tools_and_commits_only_candidates(system):
     service, actor, p, aid, ai, requests, response, config = system
     tasks, job = create(system)
+    service.process_job(job["id"])
+    assert not JourneyService(service).list(actor, p["id"], aid)
+    confirm_current_plan(tasks, service, actor, job["id"])
     service.process_job(job["id"])
     result = tasks.get(actor, job["id"])
     assert result["state"] == "succeeded", (result.get("error"), result.get("stage_history"))
@@ -133,6 +152,8 @@ def test_plan_resume_reuses_model_and_completed_tool_without_duplicate_side_effe
 
     monkeypatch.setattr(PlanExecutor, "read", interrupted)
     service.process_job(job["id"])
+    confirm_current_plan(tasks, service, actor, job["id"])
+    service.process_job(job["id"])
     assert tasks.get(actor, job["id"])["state"] == "failed"
     service.retry_job(actor, job["id"])
     service.process_job(job["id"])
@@ -190,6 +211,8 @@ def test_plan_does_not_reset_existing_human_rejection(system):
 
     response["plan"] = rejected
     service.process_job(job["id"])
+    confirm_current_plan(tasks, service, actor, job["id"])
+    service.process_job(job["id"])
     result = tasks.get(actor, job["id"])
     assert result["state"] == "succeeded", (result.get("error"), result.get("stage_history"))
     assert result["report"]["relation_candidates"][0]["manual_decision_preserved"] is True
@@ -237,6 +260,14 @@ async def test_official_sdk_natural_language_task_schema_and_candidate_only_resu
                         )
                         assert not created.isError, created.content
                         jid = created.structuredContent["data"]["id"]
+                        app.state.service.process_job(jid)
+                        result = await sdk.call_tool("get_knowledge_task", dict(project_id=p["id"], job_id=jid))
+                        assert not result.isError, result.content
+                        value = result.structuredContent["data"]
+                        assert value["state"] == "paused" and value["plan_confirmation_required"]
+                        assert not JourneyService(app.state.service).list(actor, p["id"], aid)
+                        # A machine can inspect/propose, while a person confirms the exact plan through the Web service.
+                        confirm_current_plan(KnowledgeTaskService(app.state.service), app.state.service, actor, jid)
                         app.state.service.process_job(jid)
                         result = await sdk.call_tool("get_knowledge_task", dict(project_id=p["id"], job_id=jid))
                         assert not result.isError, result.content

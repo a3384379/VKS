@@ -48,6 +48,7 @@ export function Button({
   disabled = false,
   type = "button",
   title,
+  ...attributes
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -55,9 +56,12 @@ export function Button({
   disabled?: boolean;
   type?: "button" | "submit";
   title?: string;
+  "aria-label"?: string;
+  "aria-pressed"?: boolean;
 }) {
   return (
     <button
+      {...attributes}
       type={type}
       className={`button ${kind}`}
       onClick={onClick}
@@ -110,6 +114,7 @@ const names: Record<string, string> = {
   cancelled: "已取消",
   cancelling: "取消中",
   retry_wait: "等待重试",
+  paused: "已暂停",
   draft: "草稿",
   ready_for_review: "待审核",
   frozen: "已冻结",

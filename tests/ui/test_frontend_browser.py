@@ -174,7 +174,12 @@ def site(tmp_path_factory):
                     time.sleep(0.05)
                 else:
                     pytest.fail("隔离Vite启动超时")
-            yield url, project["id"], empty["id"], doc["id"]
+            class BrowserSite(tuple):
+                pass
+
+            result = BrowserSite((url, project["id"], empty["id"], doc["id"]))
+            result.service = service
+            yield result
         finally:
             process.terminate()
             process.wait(timeout=10)

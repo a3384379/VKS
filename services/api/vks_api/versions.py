@@ -532,61 +532,64 @@ class VersionService:
 
     def decide(self, actor, proposal_id, payload, version):
         with self.service.db() as s:
-            proposal = s.get(UpdateProposal, proposal_id)
-            if not proposal:
-                fail("VKS_NOT_FOUND", "未找到更新提案", 404)
-            self.service.require(s, actor, proposal.project_id, "links:review")
-            if not actor.human:
-                fail("VKS_FORBIDDEN", "更新提案审核需要人员会话", 403)
-            if not self._visible_proposal(s, actor, proposal):
-                fail("VKS_NOT_FOUND", "未找到更新提案", 404)
-            self.service._version(proposal.row_version, version)
-            analysis = s.get(Analysis, proposal.analysis_set_id)
-            s.refresh(analysis, with_for_update=True)
-            if analysis.state == "frozen":
-                fail("VKS_STATE_CONFLICT", "已发布提案不可修改", 409)
-            if proposal.status != "pending":
-                fail("VKS_STATE_CONFLICT", "提案已处理", 409)
-            relation = s.get(Relation, proposal.target_relation_id) if proposal.target_relation_id else None
-            if payload["decision"] == "accept" and proposal.entity_id:
-                from .models import Selection
+            return self._decide(s, actor, proposal_id, payload, version)
 
-                choice = s.get(Selection, (analysis.id, proposal.entity_id))
-                if (choice.entity_revision_id if choice else None) != proposal.new_revision_id:
-                    fail("VKS_VERSION_CONFLICT", "提案所指实体修订已经变化，请重新检测", 412)
-            if relation and payload["decision"] == "reject":
-                if proposal.metadata_json.get("target_relation_version") != relation.row_version:
-                    fail("VKS_VERSION_CONFLICT", "关联已有更新或人员决定，请在关系审核中核对当前版本", 412)
-                relation.review_status = "rejected"
-                relation.validity_status = "obsolete"
-                relation.row_version += 1
-                s.add(
-                    Review(
-                        project_id=proposal.project_id,
-                        subject_id=relation.id,
-                        actor_id=actor.id,
-                        decision="reject",
-                        reason=payload["reason"],
-                        base_version=relation.row_version - 1,
-                        evidence_ids=relation.evidence_ids,
-                    )
+    def _decide(self, s, actor, proposal_id, payload, version):
+        proposal = s.get(UpdateProposal, proposal_id)
+        if not proposal:
+            fail("VKS_NOT_FOUND", "未找到更新提案", 404)
+        self.service.require(s, actor, proposal.project_id, "links:review")
+        if not actor.human:
+            fail("VKS_FORBIDDEN", "更新提案审核需要人员会话", 403)
+        if not self._visible_proposal(s, actor, proposal):
+            fail("VKS_NOT_FOUND", "未找到更新提案", 404)
+        self.service._version(proposal.row_version, version)
+        analysis = s.get(Analysis, proposal.analysis_set_id)
+        s.refresh(analysis, with_for_update=True)
+        if analysis.state == "frozen":
+            fail("VKS_STATE_CONFLICT", "已发布提案不可修改", 409)
+        if proposal.status != "pending":
+            fail("VKS_STATE_CONFLICT", "提案已处理", 409)
+        relation = s.get(Relation, proposal.target_relation_id) if proposal.target_relation_id else None
+        if payload["decision"] == "accept" and proposal.entity_id:
+            from .models import Selection
+
+            choice = s.get(Selection, (analysis.id, proposal.entity_id))
+            if (choice.entity_revision_id if choice else None) != proposal.new_revision_id:
+                fail("VKS_VERSION_CONFLICT", "提案所指实体修订已经变化，请重新检测", 412)
+        if relation and payload["decision"] == "reject":
+            if proposal.metadata_json.get("target_relation_version") != relation.row_version:
+                fail("VKS_VERSION_CONFLICT", "关联已有更新或人员决定，请在关系审核中核对当前版本", 412)
+            relation.review_status = "rejected"
+            relation.validity_status = "obsolete"
+            relation.row_version += 1
+            s.add(
+                Review(
+                    project_id=proposal.project_id,
+                    subject_id=relation.id,
+                    actor_id=actor.id,
+                    decision="reject",
+                    reason=payload["reason"],
+                    base_version=relation.row_version - 1,
+                    evidence_ids=relation.evidence_ids,
                 )
-            proposal.status = "accepted" if payload["decision"] == "accept" else "rejected"
-            proposal.reason = payload["reason"]
-            proposal.decided_by = actor.id
-            proposal.updated_at = now()
-            proposal.row_version += 1
-            analysis.selection_version += 1
-            self.service.audit(
-                s,
-                actor,
-                proposal.project_id,
-                "version.proposal_review",
-                proposal.id,
-                metadata={"decision": payload["decision"]},
             )
-            s.flush()
-            return self.proposal_dto(s, proposal)
+        proposal.status = "accepted" if payload["decision"] == "accept" else "rejected"
+        proposal.reason = payload["reason"]
+        proposal.decided_by = actor.id
+        proposal.updated_at = now()
+        proposal.row_version += 1
+        analysis.selection_version += 1
+        self.service.audit(
+            s,
+            actor,
+            proposal.project_id,
+            "version.proposal_review",
+            proposal.id,
+            metadata={"decision": payload["decision"]},
+        )
+        s.flush()
+        return self.proposal_dto(s, proposal)
 
     def revalidate(self, actor, rid, payload, version):
         with self.service.db() as s:

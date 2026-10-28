@@ -64,6 +64,10 @@ class TaskOutput(JobOutput):
     report: dict[str, Any] | None
     stage_artifacts: list[dict[str, Any]]
     module_decisions: dict[str, str]
+    pause_requested: bool = False
+    plan_confirmation_required: bool = False
+    plan_preview: dict[str, Any] | None = None
+    plan_preview_unavailable: bool = False
 
 
 class ModuleAccepted(BaseModel):

@@ -163,8 +163,11 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
 
     @app.get(API + "/projects")
     def list_projects(
-        request: Request, cursor: str | None = None, limit: int = Query(20, ge=1, le=100),
-        q: str | None = Query(None, max_length=128), a: Actor = Depends(actor)
+        request: Request,
+        cursor: str | None = None,
+        limit: int = Query(20, ge=1, le=100),
+        q: str | None = Query(None, max_length=128),
+        a: Actor = Depends(actor),
     ):
         rows, next_cursor = service.list_projects(a, cursor, limit, q)
         return envelope(request, rows, next_cursor=next_cursor, limit=limit)
@@ -323,7 +326,9 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         pid = service.find_entity_project(a, eid)
         if project_id and project_id != pid:
             raise DomainError("VKS_NOT_FOUND", "未找到对象", 404)
-        return envelope(request, service.action_context(a, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_policy))
+        return envelope(
+            request, service.action_context(a, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_policy)
+        )
 
     @app.get(API + "/entities/{eid}/relations")
     def graph(
@@ -562,6 +567,9 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
 
     install_journeys(app, service, actor, envelope)
     install_workbench(app, service, actor, envelope)
+    from .review_inbox import install_review_inbox
+
+    install_review_inbox(app, service, actor, envelope)
     from .onboarding_report import install as install_onboarding_report
 
     install_onboarding_report(app, service, actor, envelope)
@@ -582,7 +590,7 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     install_tasks(app, service, actor, envelope)
     from .capture_proposals import install_capture_proposals
 
-    install_capture_proposals(app,service,actor,envelope)
+    install_capture_proposals(app, service, actor, envelope)
     return app
 
 

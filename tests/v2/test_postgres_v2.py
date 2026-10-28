@@ -9,6 +9,7 @@ from test_journeys import journey
 from vks_api.service import Service, DomainError
 from vks_api.journeys import JourneyService
 from vks_api.knowledge_tasks import KnowledgeTaskService, TaskInput
+from vks_api.review_inbox import ReviewInboxService
 from scripts.backup_restore import backup, restore
 
 
@@ -54,9 +55,58 @@ def test_postgres_v2_concurrent_cas_candidate_review_publish_checkpoint_restore(
         ).model_dump(),
         "knowledge-task",
     )
+    tasks = KnowledgeTaskService(service)
+    paused = tasks.control(actor, task["id"], dict(action="pause", expected_state="queued"), 0, "pause-pg")
+    service.process_job(task["id"])
+    assert KnowledgeTaskService(second).get(actor, task["id"])["state"] == "paused"
+    tasks.control(actor, task["id"], dict(action="resume", expected_state="paused"), paused["attempt"], "resume-pg")
     service.process_job(task["id"])
     task_result = KnowledgeTaskService(second).get(actor, task["id"])
     assert task_result["state"] == "succeeded" and task_result["stage_artifacts"]
+    inbox = ReviewInboxService(service).list(actor, pid, aid)
+    flow = next(item for item in inbox["items"] if item["kind"] == "journey")
+    relation = next(
+        item for item in inbox["items"] if item["kind"] == "relation" and "approve" in item["batch_actions"]
+    )
+    batch = dict(
+        analysis_set_id=aid,
+        reason="Concurrent exact PG human review",
+        items=[
+            dict(
+                kind=item["kind"], subject_id=item["subject_id"], review_token=item["review_token"], decision="approve"
+            )
+            for item in (flow, relation)
+        ],
+    )
+    review_gate = Barrier(2)
+
+    def review(index):
+        review_gate.wait(timeout=10)
+        try:
+            return ReviewInboxService([service, second][index]).batch(
+                actor, pid, batch, inbox["selection_version"], "concurrent-review-" + str(index)
+            )
+        except DomainError as error:
+            return error.status
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reviewed = list(pool.map(review, range(2)))
+    assert sum(isinstance(value, dict) for value in reviewed) == 1 and 412 in reviewed
+    from sqlalchemy import func, select
+    from vks_api.models import Audit, Review
+
+    with service.db() as db:
+        assert (
+            db.scalar(select(func.count()).select_from(Review).where(Review.subject_id == relation["subject_id"])) == 1
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(Audit)
+                .where(Audit.resource_id == flow["revision_id"], Audit.action == "journey.approve")
+            )
+            == 1
+        )
     for item in journeys.list(actor, pid, aid):
         journeys.review(
             actor,

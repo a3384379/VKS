@@ -1156,7 +1156,7 @@
     },
     {
       "name": "create_knowledge_task",
-      "description": "按固定模板和范围创建可取消的知识任务；模型最多一次，产物仅为候选。",
+      "description": "按固定模板和准确范围创建可暂停、取消的知识任务；自然语言计划最多一次模型调用，先暂停等待人员确认范围，产物仅为候选。",
       "required_scopes": [
         "analysis:run",
         "knowledge:edit"
@@ -1235,6 +1235,11 @@
             ],
             "default": null,
             "title": "From Release Id"
+          },
+          "selection_version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional exact draft selection version; stale scope is rejected."
           }
         },
         "required": [
@@ -1431,7 +1436,7 @@
     },
     {
       "name": "get_knowledge_task",
-      "description": "查询知识任务的实际阶段、预算与当前有权产物。",
+      "description": "查询知识任务的实际阶段、预算、待人员确认的计划及当前有权产物；机器不能确认计划、审核或发布。",
       "required_scopes": [
         "knowledge:read"
       ],
@@ -1693,6 +1698,21 @@
                     "rejected"
                   ]
                 }
+              },
+              "pause_requested": {
+                "type": "boolean"
+              },
+              "plan_confirmation_required": {
+                "type": "boolean"
+              },
+              "plan_preview": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "plan_preview_unavailable": {
+                "type": "boolean"
               }
             },
             "required": [

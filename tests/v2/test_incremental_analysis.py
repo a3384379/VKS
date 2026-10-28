@@ -40,6 +40,8 @@ def test_incremental_cache_matches_cold_gold_and_reparses_only_changed_files():
     assert facts(warm) == facts(cold)
     assert warm.metrics["syntax_parsed_files"] == 0
     assert warm.metrics["syntax_reused_files"] == len(artifacts)
+    assert warm.metrics["dependency_recomputed_files"] == 0
+    assert warm.metrics["dependency_cache_fallbacks"] == 0
     changed = deepcopy(artifacts)
     mapper = next(a for a in changed if a["path"] == "billing/InvoiceMapper.xml")
     mapper["content"] = mapper["content"].replace(b"demo_invoice", b"changed_invoice")
@@ -50,6 +52,7 @@ def test_incremental_cache_matches_cold_gold_and_reparses_only_changed_files():
     assert facts(incremental) == facts(reference)
     assert incremental.metrics["syntax_parsed_files"] == 1
     assert incremental.metrics["syntax_reused_files"] == len(artifacts) - 1
+    assert incremental.metrics["dependency_cache_fallbacks"] == 0
     assert any(e["metadata"].get("table_name") == "changed_invoice" for e in incremental.entities)
     assert not any(e["metadata"].get("table_name") == "demo_invoice" for e in incremental.entities)
 
@@ -109,7 +112,9 @@ def test_one_percent_source_change_reparses_one_file_with_identical_cold_facts()
         actual = analyze_sources(artifacts, sources)
     assert actual.metrics["syntax_parsed_files"] == 1
     assert actual.metrics["syntax_reused_files"] == 99
-    assert actual.metrics["dependency_recomputed_files"] == 100
+    assert actual.metrics["dependency_recomputed_files"] == 1
+    assert actual.metrics["dependency_reused_files"] == 99
+    assert actual.metrics["dependency_cache_fallbacks"] == 0
     assert facts(actual) == facts(analyze_sources(artifacts, sources))
 
 

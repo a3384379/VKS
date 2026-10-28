@@ -146,7 +146,21 @@ def test_real_compose_reserved_passwords_durable_job_publish_and_exports(tmp_pat
             assert response.status_code == 202, response.text
             task = response.json()["data"]
             assert client.get(f"/api/v1/jobs/{task['id']}").json()["data"]["state"] == "queued"
+            response = client.post(
+                f"/api/v2/knowledge-tasks/{task['id']}/control",
+                json=dict(action="pause", expected_state="queued"),
+                headers={"Idempotency-Key": "compose-pause", "If-Match": "0"},
+            )
+            assert response.status_code == 200, response.text
             compose("start", "worker-model")
+            time.sleep(0.5)
+            assert client.get(f"/api/v2/knowledge-tasks/{task['id']}").json()["data"]["state"] == "paused"
+            response = client.post(
+                f"/api/v2/knowledge-tasks/{task['id']}/control",
+                json=dict(action="resume", expected_state="paused"),
+                headers={"Idempotency-Key": "compose-resume", "If-Match": "0"},
+            )
+            assert response.status_code == 200, response.text
             assert finished(task["id"])["attempt"] == 1
             task_result = client.get(f"/api/v2/knowledge-tasks/{task['id']}").json()["data"]
             assert task_result["stage"] == "READY_FOR_REVIEW" and task_result["stage_artifacts"]
@@ -166,21 +180,27 @@ def test_real_compose_reserved_passwords_durable_job_publish_and_exports(tmp_pat
                 assert response.status_code == 200
             blocked = post(f"/projects/{pid}/release-candidates", {"analysis_set_id": aid})
             assert blocked["blockers"], "An unreviewed V2 flow must block publication in the deployed stack"
-            for journey in journeys:
-                response = client.post(
-                    f"/api/v2/journeys/{journey['journey_id']}/review",
-                    json={
-                        "analysis_set_id": aid,
-                        "revision_id": journey["revision_id"],
-                        "decision": "approve",
-                        "reason": "Synthetic Compose human review",
-                    },
-                    headers={
-                        "If-Match": journey["revision_id"],
-                        "Idempotency-Key": "review-" + journey["revision_id"],
-                    },
-                )
-                assert response.status_code == 200, response.text
+            inbox = client.get(
+                f"/api/v2/projects/{pid}/review-items", params=dict(analysis_set_id=aid, kind="journey")
+            ).json()["data"]
+            response = client.post(
+                f"/api/v2/projects/{pid}/review-batches",
+                json=dict(
+                    analysis_set_id=aid,
+                    reason="Synthetic Compose exact human review",
+                    items=[
+                        dict(
+                            kind=item["kind"],
+                            subject_id=item["subject_id"],
+                            review_token=item["review_token"],
+                            decision="approve",
+                        )
+                        for item in inbox["items"]
+                    ],
+                ),
+                headers={"If-Match": str(inbox["selection_version"]), "Idempotency-Key": "compose-review-batch"},
+            )
+            assert response.status_code == 200, response.text
             candidate = post(
                 f"/projects/{pid}/release-candidates", {"analysis_set_id": w["selected_analysis_set"]["id"]}
             )

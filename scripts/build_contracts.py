@@ -54,6 +54,8 @@ def build() -> dict:
             enum = value.get('enum', [])
             if 'generate_documents' in enum and 'suggest_links' in enum and 'knowledge_task' not in enum:
                 enum.append('knowledge_task')
+            if all(state in enum for state in ('queued', 'running', 'succeeded', 'failed')) and 'paused' not in enum:
+                enum.append('paused')
             if 'page' in enum and 'action' in enum and 'scenario' in enum and 'journey' not in enum:
                 enum.append('journey')
             if 'review_batch' in enum and 'release_candidate' in enum:

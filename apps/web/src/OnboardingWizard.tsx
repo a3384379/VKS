@@ -8,6 +8,7 @@ import { SourceManagement } from "./SourceManagement";
 import { ImportCenter } from "./ImportCenter";
 import { SourceDiagnostics } from "./SourceDiagnostics";
 import { OnboardingReport } from "./OnboardingReport";
+import { OnboardingFlowDraft } from "./OnboardingFlowDraft";
 
 export function OnboardingWizard() {
   const { w, navigate } = useWorkspace();
@@ -152,6 +153,7 @@ export function OnboardingWizard() {
               <Button onClick={() => navigate("workbench")}>探索业务</Button>
               <Button onClick={() => navigate("reviews")}>审核候选</Button>
             </div>
+            <OnboardingFlowDraft />
           </div>
         )}
         <div className="v2-wizard-actions">

@@ -279,41 +279,44 @@ class JourneyService:
 
     def review(self, actor, jid, payload, version, key):
         with self.service.db() as s:
-            entity = s.get(Entity, jid)
-            if not entity or entity.type != "journey":
+            return self._review(s, actor, jid, payload, version, key)
+
+    def _review(self, s, actor, jid, payload, version, key):
+        entity = s.get(Entity, jid)
+        if not entity or entity.type != "journey":
+            raise DomainError("VKS_NOT_FOUND", "未找到流程", 404)
+        analysis = self._analysis(s, actor, entity.project_id, payload["analysis_set_id"])
+        self.service.require(s, actor, entity.project_id, "links:review")
+        if not actor.human:
+            raise DomainError("VKS_FORBIDDEN", "流程审核需要人员身份", 403)
+
+        def decide():
+            choice = s.get(Selection, (analysis.id, jid))
+            if not choice:
                 raise DomainError("VKS_NOT_FOUND", "未找到流程", 404)
-            analysis = self._analysis(s, actor, entity.project_id, payload["analysis_set_id"])
-            self.service.require(s, actor, entity.project_id, "links:review")
-            if not actor.human:
-                raise DomainError("VKS_FORBIDDEN", "流程审核需要人员身份", 403)
-
-            def decide():
-                choice = s.get(Selection, (analysis.id, jid))
-                if not choice:
-                    raise DomainError("VKS_NOT_FOUND", "未找到流程", 404)
-                self.service._version(choice.entity_revision_id, version)
-                if payload["revision_id"] != choice.entity_revision_id:
-                    raise DomainError("VKS_VERSION_CONFLICT", "审核目标已变化", 412)
-                row = s.get(Revision, choice.entity_revision_id)
-                self._validate(s, actor, analysis, row.metadata_json["journey_dsl"])
-                self.service.audit(
-                    s,
-                    actor,
-                    entity.project_id,
-                    "journey." + payload["decision"],
-                    row.id,
-                    metadata={
-                        "analysis_set_id": analysis.id,
-                        "sha256": row.content_sha256,
-                        "reason": payload["reason"],
-                    },
-                )
-                analysis.selection_version += 1
-                return {"revision_id": row.id, "decision": payload["decision"]}
-
-            return self.service.idem(
-                s, actor, entity.project_id, "journey.review", key, dict(payload, version=version), decide
+            self.service._version(choice.entity_revision_id, version)
+            if payload["revision_id"] != choice.entity_revision_id:
+                raise DomainError("VKS_VERSION_CONFLICT", "审核目标已变化", 412)
+            row = s.get(Revision, choice.entity_revision_id)
+            self._validate(s, actor, analysis, row.metadata_json["journey_dsl"])
+            self.service.audit(
+                s,
+                actor,
+                entity.project_id,
+                "journey." + payload["decision"],
+                row.id,
+                metadata={
+                    "analysis_set_id": analysis.id,
+                    "sha256": row.content_sha256,
+                    "reason": payload["reason"],
+                },
             )
+            analysis.selection_version += 1
+            return {"revision_id": row.id, "decision": payload["decision"]}
+
+        return self.service.idem(
+            s, actor, entity.project_id, "journey.review", key, dict(payload, version=version), decide
+        )
 
     def assert_publishable(self, s, analysis):
         blockers = []

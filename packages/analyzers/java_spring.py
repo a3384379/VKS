@@ -161,6 +161,20 @@ class JavaMethod:
     varargs: bool = False
 
 
+class FileMetrics(dict):
+    def __init__(self, analyzer, values):
+        super().__init__(values)
+        self.analyzer = analyzer
+
+    def __setitem__(self, key, value):
+        before = self.get(key, 0)
+        super().__setitem__(key, value)
+        path = self.analyzer.current_path
+        if path:
+            counters = self.analyzer.file_metrics.setdefault(path, {})
+            counters[key] = counters.get(key, 0) + value - before
+
+
 class Analyzer:
     def __init__(self, artifacts: list[dict], sources: dict[str, dict], texts: dict[str, str] | None = None):
         self.artifacts = {a["path"]: a for a in artifacts if a["kind"] == "source"}
@@ -172,17 +186,25 @@ class Analyzer:
         self.evidence_by_key: dict[str, dict] = {}
         self.relation_keys: set[tuple] = set()
         self.classes_by_identity: dict[tuple[str, str], list[JavaClass]] = {}
-        self.metrics = {
-            "java_files": 0,
-            "xml_files": 0,
-            "parsed_files": 0,
-            "methods": 0,
-            "calls": 0,
-            "resolved_calls": 0,
-            "unresolved_calls": 0,
-            "syntax_parsed_files": 0,
-            "syntax_reused_files": 0,
-        }
+        self.current_path = None
+        self.file_metrics = {}
+        self.entity_owners = {}
+        self.evidence_owners = {}
+        self.relation_owners = {}
+        self.metrics = FileMetrics(
+            self,
+            {
+                "java_files": 0,
+                "xml_files": 0,
+                "parsed_files": 0,
+                "methods": 0,
+                "calls": 0,
+                "resolved_calls": 0,
+                "unresolved_calls": 0,
+                "syntax_parsed_files": 0,
+                "syntax_reused_files": 0,
+            },
+        )
 
     def issue(self, code: str, path: str, message: str, state="unsupported", **details):
         self.result.issues.append(
@@ -219,6 +241,7 @@ class Analyzer:
             },
         }
         self.entity_by_key[key] = entity
+        self.entity_owners[key] = self.current_path or path
         self.result.entities.append(entity)
         if len(self.result.entities) > MAX_DECLARATIONS:
             raise ValueError("Java declaration limit exceeded")
@@ -239,6 +262,7 @@ class Analyzer:
                 "extractor_version": VERSION,
             }
             self.evidence_by_key[key] = value
+            self.evidence_owners[key] = self.current_path or path
             self.result.evidence.append(value)
         return key
 
@@ -247,6 +271,7 @@ class Analyzer:
         if identity in self.relation_keys:
             return
         self.relation_keys.add(identity)
+        self.relation_owners[identity] = self.current_path
         self.result.relations.append(
             {
                 "from_key": a,
@@ -259,6 +284,7 @@ class Analyzer:
         )
 
     def java(self, artifact: dict):
+        self.current_path = artifact["path"]
         self.metrics["java_files"] += 1
         path = artifact["path"]
         text = self.text(artifact)
@@ -499,6 +525,7 @@ class Analyzer:
     def spring(self):
         api_by_identity: dict[tuple, list[dict]] = {}
         for cls in self.classes:
+            self.current_path = cls.path
             checkpoint()
             feign = self.feign(cls)
             if feign and feign.get("invalid"):
@@ -654,6 +681,7 @@ class Analyzer:
 
     def calls(self):
         for cls in self.classes:
+            self.current_path = cls.path
             checkpoint()
             for interface_name in cls.interfaces:
                 matches = self.resolve_class(interface_name, cls)
@@ -826,6 +854,7 @@ class Analyzer:
         documents = []
         fragments: dict[tuple, list] = {}
         for path, artifact in self.artifacts.items():
+            self.current_path = path
             checkpoint()
             if not path.lower().endswith(".xml"):
                 continue
@@ -874,6 +903,7 @@ class Analyzer:
                     identity = (service, namespace, statement.attrib.get("id"))
                     statement_counts[identity] = statement_counts.get(identity, 0) + 1
         for path, service, namespace, root, text, spans in documents:
+            self.current_path = path
             for statement in root:
                 if statement.tag not in ("select", "insert", "update", "delete"):
                     continue
@@ -1105,4 +1135,6 @@ def analyze_sources(
 ) -> AnalysisResult:
     """Analyze authorized in-memory source bytes; never reads the source filesystem."""
     source_map = sources if isinstance(sources, dict) else {s["source_id"]: s for s in sources}
-    return Analyzer(artifacts, source_map, texts).run()
+    from .incremental import analyze_incremental
+
+    return analyze_incremental(artifacts, source_map, texts)

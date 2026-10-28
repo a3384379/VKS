@@ -67,6 +67,7 @@ def analyze_async(analyzer):
         return entity
 
     for cls in analyzer.classes:
+        analyzer.current_path = cls.path
         for method in cls.methods:
             checkpoint()
             for annotation in _annotations(method.node):

@@ -1018,7 +1018,7 @@ class Service:
                 if j.created_by != actor.id:
                     raise DomainError("VKS_FORBIDDEN", "只能取消自己发起的任务", 403)
                 self.require(s, actor, j.project_id, JOB_SCOPES[j.kind])
-            if j.state in ("queued", "retry_wait"):
+            if j.state in ("queued", "retry_wait", "paused"):
                 j.state = "cancelled"
                 j.stage = "CANCELLED"
                 j.cancel_requested = True
@@ -1052,51 +1052,54 @@ class Service:
 
     def review_relation(self, actor, rid, payload, version):
         with self.db() as s:
-            r = s.get(Relation, rid)
-            if not r:
-                raise DomainError("VKS_NOT_FOUND", "未找到关系", 404)
-            self.require(s, actor, r.project_id, "links:review")
-            s.refresh(r)
-            if not actor.human:
-                raise DomainError("VKS_FORBIDDEN", "普通客户端令牌不能审核关系", 403)
-            self._version(r.row_version, version)
-            a = s.get(Analysis, r.analysis_set_id)
-            if a.state == "frozen":
-                raise DomainError("VKS_STATE_CONFLICT", "已发布基线不可修改，请创建新草稿", 409)
-            if set(payload["evidence_ids"]) - set(r.evidence_ids):
-                raise DomainError("VKS_INVALID_EVIDENCE", "审核证据必须属于当前关系")
-            self._verify_relation(s, r)
-            if not all(
-                self._visible_revision(s, actor, r.project_id, s.get(Revision, rid))
-                for rid in (r.from_revision_id, r.to_revision_id)
-            ) or not all(
-                self._visible_evidence(s, actor, r.project_id, s.get(Evidence, eid)) for eid in payload["evidence_ids"]
-            ):
-                raise DomainError("VKS_NOT_FOUND", "未找到可审核的证据", 404)
-            rev = Review(
-                id=uid(),
-                project_id=r.project_id,
-                subject_id=r.id,
-                actor_id=actor.id,
-                decision=payload["decision"],
-                reason=payload["reason"],
-                base_version=r.row_version,
-                evidence_ids=payload["evidence_ids"],
-            )
-            s.add(rev)
-            r.review_status = {"confirm": "confirmed", "reject": "rejected", "reopen": "candidate"}[payload["decision"]]
-            r.row_version += 1
-            r.manual_lock = r.review_status == "confirmed"
-            a.selection_version += 1
-            self.audit(
-                s,
-                actor,
-                r.project_id,
-                "relation.review",
-                r.id,
-                metadata={"decision": payload["decision"], "base_version": rev.base_version},
-            )
-            return {"review_decision_id": rev.id, "relation": self.relation_dto(r)}
+            return self._review_relation(s, actor, rid, payload, version)
+
+    def _review_relation(self, s, actor, rid, payload, version):
+        r = s.get(Relation, rid)
+        if not r:
+            raise DomainError("VKS_NOT_FOUND", "未找到关系", 404)
+        self.require(s, actor, r.project_id, "links:review")
+        s.refresh(r)
+        if not actor.human:
+            raise DomainError("VKS_FORBIDDEN", "普通客户端令牌不能审核关系", 403)
+        self._version(r.row_version, version)
+        a = s.get(Analysis, r.analysis_set_id)
+        if a.state == "frozen":
+            raise DomainError("VKS_STATE_CONFLICT", "已发布基线不可修改，请创建新草稿", 409)
+        if set(payload["evidence_ids"]) - set(r.evidence_ids):
+            raise DomainError("VKS_INVALID_EVIDENCE", "审核证据必须属于当前关系")
+        self._verify_relation(s, r)
+        if not all(
+            self._visible_revision(s, actor, r.project_id, s.get(Revision, rid))
+            for rid in (r.from_revision_id, r.to_revision_id)
+        ) or not all(
+            self._visible_evidence(s, actor, r.project_id, s.get(Evidence, eid)) for eid in payload["evidence_ids"]
+        ):
+            raise DomainError("VKS_NOT_FOUND", "未找到可审核的证据", 404)
+        rev = Review(
+            id=uid(),
+            project_id=r.project_id,
+            subject_id=r.id,
+            actor_id=actor.id,
+            decision=payload["decision"],
+            reason=payload["reason"],
+            base_version=r.row_version,
+            evidence_ids=payload["evidence_ids"],
+        )
+        s.add(rev)
+        r.review_status = {"confirm": "confirmed", "reject": "rejected", "reopen": "candidate"}[payload["decision"]]
+        r.row_version += 1
+        r.manual_lock = r.review_status == "confirmed"
+        a.selection_version += 1
+        self.audit(
+            s,
+            actor,
+            r.project_id,
+            "relation.review",
+            r.id,
+            metadata={"decision": payload["decision"], "base_version": rev.base_version},
+        )
+        return {"review_decision_id": rev.id, "relation": self.relation_dto(r)}
 
     def _verify_relation(self, s, r):
         selected = set(

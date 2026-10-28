@@ -26,6 +26,12 @@ KINDS = Literal[
 MODEL_KINDS = ("document_draft", "knowledge_plan")
 
 
+class TaskPause(Exception):
+    def __init__(self, stage="PAUSED"):
+        self.stage = stage
+        super().__init__(stage)
+
+
 class TaskInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     analysis_set_id: str
@@ -35,6 +41,19 @@ class TaskInput(BaseModel):
     max_entities: int = Field(default=100, ge=1, le=200)
     max_model_calls: int = Field(default=0, ge=0, le=1)
     from_release_id: str | None = None
+    selection_version: int | None = Field(default=None, ge=1)
+
+
+class TaskControlInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["pause", "resume"]
+    expected_state: Literal["queued", "running", "retry_wait", "paused"]
+
+
+class PlanConfirmationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 class ModuleRejection(BaseModel):
@@ -56,6 +75,8 @@ class KnowledgeTaskService:
                 raise DomainError("VKS_NOT_FOUND", "未找到草稿基线", 404)
             if analysis.state == "frozen":
                 raise DomainError("VKS_STATE_CONFLICT", "请克隆发布版后创建知识任务", 409)
+            if payload.get("selection_version") is not None:
+                self.service._version(analysis.selection_version, payload["selection_version"])
             if payload["task_kind"] == "difference_review":
                 from .models import Release
 
@@ -110,7 +131,7 @@ class KnowledgeTaskService:
 
             return self.service.idem(s, actor, pid, "knowledge_task.create", key, payload, create)
 
-    def _validate(self, s, job):
+    def _validate(self, s, job, allow_suspended=False):
         actor = current_actor(self.service, job.created_by, job.project_id, s, job=job)
         self.service.require(s, actor, job.project_id, "analysis:run")
         self.service.require(s, actor, job.project_id, "knowledge:edit")
@@ -147,8 +168,13 @@ class KnowledgeTaskService:
             raise DomainError("VKS_FORBIDDEN", "任务历史输入权限已变化，结果被丢弃", 403)
         if (
             job.cancel_requested
-            or job.state not in ("running", "cancelling")
-            or (job.lease_until and job.lease_until <= now())
+            or job.state
+            not in (
+                ("running", "cancelling", "paused", "queued", "retry_wait")
+                if allow_suspended
+                else ("running", "cancelling")
+            )
+            or (job.state in ("running", "cancelling") and job.lease_until and job.lease_until <= now())
         ):
             raise DomainError("VKS_CANCELLED", "任务已取消或租约已失效", 409)
         return actor, analysis
@@ -159,6 +185,8 @@ class KnowledgeTaskService:
             if job.attempt != attempt:
                 raise DomainError("VKS_CANCELLED", "旧任务 attempt 已失效", 409)
             self._validate(s, job)
+            if job.input_json.get("_pause_requested"):
+                raise TaskPause()
             previous = [dict(row) for row in job.input_json.get("_stage_history", [])]
             if previous and previous[-1]["state"] == "running":
                 previous[-1]["state"] = "interrupted"
@@ -445,6 +473,9 @@ class KnowledgeTaskService:
             payload["_model_plan"] = checkpoints.run(
                 "Plan", payload["_input_revision_ids"], lambda: self._plan(jid, actor, pid, aid, payload)
             )
+            digest = sha(canonical(payload["_model_plan"]))
+            if payload.get("_plan_confirmation", {}).get("plan_sha256") != digest:
+                raise TaskPause("PLAN_REVIEW")
 
         def collect():
             w = self._collect(actor, pid, aid, payload)
@@ -462,10 +493,17 @@ class KnowledgeTaskService:
         checkpoints.run("Validate", proposal, lambda: self._validate_report(jid, proposal))
         # Always revalidate after the final cached stage, before the job's atomic commit.
         self._validate_report(jid, proposal)
+        with self.service.db() as s:
+            job = s.get(Job, jid)
+            self._validate(s, job)
+            if job.input_json.get("_pause_requested"):
+                raise TaskPause()
         return proposal
 
     def finalize(self, s, job, report):
         actor, analysis = self._validate(s, job)
+        if job.input_json.get("_pause_requested"):
+            raise TaskPause()
         from .journeys import JourneyService
         from .models import Entity, Revision
 
@@ -573,6 +611,113 @@ class KnowledgeTaskService:
         )
         return result
 
+    def _plan_record(self, s, job):
+        from .jobs import Checkpoint
+        from .task_checkpoints import TaskCheckpoints, processor_version
+
+        point = s.scalar(
+            select(Checkpoint).where(
+                Checkpoint.job_id == job.id,
+                Checkpoint.stage == "KNOWLEDGE_PLAN",
+                Checkpoint.processor_version == processor_version(),
+                Checkpoint.input_hash == TaskCheckpoints.input_hash(job, job.input_json["_input_revision_ids"]),
+            )
+        )
+        if not point:
+            raise DomainError("VKS_STATE_CONFLICT", "准确计划检查点不可用，请重新创建任务", 409)
+        packet, _ = self._read_stage(point)
+        return packet["result"]
+
+    def _control_job(self, s, actor, jid):
+        job = s.scalar(select(Job).where(Job.id == jid).with_for_update())
+        if not job or job.kind != "knowledge_task":
+            raise DomainError("VKS_NOT_FOUND", "未找到知识任务", 404)
+        self.service.require(s, actor, job.project_id, "analysis:run")
+        self.service.require(s, actor, job.project_id, "knowledge:edit")
+        if actor.id != job.created_by and not self.service._can(s, actor, job.project_id, "project:manage"):
+            raise DomainError("VKS_FORBIDDEN", "只能控制自己发起的任务", 403)
+        return job
+
+    def _enqueue(self, s, job):
+        from .jobs import DispatchState
+
+        job.state, job.stage = "queued", "VALIDATE"
+        job.lease_until = None
+        job.updated_at = now()
+        job.input_json = dict(job.input_json, _pause_requested=False)
+        dispatch = s.scalar(select(DispatchState).where(DispatchState.job_id == job.id).with_for_update())
+        if dispatch:
+            dispatch.state, dispatch.attempt, dispatch.next_attempt_at = "pending", 0, now()
+
+    def control(self, actor, jid, payload, version, key):
+        with self.service.db() as s:
+            job = self._control_job(s, actor, jid)
+
+            def change():
+                self.service._version(job.attempt, version)
+                if job.state != payload["expected_state"]:
+                    raise DomainError("VKS_VERSION_CONFLICT", "任务状态已变化，请刷新后操作", 412)
+                self._validate(s, job, allow_suspended=True)
+                if payload["action"] == "resume":
+                    if job.state != "paused" or job.stage == "PLAN_REVIEW":
+                        raise DomainError("VKS_STATE_CONFLICT", "模型计划需要人员核对准确范围后确认", 409)
+                    self._enqueue(s, job)
+                elif job.state in ("queued", "retry_wait"):
+                    job.state, job.stage, job.lease_until = "paused", "PAUSED", None
+                elif job.state == "running":
+                    job.input_json = dict(job.input_json, _pause_requested=True)
+                else:
+                    raise DomainError("VKS_STATE_CONFLICT", "当前任务不能暂停", 409)
+                self.service.audit(s, actor, job.project_id, "knowledge_task." + payload["action"], jid)
+                s.flush()
+                return self.service.job_dto(job)
+
+            return self.service.idem(
+                s, actor, job.project_id, "knowledge_task.control", key, dict(payload, version=version), change
+            )
+
+    def confirm_plan(self, actor, jid, payload, version, key):
+        if not actor.human:
+            raise DomainError("VKS_FORBIDDEN", "模型计划的执行范围需要人员确认", 403)
+        if not payload["reason"].strip():
+            raise DomainError("VKS_INVALID_INPUT", "请记录计划范围确认依据")
+        with self.service.db() as s:
+            job = self._control_job(s, actor, jid)
+
+            def confirm():
+                if job.state != "paused" or job.stage != "PLAN_REVIEW":
+                    raise DomainError("VKS_STATE_CONFLICT", "任务当前没有待确认的模型计划", 409)
+                self.service._version(job.attempt, version)
+                self._validate(s, job, allow_suspended=True)
+                if not self._can_read_stages(s, actor, job):
+                    raise DomainError("VKS_NOT_FOUND", "未找到当前可见计划", 404)
+                plan = self._plan_record(s, job)
+                from .task_planning import PlanExecutor
+
+                PlanExecutor(self, jid, None).validate(plan, s, allow_suspended=True)
+                digest = sha(canonical(plan))
+                if digest != payload["plan_sha256"]:
+                    raise DomainError("VKS_VERSION_CONFLICT", "计划摘要已变化，请重新核对范围", 412)
+                job.input_json = dict(
+                    job.input_json,
+                    _plan_confirmation=dict(plan_sha256=digest, actor_id=actor.id, reason=payload["reason"]),
+                )
+                self._enqueue(s, job)
+                self.service.audit(
+                    s,
+                    actor,
+                    job.project_id,
+                    "knowledge_plan.confirm",
+                    jid,
+                    metadata=dict(plan_sha256=digest, reason=payload["reason"]),
+                )
+                s.flush()
+                return self.service.job_dto(job)
+
+            return self.service.idem(
+                s, actor, job.project_id, "knowledge_plan.confirm", key, dict(payload, version=version), confirm
+            )
+
     def get(self, actor, jid, pid=None):
         dto = self.service.get_job(actor, jid, pid)
         with self.service.db() as s:
@@ -588,9 +733,28 @@ class KnowledgeTaskService:
                 report=None,
                 stage_artifacts=[],
                 module_decisions={},
+                pause_requested=bool(job.input_json.get("_pause_requested")),
+                plan_confirmation_required=job.state == "paused" and job.stage == "PLAN_REVIEW",
+                plan_preview=None,
             )
             if self._can_read_stages(s, actor, job):
                 from .jobs import Checkpoint
+
+                if dto["plan_confirmation_required"]:
+                    try:
+                        plan = self._plan_record(s, job)
+                        dto["plan_preview"] = dict(
+                            sha256=sha(canonical(plan)),
+                            title=plan["title"],
+                            steps=plan["steps"],
+                            unknowns=plan["unknowns"],
+                            catalog=plan["_catalog"],
+                            analysis_set_id=job.input_json["analysis_set_id"],
+                            selection_version=job.input_json["_selection_version"],
+                            model_calls_reserved=int(bool(job.input_json.get("_model_reserved"))),
+                        )
+                    except DomainError:
+                        dto["plan_preview_unavailable"] = True
 
                 for point in s.scalars(
                     select(Checkpoint)
@@ -849,6 +1013,28 @@ def install_tasks(app, service, actor, envelope):
     @app.get("/api/v2/knowledge-tasks/{jid}", response_model=Envelope[TaskOutput], response_model_exclude_unset=True)
     def get(jid: str, request: Request, project_id: str | None = None, a=Depends(actor)):
         return envelope(request, tasks.get(a, jid, project_id))
+
+    @app.post("/api/v2/knowledge-tasks/{jid}/control", response_model=Envelope[JobOutput])
+    def control(
+        jid: str,
+        payload: TaskControlInput,
+        request: Request,
+        if_match: str = Header(...),
+        idempotency_key: str = Header(...),
+        a=Depends(actor),
+    ):
+        return envelope(request, tasks.control(a, jid, payload.model_dump(), if_match, idempotency_key))
+
+    @app.post("/api/v2/knowledge-tasks/{jid}/confirm-plan", response_model=Envelope[JobOutput])
+    def confirm(
+        jid: str,
+        payload: PlanConfirmationInput,
+        request: Request,
+        if_match: str = Header(...),
+        idempotency_key: str = Header(...),
+        a=Depends(actor),
+    ):
+        return envelope(request, tasks.confirm_plan(a, jid, payload.model_dump(), if_match, idempotency_key))
 
     @app.get("/api/v2/knowledge-tasks/{jid}/stage-artifacts/{digest}", response_model=Envelope[dict])
     def stage(jid: str, digest: str, request: Request, a=Depends(actor)):

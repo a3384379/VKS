@@ -105,16 +105,16 @@ class PlanExecutor:
     def __init__(self, tasks, jid, checkpoints):
         self.tasks, self.service, self.jid, self.checkpoints = tasks, tasks.service, jid, checkpoints
 
-    def validate(self, plan, session=None):
+    def validate(self, plan, session=None, allow_suspended=False):
         if session is None:
             with self.service.db() as s:
-                return self.validate(plan, s)
+                return self.validate(plan, s, allow_suspended)
         s = session
         from .models import Job
         from .ai_gateway import AiService
 
         job = s.get(Job, self.jid)
-        actor, analysis = self.tasks._validate(s, job)
+        actor, analysis = self.tasks._validate(s, job, allow_suspended=allow_suspended)
         AiService(self.service).validate_inputs(s, actor, job.project_id, plan["_input_provenance"])
         validate_plan(
             plan,
