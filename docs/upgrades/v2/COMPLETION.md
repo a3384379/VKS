@@ -2,7 +2,15 @@
 
 2026-10-28，继续执行用户“直到 2.0 完整开发和验证”的授权。原任务提示词中的分阶段等待是文档示例；原设计原件不改。工程实现、自动/合成验证、外部真实验收和生产发行分别记录。
 
-## 剩余工程补齐：当前实现
+## 当前源码：轨迹加载时序收尾
+
+运行代码 `aab485870f8e3d6daf2a3c14157aaf727f2c0b96`，333 个工程输入聚合 SHA-256 `87f48837fef27d0d11e16f1e0cb534f6d56597852659312bf49413b3ff822d9d`。见 [UI 收尾源码](../../validation/results/v2-remaining-ui-source-manifest-20261028.json)、[UI 收尾验证](../../validation/results/v2-remaining-ui-validation-20261028.json)。交付提交的 CI 以 PR 当前头检查为准。
+
+`8cc6fed` 的 PR 轮检查通过，但 push 轮在权限撤销之前未显示预期比较快照（442 passed / 1 failed / 15 skipped）。固定响应顺序后复现：状态列表迟到会更换 React 根结构，重新挂载轨迹比较并丢弃选择/结果。现保持稳定组件位置，并忽略已取消响应；新增真实 GET 请求门闩测试，不重试、不延长超时、不删除权限撤销断言。修复后 14 项浏览器组合通过，完整 `make check` 为 **444 passed / 15 skipped**（236.67s）、前端 **41 passed**、正式构建成功（16.46s），总计 259.183s。
+
+本次仅前端和浏览器测试变化；以下 5000 文件测量所用 11 个分析文件摘要全部不变，原始实测继续单独保留。四项工程功能均完成，外部验收与部署边界不变。
+
+## 剩余工程补齐快照（6b49e9a）
 
 运行代码 `6b49e9ab43d74cb9294e86e6768fcd16af01cf42`，草稿 [PR #2](https://github.com/a3384379/VKS/pull/2)。333 个工程输入文件聚合 SHA-256：`3d5fee96daf1874fec25482e2bd96ae287d92207016c712bb8d904b212eeeb1a`。原件、历史快照和失败日志保留。逐文件清单与当前结果见 [remaining manifest](../../validation/results/v2-remaining-source-manifest-20261028.json)、[remaining validation](../../validation/results/v2-remaining-validation-20261028.json)。
 

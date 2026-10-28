@@ -199,3 +199,14 @@ V2 容量使用 `benchmark_reads.py --http --v2`；无此开关的历史 v1 数�
 保留原始失败及修复：Button 未透传 aria-label、任务 UI 缺 attempt 类型、旧测试/SDK 枚举假定计划立即执行、默认测试浏览器路径造成最初跳过，以及旧依赖重算计数断言。修复后均实际执行通过。Windows 与 Unix 的 ZIP 平台元数据不同，整包跨平台字节比较最初失败；独立检查确认 33 项内容和 manifest 完全相同，分别核对各平台归档摘要，没有将外层 ZIP 相等作为通过条件。
 
 专项与主套件有重叠，不相加。15 项主套件环境跳过分类不变，Windows 的 1 skip 为另行已验证的 SVN Docker。测试自有 PG/Compose 容器和临时 API 均停止；用户已有服务未重启，PR 未合并、实例未切换。四项剩余工程已完成，真实业务、独立 Gold/人员、真实模型效果、企业目标机与发行签署继续单列待验收。
+
+
+## 浏览器时序收尾：aab4858
+
+`8cc6fed` 的 PR 轮 443 passed / 15 skipped、前端 41、构建/审计通过；push 轮 **442 passed / 1 failed / 15 skipped**（629.61s）。失败发生在撤销权限之前：已完成的轨迹比较快照消失。原始远端日志保留，失败作业没有重跑。
+
+固定实际请求顺序后复现：先拦住 state-replay GET，让轨迹选择和比较完成，再放行状态响应。旧组件会重挂载，将选择重置为 scenario、清空比较；新的回归明确失败。现始终保持同一个 Fragment 和轨迹组件位置，并忽略取消响应。修复后选择/摘要/快照保持、没有额外 options/comparison 请求；原权限撤销断言不改，14 项真实浏览器组合 **passed / 34.15s**。最初测试门闩错误假定 StrictMode 只有一次 effect，也单独保留失败；修正为放行全部实际初始请求后才复现产品问题。
+
+完整本地 `make check`：**444 passed / 15 skipped**（236.67s）、前端 **41 passed**、构建成功（16.46s）、总计 **259.183s**。Ruff/Prettier/diff、原件字节、UTF-8/LF 检查通过。当前 333 个输入摘要 `87f48837fef27d0d11e16f1e0cb534f6d56597852659312bf49413b3ff822d9d`；[新源码清单](../../validation/results/v2-remaining-ui-source-manifest-20261028.json)、[新验证结果](../../validation/results/v2-remaining-ui-validation-20261028.json)。提交后的 CI 以 PR 当前头检查为准，不能用旧头通过替代。
+
+只修改前端和浏览器测试。5000 文件测量的 11 个分析输入以及 API 读取路径与 6b49e9a 字节一致，保留原先实际 PG/HTTP/Compose 与 Windows 包证据，不冒充本次新测；外部真实验收与生产发行边界不变。
