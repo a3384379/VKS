@@ -58,6 +58,40 @@ def test_saved_trajectory_comparison_shows_exact_observation_without_business_re
         assert all(url.startswith(s["url"]) or url.startswith("data:") for _, url in requests)
 
 
+def test_late_state_replay_response_keeps_selected_trajectory_and_completed_comparison(audit_site):
+    s = audit_site
+    record = ScenarioService(s["service"]).captures(s["owner"], s["pid"])[0]
+    held, requests = [], []
+
+    def prepare(page):
+        # Hold the actual read request. The comparison completes first, then the
+        # original state response arrives; no fabricated API payload or sleep.
+        page.route("**/api/v2/projects/*/state-replay?*", lambda route: held.append(route))
+        page.on("request", lambda request: requests.append(request.url))
+
+    with signed_page(s, f"/#view=workbench&project={s['pid']}&baseline=draft:{s['a']}", prepare=prepare) as page:
+        left = page.get_by_label("左侧轨迹", exact=True)
+        right = page.get_by_label("右侧轨迹", exact=True)
+        left.select_option("capture:" + record["id"])
+        right.select_option("capture:" + record["id"])
+        page.get_by_role("button", name="比较已保存轨迹", exact=True).click()
+        expect(page.get_by_label("右侧轨迹观察快照", exact=True)).to_be_visible()
+        before = page.get_by_text("固定比较摘要：", exact=False).text_content()
+        assert held
+        option_requests = sum("/trajectory-options?" in url for url in requests)
+        # Vite's development StrictMode may start then abort an initial effect.
+        # Release every held request without turning an aborted one into a retry.
+        for route in held:
+            route.continue_()
+        held.clear()
+        expect(page.get_by_label("回放场景", exact=True)).to_be_visible()
+        expect(left).to_have_value("capture:" + record["id"])
+        expect(page.get_by_label("右侧轨迹观察快照", exact=True)).to_be_visible()
+        expect(page.get_by_text("固定比较摘要：", exact=False)).to_have_text(before)
+        assert sum("/trajectory-options?" in url for url in requests) == option_requests
+        assert sum("/trajectory-comparison?" in url for url in requests) == 1
+
+
 def test_revoked_sensitive_grants_clear_previously_loaded_trajectory_on_workspace_refresh(audit_site):
     from vks_api.models import Member
     from vks_api.knowledge_tasks import KnowledgeTaskService, TaskInput

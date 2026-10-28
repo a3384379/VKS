@@ -43,7 +43,9 @@ export function StateReplay() {
       `/api/v2/projects/${w.project.id}/state-replay?${q}`,
       { signal: controller.signal },
     )
-      .then((r) => setScenarios(r.scenarios))
+      .then((r) => {
+        if (!controller.signal.aborted) setScenarios(r.scenarios);
+      })
       .catch((e) => {
         if (!controller.signal.aborted) setError(e.message);
       });
@@ -52,7 +54,6 @@ export function StateReplay() {
   const scenario =
     scenarios.find((s) => s.entity_id === explanation.scenarioId) ||
     scenarios.find((s) => s.states.length);
-  if (!scenario?.states.length && !error) return <TrajectoryComparison />;
   const selected =
     scenario?.states.find((s) => s.stateKey === explanation.stateKey) ||
     scenario?.states[0];
@@ -84,89 +85,94 @@ export function StateReplay() {
   }
   return (
     <>
-      <Panel title="被动状态与分支时间轴" action={<Tag>讲解 / 已保存状态</Tag>}>
-        {error && <Notice tone="red">{error}</Notice>}
-        {scenario && (
-          <>
-            <div className="row wrap">
-              <label>
-                场景
-                <select
-                  aria-label="回放场景"
-                  value={scenario.entity_id}
-                  onChange={(e) => {
-                    setCompare("");
-                    const target = scenarios.find(
-                      (s) => s.entity_id === e.target.value,
-                    );
-                    navigateExplanation({
-                      scenarioId: e.target.value,
-                      stateKey: target?.states[0]?.stateKey || "",
-                      followTarget: false,
-                    });
-                  }}
-                >
-                  {scenarios
-                    .filter((s) => s.states.length)
-                    .map((s) => (
-                      <option value={s.entity_id} key={s.entity_id}>
-                        {s.name}
+      {!!(scenario?.states.length || error) && (
+        <Panel
+          title="被动状态与分支时间轴"
+          action={<Tag>讲解 / 已保存状态</Tag>}
+        >
+          {error && <Notice tone="red">{error}</Notice>}
+          {scenario && (
+            <>
+              <div className="row wrap">
+                <label>
+                  场景
+                  <select
+                    aria-label="回放场景"
+                    value={scenario.entity_id}
+                    onChange={(e) => {
+                      setCompare("");
+                      const target = scenarios.find(
+                        (s) => s.entity_id === e.target.value,
+                      );
+                      navigateExplanation({
+                        scenarioId: e.target.value,
+                        stateKey: target?.states[0]?.stateKey || "",
+                        followTarget: false,
+                      });
+                    }}
+                  >
+                    {scenarios
+                      .filter((s) => s.states.length)
+                      .map((s) => (
+                        <option value={s.entity_id} key={s.entity_id}>
+                          {s.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label>
+                  对比状态
+                  <select
+                    aria-label="对比状态"
+                    value={compare}
+                    onChange={(e) => setCompare(e.target.value)}
+                  >
+                    <option value="">不对比</option>
+                    {scenario.states.map((s) => (
+                      <option value={s.stateKey} key={s.stateKey}>
+                        {s.label} · {s.evidenceOrigin}
                       </option>
                     ))}
-                </select>
-              </label>
-              <label>
-                对比状态
-                <select
-                  aria-label="对比状态"
-                  value={compare}
-                  onChange={(e) => setCompare(e.target.value)}
-                >
-                  <option value="">不对比</option>
-                  {scenario.states.map((s) => (
-                    <option value={s.stateKey} key={s.stateKey}>
-                      {s.label} · {s.evidenceOrigin}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="v2-state-timeline">
-              {scenario.states.map((state) => (
-                <button
-                  key={state.stateKey}
-                  aria-pressed={selected?.stateKey === state.stateKey}
-                  onClick={() => {
-                    const action = w.actions.find(
-                      (a) => a.stable_key === state.actionKey,
-                    );
-                    const page = w.pages.find(
-                      (p) => p.stable_key === state.pageKey,
-                    );
-                    navigateExplanation({
-                      scenarioId: scenario.entity_id,
-                      stateKey: state.stateKey,
-                      ...(action ? { actionId: action.id } : {}),
-                      ...(page ? { pageId: page.id } : {}),
-                      followTarget: false,
-                    });
-                  }}
-                >
-                  <strong>{state.label}</strong>
-                  <small>{state.evidenceOrigin}</small>
-                </button>
-              ))}
-            </div>
-            <div className={`v2-state-compare ${other ? "comparing" : ""}`}>
-              {selected && surface(selected)}
-              {other && surface(other)}
-            </div>
-            <p className="muted">
-              切换只读取保存状态；未请求业务系统。运行观察和人工绑定分别保留，未知链路不自动补全。
-            </p>
-          </>
-        )}
-      </Panel>
+                  </select>
+                </label>
+              </div>
+              <div className="v2-state-timeline">
+                {scenario.states.map((state) => (
+                  <button
+                    key={state.stateKey}
+                    aria-pressed={selected?.stateKey === state.stateKey}
+                    onClick={() => {
+                      const action = w.actions.find(
+                        (a) => a.stable_key === state.actionKey,
+                      );
+                      const page = w.pages.find(
+                        (p) => p.stable_key === state.pageKey,
+                      );
+                      navigateExplanation({
+                        scenarioId: scenario.entity_id,
+                        stateKey: state.stateKey,
+                        ...(action ? { actionId: action.id } : {}),
+                        ...(page ? { pageId: page.id } : {}),
+                        followTarget: false,
+                      });
+                    }}
+                  >
+                    <strong>{state.label}</strong>
+                    <small>{state.evidenceOrigin}</small>
+                  </button>
+                ))}
+              </div>
+              <div className={`v2-state-compare ${other ? "comparing" : ""}`}>
+                {selected && surface(selected)}
+                {other && surface(other)}
+              </div>
+              <p className="muted">
+                切换只读取保存状态；未请求业务系统。运行观察和人工绑定分别保留，未知链路不自动补全。
+              </p>
+            </>
+          )}
+        </Panel>
+      )}
       <TrajectoryComparison />
     </>
   );

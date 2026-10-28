@@ -141,10 +141,12 @@ def audit_site(tmp_path_factory):
 
 
 @contextmanager
-def signed_page(site, path):
+def signed_page(site, path, *, prepare=None):
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
         page = browser.new_page(viewport={"width": 1586, "height": 992})
+        if prepare:
+            prepare(page)
         page.goto(site["url"] + path)
         page.get_by_label("登录名", exact=True).fill("owner")
         page.get_by_label("密码", exact=True).fill("owner")
