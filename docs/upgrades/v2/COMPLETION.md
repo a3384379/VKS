@@ -2,7 +2,24 @@
 
 2026-10-28，继续执行用户“直到 2.0 完整开发和验证”的授权。原任务提示词中的分阶段等待是文档示例；原设计原件不改。工程实现、自动/合成验证、外部真实验收和生产发行分别记录。
 
-当前运行代码：`0a3becc910fb1c8f97d94aed3927c68014f45c12`，草稿 [PR #2](https://github.com/a3384379/VKS/pull/2)。323 个工程输入文件聚合 SHA-256：`99293cbe14a2fc2417fc1ef8f85caef6838a08cfcfb514bca6ae6bb287ea27ec`。逐文件清单与结果见 [engineering manifest](../../validation/results/v2-engineering-source-manifest-20261028.json)、[engineering validation](../../validation/results/v2-engineering-validation-20261028.json)。文档与私有日志不计入该源码聚合。
+## 剩余工程补齐：当前实现
+
+运行代码 `6b49e9ab43d74cb9294e86e6768fcd16af01cf42`，草稿 [PR #2](https://github.com/a3384379/VKS/pull/2)。333 个工程输入文件聚合 SHA-256：`3d5fee96daf1874fec25482e2bd96ae287d92207016c712bb8d904b212eeeb1a`。原件、历史快照和失败日志保留。逐文件清单与当前结果见 [remaining manifest](../../validation/results/v2-remaining-source-manifest-20261028.json)、[remaining validation](../../validation/results/v2-remaining-validation-20261028.json)。
+
+- 已完成依赖影响分片：当前类型/Mapper/适配器依赖决定重算上下文；删除、增添目标、重载、同名冲突、移动及 SQL 变化与冷分析一致。全包校验与摘要索引继续执行，实际语义重算和复用分别报告。
+- 已完成四类统一原子审核：关系、文档、迁移和流程共用精确令牌、分页/筛选/当前可见计数、独立人员审计。文档先提交；业务解释/运行因果仍逐条核对；过期对象导致整批回滚。
+- 已完成人员计划确认与暂停/继续：自然语言 Plan 后暂停，人员确认准确范围后复用同一次模型结果；普通任务在阶段边界暂停。继续不能绕过确认；恢复复核权限、基线、策略和 attempt。
+- 已完成向导内有序动作流程草稿：勾选、排序、绑定准确基线、无模型生成独立候选及结果入口，无需手写绑定 JSON。
+
+本地完整 `make check`：Python **443 passed / 15 skipped**（247.08s）、前端 **41 passed**、正式构建成功（16.90s），总计 270.33s。实际 Chromium 完成文档提交/混合审核、向导生成流程，以及一次合成 HTTP 计划→暂停→人员确认→完成。外部模型调用仍为 **0**。隔离 PG 并发批次/暂停恢复/备份恢复与最新 Compose 真实队列/统一审核/冻结/导出均通过。Windows 原生 CI 与干净安装启动通过，下载制品 33 项内容摘要已核验。
+
+当前源码 push/PR 六项 CI 全通过；Linux 443 passed / 15 skipped（399.98s）、前端 41、构建成功（33.68s）、依赖审计 0 漏洞；Windows 25/1（27.33s），下载包 SHA-256 `c4a81baba5409c9245a3f6f3ddd9c0886474df68397e8f80f7669d033593622a`。真实 PG/HTTP 5000 文件/100MiB 冷任务 562.812s；50 文件变化后的任务 193.666s，语法与依赖均解析/重算 50、复用 4950、回退 0。全部摘要仍索引 5000 文件；新增校验有开销，此简单无调用 fixture 不证明相对上一轮语法缓存的总耗时加速。测量期间源码未变化。
+
+四项剩余工程均已完成；外部独立验收与发行签署仍见下文。本轮功能清单和计量边界见 [REMAINING.md](REMAINING.md)。上一轮 600 秒读取容量留为历史记录，本轮未重复执行；旧报告与本轮报告分别保存。自有测试容器已清理，现有用户实例未切换。
+
+## 上一轮工程快照（保留）
+
+运行代码：`0a3becc910fb1c8f97d94aed3927c68014f45c12`，323 个工程输入文件聚合 SHA-256：`99293cbe14a2fc2417fc1ef8f85caef6838a08cfcfb514bca6ae6bb287ea27ec`。逐文件清单与结果见 [engineering manifest](../../validation/results/v2-engineering-source-manifest-20261028.json)、[engineering validation](../../validation/results/v2-engineering-validation-20261028.json)。文档与私有日志不计入该源码聚合；以下数值属于上一轮，不替代当前源码结果。
 
 ## 工程清单
 
