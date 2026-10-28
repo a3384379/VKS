@@ -1,0 +1,90 @@
+{
+  "schema_version": 3,
+  "date": "2026-10-28",
+  "status": "engineering_and_synthetic_validation_passed_external_acceptance_pending",
+  "source_commit": "6bef98fcda8b482ac3f98b4bec8944b4d02be4e5",
+  "source_manifest": "v2-navigation-source-manifest-20261028.json",
+  "source_sha256": "ee35a7e31a9e898ba5ae204ba7aa19f4970322efd69d12dd919689870bf23c49",
+  "source_files": 333,
+  "new_ddl": false,
+  "production_release": false,
+  "real_external_model_calls": 0,
+  "pr_url": "https://github.com/a3384379/VKS/pull/2",
+  "fix": {
+    "problem": "After the native Back/Forward pending marker was cleared, a stale render epoch could still replace the restored URL. Passive URL synchronization could also lag the visible DOM.",
+    "deterministic_reproduction": "Complete a native Back render, then commit the preceding user epoch: old HashRouteSync returns replace instead of null. The new epoch check rejects every older render after completion as well.",
+    "implementation": "Validate renderEpoch against the latest epoch for every commit; synchronize URL and native handlers in layout effects before the updated DOM becomes interactive.",
+    "old_epoch_regression": "failed",
+    "fixed_navigation_tests": {
+      "passed": 8,
+      "seconds": 0.233
+    },
+    "fixed_browser_combination": {
+      "passed": 18,
+      "seconds": 54.61
+    },
+    "new_browser_scope": "At first branch DOM commit, record URL and immediately invoke actual history.back; restore the same Ready page/action/context. Existing G01 assertion kept, with bounded event/URL diagnostics.",
+    "first_dom_browser_on_old_ui": "passed; additional integration coverage, not represented as a failing reproduction"
+  },
+  "prior_head_ci": {
+    "head_sha": "d63bc2af25369bfb14f27ea152b67c2e1f76704a",
+    "pr_run": {
+      "id": 40625724768,
+      "status": "success",
+      "python_passed": 444,
+      "python_skipped": 15,
+      "seconds": 599.7,
+      "frontend_passed": 41,
+      "build_seconds": 48.93
+    },
+    "push_run": {
+      "id": 40625721381,
+      "status": "failure",
+      "python_passed": 443,
+      "python_failed": 1,
+      "python_skipped": 15,
+      "seconds": 591.12,
+      "failed_test": "test_g01_hotspot_branch_page_tree_and_url_use_one_passive_context",
+      "failure": "Ready state missing after native Back"
+    },
+    "old_failures_preserved": true,
+    "failed_job_not_rerun": true
+  },
+  "reused_environment_evidence": {
+    "report": "v2-remaining-validation-20261028.json",
+    "large_analysis_source_commit": "6b49e9ab43d74cb9294e86e6768fcd16af01cf42",
+    "unchanged_analysis_inputs": 11,
+    "scope": "Frontend navigation and test changes only; all eleven analysis inputs and API read paths remain byte-identical. Retains prior environment measurements as separately scoped evidence.",
+    "native_windows_distribution_source_unchanged": true,
+    "agent_zip_sha256": "c4a81baba5409c9245a3f6f3ddd9c0886474df68397e8f80f7669d033593622a"
+  },
+  "external_gates_pending": [
+    "authorized business domain and two fixed source revisions plus three controlled business branches",
+    "independently frozen 30-action Gold and five independent paired participants",
+    "approved real model provider, egress policy and cost ceiling",
+    "specified benchmark machine/network and enterprise Windows acceptance",
+    "human release sign-off and deployment/switch-over"
+  ],
+  "full_suite": {
+    "status": "pass",
+    "exit_code": 0,
+    "python_passed": 445,
+    "python_skipped": 15,
+    "pytest_seconds": 237.58,
+    "frontend_passed": 42,
+    "frontend_failed": 0,
+    "build_seconds": 16.93,
+    "total_seconds": 260.556,
+    "isolated_data_dir": true,
+    "inherited_vks_configuration_cleared": true
+  },
+  "integrity": {
+    "ruff_critical": "pass",
+    "prettier_changed_frontend": "pass",
+    "git_diff_check": "pass",
+    "original_v1_files": 44,
+    "original_v2_files": 3,
+    "byte_integrity": "pass",
+    "utf8_no_bom_lf": true
+  }
+}

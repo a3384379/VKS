@@ -2,7 +2,15 @@
 
 2026-10-28，继续执行用户“直到 2.0 完整开发和验证”的授权。原任务提示词中的分阶段等待是文档示例；原设计原件不改。工程实现、自动/合成验证、外部真实验收和生产发行分别记录。
 
-## 当前源码：轨迹加载时序收尾
+## 当前源码：原生导航时序收尾
+
+运行代码 `6bef98fcda8b482ac3f98b4bec8944b4d02be4e5`，333 个工程输入聚合 SHA-256 `ee35a7e31a9e898ba5ae204ba7aa19f4970322efd69d12dd919689870bf23c49`。见 [导航收尾源码](../../validation/results/v2-navigation-source-manifest-20261028.json)、[导航收尾验证](../../validation/results/v2-navigation-validation-20261028.json)。交付提交的最终 CI 以 PR 当前头检查为准。
+
+`d63bc2a` 的 PR 轮 444/15、前端 41、构建/审计成功，但 push 轮 G01 在浏览器后退后未恢复 Ready（443 passed / 1 failed / 15 skipped）。新增状态器回归复现：原生后退提交完成并清除 pending 后，旧 epoch 仍返回 replace，可覆盖刚恢复的 URL。现始终核对最新 epoch，并在 layout effect 中同步地址与原生监听，保持可见画面和历史地址一致。8 项路由专项及 18 项浏览器组合通过；原 G01 断言保留，增加首次分支 DOM 提交时立即后退的实际浏览器覆盖和有界事件诊断。后者在旧 UI 上也通过，不冒充失败复现。
+
+本地 Python **445 passed / 15 skipped**（237.58s）、前端 **42 passed**；完整构建与总耗时见新验证报告。仅前端/测试变化，11 个分析输入及 API 读取文件未变，保留先前环境实测的准确来源。四项剩余工程与外部验收边界不变。
+
+## 轨迹加载时序收尾（aab4858）
 
 运行代码 `aab485870f8e3d6daf2a3c14157aaf727f2c0b96`，333 个工程输入聚合 SHA-256 `87f48837fef27d0d11e16f1e0cb534f6d56597852659312bf49413b3ff822d9d`。见 [UI 收尾源码](../../validation/results/v2-remaining-ui-source-manifest-20261028.json)、[UI 收尾验证](../../validation/results/v2-remaining-ui-validation-20261028.json)。交付提交的 CI 以 PR 当前头检查为准。
 

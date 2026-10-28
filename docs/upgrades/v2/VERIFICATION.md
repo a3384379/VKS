@@ -210,3 +210,14 @@ V2 容量使用 `benchmark_reads.py --http --v2`；无此开关的历史 v1 数�
 完整本地 `make check`：**444 passed / 15 skipped**（236.67s）、前端 **41 passed**、构建成功（16.46s）、总计 **259.183s**。Ruff/Prettier/diff、原件字节、UTF-8/LF 检查通过。当前 333 个输入摘要 `87f48837fef27d0d11e16f1e0cb534f6d56597852659312bf49413b3ff822d9d`；[新源码清单](../../validation/results/v2-remaining-ui-source-manifest-20261028.json)、[新验证结果](../../validation/results/v2-remaining-ui-validation-20261028.json)。提交后的 CI 以 PR 当前头检查为准，不能用旧头通过替代。
 
 只修改前端和浏览器测试。5000 文件测量的 11 个分析输入以及 API 读取路径与 6b49e9a 字节一致，保留原先实际 PG/HTTP/Compose 与 Windows 包证据，不冒充本次新测；外部真实验收与生产发行边界不变。
+
+
+## 原生导航收尾：6bef98f
+
+`d63bc2a` 的 PR 轮 **444/15**（599.70s）、前端 41、构建 48.93s、依赖审计 0 漏洞；push 轮 **443 passed / 1 failed / 15 skipped**（591.12s），G01 在 native Back 后没有 Ready 选择。前一轮迟到状态/权限撤销测试本轮均通过；原始失败保留，没有重跑失败作业。
+
+新增前端状态器回归固定为 user B→native Back→完成 Back commit→迟到 user epoch。旧实现错误返回 replace，修复为始终核对最新 epoch 后拒绝旧渲染。URL 和原生监听在 layout effect 同步，避免地址晚于可见 DOM。8 项路由专项通过；18 项浏览器组合通过（54.61s）。原 G01 不延长超时、不改选择断言，增加有界事件/URL诊断；首次 B 分支 DOM 提交即执行实际 history.back 的附加覆盖在旧 UI 上也通过，单列为集成覆盖，不作为失败复现。
+
+完整隔离 `make check`：Python **445 passed / 15 skipped**（237.58s）、前端 **42 passed**、构建成功（16.93s）、总计 **260.556s**。333 个工程输入摘要 `ee35a7e31a9e898ba5ae204ba7aa19f4970322efd69d12dd919689870bf23c49`；[导航源码](../../validation/results/v2-navigation-source-manifest-20261028.json)、[导航验证](../../validation/results/v2-navigation-validation-20261028.json)。最终交付提交 CI 以 PR 当前头检查为准。
+
+仅前端及测试变化。11 个分析输入与 API 读取路径未变；容量、PG/Compose 和 Windows 原件证据继续绑定原始快照。四项剩余工程已完成，生产切换、真实业务/独立 Gold与人员、真实模型/指定环境与发行签署继续待外部验收。
