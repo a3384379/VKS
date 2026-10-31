@@ -250,9 +250,10 @@ def test_fixed_change_report_opens_affected_action_section_and_journey(site):
                 if targets.get(path["impacted_entity_id"], {}).get("type") == "action"
             )
             affected_action = targets[action_path["impacted_entity_id"]]
-            impact.locator(f"[data-impact-target='{affected_action['id']}']").first.get_by_role(
-                "button", name=affected_action["name"], exact=True
-            ).click()
+            # A path can contain different entities with the same display name.
+            impact.locator(f"[data-impact-target='{affected_action['id']}']").first.locator(
+                f"[data-impact-entity='{affected_action['id']}']"
+            ).get_by_role("button", name=affected_action["name"], exact=True).click()
             expect(page.locator(".knowledge-detail")).to_be_visible()
             query = parse_qs(urlsplit(page.url).fragment)
             assert query["entity"] == [affected_action["id"]]
@@ -268,9 +269,9 @@ def test_fixed_change_report_opens_affected_action_section_and_journey(site):
             section = next(
                 targets[eid] for eid in section_path["entity_ids"] if targets.get(eid, {}).get("type") == "section"
             )
-            impact.locator(f"[data-impact-target='{section_path['impacted_entity_id']}']").first.get_by_role(
-                "button", name=section["name"], exact=True
-            ).click()
+            impact.locator(f"[data-impact-target='{section_path['impacted_entity_id']}']").first.locator(
+                f"[data-impact-entity='{section['id']}']"
+            ).get_by_role("button", name=section["name"], exact=True).click()
             expect(page.locator(".document-reader")).to_be_visible()
             assert parse_qs(urlsplit(page.url).fragment)["entity"] == [section["id"]]
             assert parse_qs(urlsplit(page.url).fragment)["baseline"] == ["draft:" + clone["id"]]

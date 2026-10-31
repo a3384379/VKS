@@ -231,7 +231,7 @@ export function ImpactPaths({
             <Tag>潜在影响 · {value(path.depth)} 跳</Tag>
             <div className="product-impact-route">
               {ids.map((id, index) => (
-                <span key={value(id)}>
+                <span key={value(id)} data-impact-entity={value(id)}>
                   {index > 0 && <span aria-hidden="true"> ↔ </span>}
                   {link(id)}
                 </span>

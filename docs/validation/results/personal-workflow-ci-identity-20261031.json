@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-31",
+  "base_commit": "c5c13fc964ecc2eecb30ecdd83d0f434027d75e5",
+  "source_aggregate_sha256": "55381b2f0f2f6893689b725af3219179d139cd3a24a03d1b36a74e49883e5cf7",
+  "source_file_count": 393,
+  "stage_failure": {
+    "shard": "ui",
+    "failed": 1,
+    "passed": 61,
+    "cause": "Strict text-only locator matched a same-named action and section in an actual impact path"
+  },
+  "fix": "Expose exact path entity identity and select the action/section ID before matching its label; keep all URL/baseline/journey assertions",
+  "targeted": {
+    "passed": 1,
+    "failed": 0
+  },
+  "frontend": {
+    "passed": 59,
+    "failed": 0,
+    "build": "passed",
+    "build_seconds": 19.4
+  },
+  "core_before_ui_locator_change": {
+    "passed": 698,
+    "skipped": 14
+  },
+  "collection": {
+    "total": 774,
+    "core": 712,
+    "ui": 62,
+    "exact_full_suite_multiset": true
+  },
+  "waits_and_retries_added": false,
+  "full_ci_evidence": "PR #2 Actions on final head"
+}

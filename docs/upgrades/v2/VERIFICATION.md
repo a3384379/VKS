@@ -1,5 +1,11 @@
 # VKS 2.0 开发预览验证
 
+## 2026-10-31 影响路径回归按逻辑身份定位
+
+分组本机验证为核心 **698 passed / 14 skipped**；界面 **61 passed / 1 failed**。失败是原浏览器回归仅按名称选择“申请开票”，同一路径中实际有不同类型的同名对象，Playwright 严格定位匹配到两个按钮；不是等待超时。为路径成员标明准确实体 ID，回归先按 ID 再按名称定位，保持实体、目标基线及流程修订 URL 断言。没有增加等待或重复点击，没有改变业务导航及权限逻辑。
+
+修正后准确目标专项 **1 passed**、前端 **59 passed**、构建成功（19.40s）；完整界面分组及远端结果以本 PR 最终 head 的 Actions 为准。[定位修复记录](../../validation/results/personal-workflow-ci-identity-20261031.json)、[当前工程输入](../../validation/results/personal-workflow-ci-identity-source-manifest-20261031.json)。原始失败与前后源码摘要分开保留，未将重复执行冒充行为修复。
+
 ## 2026-10-31 Linux CI 全量分组
 
 审查补修后的本机完整 `make check` 已通过 **760 passed / 14 skipped**（481.96s）、前端 **59 passed**、构建成功（17.73s），392 个工程输入执行前后相同；对应 `3a561ea`。GitHub 的旧单作业在 20 分钟上限结束时停于 **83%**，已输出用例均无失败，Windows 与 PostgreSQL/队列通过。原始取消日志保留，不计为远端全量通过。
