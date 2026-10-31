@@ -17,14 +17,13 @@ import type { TeamUser, TeamMember } from "./types";
 const roles = [
   { value: "viewer", label: "阅读者" },
   { value: "editor", label: "编辑者" },
-  { value: "reviewer", label: "审核者" },
   { value: "maintainer", label: "维护者" },
   { value: "admin", label: "项目管理员" },
 ];
 const sensitive = [
   { scope: "source:read", name: "读取源码", help: "源文件与机密材料" },
-  { scope: "trace:read", name: "读取 Trace", help: "脱敏网络与运行证据" },
-  { scope: "capture:run", name: "发起录制", help: "还需环境与动作审批" },
+  { scope: "trace:read", name: "读取 Trace", help: "网络与运行证据" },
+  { scope: "capture:run", name: "发起录制", help: "按环境与场景配置执行" },
 ];
 function roleName(role: string) {
   return roles.find((r) => r.value === role)?.label || role;
@@ -347,7 +346,7 @@ export function TeamSettings() {
           }
         >
           <p className="section-description">
-            {w.project.name} · 角色控制编辑、审核和发布；源码、Trace
+            {w.project.name} · 角色控制读取、编辑和保存版本；源码、Trace
             与录制另行授权。
           </p>
           {loading ? (
@@ -639,7 +638,7 @@ export function TeamSettings() {
             ))}
           </div>
           <Notice>
-            授权变化会撤销受影响的机器令牌；真实录制仍需有效环境、测试数据和审批。
+            授权变化会撤销受影响的机器令牌；真实录制仍需有效环境、数据集和固定场景修订。
           </Notice>
           <div className="modal-actions">
             <Button onClick={() => setEditing(null)}>取消</Button>

@@ -25,80 +25,291 @@
       "minItems": 1,
       "maxItems": 8,
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "tool",
-          "target_revision_ids",
-          "evidence_ids",
-          "relation_type",
-          "rationale",
-          "markdown"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_-]{0,23}$"
-          },
-          "tool": {
-            "type": "string",
-            "enum": [
-              "inspect_action",
-              "inspect_evidence",
-              "propose_relation",
-              "propose_journey",
-              "draft_document"
-            ]
-          },
-          "target_revision_ids": {
-            "type": "array",
-            "maxItems": 30,
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "maxLength": 36
-            }
-          },
-          "evidence_ids": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 20,
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "maxLength": 36
-            }
-          },
-          "relation_type": {
-            "anyOf": [
-              {
+        "anyOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "tool",
+              "target_revision_ids",
+              "evidence_ids",
+              "relation_type",
+              "rationale",
+              "markdown"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,23}$"
+              },
+              "tool": {
                 "type": "string",
                 "enum": [
-                  "may_call",
-                  "depends_on",
-                  "documents",
-                  "implements"
+                  "inspect_action",
+                  "inspect_evidence",
+                  "propose_relation",
+                  "propose_journey",
+                  "draft_document"
                 ]
               },
-              {
-                "type": "null"
+              "target_revision_ids": {
+                "type": "array",
+                "maxItems": 30,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "maxLength": 36
+                }
+              },
+              "evidence_ids": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "maxLength": 36
+                }
+              },
+              "relation_type": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "may_call",
+                      "depends_on",
+                      "documents",
+                      "implements"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              "markdown": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 12000
               }
-            ]
+            }
           },
-          "rationale": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          },
-          "markdown": {
-            "type": [
-              "string",
-              "null"
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "tool",
+              "target_revision_ids",
+              "evidence_ids",
+              "relation_type",
+              "rationale",
+              "markdown",
+              "journey"
             ],
-            "maxLength": 12000
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,23}$"
+              },
+              "tool": {
+                "type": "string",
+                "enum": [
+                  "propose_journey"
+                ]
+              },
+              "target_revision_ids": {
+                "type": "array",
+                "maxItems": 30,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "maxLength": 36
+                }
+              },
+              "evidence_ids": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "maxLength": 36
+                }
+              },
+              "relation_type": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "may_call",
+                      "depends_on",
+                      "documents",
+                      "implements"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              "markdown": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 12000
+              },
+              "journey": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "purpose",
+                  "preconditions",
+                  "outcome",
+                  "entry",
+                  "nodes",
+                  "edges",
+                  "source_revision_ids"
+                ],
+                "properties": {
+                  "purpose": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "preconditions": {
+                    "type": "array",
+                    "maxItems": 30,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    }
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "entry": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 96
+                  },
+                  "source_revision_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 36
+                    }
+                  },
+                  "nodes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 120,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "key",
+                        "kind",
+                        "title",
+                        "description",
+                        "target_revision_id"
+                      ],
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_.-]{1,96}$"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "page",
+                            "action",
+                            "step",
+                            "decision",
+                            "branch",
+                            "end",
+                            "reference"
+                          ]
+                        },
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "description": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "target_revision_id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "minLength": 1,
+                          "maxLength": 36
+                        }
+                      }
+                    }
+                  },
+                  "edges": {
+                    "type": "array",
+                    "maxItems": 240,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "source",
+                        "target",
+                        "label"
+                      ],
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 96
+                        },
+                        "target": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 96
+                        },
+                        "label": {
+                          "type": "string",
+                          "maxLength": 160
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
-        }
+        ]
       }
     }
   }

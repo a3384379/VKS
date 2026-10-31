@@ -60,33 +60,24 @@ export function OnboardingFlowDraft() {
           selection_version: scopeVersion,
           task_kind: "business_flow",
           instruction:
-            "由接入向导中的人员选择并声明步骤顺序，生成独立待审流程候选",
+            "由接入向导人员选择独立查阅的动作，生成并列证据导航；不声明业务顺序或执行条件",
           action_ids: actions,
           max_model_calls: 0,
         }),
       );
       setJobId(row.id);
-      notify("已按准确基线创建流程候选任务");
+      notify("已按准确基线创建动作证据导航任务");
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
-  function move(index: number, delta: number) {
-    setActions((rows) => {
-      const next = [...rows];
-      const target = index + delta;
-      if (target >= 0 && target < rows.length)
-        [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  }
   return (
-    <section className="v2-onboarding-flow" aria-label="向导流程草稿">
-      <h3>从已发现动作建立第一个流程草稿</h3>
+    <section className="v2-onboarding-flow" aria-label="向导动作证据导航">
+      <h3>从已发现动作建立证据导航</h3>
       <p>
-        选择步骤并调整顺序。此顺序由人员声明，尚未证明真实业务执行条件；生成结果需要审核。
+        选择需要独立查阅的动作，生成并列的证据入口。菜单排列和选择顺序不代表业务先后；带目标、条件与结果的业务流程需另行整理或提出结构计划。
       </p>
       <Tag>
         当前可见 {w.actions.length} 个动作 · 最多选择 30 个 · 无模型调用
@@ -112,7 +103,7 @@ export function OnboardingFlowDraft() {
           <label key={row.id}>
             <input
               type="checkbox"
-              aria-label={`向导流程动作 ${row.name}`}
+              aria-label={`向导证据动作 ${row.name}`}
               checked={actions.includes(row.id)}
               disabled={
                 busy || (!actions.includes(row.id) && actions.length >= 30)
@@ -130,32 +121,18 @@ export function OnboardingFlowDraft() {
           </label>
         ))}
       </div>
-      <ol className="v2-ordered-actions">
-        {actions.map((id, index) => {
+      <ul className="v2-evidence-actions">
+        {actions.map((id) => {
           const title =
             w.actions.find((row) => row.id === id)?.name ||
             "当前基线已移除此动作";
           return (
             <li key={id}>
               <span>{title}</span>
-              <Button
-                disabled={busy || index === 0}
-                onClick={() => move(index, -1)}
-                aria-label={`向导动作上移 ${title}`}
-              >
-                上移
-              </Button>
-              <Button
-                disabled={busy || index === actions.length - 1}
-                onClick={() => move(index, 1)}
-                aria-label={`向导动作下移 ${title}`}
-              >
-                下移
-              </Button>
             </li>
           );
         })}
-      </ol>
+      </ul>
       <Button
         kind="primary"
         disabled={
@@ -167,7 +144,7 @@ export function OnboardingFlowDraft() {
         }
         onClick={() => void create()}
       >
-        生成向导流程草稿
+        生成动作证据导航
       </Button>
       {job && (
         <div className="row wrap">
@@ -176,10 +153,10 @@ export function OnboardingFlowDraft() {
           {job.state === "succeeded" && (
             <>
               <Notice>
-                已生成独立待审流程草稿，原始材料与已有流程保持不变。
+                已生成并列的动作证据导航，产物可直接查阅；条目间没有业务先后含义。
               </Notice>
               <Button onClick={() => navigate("journeys")}>
-                查看向导流程草稿
+                查看动作证据导航
               </Button>
             </>
           )}

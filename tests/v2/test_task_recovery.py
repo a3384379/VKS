@@ -1,7 +1,7 @@
 from collections import Counter
 import pytest
 from sqlalchemy import select
-from test_journeys import store
+from test_journeys import store as store  # pytest fixture registration
 from vks_api.knowledge_tasks import KnowledgeTaskService, TaskInput
 from vks_api.jobs import Checkpoint
 from vks_api.service import DomainError

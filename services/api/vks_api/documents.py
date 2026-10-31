@@ -1,4 +1,4 @@
-"""Immutable Markdown chapters, protected sections, and human document review."""
+"""Immutable Markdown chapters, protected sections, and direct document editing."""
 
 from __future__ import annotations
 
@@ -6,27 +6,20 @@ import json
 import re
 from collections import Counter
 from hashlib import sha256
-from typing import ClassVar, Literal
 
-from fastapi import Depends, Header, Request
 from markdown_it import MarkdownIt
-from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, select
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import select
 
 from .knowledge import AnalysisSource, SourceSnapshot
 from .models import (
     Analysis,
     Artifact,
-    Base,
     Entity,
     Evidence,
-    Identified,
     Relation,
     Release,
     Revision,
     Selection,
-    now,
     uid,
 )
 
@@ -43,35 +36,6 @@ def fail(code, message, status=422, details=None):
     from .service import DomainError
 
     raise DomainError(code, message, status, details)
-
-
-class DocumentWorkflow(Identified, Base):
-    __tablename__ = "document_workflow"
-    __table_args__ = (UniqueConstraint("analysis_set_id", "document_id"),)
-    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
-    analysis_set_id: Mapped[str] = mapped_column(ForeignKey("analysis_set.id"), index=True)
-    document_id: Mapped[str] = mapped_column(ForeignKey("entity.id"))
-    revision_id: Mapped[str] = mapped_column(ForeignKey("entity_revision.id"))
-    state: Mapped[str] = mapped_column(String(24), default="editing")
-    row_version: Mapped[int] = mapped_column(Integer, default=1)
-    submitted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    approval_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    reason: Mapped[str] = mapped_column(Text, default="")
-    updated_at: Mapped[str] = mapped_column(String(40), default=now)
-    __mapper_args__: ClassVar[dict] = {"version_id_col": row_version}
-
-
-class DocumentReview(Identified, Base):
-    __tablename__ = "document_review"
-    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"))
-    analysis_set_id: Mapped[str] = mapped_column(ForeignKey("analysis_set.id"))
-    document_id: Mapped[str] = mapped_column(ForeignKey("entity.id"))
-    revision_id: Mapped[str] = mapped_column(ForeignKey("entity_revision.id"))
-    decision: Mapped[str] = mapped_column(String(24))
-    reason: Mapped[str] = mapped_column(Text)
-    actor_id: Mapped[str] = mapped_column(String(36))
-    base_version: Mapped[int] = mapped_column(Integer)
 
 
 def parse_sections(markdown: str, fallback_title: str) -> list[dict]:
@@ -438,14 +402,6 @@ class DocumentService:
         markdown = payload["markdown"]
         if len(markdown.encode()) > 1_000_000:
             fail("VKS_LIMIT_EXCEEDED", "文档草稿超过大小限制", 413)
-        if re.search(
-            r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b",
-            markdown,
-        ) or re.search(
-            r"""(?i)\b(?:password|api[_-]?key|access[_-]?token|client[_-]?secret)\b\s*[:=]\s*["']([^"'\r\n]{8,})["']""",
-            markdown,
-        ):
-            fail("VKS_INVALID_INPUT", "草稿包含疑似秘密，请先脱敏")
         with self.service.db() as s:
             document, analysis, selection, old = self._selected_document(s, actor, eid, payload["analysis_set_id"])
             if analysis.state == "frozen":
@@ -473,7 +429,6 @@ class DocumentService:
                 original_artifact_id=old.metadata_json.get("original_artifact_id", old.artifact_id),
                 locked_section_ids=sorted(requested),
                 section_count=len(sections),
-                workflow_state="editing",
                 identity_ambiguities=ambiguities,
             )
             old_to_new, evidence_for_revision, chapters = {}, {}, []
@@ -570,42 +525,9 @@ class DocumentService:
                         if rid in evidence_for_revision
                     ]
                     relation.evidence_ids = list(dict.fromkeys([*relation.evidence_ids, *extra]))
-            workflow = s.scalar(
-                select(DocumentWorkflow).where(
-                    DocumentWorkflow.analysis_set_id == analysis.id, DocumentWorkflow.document_id == document.id
-                )
-            )
-            if not workflow:
-                workflow = DocumentWorkflow(
-                    id=uid(),
-                    project_id=document.project_id,
-                    analysis_set_id=analysis.id,
-                    document_id=document.id,
-                    revision_id=new.id,
-                )
-                s.add(workflow)
-            workflow.revision_id = new.id
-            workflow.state = "editing"
-            workflow.reviewed_by = None
-            workflow.approval_sha256 = None
-            workflow.updated_at = now()
-            analysis.selection_version += 1
-            self.service.audit(
-                s,
-                actor,
-                document.project_id,
-                "document.save",
-                new.id,
-                metadata={
-                    "section_count": len(sections),
-                    "removed_sections": len(removed),
-                    "identity_ambiguities": len(ambiguities),
-                },
-            )
-            s.flush()
-            return self._dto(s, document, new, analysis.id, workflow)
+            return self._dto(s, document, new, analysis.id)
 
-    def _dto(self, s, document, revision, aid=None, workflow=None):
+    def _dto(self, s, document, revision, aid=None):
         sections = self._sections(s, document, revision, aid)
         return {
             "document_id": document.id,
@@ -615,7 +537,6 @@ class DocumentService:
             "sections": [self.service.entity_dto(s, r, True) for r in sections],
             "row_version": revision.metadata_json.get("row_version", 1),
             "original_artifact_id": revision.metadata_json.get("original_artifact_id", revision.artifact_id),
-            "workflow": self.workflow_dto(workflow) if workflow else None,
             "identity_ambiguities": revision.metadata_json.get("identity_ambiguities", []),
         }
 
@@ -636,135 +557,6 @@ class DocumentService:
                 ):
                     fail("VKS_NOT_FOUND", "未找到文档修订", 404)
             return self._dto(s, document, revision)
-
-    @staticmethod
-    def workflow_dto(workflow):
-        return {
-            "id": workflow.id,
-            "document_id": workflow.document_id,
-            "revision_id": workflow.revision_id,
-            "state": workflow.state,
-            "row_version": workflow.row_version,
-            "submitted_by": workflow.submitted_by,
-            "reviewed_by": workflow.reviewed_by,
-            "approval_sha256": workflow.approval_sha256,
-            "reason": workflow.reason,
-            "updated_at": workflow.updated_at,
-        }
-
-    def workflow(self, actor, eid, aid):
-        with self.service.db() as s:
-            _document, _analysis, _, revision = self._selected_document(s, actor, eid, aid)
-            workflow = s.scalar(
-                select(DocumentWorkflow).where(
-                    DocumentWorkflow.analysis_set_id == aid, DocumentWorkflow.document_id == eid
-                )
-            )
-            return (
-                self.workflow_dto(workflow)
-                if workflow
-                else {"document_id": eid, "revision_id": revision.id, "state": "imported", "row_version": 1}
-            )
-
-    def submit(self, actor, eid, payload, version):
-        with self.service.db() as s:
-            return self._submit(s, actor, eid, payload, version)
-
-    def _submit(self, s, actor, eid, payload, version):
-        document, analysis, _, revision = self._selected_document(s, actor, eid, payload["analysis_set_id"])
-        if analysis.state == "frozen":
-            fail("VKS_STATE_CONFLICT", "发布版不可提交修改", 409)
-        if revision.id != payload["revision_id"]:
-            fail("VKS_VERSION_CONFLICT", "文档修订已更新", 412)
-        self.service._version(revision.metadata_json.get("row_version", 1), version)
-        workflow = s.scalar(
-            select(DocumentWorkflow).where(
-                DocumentWorkflow.analysis_set_id == analysis.id, DocumentWorkflow.document_id == eid
-            )
-        )
-        if not workflow:
-            workflow = DocumentWorkflow(
-                id=uid(),
-                project_id=document.project_id,
-                analysis_set_id=analysis.id,
-                document_id=eid,
-                revision_id=revision.id,
-            )
-            s.add(workflow)
-        if workflow.state in ("approved", "submitted") and workflow.revision_id == revision.id:
-            fail("VKS_STATE_CONFLICT", "此修订已提交或批准", 409)
-        workflow.revision_id = revision.id
-        workflow.state = "submitted"
-        workflow.submitted_by = actor.id
-        workflow.reviewed_by = None
-        workflow.approval_sha256 = None
-        workflow.reason = payload["reason"]
-        workflow.updated_at = now()
-        s.add(
-            DocumentReview(
-                project_id=document.project_id,
-                analysis_set_id=analysis.id,
-                document_id=eid,
-                revision_id=revision.id,
-                decision="submit",
-                reason=payload["reason"],
-                actor_id=actor.id,
-                base_version=revision.metadata_json.get("row_version", 1),
-            )
-        )
-        self.service.audit(s, actor, document.project_id, "document.submit", revision.id)
-        s.flush()
-        return self.workflow_dto(workflow)
-
-    def review(self, actor, eid, payload, version):
-        with self.service.db() as s:
-            return self._review(s, actor, eid, payload, version)
-
-    def _review(self, s, actor, eid, payload, version):
-        document, analysis, _, revision = self._selected_document(
-            s, actor, eid, payload["analysis_set_id"], "links:review"
-        )
-        if not actor.human:
-            fail("VKS_FORBIDDEN", "文档批准需要人员会话", 403)
-        if analysis.state == "frozen":
-            fail("VKS_STATE_CONFLICT", "已发布文档不可审核", 409)
-        workflow = s.scalar(
-            select(DocumentWorkflow).where(
-                DocumentWorkflow.analysis_set_id == analysis.id, DocumentWorkflow.document_id == eid
-            )
-        )
-        if not workflow or workflow.state != "submitted":
-            fail("VKS_STATE_CONFLICT", "文档尚未提交审核", 409)
-        self.service._version(workflow.row_version, version)
-        if payload["revision_id"] != revision.id or workflow.revision_id != revision.id:
-            fail("VKS_VERSION_CONFLICT", "审核后文档素材已变化", 412)
-        workflow.state = "approved" if payload["decision"] == "approve" else "changes_requested"
-        workflow.reviewed_by = actor.id
-        workflow.approval_sha256 = revision.content_sha256 if workflow.state == "approved" else None
-        workflow.reason = payload["reason"]
-        workflow.updated_at = now()
-        s.add(
-            DocumentReview(
-                project_id=document.project_id,
-                analysis_set_id=analysis.id,
-                document_id=eid,
-                revision_id=revision.id,
-                decision=payload["decision"],
-                reason=payload["reason"],
-                actor_id=actor.id,
-                base_version=workflow.row_version,
-            )
-        )
-        self.service.audit(
-            s,
-            actor,
-            document.project_id,
-            "document.review",
-            revision.id,
-            metadata={"decision": payload["decision"]},
-        )
-        s.flush()
-        return self.workflow_dto(workflow)
 
     @staticmethod
     def assert_publishable(s, analysis):
@@ -792,52 +584,8 @@ class DocumentService:
                     blockers.append("文档修订与当前章节选择不一致：" + entity.id)
             except DomainError:
                 blockers.append("文档历史章节映射存在缺口：" + entity.id)
-            workflow = s.scalar(
-                select(DocumentWorkflow).where(
-                    DocumentWorkflow.analysis_set_id == analysis.id, DocumentWorkflow.document_id == entity.id
-                )
-            )
-            if (
-                not workflow
-                and not revision.metadata_json.get("governed")
-                and revision.metadata_json.get("source_kind") not in ("platform_draft", "generated", "ai_generated")
-            ):
-                continue
-            if (
-                not workflow
-                or workflow.state != "approved"
-                or workflow.revision_id != revision.id
-                or workflow.approval_sha256 != revision.content_sha256
-            ):
-                blockers.append("文档修订尚未通过人员审核：" + entity.id)
         return blockers
 
 
-class WorkflowInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    analysis_set_id: str
-    revision_id: str
-    reason: str = Field(min_length=1, max_length=2000)
-
-
-class DocumentReviewInput(WorkflowInput):
-    decision: Literal["approve", "request_changes"]
-
-
 def install_documents(app, service, actor, envelope, API="/api/v1"):
-    documents = DocumentService(service)
-    actor_dependency = Depends(actor)
-
-    @app.get(API + "/documents/{eid}/workflow")
-    def workflow(eid: str, analysis_set_id: str, request: Request, a=actor_dependency):
-        return envelope(request, documents.workflow(a, eid, analysis_set_id))
-
-    @app.post(API + "/documents/{eid}/submit")
-    def submit(eid: str, payload: WorkflowInput, request: Request, a=actor_dependency, if_match: str = Header(...)):
-        return envelope(request, documents.submit(a, eid, payload.model_dump(), if_match))
-
-    @app.post(API + "/documents/{eid}/review")
-    def review(
-        eid: str, payload: DocumentReviewInput, request: Request, a=actor_dependency, if_match: str = Header(...)
-    ):
-        return envelope(request, documents.review(a, eid, payload.model_dump(), if_match))
+    """Document reads and saves are installed by the shared API."""

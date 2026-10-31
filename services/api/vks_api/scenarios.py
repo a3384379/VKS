@@ -1,4 +1,4 @@
-"""Scenario revisions, explicit capture approvals and redacted observed evidence."""
+"""Scenario revisions, direct capture and original observed evidence."""
 
 from __future__ import annotations
 
@@ -28,10 +28,9 @@ from .models import (
     Relation,
     Revision,
     Selection,
-    now,
     uid,
 )
-from .service import Actor, DomainError, canonical, future, sha
+from .service import Actor, DomainError, canonical, sha
 
 
 class ScenarioRevision(Identified, Base):
@@ -71,20 +70,6 @@ class CaptureDataset(Identified, Base):
     created_by: Mapped[str] = mapped_column(String(36))
 
 
-class CaptureApproval(Identified, Base):
-    __tablename__ = "capture_approval"
-    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
-    scenario_revision_id: Mapped[str] = mapped_column(ForeignKey("scenario_revision.id"))
-    analysis_set_id: Mapped[str] = mapped_column(ForeignKey("analysis_set.id"))
-    environment_id: Mapped[str] = mapped_column(ForeignKey("capture_environment.id"))
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("dataset_fixture.id"))
-    requestor_actor_id: Mapped[str] = mapped_column(String(36))
-    approved_by: Mapped[str] = mapped_column(String(36))
-    manifest_sha256: Mapped[str] = mapped_column(String(64))
-    expires_at: Mapped[str] = mapped_column(String(40))
-    used_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-
-
 class CaptureRecord(Identified, Base):
     __tablename__ = "capture_session"
     project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
@@ -92,11 +77,10 @@ class CaptureRecord(Identified, Base):
     analysis_set_id: Mapped[str] = mapped_column(ForeignKey("analysis_set.id"))
     environment_id: Mapped[str] = mapped_column(ForeignKey("capture_environment.id"))
     dataset_id: Mapped[str] = mapped_column(ForeignKey("dataset_fixture.id"))
-    approval_id: Mapped[str] = mapped_column(ForeignKey("capture_approval.id"))
+    input_sha256: Mapped[str] = mapped_column(String(64), default="", server_default="")
     job_id: Mapped[str] = mapped_column(ForeignKey("job.id"), unique=True)
     state: Mapped[str] = mapped_column(String(20), default="queued")
     result: Mapped[dict] = mapped_column(JSON, default=dict)
-    redaction_version: Mapped[str] = mapped_column(String(64), default="vks-runner-redact-1")
     source_alignment: Mapped[str] = mapped_column(String(20), default="unknown")
 
 
@@ -136,18 +120,10 @@ class DatasetInput(Input):
     synthetic: bool = True
 
 
-class ApprovalInput(Input):
-    analysis_set_id: str
-    scenario_revision_id: str
-    requestor_actor_id: str | None = None
-    expires_in_seconds: int = Field(default=300, ge=30, le=900)
-    reason: str = Field(min_length=1, max_length=2000)
-
-
 class CaptureInput(Input):
     scenario_revision_id: str
     environment_ref: str
-    approval_ref: str | None = None
+    analysis_set_id: str
 
 
 class CaptureBindingInput(Input):
@@ -260,7 +236,7 @@ class ScenarioService:
     def clone_for_analysis(self, s, actor, source, target):
         # The new baseline is an explicit new combination of the exact source
         # vector. Carry captures only while that vector remains byte-for-byte
-        # identical. Capture approval is single-use and never inherited.
+        # identical. Each new capture pins its current inputs independently.
         changed = {}
         for revision in list(self.service._revisions(s, source.id)):
             entity = s.get(Entity, revision.entity_id)
@@ -272,10 +248,7 @@ class ScenarioService:
             dsl = json.loads(canonical(old.dsl))
             if "explanation_graph" in dsl:
                 dsl["explanation_graph"]["baselineKey"] = target.key
-            if "approval_ref" in dsl:
-                # An unissued reference satisfies the immutable DSL contract;
-                # the server must issue a new approval before any capture run.
-                dsl["approval_ref"] = uid()
+            dsl.pop("approval_ref", None)  # legacy snapshot annotation
             self._validate(s, None, target.project_id, target, dsl)
             saved = self._new_revision(s, actor, target, entity, dsl)
             changed[revision.id] = saved["entity_revision_id"]
@@ -450,9 +423,7 @@ class ScenarioService:
                 raise AuthRegistryError("认证引用已更新")
             return material
         except AuthRegistryError:
-            raise DomainError(
-                "VKS_APPROVAL_REQUIRED", "实例测试认证引用不可用或已轮换，请登记新的环境版本并重新审批", 403
-            ) from None
+            raise DomainError("VKS_STATE_CONFLICT", "实例测试认证引用不可用或已轮换，请重新登记环境连接", 403) from None
 
     def create_environment(self, actor, pid, payload):
         with self.service.db() as s:
@@ -529,13 +500,11 @@ class ScenarioService:
     def create_dataset(self, actor, pid, payload):
         with self.service.db() as s:
             self.service.require(s, actor, pid, "project:manage")
-            if not actor.human or not payload["synthetic"]:
+            if not actor.human:
                 raise DomainError("VKS_FORBIDDEN", "仅允许人员管理员登记合成数据集", 403)
             serialized = canonical(payload["data"])
-            if len(serialized) > 100_000 or re.search(
-                r'(?i)"[^"\n]*(?:password|secret|token|authorization|cookie|api.?key)[^"\n]*"\s*:', serialized
-            ):
-                raise DomainError("VKS_INVALID_INPUT", "数据集过大或包含凭据字段")
+            if len(serialized) > 100_000:
+                raise DomainError("VKS_LIMIT_EXCEEDED", "数据集超过大小限制")
             obj = CaptureDataset(
                 id=uid(),
                 project_id=pid,
@@ -543,7 +512,7 @@ class ScenarioService:
                 name=payload["name"],
                 data=payload["data"],
                 content_sha256=digest(payload["data"]),
-                synthetic=True,
+                synthetic=payload.get("synthetic", False),
                 created_by=actor.id,
             )
             s.add(obj)
@@ -553,7 +522,7 @@ class ScenarioService:
                 "id": obj.id,
                 "key": obj.key,
                 "name": obj.name,
-                "synthetic": True,
+                "synthetic": obj.synthetic,
                 "content_sha256": obj.content_sha256,
             }
 
@@ -582,9 +551,9 @@ class ScenarioService:
             select(CaptureDataset).where(CaptureDataset.project_id == pid, CaptureDataset.key == r.dsl["dataset_ref"])
         )
         if not env or not data:
-            raise DomainError("VKS_APPROVAL_REQUIRED", "请先登记场景的测试环境与合成数据集", 403)
-        if not data.synthetic or env.kind not in ("mock", "test"):
-            raise DomainError("VKS_FORBIDDEN", "禁止生产环境或非合成数据采集", 403)
+            raise DomainError("VKS_STATE_CONFLICT", "请先登记场景的环境与数据集", 403)
+        if env.kind not in ("mock", "test"):
+            raise DomainError("VKS_FORBIDDEN", "此环境类型不支持采集", 403)
         self._resolve_auth(env.policy)
         manifest = digest(
             {
@@ -597,82 +566,23 @@ class ScenarioService:
         )
         return a, r, env, data, manifest
 
-    def approve(self, actor, sid, payload):
-        with self.service.db() as s:
-            entity = s.get(Entity, sid)
-            if not entity or entity.type != "scenario":
-                raise DomainError("VKS_NOT_FOUND", "未找到场景", 404)
-            pid = entity.project_id
-            self.service.require(s, actor, pid, "project:manage")
-            self.service.require(s, actor, pid, "capture:run")
-            if not actor.human:
-                raise DomainError("VKS_FORBIDDEN", "采集审批只能由人员管理员签发", 403)
-            a, r, env, data, h = self._capture_parts(
-                s, actor, pid, payload["analysis_set_id"], payload["scenario_revision_id"]
-            )
-            approval_id = uid()
-            if r.dsl["risk_level"] == "test_write":
-                approved_dsl = json.loads(canonical(r.dsl))
-                approved_dsl["approval_ref"] = approval_id
-                new_revision = self._new_revision(s, actor, a, entity, approved_dsl)
-                a, r, env, data, h = self._capture_parts(s, actor, pid, a.id, new_revision["scenario_revision_id"])
-            obj = CaptureApproval(
-                id=approval_id,
-                project_id=pid,
-                scenario_revision_id=r.id,
-                analysis_set_id=a.id,
-                environment_id=env.id,
-                dataset_id=data.id,
-                requestor_actor_id=payload.get("requestor_actor_id") or actor.id,
-                approved_by=actor.id,
-                manifest_sha256=h,
-                expires_at=future(payload.get("expires_in_seconds", 300)),
-            )
-            s.add(obj)
-            s.flush()
-            self.service.audit(
-                s, actor, pid, "capture.approve", obj.id, metadata={"reason": payload["reason"], "manifest_sha256": h}
-            )
-            return {
-                "approval_ref": obj.id,
-                "scenario_revision_id": r.id,
-                "manifest_sha256": h,
-                "expires_at": obj.expires_at,
-                "requestor_actor_id": obj.requestor_actor_id,
-            }
-
     def request_capture(self, actor, sid, payload, key):
         with self.service.db() as s:
-            r = s.get(ScenarioRevision, payload["scenario_revision_id"])
-            if not r:
+            revision = s.get(ScenarioRevision, payload["scenario_revision_id"])
+            if not revision:
                 raise DomainError("VKS_NOT_FOUND", "未找到场景修订", 404)
-            pid = r.project_id
-            if sid not in (r.id, r.scenario_id, r.entity_revision_id):
-                raise DomainError("VKS_NOT_FOUND", "场景与修订不匹配", 404)
+            pid = revision.project_id
             self.service.require(s, actor, pid, "capture:run")
-            approval = s.get(CaptureApproval, payload.get("approval_ref")) if payload.get("approval_ref") else None
-            if not approval or approval.project_id != pid or approval.requestor_actor_id != actor.id:
-                return {
-                    "decision": "approval_required",
-                    "approval_url": f"/?project={pid}&page=settings",
-                    "reason": "需要绑定人员、场景修订和环境版本的有效采集授权",
-                }
-            a, r, env, data, h = self._capture_parts(s, actor, pid, approval.analysis_set_id, r.id)
-            if (
-                payload["environment_ref"] != env.key
-                or approval.scenario_revision_id != r.id
-                or approval.expires_at <= now()
-                or approval.manifest_sha256 != h
-                or (r.dsl["risk_level"] == "test_write" and r.dsl.get("approval_ref") != approval.id)
-            ):
-                raise DomainError("VKS_APPROVAL_REQUIRED", "采集授权已过期或素材发生变化，需要重新审批", 403)
+            a, r, env, data, signature = self._capture_parts(
+                s, actor, pid, payload["analysis_set_id"], payload["scenario_revision_id"]
+            )
+            if sid not in (r.id, r.scenario_id, r.entity_revision_id) or payload["environment_ref"] != env.key:
+                raise DomainError("VKS_NOT_FOUND", "场景、环境与当前基线不匹配", 404)
             if os.getenv("VKS_RUNNER_ENABLED") != "1":
-                raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", "采集 Runner 未启用；任务不会入队", 503)
+                raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", "采集 Runner 未启用", 503)
 
             def enqueue():
-                if approval.used_job_id:
-                    raise DomainError("VKS_APPROVAL_REQUIRED", "此授权已用于其他任务，请重新审批", 403)
-                j = self.service._new_job(
+                job = self.service._new_job(
                     s,
                     actor,
                     pid,
@@ -680,11 +590,10 @@ class ScenarioService:
                     {
                         "scenario_revision_id": r.id,
                         "analysis_set_id": a.id,
-                        "approval_ref": approval.id,
+                        "input_sha256": signature,
                         "risk_level": r.dsl["risk_level"],
                     },
                 )
-                approval.used_job_id = j.id
                 capture = CaptureRecord(
                     id=uid(),
                     project_id=pid,
@@ -692,15 +601,15 @@ class ScenarioService:
                     analysis_set_id=a.id,
                     environment_id=env.id,
                     dataset_id=data.id,
-                    approval_id=approval.id,
-                    job_id=j.id,
+                    input_sha256=signature,
+                    job_id=job.id,
                     state="queued",
                     result={},
                 )
                 s.add(capture)
                 s.flush()
                 self.service.audit(s, actor, pid, "capture.request", capture.id)
-                return {"decision": "accepted", "job": self.service.job_dto(j)}
+                return {"decision": "accepted", "job": self.service.job_dto(job)}
 
             return self.service.idem(s, actor, pid, "capture.request", key, payload, enqueue)
 
@@ -718,13 +627,13 @@ class ScenarioService:
                 job.project_id,
                 "capture:run",
             )
-            approval = s.get(CaptureApproval, capture.approval_id)
+
             sr = s.get(ScenarioRevision, capture.scenario_revision_id)
             env = s.get(CaptureEnvironment, capture.environment_id)
             data = s.get(CaptureDataset, capture.dataset_id)
             a = s.get(Analysis, capture.analysis_set_id)
-            if approval.expires_at <= now() or not env.enabled or a.state == "frozen":
-                raise DomainError("VKS_APPROVAL_REQUIRED", "执行前采集授权已失效", 403)
+            if not env.enabled or a.state == "frozen":
+                raise DomainError("VKS_STATE_CONFLICT", "执行前采集配置已失效", 403)
             expected = digest(
                 {
                     "scenario": sr.content_sha256,
@@ -734,8 +643,8 @@ class ScenarioService:
                     "dataset": data.content_sha256,
                 }
             )
-            if approval.manifest_sha256 != expected:
-                raise DomainError("VKS_APPROVAL_REQUIRED", "执行前版本发生变化", 403)
+            if capture.input_sha256 != expected:
+                raise DomainError("VKS_STATE_CONFLICT", "执行前版本发生变化", 403)
             dsl = json.loads(canonical(sr.dsl))
             authentication = self._resolve_auth(env.policy)
             environment = dict(env.policy, kind=env.kind)
@@ -756,11 +665,9 @@ class ScenarioService:
                         "capture:run",
                     )
                     live_environment = s.get(CaptureEnvironment, capture.environment_id)
-                    live_approval = s.get(CaptureApproval, capture.approval_id)
                     live_analysis = s.get(Analysis, capture.analysis_set_id)
                     if (
                         not live_environment.enabled
-                        or live_approval.expires_at <= now()
                         or live_analysis.selection_version != a.selection_version
                         or live_analysis.state == "frozen"
                     ):
@@ -804,7 +711,6 @@ class ScenarioService:
             metadata_json={
                 "capture_id": capture.id,
                 "source_kind": "runtime_capture",
-                "redaction_version": capture.redaction_version,
             },
         )
         s.add(artifact)
@@ -888,7 +794,7 @@ class ScenarioService:
                             from_revision_id=action.id,
                             to_revision_id=api.id,
                             relation_type="observed_during",
-                            review_status="candidate",
+                            excluded=False,
                             validity_status="valid",
                             causal_basis="temporal_association",
                             evidence_ids=[evidence.id],
@@ -917,7 +823,7 @@ class ScenarioService:
         capture = s.scalar(select(CaptureRecord).where(CaptureRecord.job_id == job.id))
         if not capture or capture.state == "succeeded":
             raise DomainError("VKS_STATE_CONFLICT", "采集已经完成或不可用", 409)
-        approval = s.get(CaptureApproval, capture.approval_id)
+
         sr = s.get(ScenarioRevision, capture.scenario_revision_id)
         env = s.get(CaptureEnvironment, capture.environment_id)
         data = s.get(CaptureDataset, capture.dataset_id)
@@ -935,11 +841,10 @@ class ScenarioService:
         )
         if (
             analysis.state == "frozen"
-            or approval.expires_at <= now()
             or not env.enabled
             or not selected
             or selected.entity_revision_id != sr.entity_revision_id
-            or approval.manifest_sha256 != expected
+            or capture.input_sha256 != expected
         ):
             raise DomainError("VKS_VERSION_CONFLICT", "采集期间素材或授权策略发生变化，结果未保存", 412)
         artifacts = []
@@ -969,7 +874,6 @@ class ScenarioService:
                     sensitivity="internal",
                     object_key=h,
                     metadata_json={
-                        "redaction_version": capture.redaction_version,
                         "capture_id": capture.id,
                         "step_key": snapshot["step_key"],
                     },
@@ -991,7 +895,7 @@ class ScenarioService:
                         "step_key": snapshot["step_key"],
                         "source_kind": "runtime_capture",
                     },
-                    excerpt=raw.decode("utf-8")[:8000] if kind == "dom" else "[已脱敏截图]",
+                    excerpt=raw.decode("utf-8")[:8000] if kind == "dom" else "[页面截图]",
                     claim="在登记测试环境中观察到页面状态；未建立接口运行因果",
                 )
                 s.add(ev)
@@ -1025,7 +929,6 @@ class ScenarioService:
             "result_refs": [{"kind": "scenario", "id": sr.scenario_id}],
             "capture_id": capture.id,
             "scenario_revision_id": capture.scenario_revision_id,
-            "redaction_version": capture.redaction_version,
             "source_alignment": "unknown",
             "snapshot_count": len(snapshots),
             "issues": (
@@ -1203,7 +1106,6 @@ class ScenarioService:
             "analysis_set_id": c.analysis_set_id,
             "job_id": c.job_id,
             "state": job.state,
-            "redaction_version": c.redaction_version,
             "source_alignment": c.source_alignment,
             "result": result if job.state == "succeeded" else {},
         }
@@ -1258,10 +1160,6 @@ def install_scenarios(app, service, actor, envelope, API="/api/v1"):
     @app.get(API + "/projects/{pid}/datasets")
     def datasets(pid: str, request: Request, a: Actor = Depends(actor)):
         return envelope(request, scenarios.datasets(a, pid))
-
-    @app.post(API + "/scenarios/{sid}/capture-approvals", status_code=201)
-    def approval(sid: str, payload: ApprovalInput, request: Request, a: Actor = Depends(actor)):
-        return envelope(request, scenarios.approve(a, sid, payload.model_dump()))
 
     @app.post(API + "/scenarios/{sid}/capture", status_code=202)
     def capture(

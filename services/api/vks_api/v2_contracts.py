@@ -1,7 +1,9 @@
 """Additive V2 response contracts; legacy entity/evidence DTOs remain extensible."""
 
 from typing import Any, Generic, Literal, TypeVar
-from pydantic import BaseModel, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, Field
+
 from packages.journey_dsl import Journey
 
 T = TypeVar("T")
@@ -28,12 +30,6 @@ class JourneyOutput(BaseModel):
 class JourneyValidation(BaseModel):
     dsl: Journey
     sha256: str
-    requires_review: bool
-
-
-class JourneyDecision(BaseModel):
-    revision_id: str
-    decision: Literal["approve", "reject"]
 
 
 class JobOutput(BaseModel):
@@ -65,7 +61,6 @@ class TaskOutput(JobOutput):
     stage_artifacts: list[dict[str, Any]]
     module_decisions: dict[str, str]
     pause_requested: bool = False
-    plan_confirmation_required: bool = False
     plan_preview: dict[str, Any] | None = None
     plan_preview_unavailable: bool = False
 
@@ -77,12 +72,12 @@ class ModuleAccepted(BaseModel):
 
 
 class CoveragePair(BaseModel):
-    confirmed: int
+    linked: int
     total: int
 
 
 class RelationCoverage(CoveragePair):
-    candidate: int
+    excluded: int
     stale: int
     broken: int
 
@@ -105,7 +100,7 @@ class KnowledgePath(BaseModel):
     revision_ids: list[str]
     relation_ids: list[str]
     causal_basis: list[str]
-    review_status: list[str]
+    excluded: list[bool]
     evidence_ids: list[str]
     interpretation: str
 
@@ -142,6 +137,7 @@ class BusinessReferencesOutput(BaseModel):
     release_id: str | None
     entity_id: str
     actions: list[dict[str, Any]]
+    journeys: list[JourneyOutput] = []
     is_truncated: bool
     unknowns: list[str]
 
@@ -155,7 +151,6 @@ class OnboardingOutput(BaseModel):
     source_alignment: str
     issues: list[str]
     capabilities: list[str]
-    requires_review: bool
     server_filesystem_access: bool
     preflight_sha256: str
 
@@ -182,3 +177,25 @@ class InboxItem(BaseModel):
     kind: Literal["relation", "journey", "migration", "document"]
     subject_id: str
     data: dict[str, Any]
+
+
+class ProposalCorrectionTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    to_revision_id: str = Field(min_length=1)
+    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+
+
+class ProposalCorrectionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    analysis_set_id: str = Field(min_length=1)
+    operation: Literal["retarget", "split"]
+    target_relation_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=2000)
+    targets: list[ProposalCorrectionTarget] = Field(min_length=1, max_length=20)
+
+
+class ProposalCorrectionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    proposal: dict[str, Any]
+    original_relations: list[dict[str, Any]]
+    new_relations: list[dict[str, Any]]

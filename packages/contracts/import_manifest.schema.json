@@ -69,6 +69,10 @@
     "allow_platform_llm": {
       "type": "boolean",
       "default": false
+    },
+    "selectionManifest": {
+      "$ref": "#/$defs/manifestReference",
+      "description": "Optional exact entity selection for a reimportable fixed-baseline export. This only narrows parsed knowledge; it never creates entities or expands the selected source scope."
     }
   },
   "allOf": [
@@ -312,9 +316,6 @@
             "internal",
             "confidential"
           ]
-        },
-        "redaction_policy_ref": {
-          "$ref": "#/$defs/key"
         }
       }
     },
@@ -579,6 +580,73 @@
           }
         }
       ]
+    },
+    "selectionManifestDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "schemaVersion",
+        "projectKey",
+        "baselineKey",
+        "entities"
+      ],
+      "properties": {
+        "kind": {
+          "const": "fixed_entity_selection"
+        },
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "projectKey": {
+          "$ref": "#/$defs/key"
+        },
+        "baselineKey": {
+          "$ref": "#/$defs/key"
+        },
+        "entities": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "logicalKey",
+              "entityType",
+              "artifactPath",
+              "sha256",
+              "sourceId"
+            ],
+            "properties": {
+              "logicalKey": {
+                "$ref": "#/$defs/key"
+              },
+              "entityType": {
+                "enum": [
+                  "page",
+                  "action",
+                  "api",
+                  "symbol",
+                  "sql",
+                  "table",
+                  "document",
+                  "section",
+                  "rule"
+                ]
+              },
+              "artifactPath": {
+                "$ref": "#/$defs/relativePath"
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "sourceId": {
+                "$ref": "#/$defs/key"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

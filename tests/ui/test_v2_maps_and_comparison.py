@@ -1,6 +1,10 @@
+from sqlalchemy import select
+from vks_api.models import Relation
+
+from test_audit_navigation import audit_site as audit_site  # pytest fixture registration
 from pathlib import Path
 from playwright.sync_api import expect
-from test_audit_navigation import audit_site, signed_page
+from test_audit_navigation import signed_page
 from vks_api.scenarios import ScenarioService
 from vks_api.knowledge import KnowledgeService
 from packages.collector.snapshots import Snapshot, bundle_bytes
@@ -38,7 +42,14 @@ def test_graph_uses_bounded_server_data_and_scrolls_all_100_nodes_instead_of_rad
         output = ROOT / "output/playwright"
         output.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(output / "v2-bounded-knowledge-map.png"), full_page=True)
-        page.get_by_label("仅已确认关系", exact=True).check()
+        with service.db() as db:
+            for relation in db.scalars(
+                select(Relation).where(
+                    Relation.analysis_set_id == aid, Relation.from_revision_id == entity["entity_revision_id"]
+                )
+            ):
+                relation.validity_status = "stale"
+        page.get_by_label("仅有效关系", exact=True).check()
         expect(page.locator(".graph-node")).to_have_count(1)
         assert page.evaluate("document.documentElement.scrollWidth<=innerWidth+1")
 

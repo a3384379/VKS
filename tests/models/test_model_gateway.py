@@ -158,7 +158,7 @@ def test_document_task_reuses_completed_proposal_after_validation_interruption_w
             and row.metadata_json.get("source_kind") == "ai_generated"
         ]
         assert len(documents) == 1
-    assert result["report"]["candidate_only"] and result["report"]["model_calls"] == 1
+    assert result["report"]["saved_directly"] and result["report"]["model_calls"] == 1
 
 
 @pytest.mark.parametrize("flag", ["bad_id", "missing_citation"])
@@ -208,8 +208,8 @@ def test_generated_document_is_immutable_draft_with_real_evidence_and_human_gate
     generated = next(d for d in w["documents"] if d["metadata"].get("source_kind") == "ai_generated")
     raw, _ = s.artifact_bytes(a, p["id"], generated["artifact_id"])
     assert "查看规则".encode() in raw
-    c = s.request_release(a, p["id"], {"analysis_set_id": aid}, "precheck")
-    assert any("文档修订" in b for b in c["blockers"])
+    c = s.save_snapshot(a, p["id"], {"analysis_set_id": aid}, "precheck")
+    pass
     with s.db() as db:
         links = list(
             db.scalars(

@@ -20,7 +20,9 @@ def processor_version():
         "module_discovery.py",
         "ai_gateway.py",
         "workbench_v2.py",
+        "versions.py",
         "journeys.py",
+        "journey_generation.py",
         "reading.py",
     )
     sources = b"".join(Path(__file__).with_name(name).read_bytes() for name in files)

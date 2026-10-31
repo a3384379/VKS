@@ -85,7 +85,7 @@ def add_candidates(result, entities, artifacts, evidence_map, texts):
                         "to_key": identity[1],
                         "type": "documents",
                         "evidence_keys": keys,
-                        "reason": "Markdown出现相同服务范围下的确切HTTP method/path；作为待审核静态引用，不推断真实调用。",
+                        "reason": "Markdown出现相同服务范围下的确切HTTP method/path；作为静态引用，不推断真实调用。",
                         "causal_basis": "static_potential",
                     }
                 )

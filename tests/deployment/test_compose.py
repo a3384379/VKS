@@ -163,53 +163,17 @@ def test_real_compose_reserved_passwords_durable_job_publish_and_exports(tmp_pat
             assert response.status_code == 200, response.text
             assert finished(task["id"])["attempt"] == 1
             task_result = client.get(f"/api/v2/knowledge-tasks/{task['id']}").json()["data"]
-            assert task_result["stage"] == "READY_FOR_REVIEW" and task_result["stage_artifacts"]
-            assert task_result["report"]["candidate_only"] and task_result["report"]["model_calls"] == 0
+            assert task_result["stage"] == "COMPLETE" and task_result["stage_artifacts"]
+            assert task_result["report"]["saved_directly"] and task_result["report"]["model_calls"] == 0
             journeys = client.get(f"/api/v2/projects/{pid}/journeys", params={"analysis_set_id": aid}).json()["data"]
             assert len(journeys) == 1 and len(journeys[0]["dsl"]["nodes"]) == 4
-            for r in w["relations"]:
-                response = client.post(
-                    f"/api/v1/relations/{r['id']}/review",
-                    json={
-                        "decision": "confirm",
-                        "reason": "独立容器核对合成 fixture",
-                        "evidence_ids": r["evidence_ids"],
-                    },
-                    headers={"If-Match": str(r["row_version"])},
-                )
-                assert response.status_code == 200
-            blocked = post(f"/projects/{pid}/release-candidates", {"analysis_set_id": aid})
-            assert blocked["blockers"], "An unreviewed V2 flow must block publication in the deployed stack"
-            inbox = client.get(
-                f"/api/v2/projects/{pid}/review-items", params=dict(analysis_set_id=aid, kind="journey")
-            ).json()["data"]
             response = client.post(
-                f"/api/v2/projects/{pid}/review-batches",
-                json=dict(
-                    analysis_set_id=aid,
-                    reason="Synthetic Compose exact human review",
-                    items=[
-                        dict(
-                            kind=item["kind"],
-                            subject_id=item["subject_id"],
-                            review_token=item["review_token"],
-                            decision="approve",
-                        )
-                        for item in inbox["items"]
-                    ],
-                ),
-                headers={"If-Match": str(inbox["selection_version"]), "Idempotency-Key": "compose-review-batch"},
+                f"/api/v2/projects/{pid}/snapshots",
+                json={"analysis_set_id": aid, "change_note": "隔离部署验收"},
+                headers={"Idempotency-Key": "compose-snapshot"},
             )
-            assert response.status_code == 200, response.text
-            candidate = post(
-                f"/projects/{pid}/release-candidates", {"analysis_set_id": w["selected_analysis_set"]["id"]}
-            )
-            confirm = post(f"/release-candidates/{candidate['candidate_id']}/confirm")
-            release = post(
-                f"/release-candidates/{candidate['candidate_id']}/publish",
-                {k: confirm[k] for k in ("human_confirmation_ref", "expected_manifest_sha256")}
-                | {"change_note": "隔离部署验收"},
-            )
+            assert response.status_code == 201, response.text
+            release = response.json()["data"]
             frozen = client.get(f"/api/v2/projects/{pid}/journeys", params={"release_id": release["id"]}).json()["data"]
             assert [(row["revision_id"], row["dsl"]) for row in frozen] == [
                 (row["revision_id"], row["dsl"]) for row in journeys

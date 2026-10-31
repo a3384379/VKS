@@ -415,11 +415,11 @@ class HotspotService:
                             from_revision_id=new_page.id,
                             to_revision_id=new_action.id,
                             relation_type=relation_type,
-                            review_status="candidate",
+                            excluded=False,
                             validity_status="valid",
                             causal_basis="not_established",
                             evidence_ids=[evidence.id],
-                            reason="人工被动热点标注，待独立审核",
+                            reason="人工被动热点标注，保存后可用",
                             manual_lock=False,
                         )
                         s.add(relation)

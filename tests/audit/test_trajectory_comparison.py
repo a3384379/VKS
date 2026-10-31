@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import replace
 import pytest
-from test_capture_bindings import captured
+from test_capture_bindings import captured as captured  # pytest fixture registration
 from vks_api.trajectory_comparison import TrajectoryService
 from vks_api.service import DomainError
 

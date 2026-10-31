@@ -1,5 +1,4 @@
 from hashlib import sha256
-from pathlib import Path
 import os
 import pytest
 from packages.collector.snapshots import CollectionError
@@ -31,4 +30,4 @@ def test_sync_scope_bytes_moves_and_missing_file_storm(tmp_path):
     with pytest.raises(CollectionError):
         snapshot_delta({}, {}, scope_before="old", scope_after="new")
     storm = snapshot_delta({str(i): str(i) for i in range(30)}, {"0": "0"}, scope_before="scope", scope_after="scope")
-    assert storm["scope_anomaly"] and storm["requires_review"]
+    assert storm["scope_anomaly"] and storm["has_changes"]

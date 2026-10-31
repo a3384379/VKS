@@ -1,6 +1,6 @@
 import pytest
 
-from test_journeys import store
+from test_journeys import store as store  # pytest fixture registration
 from vks_api.journeys import JourneyService
 from vks_api.knowledge_tasks import KnowledgeTaskService, TaskInput
 from vks_api.service import DomainError

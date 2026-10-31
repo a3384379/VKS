@@ -59,10 +59,9 @@ export function OnboardingReport() {
             {report.counts.scenarios} · 文档 {report.counts.documents}
           </p>
           <p>
-            有已确认有效关联的动作{" "}
-            {report.counts.actions_with_confirmed_valid_links} /{" "}
+            有有效关联的动作 {report.counts.actions_with_valid_links} /{" "}
             {report.counts.action_denominator}；待审关系{" "}
-            {report.counts.candidate_relations} / {report.counts.relations}。
+            {report.counts.excluded_relations} / {report.counts.relations}。
           </p>
           <div className="v2-domain-grid">
             {report.gaps.map((gap) => (
@@ -74,8 +73,8 @@ export function OnboardingReport() {
                 <Button
                   onClick={() =>
                     navigate(
-                      gap.next_action === "review_candidates"
-                        ? "reviews"
+                      gap.next_action === "manage_relations"
+                        ? "relations"
                         : gap.next_action === "create_knowledge_task"
                           ? "agent"
                           : "imports",

@@ -3,7 +3,7 @@
   "tools": [
     {
       "name": "propose_journey",
-      "description": "提交固定修订的被动业务流程候选，不审核或发布。",
+      "description": "保存固定修订的被动业务流程。",
       "required_scopes": [
         "knowledge:edit"
       ],
@@ -133,6 +133,7 @@
                     "enum": [
                       "page",
                       "action",
+                      "step",
                       "decision",
                       "branch",
                       "end",
@@ -146,6 +147,20 @@
                     "minLength": 1,
                     "title": "Title",
                     "type": "string"
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "maxLength": 2000,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Description"
                   },
                   "x": {
                     "maximum": 4000,
@@ -283,6 +298,139 @@
                 "title": "Node",
                 "type": "object"
               },
+              "Semantics": {
+                "additionalProperties": false,
+                "description": "An author's meaning claim; neither approval nor runtime/business validation.",
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "business_process",
+                      "operation_sequence",
+                      "evidence_navigation",
+                      "observation_comparison",
+                      "unclassified"
+                    ],
+                    "title": "Kind",
+                    "type": "string"
+                  },
+                  "basis": {
+                    "enum": [
+                      "declared",
+                      "observed",
+                      "inferred",
+                      "unknown"
+                    ],
+                    "title": "Basis",
+                    "type": "string"
+                  },
+                  "purpose": {
+                    "anyOf": [
+                      {
+                        "maxLength": 2000,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Purpose"
+                  },
+                  "preconditions": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maxItems": 30,
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Preconditions"
+                  },
+                  "outcome": {
+                    "anyOf": [
+                      {
+                        "maxLength": 2000,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Outcome"
+                  },
+                  "unknowns": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maxItems": 50,
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Unknowns"
+                  },
+                  "source_refs": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "entity_id": {
+                              "maxLength": 36,
+                              "minLength": 1,
+                              "title": "Entity Id",
+                              "type": "string"
+                            },
+                            "revision_id": {
+                              "maxLength": 36,
+                              "minLength": 1,
+                              "title": "Revision Id",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "entity_id",
+                            "revision_id"
+                          ],
+                          "title": "Binding",
+                          "type": "object"
+                        },
+                        "maxItems": 50,
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Source Refs"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "basis"
+                ],
+                "title": "Semantics",
+                "type": "object"
+              },
               "StateReference": {
                 "additionalProperties": false,
                 "properties": {
@@ -331,6 +479,147 @@
                 "title": "Title",
                 "type": "string"
               },
+              "semantics": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "description": "An author's meaning claim; neither approval nor runtime/business validation.",
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "business_process",
+                          "operation_sequence",
+                          "evidence_navigation",
+                          "observation_comparison",
+                          "unclassified"
+                        ],
+                        "title": "Kind",
+                        "type": "string"
+                      },
+                      "basis": {
+                        "enum": [
+                          "declared",
+                          "observed",
+                          "inferred",
+                          "unknown"
+                        ],
+                        "title": "Basis",
+                        "type": "string"
+                      },
+                      "purpose": {
+                        "anyOf": [
+                          {
+                            "maxLength": 2000,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Purpose"
+                      },
+                      "preconditions": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "maxLength": 2000,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 30,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Preconditions"
+                      },
+                      "outcome": {
+                        "anyOf": [
+                          {
+                            "maxLength": 2000,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Outcome"
+                      },
+                      "unknowns": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "maxLength": 2000,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 50,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Unknowns"
+                      },
+                      "source_refs": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "entity_id": {
+                                  "maxLength": 36,
+                                  "minLength": 1,
+                                  "title": "Entity Id",
+                                  "type": "string"
+                                },
+                                "revision_id": {
+                                  "maxLength": 36,
+                                  "minLength": 1,
+                                  "title": "Revision Id",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "entity_id",
+                                "revision_id"
+                              ],
+                              "title": "Binding",
+                              "type": "object"
+                            },
+                            "maxItems": 50,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Source Refs"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "basis"
+                    ],
+                    "title": "Semantics",
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "entry": {
                 "maxLength": 96,
                 "minLength": 1,
@@ -350,6 +639,7 @@
                       "enum": [
                         "page",
                         "action",
+                        "step",
                         "decision",
                         "branch",
                         "end",
@@ -363,6 +653,20 @@
                       "minLength": 1,
                       "title": "Title",
                       "type": "string"
+                    },
+                    "description": {
+                      "anyOf": [
+                        {
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Description"
                     },
                     "x": {
                       "maximum": 4000,
@@ -700,6 +1004,7 @@
                         "enum": [
                           "page",
                           "action",
+                          "step",
                           "decision",
                           "branch",
                           "end",
@@ -713,6 +1018,20 @@
                         "minLength": 1,
                         "title": "Title",
                         "type": "string"
+                      },
+                      "description": {
+                        "anyOf": [
+                          {
+                            "maxLength": 2000,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Description"
                       },
                       "x": {
                         "maximum": 4000,
@@ -850,6 +1169,139 @@
                     "title": "Node",
                     "type": "object"
                   },
+                  "Semantics": {
+                    "additionalProperties": false,
+                    "description": "An author's meaning claim; neither approval nor runtime/business validation.",
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "business_process",
+                          "operation_sequence",
+                          "evidence_navigation",
+                          "observation_comparison",
+                          "unclassified"
+                        ],
+                        "title": "Kind",
+                        "type": "string"
+                      },
+                      "basis": {
+                        "enum": [
+                          "declared",
+                          "observed",
+                          "inferred",
+                          "unknown"
+                        ],
+                        "title": "Basis",
+                        "type": "string"
+                      },
+                      "purpose": {
+                        "anyOf": [
+                          {
+                            "maxLength": 2000,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Purpose"
+                      },
+                      "preconditions": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "maxLength": 2000,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 30,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Preconditions"
+                      },
+                      "outcome": {
+                        "anyOf": [
+                          {
+                            "maxLength": 2000,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Outcome"
+                      },
+                      "unknowns": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "maxLength": 2000,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 50,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Unknowns"
+                      },
+                      "source_refs": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "entity_id": {
+                                  "maxLength": 36,
+                                  "minLength": 1,
+                                  "title": "Entity Id",
+                                  "type": "string"
+                                },
+                                "revision_id": {
+                                  "maxLength": 36,
+                                  "minLength": 1,
+                                  "title": "Revision Id",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "entity_id",
+                                "revision_id"
+                              ],
+                              "title": "Binding",
+                              "type": "object"
+                            },
+                            "maxItems": 50,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "title": "Source Refs"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "basis"
+                    ],
+                    "title": "Semantics",
+                    "type": "object"
+                  },
                   "StateReference": {
                     "additionalProperties": false,
                     "properties": {
@@ -898,6 +1350,147 @@
                     "title": "Title",
                     "type": "string"
                   },
+                  "semantics": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "description": "An author's meaning claim; neither approval nor runtime/business validation.",
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "business_process",
+                              "operation_sequence",
+                              "evidence_navigation",
+                              "observation_comparison",
+                              "unclassified"
+                            ],
+                            "title": "Kind",
+                            "type": "string"
+                          },
+                          "basis": {
+                            "enum": [
+                              "declared",
+                              "observed",
+                              "inferred",
+                              "unknown"
+                            ],
+                            "title": "Basis",
+                            "type": "string"
+                          },
+                          "purpose": {
+                            "anyOf": [
+                              {
+                                "maxLength": 2000,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null,
+                            "title": "Purpose"
+                          },
+                          "preconditions": {
+                            "anyOf": [
+                              {
+                                "items": {
+                                  "maxLength": 2000,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "maxItems": 30,
+                                "type": "array"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null,
+                            "title": "Preconditions"
+                          },
+                          "outcome": {
+                            "anyOf": [
+                              {
+                                "maxLength": 2000,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null,
+                            "title": "Outcome"
+                          },
+                          "unknowns": {
+                            "anyOf": [
+                              {
+                                "items": {
+                                  "maxLength": 2000,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "maxItems": 50,
+                                "type": "array"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null,
+                            "title": "Unknowns"
+                          },
+                          "source_refs": {
+                            "anyOf": [
+                              {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "entity_id": {
+                                      "maxLength": 36,
+                                      "minLength": 1,
+                                      "title": "Entity Id",
+                                      "type": "string"
+                                    },
+                                    "revision_id": {
+                                      "maxLength": 36,
+                                      "minLength": 1,
+                                      "title": "Revision Id",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "entity_id",
+                                    "revision_id"
+                                  ],
+                                  "title": "Binding",
+                                  "type": "object"
+                                },
+                                "maxItems": 50,
+                                "type": "array"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null,
+                            "title": "Source Refs"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "basis"
+                        ],
+                        "title": "Semantics",
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
                   "entry": {
                     "maxLength": 96,
                     "minLength": 1,
@@ -917,6 +1510,7 @@
                           "enum": [
                             "page",
                             "action",
+                            "step",
                             "decision",
                             "branch",
                             "end",
@@ -930,6 +1524,20 @@
                           "minLength": 1,
                           "title": "Title",
                           "type": "string"
+                        },
+                        "description": {
+                          "anyOf": [
+                            {
+                              "maxLength": 2000,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null,
+                          "title": "Description"
                         },
                         "x": {
                           "maximum": 4000,
@@ -1349,8 +1957,6 @@
                         "analysis_set",
                         "scenario",
                         "relation",
-                        "review_batch",
-                        "release_candidate",
                         "release",
                         "export"
                       ]
@@ -1382,7 +1988,6 @@
                       "VKS_LIMIT_EXCEEDED",
                       "VKS_INVALID_INPUT",
                       "VKS_INVALID_EVIDENCE",
-                      "VKS_APPROVAL_REQUIRED",
                       "VKS_RATE_LIMITED",
                       "VKS_DEPENDENCY_UNAVAILABLE",
                       "VKS_INTERNAL_ERROR"
@@ -1436,7 +2041,7 @@
     },
     {
       "name": "get_knowledge_task",
-      "description": "查询知识任务的实际阶段、预算、待人员确认的计划及当前有权产物；机器不能确认计划、审核或发布。",
+      "description": "查询知识任务的实际阶段、预算、任务执行计划及当前有权产物；授权客户端可执行任务和保存版本。",
       "required_scopes": [
         "knowledge:read"
       ],
@@ -1546,8 +2151,6 @@
                         "analysis_set",
                         "scenario",
                         "relation",
-                        "review_batch",
-                        "release_candidate",
                         "release",
                         "export"
                       ]
@@ -1579,7 +2182,6 @@
                       "VKS_LIMIT_EXCEEDED",
                       "VKS_INVALID_INPUT",
                       "VKS_INVALID_EVIDENCE",
-                      "VKS_APPROVAL_REQUIRED",
                       "VKS_RATE_LIMITED",
                       "VKS_DEPENDENCY_UNAVAILABLE",
                       "VKS_INTERNAL_ERROR"
@@ -1700,9 +2302,6 @@
                 }
               },
               "pause_requested": {
-                "type": "boolean"
-              },
-              "plan_confirmation_required": {
                 "type": "boolean"
               },
               "plan_preview": {
@@ -1839,7 +2438,7 @@
               "actions": {
                 "type": "object",
                 "properties": {
-                  "confirmed": {
+                  "linked": {
                     "type": "integer",
                     "minimum": 0
                   },
@@ -1849,7 +2448,7 @@
                   }
                 },
                 "required": [
-                  "confirmed",
+                  "linked",
                   "total"
                 ],
                 "additionalProperties": false
@@ -1857,7 +2456,7 @@
               "relations": {
                 "type": "object",
                 "properties": {
-                  "confirmed": {
+                  "linked": {
                     "type": "integer",
                     "minimum": 0
                   },
@@ -1865,7 +2464,7 @@
                     "type": "integer",
                     "minimum": 0
                   },
-                  "candidate": {
+                  "excluded": {
                     "type": "integer",
                     "minimum": 0
                   },
@@ -1879,9 +2478,9 @@
                   }
                 },
                 "required": [
-                  "confirmed",
+                  "linked",
                   "total",
-                  "candidate",
+                  "excluded",
                   "stale",
                   "broken"
                 ],
@@ -1891,6 +2490,26 @@
                 "type": "object",
                 "properties": {
                   "total": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "business_process": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "operation_sequence": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "evidence_navigation": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "observation_comparison": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "unclassified": {
                     "type": "integer",
                     "minimum": 0
                   }
@@ -2080,8 +2699,6 @@
                         "analysis_set",
                         "scenario",
                         "relation",
-                        "review_batch",
-                        "release_candidate",
                         "release",
                         "export"
                       ]
@@ -2113,7 +2730,6 @@
                       "VKS_LIMIT_EXCEEDED",
                       "VKS_INVALID_INPUT",
                       "VKS_INVALID_EVIDENCE",
-                      "VKS_APPROVAL_REQUIRED",
                       "VKS_RATE_LIMITED",
                       "VKS_DEPENDENCY_UNAVAILABLE",
                       "VKS_INTERNAL_ERROR"
@@ -2132,6 +2748,14 @@
                     "description": "仅结构化诊断元信息，不回传堆栈、SQL、凭据或未授权内容"
                   }
                 }
+              },
+              "result": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true,
+                "description": "按当前身份过滤的影响报告，含准确目标选择版本、来源向量、路径及截断范围；任务未完成时可为空。"
               }
             }
           },

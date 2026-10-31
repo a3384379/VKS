@@ -6,7 +6,6 @@ import {
   GitBranch,
   Plus,
   Save,
-  ShieldCheck,
 } from "lucide-react";
 import { api, mutation } from "./api";
 import { Button, Modal, Notice, Panel, Tag } from "./components";
@@ -46,7 +45,6 @@ type DSL = {
   environment_ref: string;
   dataset_ref: string;
   risk_level: "read_only" | "test_write";
-  approval_ref?: string;
   timeout_ms: number;
   steps: Array<Record<string, unknown>>;
   explanation_graph?: {
@@ -77,11 +75,7 @@ type Environment = {
   };
 };
 type Dataset = { id: string; key: string; name: string; synthetic: boolean };
-type Approval = {
-  approval_ref: string;
-  scenario_revision_id: string;
-  expires_at: string;
-};
+
 const originLabel: Record<Origin, string> = {
   declared: "人工声明",
   simulated: "模拟状态",
@@ -93,7 +87,6 @@ export default function ScenarioStudio() {
     w,
     refresh,
     notify,
-    navigate,
     setUnsavedChanges,
     explanation,
     navigateExplanation,
@@ -124,8 +117,6 @@ export default function ScenarioStudio() {
   const [environmentModal, setEnvironmentModal] = useState(false);
   const [datasetModal, setDatasetModal] = useState(false);
   const [captureModal, setCaptureModal] = useState(false);
-  const [approval, setApproval] = useState<Approval | null>(null);
-  const [reason, setReason] = useState("");
   const [stateName, setStateName] = useState("");
   const [fromState, setFromState] = useState("");
   const [toState, setToState] = useState("");
@@ -177,13 +168,6 @@ export default function ScenarioStudio() {
   useEffect(() => {
     void load();
   }, [load, jobState]);
-  useEffect(() => {
-    setApproval((previous) =>
-      previous?.scenario_revision_id === current?.scenario_revision_id
-        ? previous
-        : null,
-    );
-  }, [current?.scenario_revision_id]);
   useEffect(() => () => setUnsavedChanges(false), [setUnsavedChanges]);
   async function perform(action: () => Promise<void>) {
     setBusy(true);
@@ -326,38 +310,21 @@ export default function ScenarioStudio() {
     });
     setCondition("");
   }
-  async function approve() {
-    if (!current || !w.selected_analysis_set) return;
-    await perform(async () => {
-      const granted = await api<Approval>(
-        `/scenarios/${current.scenario_id}/capture-approvals`,
-        mutation("POST", {
-          analysis_set_id: w.selected_analysis_set!.id,
-          scenario_revision_id: current.scenario_revision_id,
-          reason,
-        }),
-      );
-      await refresh();
-      await load();
-      setApproval(granted);
-      notify("已签发绑定当前版本的短期采集授权");
-    });
-  }
+
   async function startCapture() {
-    if (!current || !approval) return;
+    if (!current || !w.selected_analysis_set) return;
     await perform(async () => {
       const result = await api<{ decision: string; reason?: string }>(
         `/scenarios/${current.scenario_id}/capture`,
         mutation("POST", {
-          scenario_revision_id: approval.scenario_revision_id,
+          scenario_revision_id: current.scenario_revision_id,
           environment_ref: current.dsl.environment_ref,
-          approval_ref: approval.approval_ref,
+          analysis_set_id: w.selected_analysis_set!.id,
         }),
       );
       if (result.decision !== "accepted")
-        throw new Error(result.reason || "需要有效采集授权");
+        throw new Error(result.reason || "采集任务未启动");
       setCaptureModal(false);
-      setApproval(null);
       await refresh();
       notify("受控采集任务已提交，可在任务中心查看");
     });
@@ -504,8 +471,7 @@ export default function ScenarioStudio() {
                           kind="small"
                           onClick={() => {
                             setCaptureModal(true);
-                            setApproval(null);
-                            setReason("");
+                            setError("");
                           }}
                         >
                           <Camera size={15} />
@@ -606,10 +572,10 @@ export default function ScenarioStudio() {
                       <figure className="scenario-capture" key={i}>
                         <img
                           src={`/api/v1/captures/${captureForState.id}/artifacts/${snapshot.png_artifact_id}`}
-                          alt={`${snapshot.name} · 已脱敏的测试环境观察`}
+                          alt={`${snapshot.name} · 的测试环境观察`}
                         />
                         <figcaption>
-                          {snapshot.name} · 运行观察 · 已脱敏 · 源码对齐未知
+                          {snapshot.name} · 运行观察 · · 源码对齐未知
                         </figcaption>
                       </figure>
                     ))}
@@ -633,7 +599,7 @@ export default function ScenarioStudio() {
                           <div key={capture.id}>
                             <Tag value={capture.state} />
                             <span>
-                              {capture.result.snapshots?.length || 0} 个脱敏状态
+                              {capture.result.snapshots?.length || 0} 个页面状态
                             </span>
                             <small>运行与源码版本未核对</small>
                             <Button
@@ -846,9 +812,6 @@ export default function ScenarioStudio() {
                   setDraft({
                     ...draft,
                     risk_level: e.target.value as DSL["risk_level"],
-                    ...(e.target.value === "test_write"
-                      ? { approval_ref: crypto.randomUUID() }
-                      : {}),
                   })
                 }
               >
@@ -1045,71 +1008,27 @@ export default function ScenarioStudio() {
         </Modal>
       )}
       {captureModal && current && (
-        <Modal
-          title="授权受控环境录制"
-          onClose={() => {
-            setCaptureModal(false);
-            setApproval(null);
-          }}
-        >
-          <Notice tone="amber">
-            录制会访问登记的测试环境，独立于只读讲解。仅使用合成数据集，所有网络按允许清单检查，输出先脱敏再保存。
-          </Notice>
-          <p>
-            场景：{current.dsl.name} · 修订 {current.revision_no}
-          </p>
+        <Modal title="录制当前场景" onClose={() => setCaptureModal(false)}>
+          <p>场景：{current.dsl.name}</p>
           <p>
             环境：{current.dsl.environment_ref} · 数据集：
             {current.dsl.dataset_ref}
           </p>
-          {!approval ? (
-            <>
-              <label>
-                授权依据
-                <textarea
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  rows={3}
-                  placeholder="说明测试环境与动作范围的授权依据…"
-                />
-              </label>
-              {error && <Notice tone="red">{error}</Notice>}
-              <div className="modal-actions">
-                <Button onClick={() => setCaptureModal(false)}>返回</Button>
-                <Button
-                  kind="primary"
-                  disabled={busy || !reason.trim() || !canManage}
-                  onClick={() => void approve()}
-                >
-                  <ShieldCheck size={16} />
-                  签发本次采集授权
-                </Button>
-              </div>
-              {!canManage && <p>需要项目管理员签发采集授权。</p>}
-            </>
-          ) : (
-            <>
-              <Notice>
-                已绑定当前场景、环境策略与数据集。有效期至{" "}
-                {new Date(approval.expires_at).toLocaleTimeString("zh-CN")}。
-              </Notice>
-              {error && <Notice tone="red">{error}</Notice>}
-              <div className="modal-actions">
-                <Button onClick={() => setCaptureModal(false)}>取消</Button>
-                <Button
-                  kind="primary"
-                  disabled={busy}
-                  onClick={() => void startCapture()}
-                >
-                  <Camera size={16} />
-                  开始受控录制
-                </Button>
-              </div>
-            </>
-          )}
-          <Button kind="subtle" onClick={() => navigate("imports")}>
-            查看任务中心
-          </Button>
+          <Notice>
+            录制保存实际页面状态和截图；普通知识浏览不会运行此场景。
+          </Notice>
+          {error && <Notice tone="red">{error}</Notice>}
+          <div className="modal-actions">
+            <Button onClick={() => setCaptureModal(false)}>取消</Button>
+            <Button
+              kind="primary"
+              disabled={busy}
+              onClick={() => void startCapture()}
+            >
+              <Camera size={16} />
+              开始录制
+            </Button>
+          </div>
         </Modal>
       )}
       {environmentModal && (

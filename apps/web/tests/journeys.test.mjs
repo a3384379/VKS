@@ -99,7 +99,7 @@ test("five task navigation groups preserve original hashes and concept aliases",
   assert.equal(primary.length, 5);
   assert.equal(group("documents"), "imports");
   assert.equal(group("journeys"), "workbench");
-  assert.equal(group("reviews"), "versions");
+  assert.equal(group("relations"), "versions");
   assert.equal(route("explorer").get("view"), "workbench");
   assert.equal(
     route("view=documents&project=p&baseline=release:r&entity=e").toString(),
@@ -115,7 +115,10 @@ test("five task navigation groups preserve original hashes and concept aliases",
     "versions",
     "settings",
   ])
-    assert.equal(route(`view=${old}`).get("view"), old);
+    assert.equal(
+      route(`view=${old}`).get("view"),
+      old === "reviews" ? "relations" : old,
+    );
 });
 test("journey undo redo preserves fixed bindings and forks history without mutation", () => {
   const dsl = newJourney({

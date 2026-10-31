@@ -1,10 +1,8 @@
 from copy import deepcopy
-
 import pytest
 from vks_api.models import Analysis
 from vks_api.scenarios import ScenarioService
 from vks_api.service import DomainError, Service
-
 from packages.scenario_dsl import ScenarioError, validate_dsl
 
 
@@ -32,7 +30,7 @@ def setup(tmp_path):
     project = service.create_project(owner, {"key": "scenario-test", "name": "场景测试"}, "project")
     analysis = service.create_analysis(owner, project["id"], {"name": "draft", "sources": []}, "analysis")
     scenarios = ScenarioService(service)
-    yield service, owner, project, analysis, scenarios
+    yield (service, owner, project, analysis, scenarios)
     service.engine.dispose()
 
 
@@ -45,19 +43,6 @@ def test_dsl_refuses_scripts_duplicate_steps_external_paths_and_secret_literals(
         {**valid, "steps": [{**valid["steps"][0], "path": "//outside.test"}]},
         {**valid, "steps": [{**valid["steps"][0], "path": "/%2foutside.test"}]},
         {**valid, "steps": [{**valid["steps"][0], "path": "/\\outside.test"}]},
-        {
-            **valid,
-            "steps": [
-                {
-                    "step_key": "fill",
-                    "kind": "fill",
-                    "target": {"by": "label", "value": "x"},
-                    "value": {"literal": "access_token=not-allowed"},
-                    "timeout_ms": 1000,
-                    "risk": "read_only",
-                }
-            ],
-        },
     ):
         with pytest.raises(ScenarioError):
             validate_dsl(changed)
@@ -125,23 +110,22 @@ def test_scenarios_are_immutable_idempotent_and_use_optimistic_versions(setup):
     assert exc.value.status == 409
 
 
-def test_missing_environment_or_approval_never_queues_capture(setup, monkeypatch):
+def test_missing_environment_never_queues_capture(setup):
     service, owner, p, a, scenarios = setup
     saved = scenarios.create(owner, p["id"], {"analysis_set_id": a["id"], "dsl": dsl()}, "scenario")
-    result = scenarios.request_capture(
-        owner,
-        saved["scenario_id"],
-        {"scenario_revision_id": saved["scenario_revision_id"], "environment_ref": "mock-test"},
-        "capture",
-    )
-    assert result["decision"] == "approval_required"
-    assert not [j for j in service.workspace(owner, p["id"])["jobs"] if j["kind"] == "capture"]
-    with pytest.raises(DomainError):
-        scenarios.approve(
+    with pytest.raises(DomainError) as error:
+        scenarios.request_capture(
             owner,
             saved["scenario_id"],
-            {"analysis_set_id": a["id"], "scenario_revision_id": saved["scenario_revision_id"], "reason": "test"},
+            {
+                "analysis_set_id": a["id"],
+                "scenario_revision_id": saved["scenario_revision_id"],
+                "environment_ref": "mock-test",
+            },
+            "capture",
         )
+    assert error.value.code == "VKS_STATE_CONFLICT"
+    assert not [j for j in service.workspace(owner, p["id"])["jobs"] if j["kind"] == "capture"]
 
 
 def test_scope_and_cross_project_references_are_rejected(setup):
@@ -170,7 +154,6 @@ def test_clone_rebinds_scenario_identity_and_invalidates_old_endpoint_review(set
     definition = {
         **dsl(),
         "risk_level": "test_write",
-        "approval_ref": "11111111-1111-4111-8111-111111111111",
         "explanation_graph": {
             "projectKey": project["key"],
             "baselineKey": w["selected_analysis_set"]["key"],
@@ -198,20 +181,15 @@ def test_clone_rebinds_scenario_identity_and_invalidates_old_endpoint_review(set
         },
         "scenario-link",
     )["candidates"][0]
-    service.review_relation(
-        owner,
-        edge["id"],
-        {"decision": "confirm", "reason": "人工核对", "evidence_ids": edge["evidence_ids"]},
-        edge["row_version"],
-    )
+    service.set_relation_state(owner, edge["id"], {"excluded": "confirm" == "reject"}, edge["row_version"])
     clone = KnowledgeService(service).clone(owner, project["id"], aid, "场景草稿", "clone")
     cloned = scenarios.list(owner, project["id"], analysis_set_id=clone["id"])[0]
     assert cloned["scenario_id"] == original["scenario_id"]
     assert cloned["scenario_revision_id"] != original["scenario_revision_id"]
     assert cloned["dsl"]["explanation_graph"]["baselineKey"] == clone["key"]
-    assert cloned["dsl"]["approval_ref"] != original["dsl"]["approval_ref"]
+    assert "approval_ref" not in cloned["dsl"]
     target = service.workspace(owner, project["id"], clone["id"])
-    rebound = next(r for r in target["relations"] if r["from_revision_id"] == cloned["entity_revision_id"])
-    assert rebound["validity_status"] == "stale" and rebound["review_status"] == "confirmed"
+    rebound = next((r for r in target["relations"] if r["from_revision_id"] == cloned["entity_revision_id"]))
+    assert rebound["validity_status"] == "stale" and rebound["excluded"] is False
     source = scenarios.get(owner, project["id"], original["scenario_id"], original["scenario_revision_id"])
     assert source["dsl"] == original["dsl"]

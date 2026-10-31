@@ -72,7 +72,7 @@ export function CaptureJourneyBuilder({
                   )
                 }
               />
-              轨迹 {i + 1} · {capture.result.snapshots?.length || 0} 个脱敏状态
+              轨迹 {i + 1} · {capture.result.snapshots?.length || 0} 个页面状态
               · {capture.source_alignment}
             </label>
           ))}

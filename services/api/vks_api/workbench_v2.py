@@ -1,5 +1,7 @@
 """V2 product projections; all reads use the existing permission-filtered services."""
 
+from collections import deque
+
 from .v2_contracts import (
     Envelope,
     JobOutput,
@@ -8,7 +10,6 @@ from .v2_contracts import (
     ExplanationOutput,
     BusinessReferencesOutput,
     ReplayOutput,
-    InboxItem,
     KnowledgeMapOutput,
 )
 
@@ -16,6 +17,7 @@ from fastapi import Depends, Header, Request, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from .journeys import JourneyService
+from .knowledge_coverage import action_knowledge_revisions
 from .models import Analysis
 from .service import DomainError, canonical, sha
 
@@ -34,44 +36,82 @@ class ImpactInput(BaseModel):
     analysis_set_id: str
 
 
+TECHNICAL_TYPES = {
+    "handler_of",
+    "may_call",
+    "implements",
+    "maps_to_sql",
+    "reads_table",
+    "writes_table",
+    "documents",
+    "depends_on",
+    "observed_during",
+    "confirmed_trigger",
+}
+KNOWLEDGE_TYPES = {"api", "symbol", "sql", "table", "document", "section"}
+
+
+def technical_adjacency(graph, *, reverse=False):
+    from collections import defaultdict
+
+    nodes = {row["entity_revision_id"]: row for row in graph["nodes"]}
+    adjacent = defaultdict(list)
+    for edge in graph["edges"]:
+        source, target = edge["from_revision_id"], edge["to_revision_id"]
+        if edge["relation_type"] == "handler_of":
+            source, target = target, source
+        elif edge["relation_type"] == "documents":
+            # Normalize the association towards documentation. It is a leaf of
+            # a technical explanation, not a bridge between related actions.
+            if nodes[source]["type"] in ("document", "section"):
+                source, target = target, source
+            if nodes[target]["type"] not in ("document", "section"):
+                continue
+        if reverse:
+            source, target = target, source
+        adjacent[source].append((target, edge))
+    return nodes, adjacent
+
+
 def coverage(service, actor, pid, analysis_set_id=None, release_id=None):
     w = service.workspace(actor, pid, analysis_set_id, release_id)
     actions = {row["entity_revision_id"] for row in w["actions"]}
-    trusted = [r for r in w["relations"] if r["review_status"] == "confirmed" and r["validity_status"] == "valid"]
-    linked = actions & {rid for row in trusted for rid in (row["from_revision_id"], row["to_revision_id"])}
+    trusted = [r for r in w["relations"] if (r["excluded"] is False) and r["validity_status"] == "valid"]
+    linked = action_knowledge_revisions(w["entities"], trusted)
     runtime_linked = (
-        actions
-        & {
-            rid
-            for row in trusted
-            if row["causal_basis"] == "correlated_runtime"
-            for rid in (row["from_revision_id"], row["to_revision_id"])
-        }
+        action_knowledge_revisions(
+            w["entities"], [row for row in trusted if row["causal_basis"] == "correlated_runtime"]
+        )
         if (w["selected_analysis_set"] or {}).get("runtime_alignment") == "matched"
         else set()
     )
+    journey_counts = dict.fromkeys(
+        ("business_process", "operation_sequence", "evidence_navigation", "observation_comparison", "unclassified"), 0
+    )
+    for row in w["entities"]:
+        if row["type"] == "journey":
+            meaning = row.get("metadata", {}).get("journey_dsl", {}).get("semantics", {}).get("kind", "unclassified")
+            journey_counts[meaning if meaning in journey_counts else "unclassified"] += 1
     return dict(
         project_id=pid,
         analysis_set_id=(w["selected_analysis_set"] or {}).get("id"),
         release_id=(w["selected_release"] or {}).get("id"),
         source_vector=w["sources"],
-        scope="当前身份可见、当前固定基线；不含已移除动作；候选不计入确认覆盖",
-        actions={"confirmed": len(linked), "total": len(actions)},
+        scope="当前身份可见固定基线的关联知识覆盖；排除页面成员及结构关系，仅计算有效且未移除的关联",
+        actions={"linked": len(linked), "total": len(actions)},
         relations={
-            "confirmed": len(trusted),
+            "linked": len(trusted),
             "total": len(w["relations"]),
-            "candidate": sum(r["review_status"] == "candidate" for r in w["relations"]),
+            "excluded": sum(r["excluded"] for r in w["relations"]),
             "stale": sum(r["validity_status"] == "stale" for r in w["relations"]),
             "broken": sum(r["validity_status"] == "broken" for r in w["relations"]),
         },
-        journeys={"total": sum(e["type"] == "journey" for e in w["entities"])},
+        journeys={"total": sum(journey_counts.values()), **journey_counts},
         knowledge_health=dict(
             unverified_runtime_actions=len(actions - runtime_linked),
             action_denominator=len(actions),
-            review_backlog=sum(
-                r["review_status"] != "rejected"
-                and (r["review_status"] == "candidate" or r["validity_status"] != "valid")
-                for r in w["relations"]
+            outdated_relations=sum(
+                (r["excluded"] is False) and r["validity_status"] != "valid" for r in w["relations"]
             ),
             relation_denominator=len(w["relations"]),
         ),
@@ -81,7 +121,6 @@ def coverage(service, actor, pid, analysis_set_id=None, release_id=None):
 
 
 def explanation(service, actor, pid, eid, analysis_set_id=None, release_id=None):
-    from collections import defaultdict, deque
     from sqlalchemy import select
     from .models import Evidence
     from .reading import ReadingService, chunks
@@ -89,26 +128,26 @@ def explanation(service, actor, pid, eid, analysis_set_id=None, release_id=None)
     reading = ReadingService(service)
     with reading.db() as s:
         graph, analysis, release = reading._graph(
-            s, actor, pid, eid, analysis_set_id, release_id, 3, 100, None, True, "trusted"
+            s, actor, pid, eid, analysis_set_id, release_id, 3, 100, TECHNICAL_TYPES, True, "valid"
         )
         action = next((row for row in graph["nodes"] if row["entity_id"] == eid and row["type"] == "action"), None)
         if not action:
             raise DomainError("VKS_NOT_FOUND", "未找到当前版本操作", 404)
         seed = action["entity_revision_id"]
-        adjacent = defaultdict(list)
-        for edge in graph["edges"]:
-            adjacent[edge["from_revision_id"]].append(edge)
-            adjacent[edge["to_revision_id"]].append(edge)
+        nodes, adjacent = technical_adjacency(graph)
         paths = []
         frontier = deque([(seed, [seed], [])])
         truncated = graph["truncated"]
         while frontier and len(paths) < 120:
             current, visited, relations = frontier.popleft()
             if len(relations) >= 3:
+                if any(target not in visited for target, _ in adjacent[current]):
+                    truncated = True
                 continue
-            for edge in adjacent[current]:
-                target = edge["to_revision_id"] if edge["from_revision_id"] == current else edge["from_revision_id"]
-                if target in visited:
+            if current != seed and nodes[current]["type"] in ("document", "section"):
+                continue
+            for target, edge in adjacent[current]:
+                if target in visited or nodes[target]["type"] not in KNOWLEDGE_TYPES:
                     continue
                 edges = [*relations, edge]
                 path = [*visited, target]
@@ -117,9 +156,9 @@ def explanation(service, actor, pid, eid, analysis_set_id=None, release_id=None)
                         revision_ids=path,
                         relation_ids=[r["id"] for r in edges],
                         causal_basis=[r["causal_basis"] for r in edges],
-                        review_status=[r["review_status"] for r in edges],
+                        excluded=[r["excluded"] for r in edges],
                         evidence_ids=sorted({key for r in edges for key in r["evidence_ids"]}),
-                        interpretation="知识关联路径；不表示完整运行调用链",
+                        interpretation="按关系方向展开的技术关联路径；文档为终点，不表示完整运行调用链",
                     )
                 )
                 if len(paths) >= 120:
@@ -127,11 +166,7 @@ def explanation(service, actor, pid, eid, analysis_set_id=None, release_id=None)
                     break
                 frontier.append((target, path, edges))
         choices, _ = reading.selections(s, analysis, release)
-        journeys = [
-            row
-            for row in JourneyService(service)._selected_list(s, actor, pid, choices)
-            if any(node.get("binding", {}).get("revision_id") == seed for node in row["dsl"]["nodes"])
-        ]
+        journeys, journeys_truncated = JourneyService(service).referencing(s, actor, pid, choices, seed)
         path_relations = {rid for path in paths for rid in path["relation_ids"]}
         path_nodes = {seed} | {rid for path in paths for rid in path["revision_ids"]}
         relations = [row for row in graph["edges"] if row["id"] in path_relations]
@@ -164,9 +199,14 @@ def explanation(service, actor, pid, eid, analysis_set_id=None, release_id=None)
             journeys=journeys,
             relations=relations,
             evidence=evidence,
-            is_truncated=truncated or omitted,
-            unknowns=[*graph["unknowns"], "没有经核验且与源码版本对齐的 Trace 时，不能宣称完整运行因果链"]
-            + (["有限路径仅返回已列出路径涉及的关联；循环、其他分支或超限关联需在局部图中继续核对"] if omitted else []),
+            is_truncated=truncated or omitted or journeys_truncated,
+            unknowns=[
+                *graph["unknowns"],
+                "排除页面包含等结构关系；技术路径最多3跳、100节点、120条路径",
+                "没有经核验且与源码版本对齐的 Trace 时，不能宣称完整运行因果链",
+            ]
+            + (["有限路径仅返回已列出路径涉及的关联；循环、其他分支或超限关联需在局部图中继续核对"] if omitted else [])
+            + (["流程反查最多检查200个当前可见流程，未检查部分可能仍有引用"] if journeys_truncated else []),
         )
 
 
@@ -182,7 +222,7 @@ def install_workbench(app, service, actor, envelope):
         release_id: str | None = None,
         depth: int = Query(2, ge=1, le=3),
         max_nodes: int = Query(100, ge=1, le=100),
-        confirmed_only: bool = False,
+        valid_only: bool = False,
         a=Depends(actor),
     ):
         from .reading import ReadingService
@@ -200,7 +240,7 @@ def install_workbench(app, service, actor, envelope):
                 max_nodes,
                 None,
                 True,
-                "trusted" if confirmed_only else "map",
+                "valid" if valid_only else "all",
             )
             return envelope(
                 request, dict(graph, analysis_set_id=analysis.id, release_id=release.id if release else None)
@@ -212,9 +252,11 @@ def install_workbench(app, service, actor, envelope):
         response_model_exclude_unset=True,
     )
     def preflight(pid: str, payload: OnboardingInput, request: Request, a=Depends(actor)):
+
         with service.db() as s:
             service.require(s, a, pid, "source:import")
         w = service.workspace(a, pid, payload.analysis_set_id)
+
         result = dict(
             project_id=pid,
             analysis_set_id=(w["selected_analysis_set"] or {}).get("id"),
@@ -223,9 +265,8 @@ def install_workbench(app, service, actor, envelope):
             requires_model_policy=payload.allow_platform_llm,
             source_alignment="unknown",
             issues=([] if payload.source_code_available else ["未提供源码，调用链与 SQL 能力降级"])
-            + (["资料未接入：请上传资料并运行安全预检"] if not w["sources"] else []),
-            capabilities=["readonly_import", "passive_explanation", "human_review"],
-            requires_review=True,
+            + (["资料未接入：请上传资料并运行格式预检"] if not w["sources"] else []),
+            capabilities=["readonly_import", "passive_explanation", "direct_knowledge_save"],
             server_filesystem_access=False,
         )
         result["preflight_sha256"] = sha(canonical(result))
@@ -274,9 +315,30 @@ def install_workbench(app, service, actor, envelope):
         reading = ReadingService(service)
         with reading.db() as s:
             graph, analysis, release = reading._graph(
-                s, a, project_id, eid, analysis_set_id, release_id, 3, 100, None, True, "trusted"
+                s, a, project_id, eid, analysis_set_id, release_id, 3, 100, TECHNICAL_TYPES, True, "valid"
             )
-            actions = [row for row in graph["nodes"] if row["type"] == "action"]
+            choices, _ = reading.selections(s, analysis, release)
+            seed = choices[eid]
+            nodes, adjacent = technical_adjacency(graph, reverse=True)
+            reached, frontier = {seed}, deque([(seed, 0)])
+            truncated = graph["truncated"]
+            while frontier:
+                current, depth = frontier.popleft()
+                if nodes[current]["type"] == "action":
+                    continue
+                if depth >= 3:
+                    if any(target not in reached for target, _ in adjacent[current]):
+                        truncated = True
+                    continue
+                for target, _ in adjacent[current]:
+                    if target in reached or nodes[target]["type"] not in KNOWLEDGE_TYPES | {"action"}:
+                        continue
+                    reached.add(target)
+                    frontier.append((target, depth + 1))
+            actions = [
+                row for row in graph["nodes"] if row["entity_revision_id"] in reached and row["type"] == "action"
+            ]
+            journeys, journeys_truncated = JourneyService(service).referencing(s, a, project_id, choices, seed)
             return envelope(
                 request,
                 dict(
@@ -285,59 +347,13 @@ def install_workbench(app, service, actor, envelope):
                     release_id=release.id if release else None,
                     entity_id=eid,
                     actions=actions,
-                    is_truncated=graph["truncated"],
-                    unknowns=graph["unknowns"],
+                    journeys=journeys,
+                    is_truncated=truncated or journeys_truncated,
+                    unknowns=graph["unknowns"]
+                    + ["动作反查沿技术关系反向最多3跳；不穿过页面成员关系或共享文档串联其他动作"]
+                    + (["流程反查最多检查200个当前可见流程，未检查部分可能仍有引用"] if journeys_truncated else []),
                 ),
             )
-
-    @app.get(
-        api + "/projects/{pid}/review-inbox",
-        response_model=Envelope[list[InboxItem]],
-        response_model_exclude_unset=True,
-    )
-    def inbox(pid: str, request: Request, analysis_set_id: str, a=Depends(actor)):
-        with service.db() as s:
-            service.require(s, a, pid, "links:review")
-        w = service.workspace(a, pid, analysis_set_id)
-        from .versions import VersionService
-        from .documents import DocumentService
-
-        items = [
-            dict(kind="relation", subject_id=r["id"], data=r)
-            for r in w["relations"]
-            if r["review_status"] == "candidate" or r["validity_status"] != "valid"
-        ]
-        from sqlalchemy import select
-        from .models import Audit
-
-        journeys = JourneyService(service).list(a, pid, analysis_set_id)
-        with service.db() as s:
-            for row in journeys:
-                decision = s.scalar(
-                    select(Audit)
-                    .where(
-                        Audit.project_id == pid,
-                        Audit.resource_id == row["revision_id"],
-                        Audit.action.in_(["journey.approve", "journey.reject"]),
-                    )
-                    .order_by(Audit.created_at.desc(), Audit.id.desc())
-                )
-                if (
-                    not decision
-                    or decision.action != "journey.approve"
-                    or decision.metadata_json.get("sha256") != row["content_sha256"]
-                ):
-                    items.append(dict(kind="journey", subject_id=row["journey_id"], data=row))
-        items += [
-            dict(kind="migration", subject_id=row["id"], data=row)
-            for row in VersionService(service).list_proposals(a, pid, analysis_set_id)
-            if row["status"] == "pending"
-        ]
-        for row in w["documents"]:
-            workflow = DocumentService(service).workflow(a, row["entity_id"], analysis_set_id)
-            if workflow["state"] != "approved" or workflow["revision_id"] != row["entity_revision_id"]:
-                items.append(dict(kind="document", subject_id=row["entity_id"], data=workflow))
-        return envelope(request, items)
 
     @app.get(
         api + "/projects/{pid}/state-replay", response_model=Envelope[ReplayOutput], response_model_exclude_unset=True

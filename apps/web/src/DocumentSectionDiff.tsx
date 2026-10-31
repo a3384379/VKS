@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { Button, Notice, Tag } from "./components";
 import { useWorkspace } from "./context";
+import { ProductEntityLink } from "./ProductEntityLink";
 type Report = {
   before: { revision_id: string; name: string } | null;
   after: { revision_id: string; name: string } | null;
@@ -11,8 +12,8 @@ type Report = {
     change_kind: string;
     locked_before: boolean;
     locked_after: boolean;
-    before: { name: string } | null;
-    after: { name: string } | null;
+    before: { revision_id: string; name: string } | null;
+    after: { revision_id: string; name: string } | null;
     patch: { text: string; is_truncated: boolean };
   }[];
   denominator: {
@@ -79,7 +80,7 @@ export function DocumentSectionDiff({
             {report.denominator.unchanged_sections} 节保持原修订与顺序。
           </p>
           <Notice>
-            差异核对与文档审核分开进行；此处不覆盖正文、人工锁或历史修订。
+            差异展示基于准确修订；此处不覆盖正文、人工锁或历史修订。
           </Notice>
           {report.sections.map((row) => (
             <details key={row.section_id}>
@@ -97,6 +98,25 @@ export function DocumentSectionDiff({
                 )[row.change_kind] || row.change_kind}{" "}
                 {(row.locked_before || row.locked_after) && <Tag>含人工锁</Tag>}
               </summary>
+              {w.entities.find(
+                (e) =>
+                  e.entity_id === row.section_id &&
+                  e.type === "section" &&
+                  e.entity_revision_id === row.after?.revision_id,
+              ) && (
+                <ProductEntityLink
+                  entity={
+                    w.entities.find(
+                      (e) =>
+                        e.entity_id === row.section_id &&
+                        e.type === "section" &&
+                        e.entity_revision_id === row.after?.revision_id,
+                    )!
+                  }
+                >
+                  打开同版章节
+                </ProductEntityLink>
+              )}
               <pre className="v2-json">{row.patch.text || "正文未变化"}</pre>
               {row.patch.is_truncated && (
                 <Notice>差异显示已截断，请核对完整原文。</Notice>

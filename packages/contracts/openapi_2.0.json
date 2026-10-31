@@ -5,6 +5,62 @@
     "version": "2.0-dev"
   },
   "paths": {
+    "/api/v2/projects/{pid}/snapshots": {
+      "post": {
+        "summary": "Save Snapshot",
+        "operationId": "save_snapshot_api_v2_projects__pid__snapshots_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v2/projects/{pid}/journeys": {
       "get": {
         "summary": "Listing",
@@ -305,73 +361,6 @@
         }
       }
     },
-    "/api/v2/journeys/{jid}/review": {
-      "post": {
-        "summary": "Review",
-        "operationId": "review_api_v2_journeys__jid__review_post",
-        "parameters": [
-          {
-            "name": "jid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Jid"
-            }
-          },
-          {
-            "name": "if-match",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "If-Match"
-            }
-          },
-          {
-            "name": "idempotency-key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/JourneyReviewInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_JourneyDecision_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v2/entities/{eid}/knowledge-map": {
       "get": {
         "summary": "Knowledge Map",
@@ -452,13 +441,13 @@
             }
           },
           {
-            "name": "confirmed_only",
+            "name": "valid_only",
             "in": "query",
             "required": false,
             "schema": {
               "type": "boolean",
               "default": false,
-              "title": "Confirmed Only"
+              "title": "Valid Only"
             }
           }
         ],
@@ -766,54 +755,6 @@
         }
       }
     },
-    "/api/v2/projects/{pid}/review-inbox": {
-      "get": {
-        "summary": "Inbox",
-        "operationId": "inbox_api_v2_projects__pid__review_inbox_get",
-        "parameters": [
-          {
-            "name": "pid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Pid"
-            }
-          },
-          {
-            "name": "analysis_set_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Analysis Set Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_list_InboxItem__"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v2/projects/{pid}/state-replay": {
       "get": {
         "summary": "Replay",
@@ -974,177 +915,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Envelope_JobOutput_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v2/projects/{pid}/review-items": {
-      "get": {
-        "summary": "Items",
-        "operationId": "items_api_v2_projects__pid__review_items_get",
-        "parameters": [
-          {
-            "name": "pid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Pid"
-            }
-          },
-          {
-            "name": "analysis_set_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Analysis Set Id"
-            }
-          },
-          {
-            "name": "kind",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "enum": [
-                "all",
-                "relation",
-                "journey",
-                "migration",
-                "document"
-              ],
-              "type": "string",
-              "default": "all",
-              "title": "Kind"
-            }
-          },
-          {
-            "name": "status",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "enum": [
-                "all",
-                "pending",
-                "rejected",
-                "approved"
-              ],
-              "type": "string",
-              "default": "pending",
-              "title": "Status"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Offset"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 50,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_InboxOutput_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v2/projects/{pid}/review-batches": {
-      "post": {
-        "summary": "Batch",
-        "operationId": "batch_api_v2_projects__pid__review_batches_post",
-        "parameters": [
-          {
-            "name": "pid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Pid"
-            }
-          },
-          {
-            "name": "if-match",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "If-Match"
-            }
-          },
-          {
-            "name": "idempotency-key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/vks_api__review_inbox__BatchInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_BatchOutput_"
                 }
               }
             }
@@ -1805,73 +1575,6 @@
         }
       }
     },
-    "/api/v2/knowledge-tasks/{jid}/confirm-plan": {
-      "post": {
-        "summary": "Confirm",
-        "operationId": "confirm_api_v2_knowledge_tasks__jid__confirm_plan_post",
-        "parameters": [
-          {
-            "name": "jid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Jid"
-            }
-          },
-          {
-            "name": "if-match",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "If-Match"
-            }
-          },
-          {
-            "name": "idempotency-key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PlanConfirmationInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_JobOutput_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v2/knowledge-tasks/{jid}/stage-artifacts/{digest}": {
       "get": {
         "summary": "Stage",
@@ -2135,84 +1838,6 @@
         ],
         "title": "AnalysisInput"
       },
-      "ApprovalInput": {
-        "properties": {
-          "analysis_set_id": {
-            "type": "string",
-            "title": "Analysis Set Id"
-          },
-          "scenario_revision_id": {
-            "type": "string",
-            "title": "Scenario Revision Id"
-          },
-          "requestor_actor_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Requestor Actor Id"
-          },
-          "expires_in_seconds": {
-            "type": "integer",
-            "maximum": 900.0,
-            "minimum": 30.0,
-            "title": "Expires In Seconds",
-            "default": 300
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "analysis_set_id",
-          "scenario_revision_id",
-          "reason"
-        ],
-        "title": "ApprovalInput"
-      },
-      "BatchOutput": {
-        "properties": {
-          "analysis_set_id": {
-            "type": "string",
-            "title": "Analysis Set Id"
-          },
-          "selection_version": {
-            "type": "integer",
-            "title": "Selection Version"
-          },
-          "count": {
-            "type": "integer",
-            "title": "Count"
-          },
-          "decisions": {
-            "items": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
-            },
-            "type": "array",
-            "title": "Decisions"
-          }
-        },
-        "type": "object",
-        "required": [
-          "analysis_set_id",
-          "selection_version",
-          "count",
-          "decisions"
-        ],
-        "title": "BatchOutput"
-      },
       "Binding": {
         "properties": {
           "entity_id": {
@@ -2269,6 +1894,14 @@
             "type": "array",
             "title": "Actions"
           },
+          "journeys": {
+            "items": {
+              "$ref": "#/components/schemas/JourneyOutput"
+            },
+            "type": "array",
+            "title": "Journeys",
+            "default": []
+          },
           "is_truncated": {
             "type": "boolean",
             "title": "Is Truncated"
@@ -2292,31 +1925,6 @@
           "unknowns"
         ],
         "title": "BusinessReferencesOutput"
-      },
-      "CandidateInput": {
-        "properties": {
-          "analysis_set_id": {
-            "type": "string",
-            "title": "Analysis Set Id"
-          },
-          "review_batch_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Review Batch Id"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "analysis_set_id"
-        ],
-        "title": "CandidateInput"
       },
       "CaptureBindingInput": {
         "properties": {
@@ -2394,23 +2002,17 @@
             "type": "string",
             "title": "Environment Ref"
           },
-          "approval_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Approval Ref"
+          "analysis_set_id": {
+            "type": "string",
+            "title": "Analysis Set Id"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "scenario_revision_id",
-          "environment_ref"
+          "environment_ref",
+          "analysis_set_id"
         ],
         "title": "CaptureInput"
       },
@@ -2782,9 +2384,9 @@
       },
       "CoveragePair": {
         "properties": {
-          "confirmed": {
+          "linked": {
             "type": "integer",
-            "title": "Confirmed"
+            "title": "Linked"
           },
           "total": {
             "type": "integer",
@@ -2793,7 +2395,7 @@
         },
         "type": "object",
         "required": [
-          "confirmed",
+          "linked",
           "total"
         ],
         "title": "CoveragePair"
@@ -2924,11 +2526,6 @@
           "report_sha256": {
             "type": "string",
             "title": "Report Sha256"
-          },
-          "requires_document_review": {
-            "type": "boolean",
-            "title": "Requires Document Review",
-            "default": true
           }
         },
         "type": "object",
@@ -2945,41 +2542,6 @@
           "report_sha256"
         ],
         "title": "DocumentDiffOutput"
-      },
-      "DocumentReviewInput": {
-        "properties": {
-          "analysis_set_id": {
-            "type": "string",
-            "title": "Analysis Set Id"
-          },
-          "revision_id": {
-            "type": "string",
-            "title": "Revision Id"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Reason"
-          },
-          "decision": {
-            "type": "string",
-            "enum": [
-              "approve",
-              "request_changes"
-            ],
-            "title": "Decision"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "analysis_set_id",
-          "revision_id",
-          "reason",
-          "decision"
-        ],
-        "title": "DocumentReviewInput"
       },
       "DraftInput": {
         "properties": {
@@ -3047,22 +2609,6 @@
           "label"
         ],
         "title": "Edge"
-      },
-      "Envelope_BatchOutput_": {
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/BatchOutput"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/Metadata"
-          }
-        },
-        "type": "object",
-        "required": [
-          "data",
-          "meta"
-        ],
-        "title": "Envelope[BatchOutput]"
       },
       "Envelope_BusinessReferencesOutput_": {
         "properties": {
@@ -3144,22 +2690,6 @@
         ],
         "title": "Envelope[ExplanationOutput]"
       },
-      "Envelope_InboxOutput_": {
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/InboxOutput"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/Metadata"
-          }
-        },
-        "type": "object",
-        "required": [
-          "data",
-          "meta"
-        ],
-        "title": "Envelope[InboxOutput]"
-      },
       "Envelope_JobOutput_": {
         "properties": {
           "data": {
@@ -3175,22 +2705,6 @@
           "meta"
         ],
         "title": "Envelope[JobOutput]"
-      },
-      "Envelope_JourneyDecision_": {
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/JourneyDecision"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/Metadata"
-          }
-        },
-        "type": "object",
-        "required": [
-          "data",
-          "meta"
-        ],
-        "title": "Envelope[JourneyDecision]"
       },
       "Envelope_JourneyOutput_": {
         "properties": {
@@ -3369,26 +2883,6 @@
           "meta"
         ],
         "title": "Envelope[dict]"
-      },
-      "Envelope_list_InboxItem__": {
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/InboxItem"
-            },
-            "type": "array",
-            "title": "Data"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/Metadata"
-          }
-        },
-        "type": "object",
-        "required": [
-          "data",
-          "meta"
-        ],
-        "title": "Envelope[list[InboxItem]]"
       },
       "Envelope_list_JourneyOutput__": {
         "properties": {
@@ -3864,107 +3358,6 @@
         ],
         "title": "ImportInput"
       },
-      "InboxItem": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "relation",
-              "journey",
-              "migration",
-              "document"
-            ],
-            "title": "Kind"
-          },
-          "subject_id": {
-            "type": "string",
-            "title": "Subject Id"
-          },
-          "data": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Data"
-          }
-        },
-        "type": "object",
-        "required": [
-          "kind",
-          "subject_id",
-          "data"
-        ],
-        "title": "InboxItem"
-      },
-      "InboxOutput": {
-        "properties": {
-          "project_id": {
-            "type": "string",
-            "title": "Project Id"
-          },
-          "analysis_set_id": {
-            "type": "string",
-            "title": "Analysis Set Id"
-          },
-          "selection_version": {
-            "type": "integer",
-            "title": "Selection Version"
-          },
-          "scope": {
-            "type": "string",
-            "title": "Scope"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ReviewItem"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total_visible": {
-            "type": "integer",
-            "title": "Total Visible"
-          },
-          "counts": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Counts"
-          },
-          "offset": {
-            "type": "integer",
-            "title": "Offset"
-          },
-          "limit": {
-            "type": "integer",
-            "title": "Limit"
-          },
-          "next_offset": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Offset"
-          }
-        },
-        "type": "object",
-        "required": [
-          "project_id",
-          "analysis_set_id",
-          "selection_version",
-          "scope",
-          "items",
-          "total_visible",
-          "counts",
-          "offset",
-          "limit",
-          "next_offset"
-        ],
-        "title": "InboxOutput"
-      },
       "IssuerInput": {
         "properties": {
           "issuer": {
@@ -4222,6 +3615,16 @@
             "minLength": 1,
             "title": "Title"
           },
+          "semantics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Semantics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "entry": {
             "type": "string",
             "maxLength": 96,
@@ -4257,28 +3660,6 @@
           "edges"
         ],
         "title": "Journey"
-      },
-      "JourneyDecision": {
-        "properties": {
-          "revision_id": {
-            "type": "string",
-            "title": "Revision Id"
-          },
-          "decision": {
-            "type": "string",
-            "enum": [
-              "approve",
-              "reject"
-            ],
-            "title": "Decision"
-          }
-        },
-        "type": "object",
-        "required": [
-          "revision_id",
-          "decision"
-        ],
-        "title": "JourneyDecision"
       },
       "JourneyInput": {
         "properties": {
@@ -4330,41 +3711,6 @@
         ],
         "title": "JourneyOutput"
       },
-      "JourneyReviewInput": {
-        "properties": {
-          "analysis_set_id": {
-            "type": "string",
-            "title": "Analysis Set Id"
-          },
-          "revision_id": {
-            "type": "string",
-            "title": "Revision Id"
-          },
-          "decision": {
-            "type": "string",
-            "enum": [
-              "approve",
-              "reject"
-            ],
-            "title": "Decision"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "analysis_set_id",
-          "revision_id",
-          "decision",
-          "reason"
-        ],
-        "title": "JourneyReviewInput"
-      },
       "JourneyValidation": {
         "properties": {
           "dsl": {
@@ -4373,17 +3719,12 @@
           "sha256": {
             "type": "string",
             "title": "Sha256"
-          },
-          "requires_review": {
-            "type": "boolean",
-            "title": "Requires Review"
           }
         },
         "type": "object",
         "required": [
           "dsl",
-          "sha256",
-          "requires_review"
+          "sha256"
         ],
         "title": "JourneyValidation"
       },
@@ -4466,12 +3807,12 @@
             "type": "array",
             "title": "Causal Basis"
           },
-          "review_status": {
+          "excluded": {
             "items": {
-              "type": "string"
+              "type": "boolean"
             },
             "type": "array",
-            "title": "Review Status"
+            "title": "Excluded"
           },
           "evidence_ids": {
             "items": {
@@ -4490,7 +3831,7 @@
           "revision_ids",
           "relation_ids",
           "causal_basis",
-          "review_status",
+          "excluded",
           "evidence_ids",
           "interpretation"
         ],
@@ -4523,7 +3864,6 @@
             "enum": [
               "viewer",
               "editor",
-              "reviewer",
               "maintainer",
               "admin"
             ],
@@ -4795,6 +4135,7 @@
             "enum": [
               "page",
               "action",
+              "step",
               "decision",
               "branch",
               "end",
@@ -4807,6 +4148,19 @@
             "maxLength": 200,
             "minLength": 1,
             "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
           },
           "x": {
             "type": "integer",
@@ -4947,10 +4301,6 @@
             "type": "array",
             "title": "Capabilities"
           },
-          "requires_review": {
-            "type": "boolean",
-            "title": "Requires Review"
-          },
           "server_filesystem_access": {
             "type": "boolean",
             "title": "Server Filesystem Access"
@@ -4970,7 +4320,6 @@
           "source_alignment",
           "issues",
           "capabilities",
-          "requires_review",
           "server_filesystem_access",
           "preflight_sha256"
         ],
@@ -5074,28 +4423,6 @@
           "new_password"
         ],
         "title": "PasswordReset"
-      },
-      "PlanConfirmationInput": {
-        "properties": {
-          "plan_sha256": {
-            "type": "string",
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Plan Sha256"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "plan_sha256",
-          "reason"
-        ],
-        "title": "PlanConfirmationInput"
       },
       "PolicyInput": {
         "properties": {
@@ -5418,58 +4745,6 @@
         ],
         "title": "ProposalItem"
       },
-      "ProposalReviewInput": {
-        "properties": {
-          "decision": {
-            "type": "string",
-            "enum": [
-              "accept",
-              "reject"
-            ],
-            "title": "Decision"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "decision",
-          "reason"
-        ],
-        "title": "ProposalReviewInput"
-      },
-      "PublishInput": {
-        "properties": {
-          "expected_manifest_sha256": {
-            "type": "string",
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Expected Manifest Sha256"
-          },
-          "human_confirmation_ref": {
-            "type": "string",
-            "title": "Human Confirmation Ref"
-          },
-          "change_note": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Change Note"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "expected_manifest_sha256",
-          "human_confirmation_ref",
-          "change_note"
-        ],
-        "title": "PublishInput"
-      },
       "QuestionInput": {
         "properties": {
           "use_model": {
@@ -5555,17 +4830,17 @@
       },
       "RelationCoverage": {
         "properties": {
-          "confirmed": {
+          "linked": {
             "type": "integer",
-            "title": "Confirmed"
+            "title": "Linked"
           },
           "total": {
             "type": "integer",
             "title": "Total"
           },
-          "candidate": {
+          "excluded": {
             "type": "integer",
-            "title": "Candidate"
+            "title": "Excluded"
           },
           "stale": {
             "type": "integer",
@@ -5578,13 +4853,27 @@
         },
         "type": "object",
         "required": [
-          "confirmed",
+          "linked",
           "total",
-          "candidate",
+          "excluded",
           "stale",
           "broken"
         ],
         "title": "RelationCoverage"
+      },
+      "RelationStateInput": {
+        "properties": {
+          "excluded": {
+            "type": "boolean",
+            "title": "Excluded"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "excluded"
+        ],
+        "title": "RelationStateInput"
       },
       "RemoveHotspotInput": {
         "properties": {
@@ -5745,192 +5034,6 @@
         ],
         "title": "RevalidateInput"
       },
-      "ReviewAction": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "relation",
-              "journey",
-              "migration",
-              "document"
-            ],
-            "title": "Kind"
-          },
-          "subject_id": {
-            "type": "string",
-            "maxLength": 36,
-            "minLength": 1,
-            "title": "Subject Id"
-          },
-          "review_token": {
-            "type": "string",
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Review Token"
-          },
-          "decision": {
-            "type": "string",
-            "enum": [
-              "approve",
-              "reject",
-              "submit",
-              "reopen"
-            ],
-            "title": "Decision"
-          },
-          "evidence_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array",
-                "maxItems": 20,
-                "minItems": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evidence Ids"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "kind",
-          "subject_id",
-          "review_token",
-          "decision"
-        ],
-        "title": "ReviewAction"
-      },
-      "ReviewInput": {
-        "properties": {
-          "decision": {
-            "type": "string",
-            "enum": [
-              "confirm",
-              "reject",
-              "reopen"
-            ],
-            "title": "Decision"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Reason"
-          },
-          "evidence_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "maxItems": 20,
-            "minItems": 1,
-            "title": "Evidence Ids"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "decision",
-          "reason",
-          "evidence_ids"
-        ],
-        "title": "ReviewInput"
-      },
-      "ReviewItem": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "relation",
-              "journey",
-              "migration",
-              "document"
-            ],
-            "title": "Kind"
-          },
-          "subject_id": {
-            "type": "string",
-            "title": "Subject Id"
-          },
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "revision_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revision Id"
-          },
-          "version": {
-            "type": "string",
-            "title": "Version"
-          },
-          "review_token": {
-            "type": "string",
-            "title": "Review Token"
-          },
-          "actions": {
-            "items": {
-              "type": "string",
-              "enum": [
-                "approve",
-                "reject",
-                "submit",
-                "reopen"
-              ]
-            },
-            "type": "array",
-            "title": "Actions"
-          },
-          "batch_actions": {
-            "items": {
-              "type": "string",
-              "enum": [
-                "approve",
-                "reject",
-                "submit",
-                "reopen"
-              ]
-            },
-            "type": "array",
-            "title": "Batch Actions"
-          },
-          "data": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Data"
-          }
-        },
-        "type": "object",
-        "required": [
-          "kind",
-          "subject_id",
-          "title",
-          "status",
-          "revision_id",
-          "version",
-          "review_token",
-          "actions",
-          "batch_actions",
-          "data"
-        ],
-        "title": "ReviewItem"
-      },
       "ScenarioInput": {
         "properties": {
           "analysis_set_id": {
@@ -6030,6 +5133,134 @@
           "query"
         ],
         "title": "SearchInput"
+      },
+      "Semantics": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "business_process",
+              "operation_sequence",
+              "evidence_navigation",
+              "observation_comparison",
+              "unclassified"
+            ],
+            "title": "Kind"
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "declared",
+              "observed",
+              "inferred",
+              "unknown"
+            ],
+            "title": "Basis"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purpose"
+          },
+          "preconditions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 2000,
+                  "minLength": 1
+                },
+                "type": "array",
+                "maxItems": 30
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preconditions"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "unknowns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 2000,
+                  "minLength": 1
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unknowns"
+          },
+          "source_refs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Binding"
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Refs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "basis"
+        ],
+        "title": "Semantics",
+        "description": "An author's meaning claim; neither approval nor runtime/business validation."
+      },
+      "SnapshotInput": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "title": "Analysis Set Id"
+          },
+          "change_note": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Change Note",
+            "default": "保存知识版本"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id"
+        ],
+        "title": "SnapshotInput"
       },
       "SourceDiagnostics": {
         "properties": {
@@ -6528,11 +5759,6 @@
             "title": "Pause Requested",
             "default": false
           },
-          "plan_confirmation_required": {
-            "type": "boolean",
-            "title": "Plan Confirmation Required",
-            "default": false
-          },
           "plan_preview": {
             "anyOf": [
               {
@@ -6734,113 +5960,6 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ViewportInput"
-      },
-      "WorkflowInput": {
-        "properties": {
-          "analysis_set_id": {
-            "type": "string",
-            "title": "Analysis Set Id"
-          },
-          "revision_id": {
-            "type": "string",
-            "title": "Revision Id"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "analysis_set_id",
-          "revision_id",
-          "reason"
-        ],
-        "title": "WorkflowInput"
-      },
-      "vks_api__relationships__BatchInput": {
-        "properties": {
-          "analysis_set_id": {
-            "type": "string",
-            "title": "Analysis Set Id"
-          },
-          "relation_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "maxItems": 100,
-            "minItems": 1,
-            "title": "Relation Ids"
-          },
-          "expected_versions": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "maxProperties": 100,
-            "minProperties": 1,
-            "title": "Expected Versions"
-          },
-          "decision": {
-            "type": "string",
-            "enum": [
-              "confirm",
-              "reject"
-            ],
-            "title": "Decision"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "analysis_set_id",
-          "relation_ids",
-          "expected_versions",
-          "decision",
-          "reason"
-        ],
-        "title": "BatchInput"
-      },
-      "vks_api__review_inbox__BatchInput": {
-        "properties": {
-          "analysis_set_id": {
-            "type": "string",
-            "title": "Analysis Set Id"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ReviewAction"
-            },
-            "type": "array",
-            "maxItems": 50,
-            "minItems": 1,
-            "title": "Items"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "analysis_set_id",
-          "items",
-          "reason"
-        ],
-        "title": "BatchInput"
       }
     }
   }

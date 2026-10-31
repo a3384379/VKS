@@ -7,12 +7,12 @@ import os
 from pathlib import Path
 import time
 from playwright.sync_api import Page, sync_playwright
-from services.browser_runner import runner
 from vks_api.service import Service
 from vks_api.scenarios import ScenarioService
 
 
-def test_ten_step_mock_capture_reports_redaction_and_storage_phases(tmp_path, monkeypatch):
+def test_ten_step_mock_capture_reports_capture_and_storage_phases(tmp_path, monkeypatch):
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -88,14 +88,10 @@ def test_ten_step_mock_capture_reports_redaction_and_storage_phases(tmp_path, mo
             steps=steps,
         )
         saved = scenes.create(actor, project["id"], dict(analysis_set_id=aid, dsl=dsl), "scene")
-        approval = scenes.approve(
-            actor,
-            saved["scenario_id"],
-            dict(
-                analysis_set_id=aid,
-                scenario_revision_id=saved["scenario_revision_id"],
-                reason="Synthetic private Mock profile",
-            ),
+        approval = dict(
+            analysis_set_id=aid,
+            scenario_revision_id=saved["scenario_revision_id"],
+            reason="Synthetic private Mock profile",
         )
         accepted = scenes.request_capture(
             actor,
@@ -103,14 +99,14 @@ def test_ten_step_mock_capture_reports_redaction_and_storage_phases(tmp_path, mo
             dict(
                 scenario_revision_id=saved["scenario_revision_id"],
                 environment_ref="mock",
-                approval_ref=approval["approval_ref"],
+                analysis_set_id=approval["analysis_set_id"],
             ),
             "capture",
         )
-        phases = dict(dom_redaction_seconds=0.0, masked_screenshot_seconds=0.0, object_storage_seconds=0.0)
+        phases = dict(dom_capture_seconds=0.0, screenshot_seconds=0.0, object_storage_seconds=0.0)
         for obj, name, key in (
-            (runner, "redact_dom", "dom_redaction_seconds"),
-            (Page, "screenshot", "masked_screenshot_seconds"),
+            (Page, "content", "dom_capture_seconds"),
+            (Page, "screenshot", "screenshot_seconds"),
             (service, "_put_object", "object_storage_seconds"),
         ):
             original = getattr(obj, name)
@@ -132,7 +128,7 @@ def test_ten_step_mock_capture_reports_redaction_and_storage_phases(tmp_path, mo
         assert len(record["result"]["steps"]) == 10 and len(record["result"]["snapshots"]) == 5
         for item in record["result"]["snapshots"]:
             raw, _ = service.artifact_bytes(actor, project["id"], item["dom_artifact_id"])
-            assert b"13800138000" not in raw and b"synthetic-private" not in raw
+            assert b"13800138000" in raw and b"synthetic-private" in raw
         report = dict(
             profile="synthetic ten-step read-only Mock; five saved snapshots; not business branch acceptance",
             steps=10,
@@ -140,7 +136,7 @@ def test_ten_step_mock_capture_reports_redaction_and_storage_phases(tmp_path, mo
             elapsed_seconds=elapsed,
             phases=phases,
             external_model_calls=0,
-            phase_scope="DOM sanitizer, masked screenshot call, object writes separately; DB/network/queue overhead remains in total",
+            phase_scope="Original DOM capture, screenshot call, object writes separately; DB/network/queue overhead remains in total",
         )
         if destination := os.getenv("VKS_CAPTURE_PROFILE_OUTPUT"):
             Path(destination).write_text(json.dumps(report, indent=2) + "\n")

@@ -1,5 +1,5 @@
 from playwright.sync_api import expect,sync_playwright
-from test_frontend_browser import site,chromium_path
+from test_frontend_browser import site as site, chromium_path  # pytest fixture registration
 
 
 def test_journey_manual_conflict_merge_validates_before_explicit_cas_save(site):
@@ -11,10 +11,11 @@ def test_journey_manual_conflict_merge_validates_before_explicit_cas_save(site):
             page.goto(url+f'/#view=journeys&project={pid}')
             page.get_by_label('登录名',exact=True).fill('owner');page.get_by_label('密码',exact=True).fill('owner')
             page.get_by_role('button',name='打开工作空间').click()
+            page.get_by_role('button',name='维护导览与结构',exact=True).click()
             page.get_by_role('button',name='新建流程',exact=True).click()
             title=page.get_by_label('流程名称',exact=True);title.fill('Merge base')
             page.get_by_role('button',name='保存流程',exact=True).click()
-            expect(page.get_by_text('流程已保存为不可变修订，等待人员审核',exact=True)).to_be_visible()
+            expect(page.get_by_text('流程已保存为不可变修订',exact=True)).to_be_visible()
             w=page.request.get(url+f'/api/v1/projects/{pid}/workspace').json()['data'];aid=w['selected_analysis_set']['id']
             rows=page.request.get(url+f'/api/v2/projects/{pid}/journeys?analysis_set_id={aid}').json()['data']
             row=next(r for r in rows if r['dsl']['title']=='Merge base')
@@ -34,7 +35,7 @@ def test_journey_manual_conflict_merge_validates_before_explicit_cas_save(site):
             unchanged=page.request.get(url+f'/api/v2/projects/{pid}/journeys?analysis_set_id={aid}').json()['data']
             assert next(r for r in unchanged if r['journey_id']==row['journey_id'])['dsl']['title']=='Remote edited title'
             page.get_by_role('button',name='保存流程',exact=True).click()
-            page.reload();expect(title).to_have_value('Local merged title')
+            page.reload();page.get_by_role('button',name='维护导览与结构',exact=True).click();expect(title).to_have_value('Local merged title')
             page.get_by_role('button',name='自动排列',exact=True).click()
             page.get_by_role('button',name='撤销',exact=True).click()
         finally:browser.close()

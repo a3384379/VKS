@@ -1,5 +1,5 @@
 import "./configuration.css";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   GitMerge,
   GitPullRequestArrow,
@@ -9,10 +9,9 @@ import {
   X,
 } from "lucide-react";
 import { api, ApiError, mutation } from "./api";
-import { Button, Modal, Notice, RelationState, Tag } from "./components";
+import { Button, Modal, Notice, RelationState } from "./components";
 import { usePermission, useWorkspace } from "./context";
 import type { Relation } from "./types";
-
 export type CorrectionOperation = "retarget" | "split" | "merge" | "feedback";
 interface Target {
   to_revision_id: string;
@@ -29,22 +28,6 @@ export const deterministicRelationTypes = new Set([
   "reads_table",
   "writes_table",
 ]);
-export function batchReviewPayload(
-  analysisId: string,
-  relations: Relation[],
-  decision: "confirm" | "reject",
-  reason: string,
-) {
-  return {
-    analysis_set_id: analysisId,
-    relation_ids: relations.map((row) => row.id),
-    expected_versions: Object.fromEntries(
-      relations.map((row) => [row.id, row.row_version]),
-    ),
-    decision,
-    reason: reason.trim(),
-  };
-}
 export function correctionPayload(
   analysisId: string,
   operation: CorrectionOperation,
@@ -77,10 +60,9 @@ const names: Record<CorrectionOperation, string> = {
   merge: "合并关联",
   feedback: "关联纠错反馈",
 };
-
 export function RelationOperations({ relation }: { relation: Relation }) {
-  const { w, session, notify, refresh } = useWorkspace();
-  const canReview = usePermission("links:review"),
+  const { w, notify, refresh } = useWorkspace();
+  const canEdit = usePermission("knowledge:edit"),
     canRead = usePermission("knowledge:read");
   const writable = w.selected_analysis_set?.state !== "frozen",
     aid = w.selected_analysis_set?.id;
@@ -94,7 +76,19 @@ export function RelationOperations({ relation }: { relation: Relation }) {
     [reason, setReason] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const active = useRef(true);
+  const retry = useRef<{
+    signature: string;
+    key: string;
+  } | null>(null);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
   function open(next: CorrectionOperation) {
+    retry.current = null;
     setOperation(next);
     setOriginal(relation);
     setReason("");
@@ -134,36 +128,37 @@ export function RelationOperations({ relation }: { relation: Relation }) {
         original,
         ...siblings.filter((row) => merged.includes(row.id)),
       ];
-      await api(
-        "/relations/" + original.id + "/corrections",
-        mutation(
-          "POST",
-          correctionPayload(
-            aid,
-            operation,
-            reason,
-            targets,
-            originals,
-            correctTarget,
-          ),
-          original.row_version,
-        ),
+      const payload = correctionPayload(
+        aid,
+        operation,
+        reason,
+        targets,
+        originals,
+        correctTarget,
       );
-      notify(
-        operation === "feedback"
-          ? "纠错反馈已记录，原关系保留等待核验"
-          : "新的候选关系已创建，原关系与审核依据已保留",
-      );
+      const version = original.row_version;
+      const signature = JSON.stringify([original.id, version, payload]);
+      if (retry.current?.signature !== signature)
+        retry.current = { signature, key: crypto.randomUUID() };
+      const request = mutation("POST", payload, version);
+      request.headers = {
+        ...request.headers,
+        "Idempotency-Key": retry.current.key,
+      };
+      await api("/relations/" + original.id + "/corrections", request);
+      if (!active.current) return;
+      notify(operation === "feedback" ? "纠错备注已保存" : "关联已更新");
       setOperation(null);
       await refresh();
     } catch (e) {
+      if (!active.current) return;
       setError(
         e instanceof ApiError && e.status === 412
-          ? "关系已被其他人更新。当前意见与目标保留，请关闭前复制需要保留的内容，再刷新核对当前版本。"
+          ? "关系已被其他人更新。当前意见、目标和证据保留，请复制需要保留的内容，再刷新核对当前版本。"
           : (e as Error).message,
       );
     } finally {
-      setBusy(false);
+      if (active.current) setBusy(false);
     }
   }
   const filteredEntities = w.entities
@@ -204,11 +199,11 @@ export function RelationOperations({ relation }: { relation: Relation }) {
     ) ||
     new Set(targets.map((target) => target.to_revision_id)).size !==
       targets.length;
-  if (!canRead || session.human === false || !aid) return null;
+  if (!canRead || !aid) return null;
   return (
     <div className="relation-operations">
       <div className="row wrap">
-        {canReview && writable && (
+        {canEdit && writable && (
           <>
             <Button kind="small" onClick={() => open("retarget")}>
               <GitPullRequestArrow size={14} />
@@ -218,16 +213,20 @@ export function RelationOperations({ relation }: { relation: Relation }) {
               <Split size={14} />
               拆分
             </Button>
-            <Button kind="small" onClick={() => open("merge")}>
-              <GitMerge size={14} />
-              合并
-            </Button>
+            {
+              <Button kind="small" onClick={() => open("merge")}>
+                <GitMerge size={14} />
+                合并
+              </Button>
+            }
           </>
         )}
-        <Button kind="small" onClick={() => open("feedback")}>
-          <MessageSquareWarning size={14} />
-          关联不正确
-        </Button>
+        {
+          <Button kind="small" onClick={() => open("feedback")}>
+            <MessageSquareWarning size={14} />
+            关联不正确
+          </Button>
+        }
       </div>
       {operation && (
         <Modal title={names[operation]} onClose={() => setOperation(null)}>
@@ -238,7 +237,7 @@ export function RelationOperations({ relation }: { relation: Relation }) {
             </code>
             {operation === "feedback"
               ? "反馈供人工核验及本地评测使用，不自动更改关系，不向外部服务上传或训练。"
-              : "改选、拆分和合并会保留原关系并生成候选，需要再次审核；原确认不会迁移到新目标。"}
+              : "改选、拆分和合并会保留原关系并生成新关联，保存后直接可用；有效性与因果分别核验。"}
           </Notice>
           {operation === "merge" && (
             <>
@@ -319,6 +318,9 @@ export function RelationOperations({ relation }: { relation: Relation }) {
                 </div>
                 <select
                   required
+                  aria-label={
+                    operation === "split" ? "拆分目标 " + (index + 1) : "新目标"
+                  }
                   value={target.to_revision_id}
                   onChange={(e) =>
                     setTargets((previous) =>
@@ -426,226 +428,11 @@ export function RelationOperations({ relation }: { relation: Relation }) {
                 void submit();
               }}
             >
-              {operation === "feedback" ? "提交反馈" : "创建候选"}
+              {operation === "feedback" ? "提交反馈" : "保存关联"}
             </Button>
           </div>
         </Modal>
       )}
     </div>
-  );
-}
-
-export function BatchRelationReview() {
-  const { w, notify, refresh } = useWorkspace();
-  const canReview = usePermission("links:review");
-  const [open, setOpen] = useState(false),
-    [rows, setRows] = useState<Relation[]>([]),
-    [type, setType] = useState(""),
-    [selected, setSelected] = useState<string[]>([]),
-    [decision, setDecision] = useState<"confirm" | "reject">("confirm"),
-    [reason, setReason] = useState(""),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  const eligible = rows.filter((row) => typeOf(row) === type),
-    chosen = eligible.filter((row) => selected.includes(row.id));
-  const types = [...new Set(rows.map(typeOf))];
-  async function submit() {
-    if (!w.selected_analysis_set) return;
-    setBusy(true);
-    setError("");
-    try {
-      const result = await api<{ count: number }>(
-        "/projects/" + w.project.id + "/relations/batch-review",
-        mutation(
-          "POST",
-          batchReviewPayload(
-            w.selected_analysis_set.id,
-            chosen,
-            decision,
-            reason,
-          ),
-        ),
-      );
-      setOpen(false);
-      notify(
-        "已批量" +
-          (decision === "confirm" ? "确认 " : "拒绝 ") +
-          result.count +
-          " 项关系，每项审核记录独立保存",
-      );
-      await refresh();
-    } catch (e) {
-      setError(
-        e instanceof ApiError && e.status === 412
-          ? "至少一项关系已更新，整批未提交。当前选择和说明保留；请关闭并刷新后重新核对。"
-          : (e as Error).message,
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-  if (
-    !canReview ||
-    !w.selected_analysis_set ||
-    w.selected_analysis_set.state === "frozen"
-  )
-    return null;
-  return (
-    <>
-      <Button
-        kind="small"
-        onClick={() => {
-          const candidates = w.relations.filter(
-            (row) => row.review_status === "candidate",
-          );
-          setRows(candidates);
-          setType(
-            typeOf(
-              candidates.find((row) =>
-                deterministicRelationTypes.has(typeOf(row)),
-              ) ||
-                candidates[0] ||
-                ({ relation_type: "" } as Relation),
-            ),
-          );
-          setSelected([]);
-          setReason("");
-          setError("");
-          setDecision("confirm");
-          setOpen(true);
-        }}
-      >
-        批量审核同类关系
-      </Button>
-      {open && (
-        <Modal
-          title="同基线、同类型关系批量审核"
-          onClose={() => setOpen(false)}
-        >
-          <Notice>
-            每批最多 100
-            项。确认仅限确定性结构关系，且每项必须有效并通过证据核验；任一项发生冲突或不合格，整批不写入。每条关系保留独立审核日志。
-          </Notice>
-          <label>
-            关系类型
-            <select
-              value={type}
-              onChange={(e) => {
-                setType(e.target.value);
-                if (!deterministicRelationTypes.has(e.target.value))
-                  setDecision("reject");
-                setSelected([]);
-              }}
-            >
-              {types.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            审核操作
-            <select
-              value={decision}
-              onChange={(e) => {
-                setDecision(e.target.value as "confirm" | "reject");
-                setSelected([]);
-              }}
-            >
-              <option
-                value="confirm"
-                disabled={!deterministicRelationTypes.has(type)}
-              >
-                确认确定性关系
-              </option>
-              <option value="reject">拒绝候选</option>
-            </select>
-          </label>
-          <div className="row between">
-            <strong>
-              {chosen.length} / {eligible.length} 项已选择
-            </strong>
-            <Button
-              kind="small"
-              onClick={() =>
-                setSelected(
-                  eligible
-                    .filter(
-                      (row) =>
-                        decision === "reject" ||
-                        (row.validity_status === "valid" &&
-                          row.evidence_ids.length),
-                    )
-                    .slice(0, 100)
-                    .map((row) => row.id),
-                )
-              }
-            >
-              选择符合条件的前 100 项
-            </Button>
-          </div>
-          <div className="evidence-checks">
-            {eligible.map((row) => (
-              <label className="check-line" key={row.id}>
-                <input
-                  type="checkbox"
-                  checked={selected.includes(row.id)}
-                  disabled={
-                    (!selected.includes(row.id) && selected.length >= 100) ||
-                    (decision === "confirm" &&
-                      (row.validity_status !== "valid" ||
-                        !row.evidence_ids.length))
-                  }
-                  onChange={(e) =>
-                    setSelected((previous) =>
-                      e.target.checked
-                        ? [...previous, row.id]
-                        : previous.filter((id) => id !== row.id),
-                    )
-                  }
-                />
-                <span>
-                  {row.from_name} → {row.to_name}
-                  <small>
-                    {row.evidence_ids.length} 项证据 · 关系 v{row.row_version}
-                  </small>
-                  <Tag value={row.validity_status} />
-                </span>
-              </label>
-            ))}
-          </div>
-          <label>
-            本批审核依据
-            <textarea
-              required
-              maxLength={2000}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="说明同类规则及逐项核对结果"
-            />
-          </label>
-          {error && <Notice tone="red">{error}</Notice>}
-          <div className="modal-actions">
-            <Button onClick={() => setOpen(false)}>取消</Button>
-            <Button
-              kind="primary"
-              disabled={
-                busy ||
-                !chosen.length ||
-                !reason.trim() ||
-                (decision === "confirm" &&
-                  !deterministicRelationTypes.has(type))
-              }
-              onClick={() => {
-                void submit();
-              }}
-            >
-              确认处理 {chosen.length} 项
-            </Button>
-          </div>
-        </Modal>
-      )}
-    </>
   );
 }

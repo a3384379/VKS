@@ -8,8 +8,8 @@ VKS锁定官方Python MCP SDK。stdio和Streamable HTTP通过同一REST服务处
 - HTTP逐次验证项目Bearer令牌或登记的外部OAuth JWT。机器不获得审核/发布权限。
 - 读取发布版需`knowledge:read`；草稿另需`knowledge:edit`；源码/采集分别需`source:read`/`trace:read`。撤销及授权成员停用立即影响下一次请求。
 - 导入只接收本身份已上传的artifact句柄；客户端路径不是服务端路径。预检与导入验证Schema、摘要、大小和同基线引用。独立Markdown/原型、源码快照、Java重建索引、场景采集和可选模型草稿均走同一后台任务体系。
-- 相同身份/项目/操作的幂等键返回原任务；同键不同内容返回冲突。任务可断线查询、取消或按策略重试；有副作用采集必须取得新审批。
-- `request_release`只产生预检与Web入口，成功任务不代表已发布。工具不接受批准、操作者冒充或已发布状态参数。
+- 相同身份/项目/操作的幂等键返回原任务；同键不同内容返回冲突。任务可断线查询、取消或按策略重试；中断的有副作用采集必须显式重新发起。
+- `save_knowledge_snapshot` 直接固定当前知识版本；无需审批或签署。新接口与迁移见[自用知识工作流](PERSONAL_WORKFLOW.md)。
 
 ## HTTP OAuth
 

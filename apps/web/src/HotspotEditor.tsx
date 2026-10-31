@@ -190,7 +190,7 @@ export function HotspotEditor({
       notify(
         remove
           ? "热点已在新修订中移除，历史版本与关联仍可追溯"
-          : "热点已保存为新修订，后续关联仍需审核",
+          : "热点已保存为新修订",
       );
       setOpen(false);
       if (!remove && response.action) setSelected(response.action.id);

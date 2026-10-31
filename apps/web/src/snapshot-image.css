@@ -1,0 +1,112 @@
+.snapshot-thumbnail {
+  display: block;
+  width: 100%;
+  text-align: center;
+  cursor: zoom-in;
+}
+.snapshot-thumbnail > img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: auto;
+}
+.snapshot-thumbnail > span {
+  display: block;
+  padding: 8px;
+  color: var(--blue);
+  font-size: 12px;
+}
+.snapshot-thumbnail:focus-visible,
+.snapshot-viewer button:focus-visible,
+.snapshot-viewer-stage:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 3px;
+}
+.snapshot-overlay {
+  position: fixed;
+  z-index: 1300;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #15294199;
+}
+.snapshot-viewer {
+  width: min(1500px, 100%);
+  height: calc(100dvh - 40px);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px #102c4b50;
+}
+.snapshot-viewer > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.snapshot-viewer h2 {
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.snapshot-viewer p {
+  color: var(--muted);
+  font-size: 12px;
+}
+.snapshot-viewer > nav {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.snapshot-viewer button {
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--blue);
+}
+.snapshot-viewer-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  background: #eef4fc;
+  overscroll-behavior: contain;
+}
+.snapshot-viewer-stage.fit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  place-items: center;
+}
+.snapshot-viewer-stage.fit > img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.snapshot-viewer-stage.scaled > img {
+  display: block;
+  height: auto;
+  max-width: none;
+  max-height: none;
+}
+@media (max-width: 767px) {
+  .snapshot-overlay {
+    padding: 8px;
+  }
+  .snapshot-viewer {
+    height: calc(100dvh - 16px);
+  }
+  .snapshot-viewer > header,
+  .snapshot-viewer > nav {
+    padding: 10px;
+  }
+}

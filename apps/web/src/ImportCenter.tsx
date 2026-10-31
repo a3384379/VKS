@@ -182,7 +182,7 @@ export function ImportCenter() {
   return (
     <>
       <Steps
-        steps={["选择资料", "安全预检", "解析与候选", "人工审核与发布"]}
+        steps={["选择资料", "格式预检", "解析与知识", "人工知识保存"]}
         current={preflight ? 1 : 0}
       />
       <div className="import-layout">
@@ -385,7 +385,7 @@ export function ImportCenter() {
               ) : (
                 <>独立资料导入所选草稿，历史发布版保持固定。</>
               )}{" "}
-              导入仅创建事实索引和待审核候选。
+              导入仅创建事实索引和待整理候选。
             </Notice>
           </Panel>
           <SourceManagement />
@@ -455,7 +455,7 @@ export function ImportCenter() {
             </ul>
           </Panel>
           <Panel title="下一步">
-            <Button kind="subtle full" onClick={() => navigate("reviews")}>
+            <Button kind="subtle full" onClick={() => navigate("relations")}>
               检查候选关系
             </Button>
             <p className="fine-print">分析完成和知识发布是两个独立步骤。</p>

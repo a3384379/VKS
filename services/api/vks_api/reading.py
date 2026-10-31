@@ -17,7 +17,10 @@ from sqlalchemy.orm import load_only
 
 from .models import Analysis, Artifact, Entity, Evidence, Relation, Release, Revision, Selection
 
-UNKNOWN = ["尚未接入真实业务环境；运行与源码版本未核对", "静态候选和单次采集不能证明全部业务行为；发布前需人员审核"]
+UNKNOWN = [
+    "尚未接入真实业务环境；运行与源码版本未核对",
+    "静态候选和单次采集不能证明全部业务行为；知识来源与因果可单独核对",
+]
 PUBLIC_FIELDS = (
     "entity_id",
     "entity_revision_id",
@@ -29,12 +32,18 @@ PUBLIC_FIELDS = (
 )
 
 
-def relation_is_visible(row, revision_ids, evidence_ids):
-    return (
+def relation_is_visible(row, revision_ids, evidence_ids, *, s=None, source_allowed=False, trace_allowed=False):
+    visible = (
         row["from_revision_id"] in revision_ids
         and row["to_revision_id"] in revision_ids
         and bool(set(row["evidence_ids"]) & evidence_ids)
     )
+    if visible and s is not None:
+        policy = relation_policy(s, row)
+        visible = (not policy["requires_source_read"] or source_allowed) and (
+            not policy["requires_trace_read"] or trace_allowed
+        )
+    return visible
 
 
 def scenario_trace_required(metadata):
@@ -66,18 +75,104 @@ def scenario_source_required(s, pid, metadata):
     return capture_source_required(s, pid, ids)
 
 
-def artifact_policy(s, artifact):
+def _provenance_requirements(s, pid, provenance, active):
+    source, trace = False, False
+    if not isinstance(provenance, list) or not provenance:
+        return True, True
+    for row in provenance:
+        if (
+            not isinstance(row, dict)
+            or not {"artifact_id", "evidence_id", "sha256", "requires_source_read", "requires_trace_read"} <= set(row)
+            or type(row["requires_source_read"]) is not bool
+            or type(row["requires_trace_read"]) is not bool
+        ):
+            source, trace = True, True
+            continue
+        target = s.get(Artifact, row["artifact_id"])
+        evidence = s.get(Evidence, row["evidence_id"])
+        if (
+            not target
+            or target.project_id != pid
+            or target.sha256 != row["sha256"]
+            or not evidence
+            or evidence.project_id != pid
+            or evidence.artifact_id != target.id
+        ):
+            source, trace = True, True
+            continue
+        current = artifact_policy(s, target, active)
+        source = source or row["requires_source_read"] or current.get("requires_source_read", False)
+        trace = trace or row["requires_trace_read"] or current.get("requires_trace_read", False)
+    return bool(source), bool(trace)
+
+
+def revision_policy(s, row, active=None):
+    if not row:
+        return {"requires_source_read": True, "requires_trace_read": True}
+    entity = s.get(Entity, row.entity_id)
+    art = s.get(Artifact, row.artifact_id) if row.artifact_id else None
+    policy = artifact_policy(s, art, active) if art else {}
+    source = not entity or entity.type in ("symbol", "sql", "table") or bool(policy.get("requires_source_read"))
+    trace = bool(policy.get("requires_trace_read"))
+    if entity and entity.type == "scenario":
+        trace = trace or scenario_trace_required(row.metadata_json)
+        source = source or scenario_source_required(s, row.project_id, row.metadata_json)
+    return {"requires_source_read": bool(source), "requires_trace_read": bool(trace)}
+
+
+def _revision_input_requirements(s, pid, entries, active):
+    if not isinstance(entries, list):
+        return True, True
+    source, trace = False, False
+    for entry in entries:
+        if (
+            not isinstance(entry, dict)
+            or not {"revision_id", "entity_id", "sha256", "artifact_id", "requires_source_read", "requires_trace_read"}
+            <= entry.keys()
+        ):
+            return True, True
+        row = s.get(Revision, entry["revision_id"])
+        if (
+            not row
+            or row.project_id != pid
+            or row.entity_id != entry["entity_id"]
+            or row.content_sha256 != entry["sha256"]
+            or row.artifact_id != entry["artifact_id"]
+            or type(entry["requires_source_read"]) is not bool
+            or type(entry["requires_trace_read"]) is not bool
+        ):
+            return True, True
+        policy = revision_policy(s, row, active)
+        source = source or entry["requires_source_read"] or policy["requires_source_read"]
+        trace = trace or entry["requires_trace_read"] or policy["requires_trace_read"]
+    return bool(source), bool(trace)
+
+
+def artifact_policy(s, artifact, _active=None):
     """Read-time quarantine for legacy model outputs with unknown input scope."""
+    active = frozenset() if _active is None else _active
+    if not artifact or artifact.id in active or len(active) >= 64:
+        return {"requires_source_read": True, "requires_trace_read": True}
+    active = active | {artifact.id}
     metadata = dict(artifact.metadata_json or {})
+    base_source = bool(
+        metadata.get("requires_source_read") or artifact.kind == "source" or artifact.sensitivity == "confidential"
+    )
+    base_trace = bool(metadata.get("requires_trace_read") or artifact.kind in ("trace", "capture"))
+    if "input_revision_provenance" in metadata:
+        input_source, input_trace = _revision_input_requirements(
+            s, artifact.project_id, metadata["input_revision_provenance"], active
+        )
+        base_source, base_trace = base_source or input_source, base_trace or input_trace
     if artifact.relative_path.startswith(("journeys/", "task-reports/")):
         source, trace = False, False
         for rid in metadata.get("journey_binding_revisions", []):
             revision = s.get(Revision, rid)
-            if not revision:
+            if not revision or revision.project_id != artifact.project_id:
                 source, trace = True, True
                 continue
             target = s.get(Artifact, revision.artifact_id) if revision.artifact_id else None
-            policy = artifact_policy(s, target) if target else {}
+            policy = artifact_policy(s, target, active) if target else {}
             source = (
                 source
                 or s.get(Entity, revision.entity_id).type in ("symbol", "sql", "table")
@@ -98,66 +193,101 @@ def artifact_policy(s, artifact):
             source = (
                 source
                 or not target
+                or target.project_id != artifact.project_id
                 or target.sensitivity == "confidential"
                 or target.kind == "source"
                 or (target.metadata_json or {}).get("requires_source_read", False)
             )
+        input_artifacts = metadata.get("journey_input_artifacts", [])
+        if metadata.get("generation_kind") == "model" and not input_artifacts:
+            # Known generated wording without a provable input list is quarantined.
+            source, trace = True, True
+        for aid in input_artifacts:
+            target = s.get(Artifact, aid)
+            if not target or target.project_id != artifact.project_id:
+                source, trace = True, True
+                continue
+            policy = artifact_policy(s, target, active)
+            source = (
+                source
+                or target.kind == "source"
+                or target.sensitivity == "confidential"
+                or policy.get("requires_source_read", False)
+            )
+            trace = trace or target.kind in ("trace", "capture") or policy.get("requires_trace_read", False)
+        if "input_provenance" in metadata:
+            declared_source, declared_trace = _provenance_requirements(
+                s, artifact.project_id, metadata["input_provenance"], active
+            )
+            source, trace = source or declared_source, trace or declared_trace
         return dict(
             metadata,
-            requires_source_read=bool(source or metadata.get("requires_source_read")),
-            requires_trace_read=bool(trace or metadata.get("requires_trace_read")),
+            requires_source_read=bool(source or base_source),
+            requires_trace_read=bool(trace or base_trace),
         )
-    root, seen = artifact, set()
-    while root and root.id not in seen:
-        seen.add(root.id)
-        provenance = root.metadata_json.get("input_provenance")
-        if (
-            isinstance(provenance, list)
-            and provenance
-            and all(
-                isinstance(row, dict)
-                and {"artifact_id", "evidence_id", "sha256", "requires_source_read", "requires_trace_read"} <= set(row)
-                and type(row["requires_source_read"]) is bool
-                and type(row["requires_trace_read"]) is bool
-                for row in provenance
+    source, trace = base_source, base_trace
+    provenance = metadata.get("input_provenance")
+    if "input_provenance" in metadata:
+        declared_source, declared_trace = _provenance_requirements(s, artifact.project_id, provenance, active)
+        source, trace = source or declared_source, trace or declared_trace
+    elif metadata.get("generation_kind") == "model" or artifact.relative_path.startswith("model-relations/"):
+        source, trace = True, True
+    elif artifact.relative_path.startswith("documents/generated-"):
+        if s.scalar(
+            select(Revision.id)
+            .where(
+                Revision.artifact_id == artifact.id,
+                Revision.metadata_json["source_kind"].as_string().in_(["ai_generated", "generated"]),
             )
+            .limit(1)
         ):
-            return dict(
-                metadata,
-                requires_source_read=bool(
-                    metadata.get("requires_source_read") or any(row["requires_source_read"] for row in provenance)
-                ),
-                requires_trace_read=bool(
-                    metadata.get("requires_trace_read") or any(row["requires_trace_read"] for row in provenance)
-                ),
+            source, trace = True, True
+    original = metadata.get("original_artifact_id")
+    if original:
+        target = s.get(Artifact, original)
+        current = (
+            artifact_policy(s, target, active)
+            if target and target.project_id == artifact.project_id
+            else {"requires_source_read": True, "requires_trace_read": True}
+        )
+        source = source or current.get("requires_source_read", False)
+        trace = trace or current.get("requires_trace_read", False)
+    return dict(metadata, requires_source_read=bool(source), requires_trace_read=bool(trace))
+
+
+def relation_policy(s, relation):
+    """Provenance protects derived wording independently of selected citations."""
+    if isinstance(relation, dict):
+        relation = s.get(Relation, relation["id"])
+    if relation is None:
+        return {"requires_source_read": True, "requires_trace_read": True}
+    metadata = relation.metadata_json or {}
+    ids = metadata.get("model_provenance_artifact_ids", [])
+    source, trace = False, False
+    if ids:
+        for aid in ids:
+            artifact = s.get(Artifact, aid)
+            policy = (
+                artifact_policy(s, artifact)
+                if artifact and artifact.project_id == relation.project_id
+                else {"requires_source_read": True, "requires_trace_read": True}
             )
-        if root.relative_path.startswith("documents/generated-"):
-            legacy = s.scalar(
-                select(Revision.id)
-                .where(
-                    Revision.artifact_id == root.id,
-                    Revision.metadata_json["source_kind"].as_string().in_(["ai_generated", "generated"]),
-                )
-                .limit(1)
-            )
-            if legacy:
-                return dict(metadata, requires_source_read=True, requires_trace_read=True)
-        original = root.metadata_json.get("original_artifact_id")
-        root = s.get(Artifact, original) if original else None
-    return metadata
+            source = source or policy.get("requires_source_read", False)
+            trace = trace or policy.get("requires_trace_read", False)
+    elif metadata.get("generation_kind") == "model" or relation.reason.startswith("AI 语义候选："):
+        source, trace = True, True
+    return {"requires_source_read": bool(source), "requires_trace_read": bool(trace)}
 
 
 def explanation_relation(row, policy):
-    if row["review_status"] == "rejected":
+    if row["excluded"]:
         return False
-    if policy == "trusted":
-        return row["review_status"] == "confirmed" and row["validity_status"] == "valid"
-    if policy == "candidate":
-        return row["review_status"] == "candidate" and row["validity_status"] == "valid"
-    if policy == "review":
+    if policy == "valid":
+        return row["validity_status"] == "valid"
+    if policy == "outdated":
         return row["validity_status"] != "valid"
-    if policy == "map":
-        return True  # All visible, non-rejected relationships; UI keeps review/validity labels.
+    if policy == "all":
+        return True
     raise ValueError("Unknown explanation relation policy")
 
 
@@ -181,8 +311,11 @@ class FrozenIndex:
         outgoing = defaultdict(dict)
         incoming = defaultdict(dict)
         evidence = set()
-        neighbors = {policy: defaultdict(set) for policy in (None, "trusted", "candidate", "review", "map")}
+        neighbors = {policy: defaultdict(set) for policy in (None, "valid", "outdated", "all")}
         for value in manifest["relations"]:
+            from .models import relation_payload
+
+            value = relation_payload(value)
             row = dict(value, evidence_ids=tuple(value["evidence_ids"]))
             outgoing[row["from_revision_id"]].setdefault(row["to_revision_id"], []).append(row)
             incoming[row["to_revision_id"]].setdefault(row["from_revision_id"], []).append(row)
@@ -412,7 +545,7 @@ class ReadingService:
                                 if row["id"] not in seen:
                                     seen.add(row["id"])
                                     output.append(row)
-            # Callers may add display names or redact evidence. Never hand out
+            # Callers may add display names or project permitted evidence fields. Never hand out
             # the shared immutable release fact dictionaries themselves.
             return [dict(row, evidence_ids=list(row["evidence_ids"])) for row in output]
         query = select(Relation).where(Relation.analysis_set_id == aid)
@@ -451,17 +584,27 @@ class ReadingService:
         selected = {seed}
         frontier = {seed}
         truncated = False
+        source_allowed = self.service._can(s, actor, pid, "source:read")
+        trace_allowed = self.service._can(s, actor, pid, "trace:read")
 
         def usable(row):
             return (
                 (not relation_types or row["relation_type"] in relation_types)
-                and relation_is_visible(row, allowed, valid_evidence)
+                and relation_is_visible(
+                    row, allowed, valid_evidence, s=s, source_allowed=source_allowed, trace_allowed=trace_allowed
+                )
                 and (explanation_policy is None or explanation_relation(row, explanation_policy))
             )
 
         for _ in range(depth):
             neighbors = set()
-            if index and not relation_types and index.evidence_ids <= valid_evidence:
+            if (
+                index
+                and not relation_types
+                and index.evidence_ids <= valid_evidence
+                and source_allowed
+                and trace_allowed
+            ):
                 adjacent = index.neighbors_by_policy[explanation_policy]
                 for node in frontier:
                     neighbors.update(adjacent.get(node, ()))
@@ -509,21 +652,56 @@ class ReadingService:
             )[0]
 
     def action_context(
-        self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50, relation_policy="trusted"
+        self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50, relation_policy="valid"
     ):
         from .service import DomainError, sha
+        from collections import deque
+        from .workbench_v2 import TECHNICAL_TYPES, KNOWLEDGE_TYPES, technical_adjacency
 
         with self.db() as s:
-            if relation_policy not in ("trusted", "candidate", "review"):
+            if relation_policy not in ("valid", "outdated", "all"):
                 raise DomainError("VKS_INVALID_INPUT", "讲解关系策略无效")
             graph, analysis, release = self._graph(
-                s, actor, pid, eid, analysis_set_id, release_id, depth, max_nodes, None, True, relation_policy
+                s,
+                actor,
+                pid,
+                eid,
+                analysis_set_id,
+                release_id,
+                depth,
+                max_nodes,
+                TECHNICAL_TYPES,
+                True,
+                relation_policy,
             )
             action = next(
                 (node for node in graph["nodes"] if node["entity_id"] == eid and node["type"] == "action"), None
             )
             if not action:
                 raise DomainError("VKS_NOT_FOUND", "未找到当前版本操作", 404)
+            seed = action["entity_revision_id"]
+            nodes, adjacent = technical_adjacency(graph)
+            reached, included, frontier = {seed}, set(), deque([(seed, 0)])
+            while frontier:
+                current, distance = frontier.popleft()
+                if current != seed and nodes[current]["type"] in ("document", "section"):
+                    continue
+                if distance >= depth:
+                    if any(target not in reached for target, _ in adjacent[current]):
+                        graph["truncated"] = True
+                    continue
+                for target, edge in adjacent[current]:
+                    if nodes[target]["type"] not in KNOWLEDGE_TYPES:
+                        continue
+                    included.add(edge["id"])
+                    if target not in reached:
+                        reached.add(target)
+                        frontier.append((target, distance + 1))
+            graph["nodes"] = [row for row in graph["nodes"] if row["entity_revision_id"] in reached]
+            graph["edges"] = [row for row in graph["edges"] if row["id"] in included]
+            graph["unknowns"].append("只沿技术关系方向展开，排除结构成员边；共享文档不串联其他动作。")
+            if graph["truncated"]:
+                graph["unknowns"].append(f"技术上下文范围已截断：最多{depth}跳、{max_nodes}节点；未返回部分未知。")
             evidence_ids = {eid for row in graph["edges"] for eid in row["evidence_ids"]}
             evidence = []
             for batch in chunks(evidence_ids):
@@ -774,6 +952,8 @@ class ReadingService:
             refs = defaultdict(set)
             if analysis:
                 for relation in self.edge_rows(s, analysis.id, index, frontier=ids):
+                    if not self.service._visible_relation(s, actor, pid, relation):
+                        continue
                     for rid in (relation["from_revision_id"], relation["to_revision_id"]):
                         if rid in ids:
                             refs[rid].update(relation["evidence_ids"])

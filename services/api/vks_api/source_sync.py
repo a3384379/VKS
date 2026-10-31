@@ -29,6 +29,23 @@ class SyncAccepted(BaseModel):
     job: JobOutput
 
 
+def source_scope(sources):
+    """Version-independent identity of the explicitly authorized full snapshot."""
+    scope = {}
+    for source in sources:
+        key = source["source_id"]
+        if key in scope:
+            raise DomainError("VKS_SYNC_SCOPE_CHANGED", "同步来源身份重复，请重新核对采集范围", 409)
+        scope[key] = {
+            "provider": source["provider"],
+            "root": source["root"],
+            "role": source["role"],
+            "service_key": source.get("service_key", key),
+            "connector_ref": source.get("connector_ref"),
+        }
+    return scope
+
+
 class SourceSyncService:
     def __init__(self, service):
         self.service = service
@@ -84,9 +101,17 @@ class SourceSyncService:
                     files = _read_zip(raw)
                     manifest = _json(files["manifest.json"])
                     _schema(manifest, "import_manifest.schema.json")
+                    if manifest.get("selectionManifest"):
+                        raise DomainError(
+                            "VKS_SYNC_SCOPE_CHANGED", "实体选择包不能作为完整来源同步，请采集完整授权快照", 409
+                        )
                     if manifest["project_key"] != s.get(Project, pid).key:
                         raise DomainError("VKS_PROJECT_MISMATCH", "同步包不属于当前项目", 422)
+                    scope = source_scope(manifest["sources"])
+                    if previous and previous.input_json["_source_sync"].get("source_scope") != scope:
+                        raise DomainError("VKS_SYNC_SCOPE_CHANGED", "同步来源身份或范围改变，请重新建立同步配置", 409)
                     current = {}
+                    source_manifests = {source: {} for source in scope}
                     for row in manifest["artifacts"]:
                         path = safe_path(row["path"])
                         content = files.get(path)
@@ -97,7 +122,10 @@ class SourceSyncService:
                             or sha(content) != row["sha256"]
                         ):
                             raise DomainError("VKS_HASH_MISMATCH", "同步文件清单或实际字节不一致", 422)
+                        if row["source_id"] not in source_manifests:
+                            raise DomainError("VKS_SYNC_SCOPE_CHANGED", "同步文件引用了未授权来源", 409)
                         current[path] = row["sha256"]
+                        source_manifests[row["source_id"]][path] = row["sha256"]
                 except BundleError as exc:
                     raise DomainError(exc.code, exc.message, 422) from None
                 delta = snapshot_delta(
@@ -105,6 +133,22 @@ class SourceSyncService:
                 )
                 if delta["scope_anomaly"]:
                     raise DomainError("VKS_SYNC_SCOPE_ANOMALY", "大量材料缺失，核对授权范围后再同步", 409)
+                if previous:
+                    before_sources = previous.input_json["_source_sync"].get("source_manifests", {})
+                    if set(before_sources) != set(source_manifests):
+                        raise DomainError(
+                            "VKS_SYNC_SCOPE_CHANGED", "原同步记录无法证明各来源完整范围，请重新建立同步配置", 409
+                        )
+                    if any(
+                        snapshot_delta(
+                            before_sources[source],
+                            current_files,
+                            scope_before=payload["consent_sha256"],
+                            scope_after=payload["consent_sha256"],
+                        )["scope_anomaly"]
+                        for source, current_files in source_manifests.items()
+                    ):
+                        raise DomainError("VKS_SYNC_SCOPE_ANOMALY", "单一来源大量材料缺失，核对授权范围后再同步", 409)
                 body = dict(
                     kind="bundle",
                     artifact_ids=[payload["artifact_id"]],
@@ -114,6 +158,8 @@ class SourceSyncService:
                         snapshot_sha256=payload["snapshot_sha256"],
                         previous_snapshot_sha256=payload.get("previous_snapshot_sha256"),
                         manifest=current,
+                        source_scope=scope,
+                        source_manifests=source_manifests,
                         delta=delta,
                         detect_changes=payload.get("detect_changes", False),
                         from_release_id=s.get(Project, pid).current_release_id
@@ -140,6 +186,27 @@ class SourceSyncService:
                 )
 
             return service.idem(s, actor, pid, "source_sync.create", key, payload, save)
+
+    def persist(self, s, job, bundle):
+        from .knowledge import persist_bundle
+
+        scope = job.input_json["_source_sync"].get("source_scope")
+        if not scope or scope != source_scope(bundle.sources):
+            raise DomainError("VKS_SYNC_SCOPE_CHANGED", "同步来源范围无法验证，请重新建立同步配置", 409)
+        if any(item.get("parse_status") == "failed" for item in bundle.artifacts) or any(
+            item.get("code") in {"VKS_JAVA_SYNTAX", "VKS_JAVA_LIMIT", "VKS_MYBATIS_LIMIT", "VKS_MYBATIS_UNSAFE_XML"}
+            for item in bundle.issues
+        ):
+            raise DomainError("VKS_SYNC_INCOMPLETE", "同步材料解析不完整，保留原草稿和同步游标", 409)
+        return persist_bundle(
+            self.service,
+            s,
+            job.project_id,
+            job.created_by,
+            bundle,
+            job.input_json.get("analysis_set_id"),
+            complete_sources=scope,
+        )
 
     def finalize(self, s, job, actor, result):
         context = job.input_json.get("_source_sync", {})

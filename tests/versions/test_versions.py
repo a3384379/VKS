@@ -26,31 +26,15 @@ def ctx(tmp_path, request):
                 if db.get(Entity, db.get(Revision, row["to_revision_id"]).entity_id).type == "section"
             )
     for relation in workspace["relations"]:
-        service.review_relation(
-            actor,
-            relation["id"],
-            {
-                "decision": "reject" if relation["id"] == rejected_id else "confirm",
-                "reason": "Fixture inspected",
-                "evidence_ids": relation["evidence_ids"],
-            },
-            relation["row_version"],
+        service.set_relation_state(
+            actor, relation["id"], {"excluded": relation["id"] == rejected_id}, relation["row_version"]
         )
-    candidate = service.request_release(
+    candidate = service.save_snapshot(
         actor, project["id"], {"analysis_set_id": workspace["selected_analysis_set"]["id"]}, "candidate"
     )
-    assert not candidate["blockers"], candidate
-    ticket = service.confirm_release(actor, candidate["candidate_id"])
-    release = service.publish(
-        actor,
-        candidate["candidate_id"],
-        {
-            "human_confirmation_ref": ticket["human_confirmation_ref"],
-            "expected_manifest_sha256": ticket["expected_manifest_sha256"],
-            "change_note": "Version baseline",
-        },
-        "publish",
-    )
+    pass
+    ticket = None
+    release = candidate
     clone = KnowledgeService(service).clone(
         actor, project["id"], workspace["selected_analysis_set"]["id"], "V2", "clone"
     )
@@ -86,12 +70,22 @@ def detect(ctx):
         return versions.detect_drift(db, project["id"], release["id"], clone["id"], actor.id)
 
 
-def test_drift_retains_review_locks_and_history_and_is_idempotent(ctx):
+def migrated(ctx):
+    service, _, _, _, _, clone, _ = ctx
+    with service.db() as db:
+        return [
+            service.relation_dto(row)
+            for row in db.scalars(select(Relation).where(Relation.analysis_set_id == clone["id"]))
+            if (row.metadata_json or {}).get("drift_inputs")
+        ]
+
+
+def test_drift_preserves_user_choices_history_and_is_idempotent(ctx):
     service, actor, project, workspace, release, clone, versions = ctx
     with service.db() as db:
         historical = copy.deepcopy(db.get(Release, release["id"]).manifest_json)
         decisions = {
-            r.id: (r.review_status, r.manual_lock, r.row_version)
+            r.id: (r.excluded, r.manual_lock, r.row_version)
             for r in db.scalars(
                 select(Relation).where(Relation.analysis_set_id == workspace["selected_analysis_set"]["id"])
             )
@@ -100,72 +94,45 @@ def test_drift_retains_review_locks_and_history_and_is_idempotent(ctx):
     report = detect(ctx)
     assert any(c["change_kind"] == "renamed" for c in report["changes"])
     assert report["impact_paths"]
-    proposals = versions.list_proposals(actor, project["id"], clone["id"])
-    migrations = [p for p in proposals if p["kind"] == "relation_migration"]
-    assert migrations and all(p["relation"]["review_status"] == "confirmed" for p in migrations)
-    assert all(p["relation"]["validity_status"] == "stale" for p in migrations)
+    rows = migrated(ctx)
+    assert rows and all(row["validity_status"] == "stale" for row in rows)
+    assert not any(row["excluded"] for row in rows)
     with service.db() as db:
-        assert all(db.get(Relation, p["target_relation_id"]).manual_lock for p in migrations)
         assert db.get(Release, release["id"]).manifest_json == historical
         assert all(
-            (db.get(Relation, rid).review_status, db.get(Relation, rid).manual_lock, db.get(Relation, rid).row_version)
+            (db.get(Relation, rid).excluded, db.get(Relation, rid).manual_lock, db.get(Relation, rid).row_version)
             == state
             for rid, state in decisions.items()
         )
     again = detect(ctx)
-    assert set(again["proposal_ids"]) == set(report["proposal_ids"])
-    assert len(versions.list_proposals(actor, project["id"], clone["id"])) == len(proposals)
+    assert again["to_selection_version"] == report["to_selection_version"]
+    assert migrated(ctx) == rows
 
 
-def test_missing_section_stays_historical_broken_accept_does_not_validate(ctx):
+def test_missing_section_keeps_broken_history_and_exclusion_is_separate(ctx):
     service, actor, project, _, _, clone, versions = ctx
     edit(ctx, "# Replacement\nNo matching original chapters.\n")
     detect(ctx)
-    proposals = versions.list_proposals(actor, project["id"], clone["id"])
-    proposal = next(
-        p for p in proposals if p["kind"] == "relation_migration" and p["relation"]["validity_status"] == "broken"
-    )
-    with service.db() as db:
-        relation = db.get(Relation, proposal["target_relation_id"])
-        selected = {r.id for r in service._revisions(db, clone["id"])}
-        assert relation.from_revision_id not in selected or relation.to_revision_id not in selected
-    accepted = versions.decide(
-        actor, proposal["id"], {"decision": "accept", "reason": "Review migration"}, proposal["row_version"]
-    )
-    assert accepted["status"] == "accepted" and accepted["relation"]["validity_status"] == "broken"
+    row = next(row for row in migrated(ctx) if row["validity_status"] == "broken")
     with pytest.raises(DomainError) as exc:
         versions.revalidate(
             actor,
-            proposal["target_relation_id"],
-            {
-                "analysis_set_id": clone["id"],
-                "evidence_ids": proposal["relation"]["evidence_ids"],
-                "reason": "Cannot infer missing endpoint",
-            },
-            accepted["relation"]["row_version"],
+            row["id"],
+            {"analysis_set_id": clone["id"], "evidence_ids": row["evidence_ids"], "reason": "missing endpoint"},
+            row["row_version"],
         )
     assert exc.value.status == 422
-    other = next(p for p in proposals if p["kind"] == "relation_migration" and p["id"] != proposal["id"])
-    rejected = versions.decide(
-        actor,
-        other["id"],
-        {"decision": "reject", "reason": "Historical relation no longer applies"},
-        other["row_version"],
-    )
-    assert rejected["relation"]["review_status"] == "rejected" and rejected["relation"]["validity_status"] == "obsolete"
+    result = service.set_relation_state(actor, row["id"], {"excluded": True}, row["row_version"])["relation"]
+    assert result["excluded"] and result["validity_status"] == "broken"
 
 
-def test_revalidation_requires_new_source_coverage_and_preserves_review_causality(ctx):
+def test_revalidation_requires_both_current_sources_and_preserves_causality(ctx):
     service, actor, project, _, _, clone, versions = ctx
     edit(ctx)
     detect(ctx)
-    migration = next(
-        p for p in versions.list_proposals(actor, project["id"], clone["id"]) if p["kind"] == "relation_migration"
-    )
-    relation = migration["relation"]
+    relation = migrated(ctx)[0]
     with service.db() as db:
-        endpoints = [db.get(Revision, relation[k]) for k in ("from_revision_id", "to_revision_id")]
-        artifacts = {r.artifact_id for r in endpoints}
+        artifacts = {db.get(Revision, relation[k]).artifact_id for k in ("from_revision_id", "to_revision_id")}
         selected_evidence = []
         for artifact_id in artifacts:
             artifact = db.get(Artifact, artifact_id)
@@ -178,8 +145,8 @@ def test_revalidation_requires_new_source_coverage_and_preserves_review_causalit
                 evidence_kind="manual",
                 content_sha256=artifact.sha256,
                 locator={"relative_path": artifact.relative_path, "line_start": 1, "line_end": 1},
-                excerpt="New selected-source review",
-                claim="Checked current endpoint version",
+                excerpt="Current source",
+                claim="Current endpoint",
             )
             db.add(evidence)
             selected_evidence.append(evidence.id)
@@ -187,21 +154,17 @@ def test_revalidation_requires_new_source_coverage_and_preserves_review_causalit
         versions.revalidate(
             actor,
             relation["id"],
-            {"analysis_set_id": clone["id"], "evidence_ids": selected_evidence[:1], "reason": "Incomplete coverage"},
+            {"analysis_set_id": clone["id"], "evidence_ids": [], "reason": "No coverage"},
             relation["row_version"],
         )
     assert exc.value.status == 422
     revalidated = versions.revalidate(
         actor,
         relation["id"],
-        {
-            "analysis_set_id": clone["id"],
-            "evidence_ids": selected_evidence,
-            "reason": "Both endpoint versions inspected",
-        },
+        {"analysis_set_id": clone["id"], "evidence_ids": selected_evidence, "reason": "Both current endpoints"},
         relation["row_version"],
     )
-    assert revalidated["review_status"] == relation["review_status"]
+    assert revalidated["excluded"] == relation["excluded"]
     assert revalidated["validity_status"] == "valid"
     assert revalidated["causal_basis"] == relation["causal_basis"] != "correlated_runtime"
     with pytest.raises(DomainError) as exc:
@@ -212,52 +175,86 @@ def test_revalidation_requires_new_source_coverage_and_preserves_review_causalit
             relation["row_version"],
         )
     assert exc.value.status == 412
+    detect(ctx)
+    assert next(row for row in migrated(ctx) if row["id"] == relation["id"])["validity_status"] == "valid"
 
 
-def test_public_reports_hide_restricted_new_revision_even_when_history_is_visible(ctx):
+def test_public_reports_hide_restricted_revisions_and_paths(ctx):
     service, actor, project, _, _, clone, versions = ctx
     edit(ctx)
     report = detect(ctx)
-    migrations = [
-        p for p in versions.list_proposals(actor, project["id"], clone["id"]) if p["kind"] == "relation_migration"
-    ]
     with service.db() as db:
-        db.get(Revision, migrations[0]["relation"]["to_revision_id"])
-        document_artifact = next(
+        artifact = next(
             r.artifact_id for r in service._revisions(db, clone["id"]) if db.get(Entity, r.entity_id).type == "document"
         )
-        db.get(Artifact, document_artifact).sensitivity = "confidential"
+        db.get(Artifact, artifact).sensitivity = "confidential"
     token = service.create_token(
-        actor,
-        project["id"],
-        {"name": "restricted editor", "scopes": ["knowledge:read", "knowledge:edit"], "expires_in_days": 1},
+        actor, project["id"], {"name": "limited", "scopes": ["knowledge:read", "knowledge:edit"]}
     )
     limited = service.authenticate(token["token"], "token")
     visible = versions.public_report(limited, project["id"], report)
-    assert not visible["changes"]
-    assert not visible["impact_paths"]
-    assert not visible["proposal_ids"]
-    assert not versions.list_proposals(limited, project["id"], clone["id"])
+    assert not visible["changes"] and not visible["impact_paths"]
+    assert "proposal_ids" not in visible
 
 
 @pytest.mark.parametrize("ctx", ["rejected"], indirect=True)
-def test_human_rejection_and_lock_false_are_preserved_without_guessing(ctx):
-    service, actor, project, workspace, _release, clone, versions = ctx
-    with service.db() as db:
-        target = next(
-            r.id
-            for r in db.scalars(
-                select(Relation).where(
-                    Relation.analysis_set_id == workspace["selected_analysis_set"]["id"],
-                    Relation.review_status == "rejected",
-                )
-            )
-        )
+def test_excluded_links_are_not_restored_by_drift(ctx):
+    service, actor, project, workspace, release, clone, versions = ctx
     edit(ctx)
     detect(ctx)
-    migrated = next(
-        p for p in versions.list_proposals(actor, project["id"], clone["id"]) if p["source_relation_id"] == target
-    )
-    assert migrated["relation"]["review_status"] == "rejected"
+    excluded = [row for row in migrated(ctx) if row["excluded"]]
+    assert excluded
+    before = copy.deepcopy(excluded)
+    detect(ctx)
+    assert [row for row in migrated(ctx) if row["excluded"]] == before
+
+
+def test_two_source_updates_preserve_a_user_exclusion_on_the_same_logical_link(ctx):
+    service, actor, project, _, _, clone, versions = ctx
+    edit(ctx)
+    detect(ctx)
+    candidates = migrated(ctx)
     with service.db() as db:
-        assert not db.get(Relation, migrated["target_relation_id"]).manual_lock
+        row = next(
+            row
+            for row in candidates
+            if db.get(Entity, db.get(Revision, row["to_revision_id"]).entity_id).type == "section"
+        )
+        source_entity_id = db.get(Revision, row["from_revision_id"]).entity_id
+        target_entity_id = db.get(Revision, row["to_revision_id"]).entity_id
+    service.set_relation_state(actor, row["id"], {"excluded": True}, row["row_version"])
+    document = service.workspace(actor, project["id"], clone["id"])["documents"][0]
+    docs = DocumentService(service)
+    current = docs.read_revision(actor, document["entity_id"], document["entity_revision_id"])
+    section = next(item for item in current["sections"] if item["entity_id"] == target_entity_id)
+    assert section["content"] in current["markdown"]
+    docs.save_draft(
+        actor,
+        document["entity_id"],
+        {
+            "analysis_set_id": clone["id"],
+            "base_revision_id": current["entity_revision_id"],
+            "markdown": current["markdown"].replace(
+                section["content"], section["content"] + "\nSecond source update.\n", 1
+            ),
+            "locked_section_ids": [],
+        },
+        current["row_version"],
+    )
+    detect(ctx)
+    with service.db() as db:
+        rows = [
+            relation
+            for relation in db.scalars(
+                select(Relation).where(
+                    Relation.analysis_set_id == clone["id"], Relation.relation_type == row["relation_type"]
+                )
+            )
+            if db.get(Revision, relation.from_revision_id).entity_id == source_entity_id
+            and db.get(Revision, relation.to_revision_id).entity_id == target_entity_id
+        ]
+        assert rows and all(relation.excluded for relation in rows), (
+            "A later source revision restored a user-excluded logical link"
+        )
+        selected = {revision.entity_id: revision.id for revision in service._revisions(db, clone["id"])}
+        assert db.get(Relation, row["id"]).to_revision_id == selected[target_entity_id]

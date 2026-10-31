@@ -1,6 +1,6 @@
-from dataclasses import replace
+
+from test_journeys import store as store  # pytest fixture registration
 from fastapi.testclient import TestClient
-from test_journeys import store
 from packages.collector.snapshots import Snapshot, bundle_bytes
 
 
@@ -35,6 +35,6 @@ def test_bounded_map_api_returns_more_than_13_nodes_and_truncates_after_permissi
         assert row.status_code == 200, row.text
         data = row.json()["data"]
         assert len(data["nodes"]) == 100 and data["truncated"] is True
-        trusted = c.get(path, params=dict(params, confirmed_only=True)).json()["data"]
-        assert len(trusted["nodes"]) == 1 and not trusted["edges"] and not trusted["truncated"]
+        trusted = c.get(path, params=dict(params, valid_only=True)).json()["data"]
+        assert len(trusted["nodes"]) == 100 and trusted["edges"] and trusted["truncated"]
         assert c.get(path, params=dict(params, max_nodes=101)).status_code == 422

@@ -18,13 +18,9 @@ def asynchronous_auth_site():
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
-            self.wfile.write(b"""<html><body><p id="status">Loading</p><script>
-            document.addEventListener('DOMContentLoaded',()=>setTimeout(async()=>{
-              try {const response=await fetch('/auth/refresh',{method:'POST'});
-                if(response.ok)document.querySelector('#status').textContent='Authenticated';
-              }catch(e){}
-              fetch('/other-write',{method:'POST'}).catch(()=>{});
-            },80));</script></body></html>""")
+            self.wfile.write(
+                b"<html><body><p id=\"status\">Loading</p><script>\n            document.addEventListener('DOMContentLoaded',()=>setTimeout(async()=>{\n              try {const response=await fetch('/auth/refresh',{method:'POST'});\n                if(response.ok)document.querySelector('#status').textContent='Authenticated';\n              }catch(e){}\n              fetch('/other-write',{method:'POST'}).catch(()=>{});\n            },80));</script></body></html>"
+            )
 
         def do_POST(self):
             if self.path == "/auth/refresh":
@@ -50,7 +46,7 @@ def asynchronous_auth_site():
     thread.start()
     base = f"http://127.0.0.1:{server.server_port}"
     try:
-        yield base, counts
+        yield (base, counts)
     finally:
         server.shutdown()
         server.server_close()
@@ -72,7 +68,6 @@ def test_authentication_spa_keeps_only_explicit_initialization_window_authorized
             "environment_ref": "mock",
             "dataset_ref": "synthetic",
             "risk_level": "test_write",
-            "approval_ref": "11111111-1111-4111-8111-111111111111",
             "timeout_ms": 8000,
             "steps": [
                 goto,

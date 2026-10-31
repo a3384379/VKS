@@ -2,7 +2,7 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 import json, zipfile
-from test_journeys import store
+from test_journeys import store as store  # pytest fixture registration
 from v2_support import published
 from packages.analyzers.java_spring import java_lexical_sha
 from packages.analyzers.vks_ingest import source_digest

@@ -1,7 +1,7 @@
 """Release-pinned, permission-filtered exports and re-importable data bundles.
 
 Export files are data. Re-import preserves source hashes and logical anchors,
-while approval and runtime causality are always established by the new server.
+while runtime causality is established from evidence on the new server.
 """
 
 from __future__ import annotations
@@ -15,16 +15,9 @@ from io import BytesIO
 
 from packages.analyzers.vks_ingest import _DOM, _document_key, parse_bundle, source_digest
 
-from .models import Artifact, Entity, Evidence, Project, Release, Revision
+from .models import Artifact, Entity, Evidence, Project, Release, Relation, Revision
 
 SOURCE_TYPES = {"symbol", "sql", "table"}
-SENSITIVE = re.compile(
-    r'(?i)(?:bearer\s+[a-z0-9._-]+|(?:api[_-]?key|access[_-]?token|password|client[_-]?secret)\s*[:=]\s*["\']?[^\s<"\']+|(?<![a-z0-9-])1[3-9]\d{9}(?![a-z0-9-])|(?<![a-z0-9-])(?:\d[ -]?){13,19}(?![a-z0-9-])|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:/Users/|/home/|[A-Z]:\\Users\\)[^\s<>"\']+)'
-)
-
-
-def clean(text):
-    return SENSITIVE.sub("[REDACTED]", str(text))
 
 
 def canonical(value):
@@ -39,6 +32,7 @@ def allow_artifact(art, capabilities, session=None):
     if art is None:
         return True
     from .reading import artifact_policy
+
     meta = artifact_policy(session, art) if session is not None else art.metadata_json or {}
     return (
         ((art.kind != "source" and not meta.get("requires_source_read")) or capabilities.get("allowed_source"))
@@ -52,6 +46,7 @@ def allow_artifact(art, capabilities, session=None):
 
 def visible_release(s, release, capabilities):
     from .reading import relation_is_visible
+
     rows = []
     for choice in release.manifest_json["selections"]:
         rev = s.get(Revision, choice["entity_revision_id"])
@@ -65,6 +60,9 @@ def visible_release(s, release, capabilities):
     relations = []
     evidence = {}
     for relation in release.manifest_json["relations"]:
+        from .models import relation_payload
+
+        relation = relation_payload(relation)
         if relation["from_revision_id"] not in ids or relation["to_revision_id"] not in ids:
             continue
         allowed = []
@@ -72,11 +70,18 @@ def visible_release(s, release, capabilities):
             ev = s.get(Evidence, eid)
             if ev and allow_artifact(s.get(Artifact, ev.artifact_id), capabilities, s):
                 allowed.append(eid)
-        if not relation_is_visible(relation, ids, set(allowed)):
+        if not relation_is_visible(
+            relation,
+            ids,
+            set(allowed),
+            s=s,
+            source_allowed=bool(capabilities.get("allowed_source")),
+            trace_allowed=bool(capabilities.get("allowed_trace")),
+        ):
             continue
         for eid in allowed:
             evidence[eid] = s.get(Evidence, eid)
-        relations.append(dict(relation, evidence_ids=allowed, reason=clean(relation.get("reason", ""))))
+        relations.append(dict(relation, evidence_ids=allowed, reason=relation.get("reason", "")))
     return rows, relations, evidence
 
 
@@ -88,8 +93,8 @@ def metadata(service, release, capabilities, relations):
         "omission_policy": [
             "Permissions are applied before materials, references, and counts are produced.",
             "Sensitive originals, raw capture, binary attachments, and inaccessible references are omitted.",
-            "Derived text is redacted and does not claim the original content hash.",
-            "Re-import requires new review; imported observations never establish runtime causality.",
+            "Derived text preserves source content and does not claim the original content hash.",
+            "Re-imported knowledge is directly usable; imported observations retain their original evidence origin.",
         ],
         "source_included": bool(capabilities.get("allowed_source")),
         "export_kind": "knowledge_bundle",
@@ -106,8 +111,7 @@ def read_original(service, art):
 
 
 def safe_original(service, art):
-    # Binary material needs a dedicated redaction verifier. This format exports
-    # only text that can be scanned, preserving bytes when no redaction is needed.
+    # The Markdown export includes supported text formats with original bytes.
     if art.kind not in ("markdown", "source", "prototype", "openapi"):
         return None
     raw = read_original(service, art)
@@ -115,7 +119,7 @@ def safe_original(service, art):
         text = raw.decode(art.metadata_json.get("encoding", "utf-8").replace("utf-8-bom", "utf-8-sig"))
     except (UnicodeError, LookupError):
         return None
-    return None if SENSITIVE.search(text) else raw
+    return raw
 
 
 def markdown_zip(service, release, capabilities, rows, relations, evidence):
@@ -140,13 +144,13 @@ def markdown_zip(service, release, capabilities, rows, relations, evidence):
             path = f"journeys/{entity.id}.json"
         else:
             continue
-        raw = clean(rev.content).encode()
+        raw = rev.content.encode()
         files[path] = raw
-        records.append({"path": path, "sha256": digest(raw), "kind": "derived", "redacted": True})
+        records.append({"path": path, "sha256": digest(raw), "kind": "derived", "original_content": True})
     doc = metadata(service, release, capabilities, relations)
     doc["files"] = records
     doc["evidence"] = [
-        {"id": ev.id, "evidence_kind": ev.evidence_kind, "excerpt": clean(ev.excerpt), "claim": clean(ev.claim)}
+        {"id": ev.id, "evidence_kind": ev.evidence_kind, "excerpt": ev.excerpt, "claim": ev.claim}
         for ev in evidence.values()
     ]
     files["knowledge-manifest.json"] = canonical(doc)
@@ -187,12 +191,34 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
     from .knowledge import SourceSnapshot, document_origin
     from .reading import artifact_policy
 
+    # Destination identities cannot reproduce all model input permissions.
+    # Omit derived wording rather than mislabel its input scope as evidence.
+    transferable = []
+    for relation in relations:
+        stored = s.get(Relation, relation["id"])
+        origin = (stored.metadata_json or {}) if stored else {}
+        if (
+            origin.get("generation_kind") == "model"
+            or origin.get("model_provenance_artifact_ids")
+            or relation.get("reason", "").startswith("AI 语义候选：")
+        ):
+            continue
+        transferable.append(relation)
+    relations = transferable
     project = s.get(Project, release.project_id)
     baseline = "export-" + release.id.replace("-", "")
     files, records, art_rows, paths = {}, [], {}, {}
     candidate_artifacts = {art.id: art for _, _, art in rows if art}
-    document_sources = {art.id: document_origin(s, rev) for entity, rev, art in rows
-                        if entity.type == "document" and art}
+    selected_artifacts = set(candidate_artifacts)
+    document_sources = {
+        art.id: document_origin(s, rev) for entity, rev, art in rows if entity.type == "document" and art
+    }
+    document_paths = {}
+    for entity, rev, art in rows:
+        if entity.type == "document" and art:
+            original = s.get(Artifact, rev.metadata_json.get("original_artifact_id") or art.id)
+            if original and _document_key(original.relative_path) == entity.stable_key:
+                document_paths[art.id] = original.relative_path
     for ev in evidence.values():
         candidate_artifacts[ev.artifact_id] = s.get(Artifact, ev.artifact_id)
     for art in candidate_artifacts.values():
@@ -202,20 +228,25 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
         raw = safe_original(service, art)
         if raw is None:
             continue
+        preferred = document_paths.get(art.id, art.relative_path)
         path = (
-            "materials/" + art.relative_path
-            if art.relative_path.casefold().startswith("export/")
-            else art.relative_path
+            "materials/" + preferred
+            if art.id not in document_paths and preferred.casefold().startswith("export/")
+            else preferred
         )
         if path.casefold() in {x.casefold() for x in files}:
             path = "snapshot-" + art.snapshot_id.replace("-", "") + "/" + path
         files[path] = raw
         paths[art.id] = path
         snapshot = s.get(SourceSnapshot, art.snapshot_id)
-        source_key = document_sources.get(art.id) or (snapshot.source_key if snapshot else "source-" + art.snapshot_id.replace("-", ""))
+        source_key = document_sources.get(art.id) or (
+            snapshot.source_key if snapshot else "source-" + art.snapshot_id.replace("-", "")
+        )
         record = {
             "source_id": source_key,
-            "kind": art.kind,
+            # Evidence-only revisions retain their exact bytes, but absence from
+            # the frozen selection must never turn them back into live knowledge.
+            "kind": art.kind if art.id in selected_artifacts else "fixture",
             "path": path,
             "sha256": digest(raw),
             "size_bytes": len(raw),
@@ -256,14 +287,14 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
                     '<button type="button" data-vks-action="'
                     + escape(action.stable_key, quote=True)
                     + '">'
-                    + escape(clean(action_revision.name))
+                    + escape(action_revision.name)
                     + "</button>"
                 )
         markup = (
             '<!doctype html><html><body><section data-vks-page="'
             + escape(entity.stable_key, quote=True)
             + '"><h1>'
-            + escape(clean(revision.name))
+            + escape(revision.name)
             + "</h1><p>导出的人工热点声明。原始画面另存或已按权限省略；此派生页面不表示真实业务运行。</p>"
             + "".join(buttons)
             + "</section></body></html>"
@@ -295,6 +326,8 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
         "codeEntities": [],
     }
     key_by_revision = {}
+    selected_entities = []
+    source_by_path = {row["path"]: row["source_id"] for row in records}
     for entity, rev, art in rows:
         if entity.type == "action":
             if rev.metadata_json.get("status") == "removed":
@@ -314,14 +347,18 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             path = paths[art.id]
             base = {"artifactPath": path, "sha256": art.sha256}
         key_by_revision[rev.id] = _document_key(path) if entity.type == "document" else entity.stable_key
+        if entity.type in {"page", "action", "api", "symbol", "sql", "table", "document", "section", "rule"}:
+            selected_entities.append(
+                dict(base, logicalKey=key_by_revision[rev.id], entityType=entity.type, sourceId=source_by_path[path])
+            )
         if entity.type == "page":
-            ui["pages"].append(dict(base, logicalKey=entity.stable_key, name=clean(rev.name)))
+            ui["pages"].append(dict(base, logicalKey=entity.stable_key, name=rev.name))
         elif entity.type == "action":
             ui["actions"].append(
                 {
                     "logicalKey": entity.stable_key,
                     "pageKey": rev.metadata_json["page_key"],
-                    "label": clean(rev.name),
+                    "label": rev.name,
                     "event": rev.metadata_json.get("event", "click"),
                 }
             )
@@ -352,7 +389,7 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
     page_keys = {r["logicalKey"] for r in ui["pages"]}
     ui["actions"] = [r for r in ui["actions"] if r["pageKey"] in page_keys]
 
-    def add_sidecar(path, kind, value):
+    def add_sidecar(path, kind, value, *, sensitivity="internal"):
         raw = canonical(value)
         files[path] = raw
         records.append(
@@ -363,38 +400,63 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
                 "sha256": digest(raw),
                 "size_bytes": len(raw),
                 "media_type": "application/json",
-                "sensitivity": "internal",
+                "sensitivity": sensitivity,
             }
         )
         return {"path": path, "sha256": digest(raw)}
 
     for entity, revision, _ in rows:
         if entity.type == "journey":
-            add_sidecar("export/journeys/" + entity.id + ".json", "fixture", {
-                "kind": "passive_journey_definition", "schema_version": "2.0", "review_required": True,
-                "approval_transferred": False, "definition": json.loads(clean(revision.content)),
-                "reimport_policy": "Preserved as data; rebind exact destination revisions before creating a candidate journey.",
-            })
+            add_sidecar(
+                "export/journeys/" + entity.id + ".json",
+                "fixture",
+                {
+                    "kind": "passive_journey_definition",
+                    "schema_version": "2.0",
+                    "definition": json.loads(revision.content),
+                    "reimport_policy": "Preserved as data; rebind exact destination revisions before creating a candidate journey.",
+                },
+            )
         if entity.type == "scenario":
             add_sidecar(
                 "export/scenarios/" + entity.id + ".json",
                 "fixture",
                 {
                     "kind": "scenario_definition",
-                    "review_required": True,
-                    "approval_transferred": False,
                     "definition": {
-                        k: value for k, value in json.loads(clean(revision.content)).items() if k != "approval_ref"
+                        k: value for k, value in json.loads(revision.content).items() if k != "approval_ref"
                     },
                     "reimport_policy": "Preserved as data; create a new scenario and revalidate observations before use.",
                 },
             )
     ui_ref = add_sidecar("export/ui-manifest.json", "ui_manifest", ui)
+    selection_ref = add_sidecar(
+        "export/selection.json",
+        "fixture",
+        {
+            "kind": "fixed_entity_selection",
+            "schemaVersion": "1.0",
+            "projectKey": project.key,
+            "baselineKey": baseline,
+            "entities": selected_entities,
+        },
+        sensitivity="confidential"
+        if any(artifact_policy(s, art).get("requires_source_read") for art in art_rows.values())
+        else "internal",
+    )
     # The declaration documents the fixed release and exclusions, without
     # embedding hidden IDs or restricted material in an importable side channel.
     provenance = metadata(service, release, capabilities, [])
     provenance.pop("relations")
-    provenance["review_policy"] = "All imported relations are candidates; prior release approval is not transferred."
+    provenance["knowledge_policy"] = (
+        "Imported relations are directly usable; evidence and runtime causality remain separate."
+    )
+    provenance["exclusions"] = [
+        {
+            "kind": "model_derived_relationships",
+            "policy": "Omitted because exact all-input provenance and destination permissions cannot be preserved; regenerate and rebind before proposing.",
+        }
+    ]
     included_snapshots = {a.snapshot_id for a in art_rows.values()}
     provenance["sources"] = [
         source
@@ -402,11 +464,41 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
         if source.get("source_snapshot_id") in included_snapshots
     ]
     provenance["files"] = [
-        {"path": x["path"], "sha256": x["sha256"], "original": not x["path"].startswith("export/")}
+        {
+            "path": x["path"],
+            "sha256": x["sha256"],
+            "original": not x["path"].startswith("export/"),
+            "indexable": x["kind"] != "fixture",
+        }
         for x in records
         if x["kind"] not in ("ui_manifest", "binding_manifest")
     ]
-    add_sidecar("export/provenance.json", "fixture", provenance)
+    provenance["evidence"] = [
+        {
+            "id": ev.id,
+            "stable_key": ev.stable_key,
+            "original_artifact_id": ev.artifact_id,
+            "artifact_path": paths[ev.artifact_id],
+            "original_relative_path": art_rows[ev.artifact_id].relative_path,
+            "source_snapshot_id": art_rows[ev.artifact_id].snapshot_id,
+            "artifact_sha256": art_rows[ev.artifact_id].sha256,
+            "content_sha256": ev.content_sha256,
+            "locator": ev.locator,
+            "evidence_kind": ev.evidence_kind,
+            "claim": ev.claim,
+            "reimport_policy": "Archived evidence data; does not select historical knowledge or transfer runtime causality.",
+        }
+        for ev in evidence.values()
+        if ev.artifact_id in paths
+    ]
+    add_sidecar(
+        "export/provenance.json",
+        "fixture",
+        provenance,
+        sensitivity="confidential"
+        if any(artifact_policy(s, art).get("requires_source_read") for art in art_rows.values())
+        else "internal",
+    )
     source_metadata = {
         x.get("source_id", "source-" + x["source_snapshot_id"].replace("-", "")): x
         for x in release.manifest_json.get("sources", [])
@@ -435,6 +527,7 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             "sources": sources,
             "artifacts": records,
             "uiManifest": ui_ref,
+            "selectionManifest": selection_ref,
             "analysis_origin": "manual",
             # A default-deny artifact can never become an opt-in on export.
             "allow_platform_llm": bool(art_rows)
@@ -461,6 +554,10 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
         refs = []
         for eid in relation["evidence_ids"]:
             ev = evidence[eid]
+            if ev.artifact_id not in selected_artifacts:
+                # Its exact locator/hash is retained in provenance. Rebinding an
+                # old document_section to today's section would falsify evidence.
+                continue
             loc = export_locator(ev)
             if ev.locator.get("kind") == "ui_hotspot":
                 loc = {"kind": "dom_attribute", "pageKey": ev.locator["pageKey"], "actionKey": ev.locator["actionKey"]}
@@ -480,7 +577,7 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
                 "artifactPath": dom_ref["artifactPath"] if dom_ref else paths[ev.artifact_id],
                 "sha256": dom_ref["sha256"] if dom_ref else art_rows[ev.artifact_id].sha256,
                 "locator": loc,
-                "claim": clean(ev.claim)[:2000],
+                "claim": ev.claim[:2000],
             }
             refs.append(key)
         if refs:
@@ -490,7 +587,7 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
                     "toLogicalKey": dst,
                     "relationType": relation["relation_type"],
                     "evidenceRefs": refs[:20],
-                    "reason": clean(relation.get("reason", ""))[:2000],
+                    "reason": relation.get("reason", "")[:2000],
                 }
             )
     if binding_relations:
@@ -534,7 +631,7 @@ def pdf_report(service, release, rows, relations):
         bottomMargin=45,
         title="VKS 知识发布报告",
         author="VKS",
-        subject="Fixed release, permission-filtered redacted derivative",
+        subject="Fixed release, permission-filtered knowledge snapshot",
     )
     body = ParagraphStyle(
         "body",
@@ -556,7 +653,7 @@ def pdf_report(service, release, rows, relations):
         Paragraph(f"发布版本：{escape(release.release_no)}", body),
         Paragraph(f"发布清单 SHA-256：{release.manifest_sha256}", note),
         Paragraph(
-            "本报告基于固定发布版本，已按导出权限筛选并对文本脱敏。原始字节与衍生知识分别保存；人工审核不代表运行因果证据。",
+            "本报告基于固定发布版本，已按导出权限筛选。原始字节与衍生知识分别保存；关联存在不代表运行因果证据。",
             body,
         ),
         Spacer(1, 12),
@@ -564,12 +661,12 @@ def pdf_report(service, release, rows, relations):
     for entity, rev, _ in rows:
         if entity.type not in ("document", "scenario", "journey"):
             continue
-        story.append(Paragraph(escape(clean(rev.name)), heading))
+        story.append(Paragraph(escape(rev.name), heading))
         story.append(Paragraph(f"类型：{entity.type} / 修订：{rev.id}", note))
-        for line in clean(rev.content).splitlines():
+        for line in rev.content.splitlines():
             story.append(Paragraph(escape(line).replace("\t", "    ") or "<br/>", body))
     story.append(Paragraph("已授权关系", heading))
-    names = {rev.id: clean(rev.name) for _, rev, _ in rows}
+    names = {rev.id: rev.name for _, rev, _ in rows}
     for relation in relations:
         label = (
             f"{names[relation['from_revision_id']]} → {relation['relation_type']} → {names[relation['to_revision_id']]}"
@@ -579,9 +676,7 @@ def pdf_report(service, release, rows, relations):
                 [
                     Paragraph(escape(label), body),
                     Paragraph(
-                        escape(
-                            f"审核：{relation['review_status']}；有效性：{relation['validity_status']}；因果：{relation['causal_basis']}"
-                        ),
+                        escape(f"有效性：{relation['validity_status']}；因果：{relation['causal_basis']}"),
                         note,
                     ),
                 ]
@@ -594,7 +689,7 @@ def pdf_report(service, release, rows, relations):
         canvas.saveState()
         canvas.setFont("STSong-Light", 8)
         canvas.setFillColor(colors.HexColor("#66758a"))
-        canvas.drawString(48, 25, "VKS / 已脱敏衍生报告")
+        canvas.drawString(48, 25, "VKS / 知识报告")
         canvas.drawRightString(A4[0] - 48, 25, str(document.page))
         canvas.restoreState()
 
@@ -630,7 +725,11 @@ def perform_export(service, s, job):
         raise DomainError("VKS_INVALID_INPUT", "不支持的导出格式")
     # Store capabilities actually used, allowing download to recheck grants.
     job.input_json = dict(
-        job.input_json, **{k: capabilities[k] for k in ("allowed_source", "allowed_confidential", "allowed_trace")}
+        job.input_json,
+        **{k: capabilities[k] for k in ("allowed_source", "allowed_confidential", "allowed_trace")},
+        _export_revision_ids=sorted(revision.id for _, revision, _ in rows),
+        _export_relation_ids=sorted(row["id"] for row in relations),
+        _export_evidence_ids=sorted(evidence),
     )
     return {
         "result_refs": [{"kind": "export", "id": job.id}],

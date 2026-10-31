@@ -1,17 +1,20 @@
 def published(service, actor, project):
     workspace = service.workspace(actor, project["id"])
     for row in workspace["relations"]:
-        service.review_relation(
+        service.set_relation_state(
             actor,
             row["id"],
-            dict(decision="confirm", reason="Synthetic frozen baseline", evidence_ids=row["evidence_ids"]),
+            {
+                "excluded": dict(
+                    decision="confirm", reason="Synthetic frozen baseline", evidence_ids=row["evidence_ids"]
+                )["decision"]
+                == "reject"
+            },
             row["row_version"],
         )
-    candidate = service.request_release(
+    candidate = service.save_snapshot(
         actor, project["id"], dict(analysis_set_id=workspace["selected_analysis_set"]["id"]), "precheck"
     )
-    ticket = service.confirm_release(actor, candidate["candidate_id"])
-    release = service.publish(
-        actor, candidate["candidate_id"], dict(ticket, change_note="Synthetic frozen V2 baseline"), "publish"
-    )
+    ticket = None
+    release = candidate
     return release, workspace

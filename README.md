@@ -4,7 +4,9 @@ VKS 从业务操作连接到文档章节、接口、源码与证据。当前实�
 
 当前分支增加 **2.0 开发预览**：五主导航、冰蓝白项目驾驶舱、智能接入向导、不可变业务流程画布、被动状态对比、同版双向知识定位、受限自然语言知识任务、Windows 本机 Agent/授权同步、来源对齐诊断、章节差异和有界知识地图。实际范围、兼容及剩余工作见 [2.0 实施记录](docs/upgrades/v2/IMPLEMENTATION.md)，检查及未验收项见 [2.0 验证记录](docs/upgrades/v2/VERIFICATION.md)。本地合成验证不代表完整 2.0 或生产发行。
 
-React/TypeScript 工作台按项目空间、业务探索、知识构建、变更与审核、项目设置五组导航组织；1.0 的八种旧 hash 地址仍可恢复。所有页面使用持久化 API；模型默认关闭，普通导入、检索、审核和阅读不依赖模型。
+React/TypeScript 工作台按项目空间、业务探索、知识构建、变更与版本、项目设置五组导航组织；1.0 的八种旧 hash 地址仍可恢复。所有页面使用持久化 API；模型默认关闭，普通导入、检索、编辑和阅读不依赖模型。
+
+2026-10-31 起采用[自用知识工作流](docs/PERSONAL_WORKFLOW.md)：审批与内容脱敏完整移除，知识直接使用，历史快照仍不可变。
 
 ## 启动
 
@@ -18,7 +20,7 @@ make dev
 
 API 位于 [127.0.0.1:8000](http://127.0.0.1:8000/docs)。本地默认 SQLite，数据保存在忽略目录 `.vks/`。`Ctrl+C` 停止开发服务。完整 PostgreSQL/RabbitMQ/Worker 部署见 [部署说明](deploy/README.md)。
 
-开始使用：创建项目 → 导入样例或资料 → 查看动作及证据 → 审核候选 → 发布预检 → 人员确认发布。已发布基线保持不可变，继续工作时先克隆草稿。
+开始使用：创建项目 → 导入样例或资料 → 查看动作及证据 → 直接编辑与纠错 → 按需保存知识版本。已发布基线保持不可变，继续工作时先克隆草稿。
 
 文档图表与数学公式的写法、阅读操作和支持边界见 [Markdown 格式说明](docs/MARKDOWN_FORMATS.md)。可将 [图表与公式样例](fixtures/markdown-visuals.md) 导入自己的项目；本地验收实例另有独立的“文档图表与公式示例”项目。
 
@@ -30,9 +32,9 @@ API 位于 [127.0.0.1:8000](http://127.0.0.1:8000/docs)。本地默认 SQLite，
 | 资料接入 | ZIP、独立 Markdown/OpenAPI、HTML/图片原型，上传预检、编码/哈希/来源版本和原始字节保留；目录/Git/SVN 只读客户端采集 |
 | 静态分析 | Tree-sitter Java 声明/保守调用候选，Spring 条件路由/Feign，MyBatis namespace/id、片段、SQL与表；歧义和动态部分明确报告 |
 | 场景与热点 | 不可变 DSL、有限状态/分支、静态安全讲解、DOM/区域热点新修订；已有发布版和原始 HTML 保持不变 |
-| 受控采集 | 登记测试/Mock 环境、合成数据、固定修订人员审批，真实 Chromium、出站来源/IP限制、采集前脱敏、来源对齐状态 |
-| 文档 | CommonMark/GFM、Mermaid/PlantUML图表、LaTeX公式、稳定章节、原始附件、代码高亮、草稿冲突与人工锁、提交/审核；生成文档未审核阻断发布 |
-| 关系与版本 | 独立审核/有效性/因果字段，改选/拆分/合并、同类批量审核、纠错反馈，变更传播、迁移提案、复核和默认版本回退 |
+| 受控采集 | 登记测试/Mock 环境、数据集和固定场景修订，真实 Chromium、出站来源/IP限制、原始页面与截图、来源对齐状态 |
+| 文档 | CommonMark/GFM、Mermaid/PlantUML图表、LaTeX公式、稳定章节、原始附件、代码高亮、草稿冲突与人工锁、直接保存并保留来源 |
+| 关系与版本 | 独立用户移除/有效性/因果字段，改选/拆分/合并、纠错反馈、移除与恢复，变更传播与来源有效性核对和默认版本回退 |
 | 检索与模型 | 按版本/模块/类型/服务过滤、权限内全文/路径/符号检索、局部图；可选带证据引用的模型问答/草稿及项目预算账本 |
 | 任务与恢复 | 数据库 outbox、独立 Celery/RabbitMQ 队列、本地兼容调度、租约/检查点/幂等、取消、有限重试、一致备份恢复 |
 | 导出与 MCP | 原始/衍生 Markdown、中文 PDF、可回导 VKS 包；官方 MCP SDK stdio/HTTP、原 18 工具及 2.0 新增 5 工具、资源/提示模板、OAuth资源服务器 |
@@ -61,7 +63,7 @@ PYTHONPATH=services/api:. uv run python -m scripts.seed_validation --data-dir .v
 
 该项目含30动作、15规范化API、30章节、3类**声明**场景，保持草稿。`scripts/build_selfhosted.py` 从当前源码/OpenAPI重建只读自举包；候选不等于运行事实或人工 Gold。
 
-已接入用户指定的 **FlowTest真实试点**：固定Git原始源码/使用手册、30动作、118章节，源码与运行OpenAPI分别保存。独立合成实例完成页面可读、表单校验、只读权限三条真实采集，并通过MCP SDK读取。源码与运行镜像版本不同，保持未对齐/待审核；详见 [FlowTest试点记录](docs/FLOWTEST_PILOT.md)。
+已接入用户指定的 **FlowTest真实试点**：固定Git原始源码/使用手册、30动作、118章节，源码与运行OpenAPI分别保存。独立合成实例完成页面可读、表单校验、只读权限三条真实采集，并通过MCP SDK读取。源码与运行镜像版本不同，保持未对齐；详见 [FlowTest试点记录](docs/FLOWTEST_PILOT.md)。
 
 ## MCP 与可选模型
 
@@ -75,9 +77,9 @@ uv run python -m vks_api.mcp_gateway
 uv run python -m vks_api.mcp_gateway --http
 ```
 
-HTTP 地址为 [127.0.0.1:8788/mcp](http://127.0.0.1:8788/mcp)，同时支持本平台 Bearer 令牌和登记的外部 OAuth JWT。每次请求重新验证发行方、audience、scope、项目授权与撤销；机器不能审核或发布。详见 [MCP 说明](docs/MCP.md)。
+HTTP 地址为 [127.0.0.1:8788/mcp](http://127.0.0.1:8788/mcp)，同时支持本平台 Bearer 令牌和登记的外部 OAuth JWT。每次请求重新验证发行方、audience、scope、项目授权与撤销；授权客户端可直接编辑知识、保存固定版本和发起采集。详见 [MCP 说明](docs/MCP.md)。
 
-模型支持 Responses/Chat Completions 结构化输出。实例先配置允许的出站来源及专用密钥引用，项目再开启策略、资料出口和预算。导入 manifest 的 `allow_platform_llm=false` 始终禁止发送该材料；无充分且获准证据时不调用模型。所有模型段落必须引用当前可见证据，结果仍为待审核草稿。参见 [模型配置](deploy/README.md#可选模型)。
+模型支持 Responses/Chat Completions 结构化输出。实例先配置允许的出站来源及专用密钥引用，项目再开启策略、资料出口和预算。导入 manifest 的 `allow_platform_llm=false` 始终禁止发送该材料；无充分且获准证据时不调用模型。所有模型段落必须引用当前可见证据，结果直接保存在当前知识版本。参见 [模型配置](deploy/README.md#可选模型)。
 
 ## 验证
 

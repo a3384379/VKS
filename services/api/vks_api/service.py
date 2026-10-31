@@ -4,15 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock, Event, Thread
-from uuid import uuid4
 import hashlib
 import io
 import json
 import os
 import secrets
-import time
 import zipfile
-from sqlalchemy import create_engine, select, update, event, text
+from sqlalchemy import create_engine, select, event, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.exc import IntegrityError
@@ -29,27 +27,17 @@ ALL_SCOPES = {
     "source:import",
     "analysis:run",
     "links:propose",
-    "links:review",
-    "release:publish",
+    "knowledge:edit",
+    "knowledge:edit",
     "capture:run",
     "knowledge:export",
     "audit:read",
     "knowledge:edit",
 }
-MACHINE_SCOPES = ALL_SCOPES - {"project:manage", "links:review", "release:publish"}
+MACHINE_SCOPES = ALL_SCOPES - {"project:manage"}
 ROLE_SCOPES = {
     "viewer": {READ, "knowledge:export"},
     "editor": {READ, "knowledge:edit", "source:import", "analysis:run", "links:propose", "knowledge:export"},
-    "reviewer": {
-        READ,
-        "knowledge:edit",
-        "source:import",
-        "analysis:run",
-        "links:propose",
-        "links:review",
-        "release:publish",
-        "knowledge:export",
-    },
     "maintainer": ALL_SCOPES,
     "admin": ALL_SCOPES,
 }
@@ -62,7 +50,6 @@ JOB_SCOPES = {
     "suggest_links": "analysis:run",
     "detect_drift": "analysis:run",
     "capture": "capture:run",
-    "release_precheck": "links:propose",
     "export": "knowledge:export",
 }
 RELATION_TYPES = {
@@ -116,7 +103,8 @@ class Actor:
 
 class Service:
     def __init__(self, data_dir=None, database_url=None):
-        from . import (
+        # Register all mapped tables before migrations or first-boot create_all.
+        from . import (  # noqa: F401 - mapped-table registration
             knowledge,
             scenarios,
             jobs,
@@ -166,8 +154,15 @@ class Service:
 
         if url.startswith("sqlite"):
             with self.engine.connect() as connection:
+                from .personal_migration import migrate_sqlite
+
+                migrate_sqlite(connection)
                 connection.exec_driver_sql("BEGIN IMMEDIATE")
                 Base.metadata.create_all(connection)
+                if "metadata_json" not in {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(relation)")}:
+                    connection.exec_driver_sql(
+                        "ALTER TABLE relation ADD COLUMN metadata_json JSON NOT NULL DEFAULT '{}'"
+                    )
                 connection.commit()
         elif os.getenv("VKS_AUTO_MIGRATE") == "1":
             Base.metadata.create_all(self.engine)
@@ -310,6 +305,13 @@ class Service:
         if row:
             if row.payload_hash != h:
                 raise DomainError("VKS_IDEMPOTENCY_CONFLICT", "相同幂等键对应不同内容", 409)
+            if operation in {
+                "propose_links",
+                "journey.create",
+                "journey.update",
+                "journey.propose_from_states",
+            }:
+                self._check_sensitive_replay(s, actor, pid, row.response_json)
             return row.response_json
         result = fn()
         s.flush()
@@ -319,6 +321,36 @@ class Service:
             )
         )
         return result
+
+    def _check_sensitive_replay(self, s, actor, pid, response):
+        """Reauthorize cached text without replaying its write or changing facts."""
+        if isinstance(response, list):
+            for value in response:
+                self._check_sensitive_replay(s, actor, pid, value)
+        elif isinstance(response, dict):
+            if {"id", "from_revision_id", "to_revision_id", "relation_type"} <= response.keys():
+                row = s.get(Relation, response["id"])
+                if (
+                    not row
+                    or row.project_id != pid
+                    or not self._visible_relation(s, actor, pid, row)
+                    or not all(
+                        self._visible_revision(s, actor, pid, s.get(Revision, response[key]))
+                        for key in ("from_revision_id", "to_revision_id")
+                    )
+                    or not all(
+                        (ev := s.get(Evidence, eid)) and self._visible_evidence(s, actor, pid, ev)
+                        for eid in response.get("evidence_ids", [])
+                    )
+                ):
+                    raise DomainError("VKS_NOT_FOUND", "缓存关系的当前来源不可访问", 404)
+            if "revision_id" in response and ("journey_id" in response or "decision" in response):
+                row = s.get(Revision, response["revision_id"])
+                if not row or row.project_id != pid or not self._visible_revision(s, actor, pid, row):
+                    raise DomainError("VKS_NOT_FOUND", "缓存流程修订的当前来源不可访问", 404)
+            for value in response.values():
+                if isinstance(value, (dict, list)):
+                    self._check_sensitive_replay(s, actor, pid, value)
 
     def project_dto(self, p):
         d = {
@@ -487,7 +519,7 @@ class Service:
             "from_revision_id": r.from_revision_id,
             "to_revision_id": r.to_revision_id,
             "relation_type": r.relation_type,
-            "review_status": r.review_status,
+            "excluded": r.excluded,
             "validity_status": r.validity_status,
             "causal_basis": r.causal_basis,
             "evidence_ids": r.evidence_ids,
@@ -510,12 +542,6 @@ class Service:
                 else "vks-explicit-1"
             ),
             "captured_at": e.created_at,
-            "redaction_version": e.locator.get("_redaction_version")
-            or (
-                "vks-runner-redact-1"
-                if e.evidence_kind == "observed" and e.locator.get("source_kind") == "runtime_capture"
-                else "import-policy-v1"
-            ),
         }
 
     def job_dto(self, j):
@@ -587,7 +613,7 @@ class Service:
 
     def _relations(self, s, a, release=None):
         if release:
-            return release.manifest_json["relations"]
+            return [relation_payload(row) for row in release.manifest_json["relations"]]
         return [self.relation_dto(r) for r in s.scalars(select(Relation).where(Relation.analysis_set_id == a.id)).all()]
 
     def _visible_revision(self, s, actor, pid, r):
@@ -606,6 +632,18 @@ class Service:
             source_restricted = source_restricted or scenario_source_required(s, pid, r.metadata_json)
         return (not source_restricted or self._can(s, actor, pid, "source:read")) and (
             not trace_restricted or self._can(s, actor, pid, "trace:read")
+        )
+
+    def _visible_relation(self, s, actor, pid, relation):
+        from .reading import relation_policy, ReadingService
+
+        policy = relation_policy(s, relation)
+        return ReadingService.policy_visible(
+            "knowledge",
+            "internal",
+            policy,
+            self._can(s, actor, pid, "source:read"),
+            self._can(s, actor, pid, "trace:read"),
         )
 
     def _visible_evidence(self, s, actor, pid, e):
@@ -674,7 +712,18 @@ class Service:
             allowed_e = {e.id for e in evs}
             for r in rels:
                 r["evidence_ids"] = [eid for eid in r["evidence_ids"] if eid in allowed_e]
-            rels = [r for r in rels if relation_is_visible(r, visible, allowed_e)]
+            rels = [
+                r
+                for r in rels
+                if relation_is_visible(
+                    r,
+                    visible,
+                    allowed_e,
+                    s=s,
+                    source_allowed=self._can(s, actor, pid, "source:read"),
+                    trace_allowed=self._can(s, actor, pid, "trace:read"),
+                )
+            ]
             names = {e["entity_revision_id"]: e["name"] for e in entities}
             rels = [dict(r, from_name=names[r["from_revision_id"]], to_name=names[r["to_revision_id"]]) for r in rels]
             jobs = (
@@ -699,9 +748,7 @@ class Service:
             )
             actions = [e for e in entities if e["type"] == "action" and e["metadata"].get("status") != "removed"]
             confirmed = {
-                r["from_revision_id"]
-                for r in rels
-                if r["review_status"] == "confirmed" and r["validity_status"] == "valid"
+                r["from_revision_id"] for r in rels if (r["excluded"] is False) and r["validity_status"] == "valid"
             }
             from .runtime import status
 
@@ -729,7 +776,7 @@ class Service:
                     "markdown",
                     "openapi_index",
                     "safe_explanation",
-                    "human_review",
+                    "ready",
                     "immutable_releases",
                     "scoped_tokens",
                     "mcp_stdio",
@@ -745,15 +792,15 @@ class Service:
                 ],
                 "unknowns": [
                     "尚未接入真实业务环境；运行与源码版本未核对",
-                    "静态候选和单次采集不能证明全部业务行为；发布前需人员审核",
+                    "静态候选和单次采集不能证明全部业务行为；知识来源与因果可单独核对",
                 ],
                 "stats": {
                     "sources": len(self._visible_sources(s, actor, pid, a.sources)) if a else 0,
                     "scenarios": len([e for e in entities if e["type"] == "scenario"]),
                     "actions": len(actions),
                     "linked_actions": len({e["entity_revision_id"] for e in actions} & confirmed),
-                    "confirmed_relations": len([r for r in rels if r["review_status"] == "confirmed"]),
-                    "candidate_relations": len([r for r in rels if r["review_status"] == "candidate"]),
+                    "active_relations": len([r for r in rels if (r["excluded"] is False)]),
+                    "excluded_relations": len([r for r in rels if r["excluded"]]),
                     "broken_relations": len([r for r in rels if r["validity_status"] == "broken"]),
                     "documents": len([e for e in entities if e["type"] == "document"]),
                 },
@@ -836,6 +883,7 @@ class Service:
                 raise DomainError("VKS_INVALID_INPUT", "此轮预检支持单个 .vksbundle.zip 包")
             data, u = self._upload_data(s, actor, pid, payload["artifact_ids"][0])
             key = p.key
+
         bundle = self._parse(data, key)
         return {
             "valid": True,
@@ -849,7 +897,6 @@ class Service:
             "issues": bundle.issues,
             "allow_platform_llm": bool(bundle.manifest.get("allow_platform_llm", False)),
             "capabilities": ["readonly_import", "explicit_bindings", "java_spring_mybatis_ast"],
-            "requires_review": True,
         }
 
     def _new_job(self, s, actor, pid, kind, payload):
@@ -1039,8 +1086,6 @@ class Service:
                 raise DomainError("VKS_FORBIDDEN", "只能重试自己发起的任务", 403)
             if j.state not in ("cancelled", "failed"):
                 raise DomainError("VKS_STATE_CONFLICT", "只有失败或取消的任务可重试", 409)
-            if j.kind == "capture":
-                raise DomainError("VKS_APPROVAL_REQUIRED", "录制重试需要重新授权", 403)
             j.state = "queued"
             j.cancel_requested = False
             j.error_json = {}
@@ -1050,56 +1095,10 @@ class Service:
             self.audit(s, actor, j.project_id, "job.retry", jid)
             return self.job_dto(j)
 
-    def review_relation(self, actor, rid, payload, version):
-        with self.db() as s:
-            return self._review_relation(s, actor, rid, payload, version)
+    def set_relation_state(self, actor, rid, payload, version):
+        from .relationships import RelationshipService
 
-    def _review_relation(self, s, actor, rid, payload, version):
-        r = s.get(Relation, rid)
-        if not r:
-            raise DomainError("VKS_NOT_FOUND", "未找到关系", 404)
-        self.require(s, actor, r.project_id, "links:review")
-        s.refresh(r)
-        if not actor.human:
-            raise DomainError("VKS_FORBIDDEN", "普通客户端令牌不能审核关系", 403)
-        self._version(r.row_version, version)
-        a = s.get(Analysis, r.analysis_set_id)
-        if a.state == "frozen":
-            raise DomainError("VKS_STATE_CONFLICT", "已发布基线不可修改，请创建新草稿", 409)
-        if set(payload["evidence_ids"]) - set(r.evidence_ids):
-            raise DomainError("VKS_INVALID_EVIDENCE", "审核证据必须属于当前关系")
-        self._verify_relation(s, r)
-        if not all(
-            self._visible_revision(s, actor, r.project_id, s.get(Revision, rid))
-            for rid in (r.from_revision_id, r.to_revision_id)
-        ) or not all(
-            self._visible_evidence(s, actor, r.project_id, s.get(Evidence, eid)) for eid in payload["evidence_ids"]
-        ):
-            raise DomainError("VKS_NOT_FOUND", "未找到可审核的证据", 404)
-        rev = Review(
-            id=uid(),
-            project_id=r.project_id,
-            subject_id=r.id,
-            actor_id=actor.id,
-            decision=payload["decision"],
-            reason=payload["reason"],
-            base_version=r.row_version,
-            evidence_ids=payload["evidence_ids"],
-        )
-        s.add(rev)
-        r.review_status = {"confirm": "confirmed", "reject": "rejected", "reopen": "candidate"}[payload["decision"]]
-        r.row_version += 1
-        r.manual_lock = r.review_status == "confirmed"
-        a.selection_version += 1
-        self.audit(
-            s,
-            actor,
-            r.project_id,
-            "relation.review",
-            r.id,
-            metadata={"decision": payload["decision"], "base_version": rev.base_version},
-        )
-        return {"review_decision_id": rev.id, "relation": self.relation_dto(r)}
+        return RelationshipService(self).set_state(actor, rid, payload, version)
 
     def _verify_relation(self, s, r):
         selected = set(
@@ -1153,6 +1152,8 @@ class Service:
             self.require(s, actor, a.project_id, "knowledge:edit")
             rows = []
             for r in s.scalars(select(Relation).where(Relation.analysis_set_id == aid)):
+                if not self._visible_relation(s, actor, a.project_id, r):
+                    continue
                 if not all(
                     self._visible_revision(s, actor, a.project_id, s.get(Revision, rid))
                     for rid in (r.from_revision_id, r.to_revision_id)
@@ -1196,24 +1197,25 @@ class Service:
                             id=uid(),
                             project_id=pid,
                             analysis_set_id=a.id,
-                            review_status="candidate",
+                            excluded=False,
                             validity_status="valid",
                             row_version=1,
                             **c,
                         )
                         self._verify_relation(s, r)
                         s.add(r)
-                    if not all(
+                    if not self._visible_relation(s, actor, pid, r) or not all(
                         self._visible_revision(s, actor, pid, s.get(Revision, rid))
                         for rid in (r.from_revision_id, r.to_revision_id)
                     ):
                         raise DomainError("VKS_NOT_FOUND", "未找到可访问的关系端点", 404)
                     if not all(self._visible_evidence(s, actor, pid, s.get(Evidence, eid)) for eid in r.evidence_ids):
                         raise DomainError("VKS_NOT_FOUND", "未找到可访问的关系证据", 404)
-                    rows.append(self.relation_dto(r))
+                    rows.append(r)
                 a.selection_version += 1
                 self.audit(s, actor, pid, "links.propose", a.id)
-                return {"review_batch_id": uid(), "candidates": rows}
+
+                return {"candidates": [self.relation_dto(row) for row in rows]}
 
             return self.idem(s, actor, pid, "propose_links", key, payload, create)
 
@@ -1225,9 +1227,7 @@ class Service:
         selections.sort(key=lambda x: x["entity_id"])
         relations = [
             self.relation_dto(r)
-            for r in s.scalars(
-                select(Relation).where(Relation.analysis_set_id == a.id, Relation.review_status != "rejected")
-            )
+            for r in s.scalars(select(Relation).where(Relation.analysis_set_id == a.id, Relation.excluded == False))
         ]
         relations.sort(key=lambda x: x["id"])
         return {
@@ -1241,158 +1241,6 @@ class Service:
             "runtime_alignment": a.runtime_alignment,
             "ruleset_version": a.ruleset_version,
         }
-
-    def request_release(self, actor, pid, payload, key):
-        with self.db() as s:
-            self.require(s, actor, pid, "links:propose")
-            a = s.get(Analysis, payload["analysis_set_id"])
-            if not a or a.project_id != pid:
-                raise DomainError("VKS_NOT_FOUND", "未找到分析集合", 404)
-            if a.state == "frozen":
-                raise DomainError("VKS_STATE_CONFLICT", "该基线已发布", 409)
-
-            def create():
-                manifest = self._manifest(s, a)
-                from .documents import DocumentService
-                from .versions import VersionService
-                from .scenarios import ScenarioService
-                from .journeys import JourneyService
-
-                blockers = (
-                    DocumentService.assert_publishable(s, a)
-                    + VersionService.assert_publishable(s, a)
-                    + ScenarioService(self).assert_publishable(s, a)
-                    + JourneyService(self).assert_publishable(s, a)
-                )
-                if not all(self._visible_revision(s, actor, pid, r) for r in self._revisions(s, a.id)):
-                    raise DomainError("VKS_FORBIDDEN", "需要读取全部待发布材料的权限", 403)
-                if not manifest["selections"]:
-                    blockers.append("分析集合没有知识实体")
-                for r in s.scalars(
-                    select(Relation).where(Relation.analysis_set_id == a.id, Relation.review_status != "rejected")
-                ):
-                    if r.review_status != "confirmed":
-                        blockers.append(f"关系 {r.id} 尚未人工审核")
-                    if r.validity_status != "valid":
-                        blockers.append(f"关系 {r.id} 的证据需要复核")
-                    try:
-                        self._verify_relation(s, r)
-                    except DomainError:
-                        blockers.append(f"关系 {r.id} 证据不完整")
-                j = self._new_job(s, actor, pid, "release_precheck", {"analysis_set_id": a.id})
-                j.state = "succeeded"
-                j.stage = "COMPLETE"
-                j.progress = 100
-                j.completeness = "complete"
-                j.result_json = {"blockers": blockers, "manifest_sha256": sha(canonical(manifest))}
-                c = Candidate(
-                    id=uid(),
-                    project_id=pid,
-                    analysis_set_id=a.id,
-                    manifest_sha256=sha(canonical(manifest)),
-                    manifest_json=manifest,
-                    blockers=blockers,
-                    job_id=j.id,
-                    created_by=actor.id,
-                )
-                s.add(c)
-                s.flush()
-                return {
-                    "candidate_id": c.id,
-                    "precheck_job": self.job_dto(j),
-                    "review_url": f"/?project={pid}&page=versions&candidate={c.id}",
-                    "published": False,
-                    "manifest_sha256": c.manifest_sha256,
-                    "blockers": blockers,
-                }
-
-            return self.idem(s, actor, pid, "request_release", key, payload, create)
-
-    def confirm_release(self, actor, cid):
-        with self.db() as s:
-            c = s.get(Candidate, cid)
-            if not c:
-                raise DomainError("VKS_NOT_FOUND", "未找到发布预检", 404)
-            self.require(s, actor, c.project_id, "release:publish")
-            s.refresh(c)
-            if not actor.human:
-                raise DomainError("VKS_FORBIDDEN", "需要人员会话确认发布", 403)
-            a = s.get(Analysis, c.analysis_set_id)
-            if c.blockers:
-                raise DomainError("VKS_STATE_CONFLICT", "请先处理发布阻断项", 409, {"blockers": c.blockers})
-            if sha(canonical(self._manifest(s, a))) != c.manifest_sha256:
-                raise DomainError("VKS_VERSION_CONFLICT", "预检后素材发生变化，请重新预检", 412)
-            confirmation = uid()
-            c.confirmation_hash = sha(confirmation)
-            c.confirmation_actor = actor.id
-            c.confirmation_expires = future(300)
-            self.audit(s, actor, c.project_id, "release.confirmation", c.id)
-            return {
-                "human_confirmation_ref": confirmation,
-                "expected_manifest_sha256": c.manifest_sha256,
-                "expires_at": c.confirmation_expires,
-            }
-
-    def publish(self, actor, cid, payload, key):
-        with self.db() as s:
-            c = s.get(Candidate, cid)
-            if not c:
-                raise DomainError("VKS_NOT_FOUND", "未找到发布预检", 404)
-            p = self.require(s, actor, c.project_id, "release:publish")
-            s.refresh(c)
-            if not actor.human:
-                raise DomainError("VKS_FORBIDDEN", "需要人员会话发布", 403)
-
-            def do_publish():
-                a = s.get(Analysis, c.analysis_set_id)
-                if a.state == "frozen":
-                    raise DomainError("VKS_STATE_CONFLICT", "该基线已发布", 409)
-                from .documents import DocumentService
-                from .versions import VersionService
-                from .scenarios import ScenarioService
-                from .journeys import JourneyService
-
-                blockers = (
-                    c.blockers
-                    + DocumentService.assert_publishable(s, a)
-                    + VersionService.assert_publishable(s, a)
-                    + ScenarioService(self).assert_publishable(s, a)
-                    + JourneyService(self).assert_publishable(s, a)
-                )
-                if blockers:
-                    raise DomainError("VKS_STATE_CONFLICT", "存在发布阻断项", 409, {"blockers": blockers})
-                if (
-                    payload["expected_manifest_sha256"] != c.manifest_sha256
-                    or sha(canonical(self._manifest(s, a))) != c.manifest_sha256
-                ):
-                    raise DomainError("VKS_VERSION_CONFLICT", "预检内容已变化，请重新审核", 412)
-                if (
-                    c.confirmation_actor != actor.id
-                    or not c.confirmation_hash
-                    or c.confirmation_expires < now()
-                    or not secrets.compare_digest(c.confirmation_hash, sha(payload["human_confirmation_ref"]))
-                ):
-                    raise DomainError("VKS_APPROVAL_REQUIRED", "人员确认票据无效或过期", 403)
-                r = Release(
-                    id=uid(),
-                    project_id=p.id,
-                    analysis_set_id=a.id,
-                    release_no=a.name,
-                    manifest_sha256=c.manifest_sha256,
-                    manifest_json=c.manifest_json,
-                    published_by=actor.id,
-                    change_note=payload["change_note"],
-                )
-                s.add(r)
-                s.flush()
-                a.state = "frozen"
-                p.current_release_id = r.id
-                p.row_version += 1
-                c.confirmation_hash = None
-                self.audit(s, actor, p.id, "release.publish", r.id)
-                return self.release_dto(r)
-
-            return self.idem(s, actor, p.id, "publish:" + cid, key, payload, do_publish)
 
     def releases(self, actor, pid):
         with self.db() as s:
@@ -1445,7 +1293,7 @@ class Service:
         )
 
     def action_context(
-        self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50, relation_policy="trusted"
+        self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50, relation_policy="valid"
     ):
         from .reading import ReadingService
 
@@ -1595,6 +1443,8 @@ class Service:
                 changes.append(change)
         relations = []
         for relation in result.get("impacted_relations", []):
+            if not self._visible_relation(s, actor, pid, relation):
+                continue
             endpoints = [s.get(Revision, relation[k]) for k in ("from_revision_id", "to_revision_id")]
             if not all(r and self._visible_revision(s, actor, pid, r) for r in endpoints):
                 continue
@@ -1708,6 +1558,49 @@ class Service:
     def set_member(self, actor, pid, payload, version):
         return team_identity.set_member(self, actor, pid, payload, version)
 
+    def save_snapshot(self, actor, pid, payload, key):
+        """Save the current knowledge selection as an immutable version."""
+        with self.db() as s:
+            project = self.require(s, actor, pid, "knowledge:edit")
+            analysis = s.scalar(select(Analysis).where(Analysis.id == payload["analysis_set_id"]).with_for_update())
+            if not analysis or analysis.project_id != pid:
+                raise DomainError("VKS_NOT_FOUND", "未找到知识基线", 404)
+
+            def save():
+                existing = s.scalar(select(Release).where(Release.analysis_set_id == analysis.id))
+                if existing:
+                    return dict(self.release_dto(existing), manifest=existing.manifest_json)
+                rows = self._revisions(s, analysis.id)
+                if not rows:
+                    raise DomainError("VKS_STATE_CONFLICT", "当前基线没有知识内容", 409)
+                if not all(self._visible_revision(s, actor, pid, row) for row in rows):
+                    raise DomainError("VKS_FORBIDDEN", "需要读取当前版本全部材料的权限", 403)
+                for relation in s.scalars(
+                    select(Relation).where(Relation.analysis_set_id == analysis.id, Relation.excluded == False)
+                ):
+                    if not self._visible_relation(s, actor, pid, relation):
+                        raise DomainError("VKS_FORBIDDEN", "需要读取当前版本关联来源的权限", 403)
+                manifest = self._manifest(s, analysis)
+                sequence = len(list(s.scalars(select(Release.id).where(Release.project_id == pid)))) + 1
+                result = Release(
+                    id=uid(),
+                    project_id=pid,
+                    analysis_set_id=analysis.id,
+                    release_no="v" + str(sequence),
+                    manifest_sha256=sha(canonical(manifest)),
+                    manifest_json=manifest,
+                    published_by=actor.id,
+                    change_note=payload.get("change_note", "保存知识版本"),
+                )
+                analysis.state = "frozen"
+                project.current_release_id = result.id
+                s.add(result)
+                s.flush()
+                self.audit(s, actor, pid, "snapshot.save", result.id)
+                return dict(self.release_dto(result), manifest=manifest)
+
+            return self.idem(s, actor, pid, "snapshot.save", key, payload, save)
+
     def export(self, actor, pid, payload, key):
         with self.db() as s:
             self.require(s, actor, pid, "knowledge:export")
@@ -1756,6 +1649,24 @@ class Service:
                 self.require(s, actor, pid, "source:read")
             if j.input_json.get("allowed_trace"):
                 self.require(s, actor, pid, "trace:read")
+            if "_export_revision_ids" in j.input_json:
+                if (
+                    any(
+                        not self._visible_revision(s, actor, pid, s.get(Revision, rid))
+                        for rid in j.input_json["_export_revision_ids"]
+                    )
+                    or any(
+                        not self._visible_relation(s, actor, pid, s.get(Relation, rid))
+                        for rid in j.input_json.get("_export_relation_ids", [])
+                    )
+                    or any(
+                        not (evidence := s.get(Evidence, eid)) or not self._visible_evidence(s, actor, pid, evidence)
+                        for eid in j.input_json.get("_export_evidence_ids", [])
+                    )
+                ):
+                    raise DomainError("VKS_FORBIDDEN", "导出内容的当前来源权限已变化，请重新导出", 403)
+            elif not self._can(s, actor, pid, "source:read") or not self._can(s, actor, pid, "trace:read"):
+                raise DomainError("VKS_FORBIDDEN", "旧导出缺少准确输入范围，请重新导出", 403)
             self.audit(s, actor, pid, "export.download", jid)
             return (self.data_dir / "objects" / j.result_json["object_key"]).read_bytes(), j.result_json["filename"]
 

@@ -118,7 +118,7 @@ def build():
                 "toLogicalKey": sections[i - 1]["sectionKey"],
                 "relationType": "documents",
                 "evidenceRefs": [f"jfa.ev.action{i:02}", f"jfa.ev.section{i:02}"],
-                "reason": "合成预期映射；需人员审核",
+                "reason": "合成预期映射；业务含义需核对",
             }
         )
         relations.append(

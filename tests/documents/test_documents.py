@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 from vks_api.documents import DocumentService, parse_sections
 from vks_api.knowledge import KnowledgeService
-from vks_api.models import Analysis, Artifact, Relation, Revision, Selection
+from vks_api.models import Artifact, Relation, Revision, Selection
 from vks_api.service import DomainError, Service
 
 
@@ -147,29 +147,7 @@ def test_conflict_preserves_current_selection_and_immutable_revision(ctx):
         assert db.get(Selection, (aid, document["entity_id"])).entity_revision_id == saved["entity_revision_id"]
 
 
-def test_document_review_is_revision_anchored_and_independent_from_save(ctx):
-    service, actor, _, _, docs = ctx
-    aid, document, old = current(ctx)
-    saved = save(ctx, old["markdown"] + "\nReviewed note\n")
-    with service.db() as db:
-        assert docs.assert_publishable(db, db.get(Analysis, aid))
-    payload = {"analysis_set_id": aid, "revision_id": saved["entity_revision_id"], "reason": "Review requested"}
-    submitted = docs.submit(actor, document["entity_id"], payload, saved["row_version"])
-    assert submitted["state"] == "submitted"
-    with pytest.raises(DomainError) as exc:
-        docs.review(machine(ctx), document["entity_id"], dict(payload, decision="approve"), submitted["row_version"])
-    assert exc.value.status == 403
-    approved = docs.review(actor, document["entity_id"], dict(payload, decision="approve"), submitted["row_version"])
-    assert approved["state"] == "approved" and approved["approval_sha256"] == saved["content_sha256"]
-    with service.db() as db:
-        assert not docs.assert_publishable(db, db.get(Analysis, aid))
-    changed = save(ctx, saved["markdown"] + "\nAnother edit\n")
-    assert changed["workflow"]["state"] == "editing" and changed["workflow"]["approval_sha256"] is None
-    with pytest.raises(DomainError) as exc:
-        docs.review(actor, document["entity_id"], dict(payload, decision="approve"), approved["row_version"])
-    assert exc.value.status == 409
-    with service.db() as db:
-        assert docs.assert_publishable(db, db.get(Analysis, aid))
+pass
 
 
 def test_draft_retargets_only_its_relations_and_removed_sections_remain_broken(ctx):

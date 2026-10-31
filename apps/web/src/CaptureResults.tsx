@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Modal, Notice, SafePrototype, Tag } from "./components";
 import { api } from "./api";
+import { SnapshotImage } from "./SnapshotImage";
 
 export type Capture = {
   id: string;
@@ -9,7 +10,6 @@ export type Capture = {
   analysis_set_id?: string;
   state: string;
   source_alignment: string;
-  redaction_version?: string;
   result: {
     snapshots?: Array<{
       name: string;
@@ -72,14 +72,13 @@ export function ObservedStateSurface({
     loaded?.key === key ? loaded.value.result.snapshots?.[index] : null;
   return (
     <div aria-label={ariaLabel}>
-      <Notice>
-        运行观察 · 已脱敏 · 页面和动作关联为人工声明，未核实后端因果。
-      </Notice>
+      <Notice>运行观察 · 页面和动作关联为人工声明，未核实后端因果。</Notice>
       {error ? (
         <Notice tone="red">{error}</Notice>
       ) : snapshot ? (
         <figure className="scenario-capture">
-          <img
+          <SnapshotImage
+            key={snapshot.png_artifact_id}
             src={`/api/v1/captures/${captureId}/artifacts/${snapshot.png_artifact_id}`}
             alt={snapshot.name + " · 当前观察状态"}
           />
@@ -132,7 +131,7 @@ export function CaptureResults({
   return (
     <Modal title="采集结果" onClose={onClose} className="scenario-modal">
       <Notice>
-        这是已脱敏的测试环境观察。页面只被动展示；源码对齐：
+        这是保存的环境观察。页面只被动展示；源码对齐：
         {capture.source_alignment === "unknown"
           ? "未核对"
           : capture.source_alignment}
@@ -140,7 +139,6 @@ export function CaptureResults({
       </Notice>
       <div className="row wrap">
         <Tag value={capture.state} />
-        <span>{capture.redaction_version || "已脱敏"}</span>
       </div>
       {error && <Notice tone="red">{error}</Notice>}
       {snapshot && (
@@ -160,9 +158,10 @@ export function CaptureResults({
             </select>
           </label>
           <figure className="scenario-capture">
-            <img
+            <SnapshotImage
+              key={snapshot.png_artifact_id}
               src={`/api/v1/captures/${capture.id}/artifacts/${snapshot.png_artifact_id}`}
-              alt={snapshot.name + " · 已脱敏采集截图"}
+              alt={snapshot.name + " · 采集截图"}
             />
           </figure>
           <details>

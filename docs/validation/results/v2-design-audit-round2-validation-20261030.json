@@ -1,0 +1,421 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-30",
+  "task": "second design comparison, xhigh remediation and max independent closure",
+  "base_commit": "f947cc5f3f463bbae81c6b670f0d48a5ba52467e",
+  "working_tree_changes": true,
+  "source_file_count": 402,
+  "source_aggregate_sha256": "c95cb40cc9ad7510f28292ea6ca08f31ba8edc16a12af2903fee111a76a5b651",
+  "source_manifest": "v2-design-audit-round2-source-manifest-20261030.json",
+  "prior_validation_manifest": "v2-design-alignment-source-manifest-20261030.json",
+  "changed_since_prior_validation": [
+    "apps/web/src/App.tsx",
+    "apps/web/src/ChangeProposals.tsx",
+    "apps/web/src/ModelSettings.tsx",
+    "apps/web/src/ModuleCandidates.tsx",
+    "apps/web/src/ModuleTree.tsx",
+    "apps/web/src/RelationOperations.tsx",
+    "apps/web/src/ReviewInbox.tsx",
+    "apps/web/src/SourceManagement.tsx",
+    "apps/web/src/context.ts",
+    "apps/web/src/pages.tsx",
+    "packages/analyzers/vks_ingest.py",
+    "packages/contracts/import_manifest.schema.json",
+    "packages/contracts/openapi_2.0.json",
+    "services/api/vks_api/ai_gateway.py",
+    "services/api/vks_api/exports.py",
+    "services/api/vks_api/jobs.py",
+    "services/api/vks_api/knowledge.py",
+    "services/api/vks_api/knowledge_tasks.py",
+    "services/api/vks_api/relationships.py",
+    "services/api/vks_api/source_sync.py",
+    "services/api/vks_api/static_index.py",
+    "services/api/vks_api/v2_contracts.py",
+    "services/api/vks_api/versions.py",
+    "tests/audit/test_round2_integrity_followup_regressions.py",
+    "tests/audit/test_round2_integrity_max_boundaries.py",
+    "tests/audit/test_round2_integrity_regressions.py",
+    "tests/audit/test_round2_integrity_sources_and_exports.py",
+    "tests/audit/test_round2_model_budget_recovery.py",
+    "tests/audit/test_round2_model_usage_settlement.py",
+    "tests/audit/test_round2_platform_budget_closure.py",
+    "tests/audit/test_round2_platform_design_alignment.py",
+    "tests/ui/test_round2_inbox_filters.py",
+    "tests/ui/test_round2_module_sources.py",
+    "tests/ui/test_round2_product_context_and_permissions.py",
+    "tests/ui/test_round2_product_review_identity.py",
+    "tests/ui/test_round2_proposal_corrections.py",
+    "tests/ui/test_round2_review_intent_boundaries.py",
+    "tests/versions/test_direct_correction_response_guard.py",
+    "tests/versions/test_proposal_corrections.py",
+    "tests/versions/test_round2_proposal_max_policy.py"
+  ],
+  "integration": {
+    "command": "make check",
+    "exit_code": 0,
+    "seconds": 611.296,
+    "isolated_data": true,
+    "real_sources": [
+      "RuoYi",
+      "FlowTest"
+    ],
+    "source_file_count": 402,
+    "source_aggregate_sha256": "c95cb40cc9ad7510f28292ea6ca08f31ba8edc16a12af2903fee111a76a5b651",
+    "source_unchanged": true,
+    "after_source_aggregate_sha256": "c95cb40cc9ad7510f28292ea6ca08f31ba8edc16a12af2903fee111a76a5b651",
+    "python": {
+      "tests": 840,
+      "passed": 825,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 15,
+      "skip_reasons": [
+        "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database",
+        "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database",
+        "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database",
+        "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database",
+        "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database",
+        "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database",
+        "未启用真实 SVN 容器验收",
+        "Requires actual Windows Win32 handles and Tcl/Tk",
+        "Requires actual Windows Win32 handles and Tcl/Tk",
+        "Requires actual Windows Win32 handles and Tcl/Tk",
+        "未启用隔离 Compose 部署验收",
+        "未配置隔离 RabbitMQ 验收地址",
+        "未配置隔离 PostgreSQL 恢复演练数据库",
+        "未配置独立 V2 PostgreSQL 验证与恢复数据库",
+        "需独立 PostgreSQL 数据库"
+      ],
+      "console_summary": "825 passed, 15 skipped, 1 warning in 582.71s (0:09:42)"
+    },
+    "frontend_passed": 59,
+    "build_seconds": 19.62
+  },
+  "postgres": {
+    "exit_code": 0,
+    "seconds": 130.141,
+    "server_version": "PostgreSQL 17.11 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "legacy_relation_upgrade_backfill_preserves_all_axes": true,
+    "downgrade_reupgrade": true,
+    "isolated_container": "vks-design-round2-20261030",
+    "base_database_count": 7,
+    "unique_test_count": 73,
+    "core_and_policy_passed": 9,
+    "round2_cases": {
+      "postgres-round2-integrity.xml": {
+        "tests": 32,
+        "passed": 32,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "skip_reasons": []
+      },
+      "postgres-round2-proposals.xml": {
+        "tests": 32,
+        "passed": 32,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "skip_reasons": []
+      }
+    },
+    "scoped_source_inputs": 260,
+    "inputs_match_final_manifest": true,
+    "per_case_database_strategy": "random separate database; all dropped before cluster stop",
+    "initial_driver_setup_error": "Missing PYTHONPATH before any database startup; raw failure retained and corrected invocation used"
+  },
+  "independent_max_closures": {
+    "platform-max-final.json": {
+      "remaining_confirmed_findings": [],
+      "matched_final_input_count": 2,
+      "independent_verification": {
+        "command": [
+          "uv",
+          "run",
+          "pytest",
+          "-q",
+          "tests/audit/test_round2_platform_design_alignment.py",
+          "tests/audit/test_round2_platform_budget_closure.py",
+          "tests/audit/test_round2_model_budget_recovery.py",
+          "tests/audit/test_round2_model_usage_settlement.py",
+          "tests/models/test_model_gateway.py",
+          "tests/models/test_task_planning.py",
+          "tests/models/test_plan_confirmation.py",
+          "tests/v2/test_task_recovery.py",
+          "tests/v2/test_task_controls.py",
+          "--junitxml=.vks/design-audit-round2-20261030/platform-max-final-tests.xml"
+        ],
+        "result": "198 passed, 1 existing Starlette/httpx warning in 128.35s",
+        "collected": 198,
+        "counts": {
+          "passed": 198
+        },
+        "by_test_module": {
+          "tests.audit.test_round2_platform_design_alignment": {
+            "passed": 6
+          },
+          "tests.audit.test_round2_platform_budget_closure": {
+            "passed": 6
+          },
+          "tests.audit.test_round2_model_budget_recovery": {
+            "passed": 94
+          },
+          "tests.audit.test_round2_model_usage_settlement": {
+            "passed": 58
+          },
+          "tests.models.test_model_gateway": {
+            "passed": 8
+          },
+          "tests.models.test_task_planning": {
+            "passed": 11
+          },
+          "tests.models.test_plan_confirmation": {
+            "passed": 5
+          },
+          "tests.v2.test_task_recovery": {
+            "passed": 6
+          },
+          "tests.v2.test_task_controls": {
+            "passed": 4
+          }
+        },
+        "original_no_send_regressions": 6,
+        "original_invalid_usage_regressions": 6,
+        "not_sent_boundaries": 94,
+        "settlement_boundaries": 58,
+        "existing_recovery_model_controls": 34,
+        "log": ".vks/design-audit-round2-20261030/platform-max-final-tests.log",
+        "junit": ".vks/design-audit-round2-20261030/platform-max-final-tests.xml",
+        "run_record": ".vks/design-audit-round2-20261030/platform-max-final-run.json",
+        "static": "Critical Ruff E9/F63/F7/F82 passed for both fixed product files and all four budget audit test files. No code/test change was needed during this final verification.",
+        "warning": "Existing Starlette TestClient/httpx deprecation; no new dependency installed.",
+        "vks_environment": "All inherited VKS_* values removed for the child; only local task mode and a private ignored audit runtime were supplied. Fixtures use isolated SQLite and synthetic in-process or loopback HTTP provider responses."
+      }
+    },
+    "proposal-max-final.json": {
+      "remaining_confirmed_findings": [],
+      "matched_final_input_count": 8,
+      "independent_verification": {
+        "command": ".venv/bin/python -m pytest tests/versions/test_round2_proposal_max_policy.py tests/versions/test_direct_correction_response_guard.py tests/review/test_relationship_operations.py tests/versions/test_proposal_corrections.py tests/v2/test_review_policy.py tests/versions/test_versions.py -q --tb=short",
+        "log": "proposal-max-final-independent.log",
+        "passed": 55,
+        "failed": 0,
+        "skipped": 1,
+        "warning_count": 1,
+        "elapsed_seconds": 19.56,
+        "exit_code": 0,
+        "skip": "Existing PostgreSQL-only concurrent policy case requires its separate URL; not run by this auditor.",
+        "warning": "Existing Starlette/httpx TestClient deprecation warning, unrelated to behavior under audit.",
+        "lint": "ruff E9,F63,F7,F82 passed for changed direct source and both guard files",
+        "whitespace": "git diff --check relationships.py passed"
+      }
+    },
+    "journey-max-final.json": {
+      "remaining_confirmed_findings": [],
+      "matched_final_input_count": 14,
+      "independent_verification": [
+        {
+          "group": "core",
+          "command": [
+            ".venv/bin/python",
+            "-m",
+            "pytest",
+            "tests/audit/test_round2_integrity_sources_and_exports.py",
+            "tests/audit/test_round2_integrity_regressions.py",
+            "tests/audit/test_round2_integrity_max_boundaries.py",
+            "tests/audit/test_round2_integrity_followup_regressions.py",
+            "-q",
+            "--tb=short",
+            "--junitxml=.vks/design-audit-round2-20261030/journey-max-final-core.xml"
+          ],
+          "exit_code": 0,
+          "wrapper_elapsed_seconds": 13.33,
+          "passed": 35,
+          "failed": 0,
+          "skipped": 0,
+          "log": "journey-max-final-core.log",
+          "junit": "journey-max-final-core.xml",
+          "run_metadata": "journey-max-final-core-run.json"
+        },
+        {
+          "group": "contract-sdk",
+          "command": [
+            ".venv/bin/python",
+            "-m",
+            "pytest",
+            "tests/ingest/test_bundles.py",
+            "tests/contracts",
+            "tests/mcp/test_sdk.py",
+            "tests/mcp/test_workflow.py",
+            "tests/v2/test_mcp_v2.py",
+            "-q",
+            "--tb=short",
+            "--junitxml=.vks/design-audit-round2-20261030/journey-max-final-contract-sdk.xml"
+          ],
+          "exit_code": 0,
+          "wrapper_elapsed_seconds": 7.02,
+          "passed": 45,
+          "failed": 0,
+          "skipped": 0,
+          "log": "journey-max-final-contract-sdk.log",
+          "junit": "journey-max-final-contract-sdk.xml",
+          "run_metadata": "journey-max-final-contract-sdk-run.json"
+        }
+      ]
+    },
+    "product-max-final.json": {
+      "remaining_confirmed_findings": [],
+      "matched_final_input_count": 97,
+      "independent_verification": {
+        "one_combined_execution": true,
+        "unique_test_count": 14,
+        "passed": 14,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reported_elapsed_seconds": 55.88,
+        "artifacts": [
+          "product-max-final-combined.xml",
+          "product-max-final-combined.log",
+          "product-max-final-combined.source.json"
+        ],
+        "test_cases": [
+          {
+            "test": "tests.ui.test_round2_product_context_and_permissions::test_search_module_options_drop_currently_invisible_modules_after_permission_refresh",
+            "result": "passed",
+            "seconds": 5.938
+          },
+          {
+            "test": "tests.ui.test_round2_product_context_and_permissions::test_source_connector_response_cannot_restore_manage_only_metadata_after_revocation",
+            "result": "passed",
+            "seconds": 2.931
+          },
+          {
+            "test": "tests.ui.test_round2_product_context_and_permissions::test_background_knowledge_completion_preserves_unsaved_module_metadata",
+            "result": "passed",
+            "seconds": 3.365
+          },
+          {
+            "test": "tests.ui.test_round2_product_context_and_permissions::test_adopting_a_selected_module_candidate_removes_it_from_later_batch_rejection",
+            "result": "passed",
+            "seconds": 2.536
+          },
+          {
+            "test": "tests.ui.test_round2_product_context_and_permissions::test_global_search_opens_journey_as_business_guide_with_exact_revision",
+            "result": "passed",
+            "seconds": 2.105
+          },
+          {
+            "test": "tests.ui.test_round2_module_sources::test_module_sources_can_bind_multiple_exact_snapshots_and_same_named_connectors",
+            "result": "passed",
+            "seconds": 5.067
+          },
+          {
+            "test": "tests.ui.test_round2_module_sources::test_module_binding_revocation_hides_connection_choices_and_preserves_hidden_memberships",
+            "result": "passed",
+            "seconds": 3.369
+          },
+          {
+            "test": "tests.ui.test_round2_module_sources::test_module_metadata_background_refresh_keeps_original_cas_and_conflicting_input",
+            "result": "passed",
+            "seconds": 3.114
+          },
+          {
+            "test": "tests.ui.test_round2_inbox_filters::test_inbox_filter_survives_late_workspace_relation_status_refresh",
+            "result": "passed",
+            "seconds": 5.75
+          },
+          {
+            "test": "tests.ui.test_round2_product_review_identity::test_new_candidate_revision_does_not_inherit_checked_review_intent",
+            "result": "passed",
+            "seconds": 5.788
+          },
+          {
+            "test": "tests.ui.test_round2_product_review_identity::test_source_read_revocation_clears_review_content_and_intent_but_keeps_filters",
+            "result": "passed",
+            "seconds": 3.689
+          },
+          {
+            "test": "tests.ui.test_round2_review_intent_boundaries::test_unrelated_aggregate_change_keeps_exact_subject_intent_and_uses_current_cas",
+            "result": "passed",
+            "seconds": 5.219
+          },
+          {
+            "test": "tests.ui.test_round2_review_intent_boundaries::test_stale_checked_revision_still_gets_412_then_requires_explicit_reselection",
+            "result": "passed",
+            "seconds": 3.326
+          },
+          {
+            "test": "tests.ui.test_round2_review_intent_boundaries::test_changed_decision_data_clears_intent_even_when_revision_version_and_status_match",
+            "result": "passed",
+            "seconds": 3.056
+          }
+        ],
+        "historical_counts_added": false,
+        "implementation_agent_counts_added": false,
+        "retries": 0,
+        "original_assertions_changed": false,
+        "command": [
+          "uv",
+          "run",
+          "pytest",
+          "-q",
+          "tests/ui/test_round2_product_context_and_permissions.py",
+          "tests/ui/test_round2_module_sources.py",
+          "tests/ui/test_round2_inbox_filters.py",
+          "tests/ui/test_round2_product_review_identity.py",
+          "tests/ui/test_round2_review_intent_boundaries.py",
+          "--junitxml=/Volumes/雷电/project/项目管理知识库项目/.vks/design-audit-round2-20261030/product-max-final-combined.xml",
+          "--tb=short"
+        ]
+      }
+    }
+  },
+  "design_integrity": {
+    "tracked_files": 48,
+    "matches_head_byte_for_byte": true
+  },
+  "policy": "User default automatic content review override; validity/evidence/causality remain independent; machine cannot directly approve/publish.",
+  "compatibility": [
+    "No new dependencies or DDL in round2.",
+    "Incomplete legacy sync/target scope proof fails closed. New profile alone is insufficient; rebuild a verified source baseline from precise original material.",
+    "Optional selectionManifest restricts imported entity selection; ordinary bundles without it retain prior behavior. Complete SourceSync rejects selection manifests.",
+    "Historical revisions, manifests and original material bytes are preserved."
+  ],
+  "failure_evidence": {
+    "directory": ".vks/design-audit-round2-20261030/",
+    "preserved": true,
+    "original_assertions_not_weakened": true,
+    "false_setup_failures_not_counted_as_product_reproductions": true,
+    "note": "Raw setup/locator/HMR-unfrozen/environment failures are distinguished from frozen deterministic behavior regressions; intermediate open reports are superseded by final independent closures."
+  },
+  "not_run": [
+    "External real model/provider evaluation or additional credentials.",
+    "Actual RuoYi/FlowTest business write workflow, independent Gold or five-person UX acceptance.",
+    "Specified-hardware capacity, real Windows/SVN/queue/Compose special runs in this round.",
+    "Production publishing/deployment, Git commit/push or remote CI."
+  ],
+  "warnings": "Existing Starlette/httpx deprecation, test Vite shutdown scan notices and build chunk-size notice retained; no threshold/delay/retry used to mask behavior.",
+  "preview": {
+    "api_ready": 200,
+    "web": 200,
+    "url": "http://127.0.0.1:5174/",
+    "current_backend_and_frontend_verified": true,
+    "projects_checked": 2,
+    "pending": [
+      0,
+      0
+    ],
+    "manual_review_enabled": [
+      false,
+      false
+    ],
+    "knowledge_tables_unchanged": 10
+  },
+  "static_checks": {
+    "ruff_critical": true,
+    "prettier": true,
+    "git_diff_check": true,
+    "utf8_without_bom": true
+  }
+}

@@ -15,7 +15,7 @@ import secrets
 from fastapi import Depends, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Boolean, ForeignKey, Integer, JSON, String, select, text, update
+from sqlalchemy import ForeignKey, Integer, JSON, String, select, text, update
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .models import Base, Credential, Identified, Member, Project, now, uid
@@ -589,7 +589,7 @@ def create_token(service, actor, project_id, payload):
         grants = member_permissions(service, session, session.get(Member, (project_id, actor.id)))
         scopes = set(payload["scopes"])
         if scopes - MACHINE_SCOPES or scopes - grants:
-            raise _error("VKS_FORBIDDEN", "令牌不能获得审核、发布、管理员或超出签发人权限的 scope", 403)
+            raise _error("VKS_FORBIDDEN", "令牌不能获得管理员或超出签发人权限的 scope", 403)
         if READ not in scopes:
             raise _error("VKS_INVALID_INPUT", "令牌必须包含 knowledge:read")
         secret = "vks_" + secrets.token_urlsafe(36)

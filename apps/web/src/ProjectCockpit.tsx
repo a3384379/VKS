@@ -1,3 +1,7 @@
+import { BusinessModuleExplorer } from "./BusinessModuleExplorer";
+import { coveredActionRevisions, materialKind } from "./product-projections";
+import { journeyKinds } from "./journey-reading";
+import { ProductEntityLink } from "./ProductEntityLink";
 import { Surface as Panel } from "./design-system/Surface";
 import {
   ArrowRight,
@@ -12,18 +16,17 @@ import { useWorkspace } from "./context";
 export function ProjectCockpit() {
   const { w, navigate, navigateExplanation } = useWorkspace();
   const journeys = w.entities.filter((e) => e.type === "journey");
+  const business = journeys.filter(
+    (e) => materialKind(e) === "business_process",
+  );
   const trusted = w.relations.filter(
-    (r) => r.review_status === "confirmed" && r.validity_status === "valid",
+    (r) => !r.excluded && r.validity_status === "valid",
   );
-  const linked = new Set(
-    trusted.flatMap((r) => [r.from_revision_id, r.to_revision_id]),
-  );
+  const linked = coveredActionRevisions(w.entities, w.relations);
   const covered = w.actions.filter((a) =>
     linked.has(a.entity_revision_id),
   ).length;
-  const pending = w.relations.filter(
-    (r) => r.review_status === "candidate",
-  ).length;
+  const pending = w.relations.filter((r) => r.excluded).length;
   const stale = w.relations.filter((r) => r.validity_status !== "valid").length;
   const runtimeLinked = new Set(
     w.selected_analysis_set?.runtime_alignment === "matched"
@@ -64,17 +67,17 @@ export function ProjectCockpit() {
           <div className="v2-metrics">
             {[
               {
-                title: "业务流程",
-                value: journeys.length,
-                note: `${w.scenarios.length} 个采集场景`,
+                title: "业务场景",
+                value: business.length,
+                note: `${journeys.length - business.length} 份其他流程材料 · ${w.scenarios.length} 个采集场景`,
               },
               {
-                title: "动作确认覆盖",
+                title: "动作知识覆盖",
                 value: `${covered} / ${w.actions.length}`,
-                note: "仅已确认且有效的可见关联",
+                note: "有效知识关联；不计页面包含关系",
               },
               {
-                title: "待审关联",
+                title: "已移除关联",
                 value: pending,
                 note: `${stale} 条过期或断链`,
               },
@@ -96,12 +99,10 @@ export function ProjectCockpit() {
           </p>
           <h2>
             {w.sources.length
-              ? "从固定来源，走向可审核知识。"
+              ? "从固定来源，建立项目知识。"
               : "从第一份项目材料开始。"}
           </h2>
-          <p>
-            先接入来源、预检，再构建流程和候选。每条关联都需要证据，所有发布由人员确认。
-          </p>
+          <p>接入资料后直接整理和阅读。保留准确来源，发现错误随时修正。</p>
           <dl>
             <dt>可见来源</dt>
             <dd>{w.sources.length}</dd>
@@ -119,8 +120,9 @@ export function ProjectCockpit() {
           </Button>
         </Panel>
       </div>
+      <BusinessModuleExplorer compact />
       <Panel
-        title="业务入口"
+        title="页面入口"
         action={
           <Button kind="small" onClick={() => navigate("journeys")}>
             <GitBranch size={14} />
@@ -156,12 +158,12 @@ export function ProjectCockpit() {
                   <h3>{page.name}</h3>
                   <p>{actions.length} 个业务动作</p>
                   <progress
-                    aria-label={`${page.name}已确认动作覆盖`}
+                    aria-label={`${page.name}动作知识覆盖`}
                     max={Math.max(1, actions.length)}
                     value={count}
                   />
                   <small>
-                    已确认 {count} / {actions.length} <ArrowRight size={14} />
+                    已关联 {count} / {actions.length} <ArrowRight size={14} />
                   </small>
                 </button>
               );
@@ -177,32 +179,38 @@ export function ProjectCockpit() {
           />
         )}
       </Panel>
-      <Panel
-        title="最近业务流程"
-        action={
-          <Button kind="small" onClick={() => navigate("journeys")}>
-            管理流程
-          </Button>
-        }
-      >
-        <div className="v2-domain-grid">
-          {journeys.length ? (
-            journeys.map((j) => (
-              <button
-                className="v2-domain"
-                key={j.id}
-                onClick={() => navigate("journeys", j)}
-              >
-                <GitBranch size={20} />
-                <h3>{j.name}</h3>
-                <small>固定修订 · 需人员审核</small>
-              </button>
-            ))
-          ) : (
-            <p className="muted">尚未创建流程，可从当前动作进入流程画布。</p>
-          )}
-        </div>
-      </Panel>
+      {Object.entries(journeyKinds).map(([kind, meaning]) => {
+        const rows = journeys.filter((j) => materialKind(j) === kind);
+        return (
+          <Panel
+            key={kind}
+            title={`${meaning.label} · ${rows.length}`}
+            action={
+              <Button kind="small" onClick={() => navigate("journeys")}>
+                打开流程材料
+              </Button>
+            }
+          >
+            <p className="muted">{meaning.description}</p>
+            <div className="v2-domain-grid">
+              {rows.length ? (
+                rows.map((j) => (
+                  <article className="v2-domain" key={j.id}>
+                    <GitBranch size={20} />
+                    <h3>{j.name}</h3>
+                    <ProductEntityLink entity={j}>
+                      打开{meaning.label}
+                    </ProductEntityLink>
+                    <small>固定修订 · 随时编辑与保存</small>
+                  </article>
+                ))
+              ) : (
+                <p className="muted">当前可见版本尚无此类材料。</p>
+              )}
+            </div>
+          </Panel>
+        );
+      })}
       <p className="v2-scope">
         <ShieldCheck size={14} />
         指标范围为当前身份、当前版本可见材料；真实业务覆盖率和运行因果需独立验收。

@@ -61,7 +61,7 @@ def error_code(files, code, **kwargs):
     return exc.value
 
 
-def test_provided_bundle_verifies_bytes_identity_evidence_and_candidate_only():
+def test_provided_bundle_verifies_bytes_identity_evidence_and_saved_directly():
     files = sample_files()
     parsed = parse_bundle(pack(files), "charge-demo")
     action = next(e for e in parsed.entities if e["type"] == "action")
@@ -206,9 +206,7 @@ def test_line_range_and_heading_path_must_match_actual_markdown():
 
 
 def test_schema_cannot_smuggle_review_or_publish_status():
-    files = change_sidecar(
-        sample_files(), "bindings", lambda value: value["bindings"][0].update(review_status="confirmed")
-    )
+    files = change_sidecar(sample_files(), "bindings", lambda value: value["bindings"][0].update(excluded=False))
     error_code(files, "VKS_SCHEMA_INVALID")
     files = change_sidecar(
         sample_files(), "bindings", lambda value: value["bindings"][0].update(relationType="confirmed_trigger")
@@ -320,9 +318,10 @@ def test_prompt_injection_is_only_preserved_material_not_executed():
     assert parsed.relations == []
 
 
-def test_marked_private_key_is_blocked_before_indexing():
+def test_import_preserves_original_text_even_when_it_looks_sensitive():
     files = simple_bundle(b"# Key\n-----BEGIN PRIVATE KEY-----\nSYNTHETIC\n")
-    error_code(files, "VKS_SECRET_DETECTED")
+    parsed = parse_bundle(pack(files), "charge-demo")
+    assert all(row["content"] == files[row["path"]] for row in parsed.artifacts)
 
 
 def test_source_revision_not_deduplicated_by_content():
@@ -338,24 +337,26 @@ def test_source_revision_not_deduplicated_by_content():
     assert first.sources[0]["provider_revision"] != second.sources[0]["provider_revision"]
 
 
-def test_source_extension_is_scanned_even_if_client_declares_binary_media_type():
+def test_source_text_is_preserved_even_for_binary_media_type():
     files = simple_bundle(
         b'const password = "synthetic-sensitive-password";',
         kind="source",
         path="docs/file.js",
         media_type="application/octet-stream",
     )
-    error_code(files, "VKS_SECRET_DETECTED")
+    parsed = parse_bundle(pack(files), "charge-demo")
+    assert all(row["content"] == files[row["path"]] for row in parsed.artifacts)
 
 
-def test_unverified_raw_network_capture_is_not_persisted():
+def test_raw_network_capture_is_saved_without_masking():
     files = simple_bundle(
         b'{"Authorization":"synthetic-sensitive"}',
         kind="capture",
         path="docs/capture.json",
         media_type="application/json",
     )
-    error_code(files, "VKS_CAPTURE_UNVERIFIED")
+    parsed = parse_bundle(pack(files), "charge-demo")
+    assert next(row for row in parsed.artifacts if row["kind"] == "capture")["content"] == files["docs/capture.json"]
 
 
 def test_declared_markdown_cannot_disguise_an_executable_extension():

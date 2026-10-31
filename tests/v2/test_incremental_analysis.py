@@ -1,10 +1,11 @@
+
+from test_journeys import store as store  # pytest fixture registration
 from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
 
 from packages.analyzers.java_spring import analyze_sources
 from packages.analyzers.syntax_cache import MemoryUnitCache, cache_scope
-from test_journeys import store
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -134,10 +135,15 @@ def test_job_reuses_project_private_units_preserves_decisions_and_recovers_corru
         packet = json.loads((service.data_dir / "objects" / point.result_json["object_key"]).read_bytes())
         assert packet["analysis_metrics"] == imported.result_json["analysis_metrics"]
     relation = next(r for r in w["relations"] if r["relation_type"] == "contains")
-    service.review_relation(
+    service.set_relation_state(
         actor,
         relation["id"],
-        dict(decision="reject", reason="Synthetic rejected fact", evidence_ids=relation["evidence_ids"]),
+        {
+            "excluded": dict(
+                decision="reject", reason="Synthetic rejected fact", evidence_ids=relation["evidence_ids"]
+            )["decision"]
+            == "reject"
+        },
         relation["row_version"],
     )
     job = service.create_analysis_job(actor, aid, {"kind": "index"}, "warm")
@@ -147,8 +153,8 @@ def test_job_reuses_project_private_units_preserves_decisions_and_recovers_corru
     assert result["result"]["analysis_metrics"]["syntax_parsed_files"] == 0
     assert result["result"]["analysis_metrics"]["syntax_reused_files"] > 0
     assert (
-        next(r for r in service.workspace(actor, pid, aid)["relations"] if r["id"] == relation["id"])["review_status"]
-        == "rejected"
+        next(r for r in service.workspace(actor, pid, aid)["relations"] if r["id"] == relation["id"])["excluded"]
+        is True
     )
     with service.db() as s:
         rows = list(

@@ -78,26 +78,6 @@
   cursor: pointer;
   font-size: 12px;
 }
-.workflow-panel {
-  border-top: 1px solid #e7eff3;
-  padding: 20px 24px;
-  background: #f9fcfd;
-}
-.workflow-panel .row {
-  gap: 10px;
-}
-.workflow-panel p {
-  line-height: 1.7;
-  color: #617789;
-  font-size: 12px;
-}
-.workflow-panel .workflow-hash {
-  display: block;
-  margin: 9px 0;
-  font-size: 11px;
-  overflow-wrap: anywhere;
-  color: #6c8293;
-}
 .proposal-card {
   padding: 18px 0;
   border-bottom: 1px solid #e7eff3;
@@ -306,8 +286,5 @@ label > select,
 @media (max-width: 800px) {
   .configuration-fields {
     grid-template-columns: 1fr;
-  }
-  .workflow-panel {
-    padding: 16px;
   }
 }

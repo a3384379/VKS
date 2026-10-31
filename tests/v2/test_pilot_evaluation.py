@@ -30,8 +30,7 @@ def fixture():
         started_at="2026-10-02T00:00:00Z",
         actions=[dict(action_id=f"a{i}", has_page_or_step=True, relation_keys=[f"r{i}"]) for i in range(30)],
         relations=[
-            dict(key=f"r{i}", review_status="confirmed", validity_status="valid", evidence=[deepcopy(ref)])
-            for i in range(30)
+            dict(key=f"r{i}", excluded=False, validity_status="valid", evidence=[deepcopy(ref)]) for i in range(30)
         ],
         impact_entity_ids=["changed"],
         user_tasks=[
@@ -90,9 +89,9 @@ def test_evidence_from_wrong_release_and_false_positive_candidates_count_as_fail
     for item in run["relations"]:
         item["evidence"][0]["release_id"] = "wrong"
     run["relations"].extend(
-        dict(key=f"wrong{i}", review_status="candidate", validity_status="valid", evidence=[]) for i in range(5)
+        dict(key=f"wrong{i}", excluded=False, validity_status="valid", evidence=[]) for i in range(5)
     )
     value = evaluate(gold, run)
-    assert value["metrics"]["confirmed_traceability"]["value"] == 0
+    assert value["metrics"]["evidence_traceability"]["value"] == 0
     assert value["metrics"]["candidate_precision"]["false_positives"] == 5
     assert value["status"] == "reported_fail"

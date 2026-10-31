@@ -91,7 +91,7 @@ def test_new_hotspot_is_immutable_manual_evidence_and_candidate_structure(ctx):
             )
         )
         assert {r.relation_type for r in relations} == {"contains", "renders"}
-        assert all(r.review_status == "candidate" and r.causal_basis == "not_established" for r in relations)
+        assert all((r.excluded is False) and r.causal_basis == "not_established" for r in relations)
         assert all(db.get(Evidence, eid).evidence_kind == "manual" for r in relations for eid in r.evidence_ids)
     assert service.artifact_bytes(actor, project["id"], original["artifact_id"])[0] == original_bytes
 
@@ -101,12 +101,7 @@ def test_edit_reuses_action_identity_preserves_decisions_and_remove_keeps_broken
     initial = save(ctx)
     w = service.workspace(actor, project["id"], workspace["selected_analysis_set"]["id"])
     relation = next(r for r in w["relations"] if r["to_revision_id"] == initial["action"]["entity_revision_id"])
-    service.review_relation(
-        actor,
-        relation["id"],
-        {"decision": "confirm", "reason": "Manual review", "evidence_ids": relation["evidence_ids"]},
-        relation["row_version"],
-    )
+    service.set_relation_state(actor, relation["id"], {"excluded": ("confirm" == "reject")}, relation["row_version"])
     old_action = initial["action"]["entity_revision_id"]
     edited = save(
         ctx,
@@ -118,7 +113,7 @@ def test_edit_reuses_action_identity_preserves_decisions_and_remove_keeps_broken
     assert edited["action"]["entity_revision_id"] != old_action
     with service.db() as db:
         retained = db.get(Relation, relation["id"])
-        assert retained.review_status == "confirmed" and retained.manual_lock and retained.validity_status == "stale"
+        assert (retained.excluded is False) and retained.manual_lock and retained.validity_status == "stale"
         assert db.get(Revision, old_action).name == "Manual annotation"
     removed = hotspots.save(
         actor,

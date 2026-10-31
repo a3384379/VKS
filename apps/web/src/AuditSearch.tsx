@@ -143,7 +143,7 @@ export function AuditSearch() {
             <input
               value={draft.action}
               onChange={(e) => setDraft({ ...draft, action: e.target.value })}
-              placeholder="例如 relation.review"
+              placeholder="例如 relation.correct"
             />
           </label>
           <label>

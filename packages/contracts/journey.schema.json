@@ -107,6 +107,7 @@
           "enum": [
             "page",
             "action",
+            "step",
             "decision",
             "branch",
             "end",
@@ -120,6 +121,20 @@
           "minLength": 1,
           "title": "Title",
           "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
         },
         "x": {
           "maximum": 4000,
@@ -177,6 +192,119 @@
       "title": "Node",
       "type": "object"
     },
+    "Semantics": {
+      "additionalProperties": false,
+      "description": "An author's meaning claim; neither approval nor runtime/business validation.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "business_process",
+            "operation_sequence",
+            "evidence_navigation",
+            "observation_comparison",
+            "unclassified"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "basis": {
+          "enum": [
+            "declared",
+            "observed",
+            "inferred",
+            "unknown"
+          ],
+          "title": "Basis",
+          "type": "string"
+        },
+        "purpose": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Purpose"
+        },
+        "preconditions": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 30,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preconditions"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome"
+        },
+        "unknowns": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 50,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unknowns"
+        },
+        "source_refs": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Binding"
+              },
+              "maxItems": 50,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Refs"
+        }
+      },
+      "required": [
+        "kind",
+        "basis"
+      ],
+      "title": "Semantics",
+      "type": "object"
+    },
     "StateReference": {
       "additionalProperties": false,
       "properties": {
@@ -224,6 +352,17 @@
       "minLength": 1,
       "title": "Title",
       "type": "string"
+    },
+    "semantics": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Semantics"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "entry": {
       "maxLength": 96,

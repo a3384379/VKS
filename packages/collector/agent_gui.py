@@ -47,7 +47,7 @@ class CollectorWindow:
         frame = ttk.Frame(root, padding=24)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(1, weight=1)
-        ttk.Label(frame, text="把已授权资料整理为可审核的知识草稿", font=("", 16, "bold")).grid(
+        ttk.Label(frame, text="把项目资料整理为可追溯的知识", font=("", 16, "bold")).grid(
             row=0, column=0, columnspan=3, sticky="w", pady=(0, 16)
         )
         labels = [
@@ -102,7 +102,7 @@ class CollectorWindow:
         )
         ttk.Label(
             frame,
-            text="每次固定来源版本。游标仅在服务器任务成功后推进；断网保留回执。仅生成待审草稿，不批准或发布。",
+            text="每次固定来源版本。游标仅在服务器任务成功后推进；断网保留回执。同步后的知识可直接使用。",
             wraplength=810,
         ).grid(row=15, column=0, columnspan=3, sticky="w", pady=12)
         self.profiles = self.agent.load_profiles()

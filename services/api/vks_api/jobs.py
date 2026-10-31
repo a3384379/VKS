@@ -132,10 +132,10 @@ def reconcile(service):
                 job.stage = "CANCELLED"
             elif job.kind == "capture":
                 job.state = "failed"
-                job.stage = "APPROVAL_REQUIRED"
+                job.stage = "INTERRUPTED"
                 job.error_json = {
-                    "code": "VKS_APPROVAL_REQUIRED",
-                    "message": "采集进程中断，必须重新审批；不会自动重放动作",
+                    "code": "VKS_STATE_CONFLICT",
+                    "message": "采集进程中断，请重新启动录制；不会自动重复写操作",
                     "retryable": False,
                 }
             else:
@@ -480,15 +480,18 @@ def execute_job(service, jid):
                     return
                 service.require(s, current_actor(service, owner, pid, s, job=job), pid, JOB_SCOPES[kind])
                 if kind == "import":
-                    result = service._commit_bundle(
-                        s,
-                        pid,
-                        owner,
-                        parsed,
-                        payload.get("analysis_set_id")
-                        if payload["kind"] != "bundle" or payload.get("_source_sync")
-                        else None,
-                    )
+                    if payload.get("_source_sync"):
+                        from .source_sync import SourceSyncService
+
+                        result = SourceSyncService(service).persist(s, job, parsed)
+                    else:
+                        result = service._commit_bundle(
+                            s,
+                            pid,
+                            owner,
+                            parsed,
+                            payload.get("analysis_set_id") if payload["kind"] != "bundle" else None,
+                        )
                     if parsed.analysis_metrics:
                         result["analysis_metrics"] = parsed.analysis_metrics
                     if payload.get("_source_sync"):
@@ -522,7 +525,8 @@ def execute_job(service, jid):
                     raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", "平台模型尚未配置，不能生成文档", 503)
                 job.result_json = result
                 job.state = "succeeded"
-                job.stage = "READY_FOR_REVIEW" if kind in ("import", "knowledge_task") else "COMPLETE"
+
+                job.stage = "COMPLETE"
                 job.progress = 100
                 job.issue_count = len(result.get("issues", []))
                 job.completeness = "partial" if job.issue_count else "complete"

@@ -1,5 +1,15 @@
 # VKS 1.0 候选版验证记录
 
+2026-10-31 自用工作流补充：按用户要求移除审批和内容脱敏。冻结源码完整 `make check` 为 Python **751 passed / 14 skipped**、前端 **59 passed**、构建成功；隔离 PostgreSQL 另 **8 项通过**。两个本机项目已备份迁移并重载，3,370 条关系和 222 个对象保留。当前行为见[自用知识工作流](PERSONAL_WORKFLOW.md)，范围、原始失败和未验收边界见 [2.0 验证记录](upgrades/v2/VERIFICATION.md)。以下历史审批/脱敏记录不再代表当前功能。
+
+2026-10-30 第二轮方案对照补充：xhigh 修复与 max 独立闭环后，冻结 402 个工程输入执行完整 `make check`，Python **825 passed / 15 skipped**、前端 **59 passed**、构建通过；隔离 PostgreSQL 17.11 另 **73 项通过**。本机预览已重载、两项目待审均为 0，知识表摘要未变；原始失败、范围和兼容限制见 [2.0 验证记录](upgrades/v2/VERIFICATION.md)。
+
+2026-10-30 设计对齐补充：业务导览、快照大图及其他模块偏差经 xhigh 修复和 max 独立复审后，完整 `make check` **575 passed / 15 skipped**、前端 **59 passed**、构建成功；PostgreSQL 17.11 另行 **9 项通过**。保存后继续维护和默认基线脏稿保护的全量失败已修复并完整重跑。源码摘要、原始失败、审计范围与未执行的业务/发行边界见 [2.0 验证记录](upgrades/v2/VERIFICATION.md)。
+
+2026-10-29 阅读导航补充：知识地图选择稳定、全文目录准确跳转、固定目录修复后，当前全量 **463 passed / 15 skipped**、前端 **42 passed**、构建成功。复现、源码摘要及边界见 [2.0 验证记录](upgrades/v2/VERIFICATION.md)。
+
+2026-10-29 审核策略补充：当前 2.0 本地全量 **461 passed / 15 skipped**、前端 **42 passed**、构建成功；两个试点项目 1,691 项审批通过，待审归零。范围、源码摘要及阶段失败见 [2.0 验证记录](upgrades/v2/VERIFICATION.md)。下文保留各轮历史快照。
+
 2026-10-27：2.0 开发预览当前全量检查为 Python 334 passed / 11 skipped、前端 36 passed、构建成功；源码摘要、阶段失败与修复、环境及真实验收边界独立记录在 [2.0 验证记录](upgrades/v2/VERIFICATION.md)。下文 1.0 快照仍绑定各自的源码，未被改写为 2.0 验收。
 
 日期：2026-10-25，版本1.0.0-rc.1。原包QUALITY_CHECK.md是设计交付检查；本文件记录代码与运行验证。以下本地结果及机器记录均绑定各自的源码快照，远端结果以 [GitHub Actions](https://github.com/a3384379/VKS/actions) 对应提交为准；自动检查不代表生产发行或真实业务验收。

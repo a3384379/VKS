@@ -2,7 +2,7 @@ from pathlib import Path
 from playwright.sync_api import expect, sync_playwright
 import pytest
 
-from test_frontend_browser import site, chromium_path
+from test_frontend_browser import site as site, chromium_path  # pytest fixture registration
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -20,10 +20,11 @@ def test_v2_journey_save_history_and_passive_exploration(site):
             page.get_by_label("密码", exact=True).fill("owner")
             page.get_by_role("button", name="打开工作空间").click()
             expect(page.get_by_role("navigation", name="主导航").get_by_role("button")).to_have_count(5)
+            page.get_by_role("button", name="维护导览与结构", exact=True).click()
             page.get_by_role("button", name="新建流程", exact=True).click()
             page.get_by_label("流程名称", exact=True).fill("Synthetic invoice journey")
             page.get_by_role("button", name="保存流程", exact=True).click()
-            expect(page.get_by_text("流程已保存为不可变修订，等待人员审核", exact=True)).to_be_visible()
+            expect(page.get_by_text("流程已保存为不可变修订", exact=True)).to_be_visible()
             title = page.get_by_label("流程名称", exact=True)
             title.fill("Changed title")
             page.get_by_role("button", name="撤销", exact=True).click()
@@ -32,6 +33,7 @@ def test_v2_journey_save_history_and_passive_exploration(site):
             expect(title).to_have_value("Changed title")
             page.get_by_role("button", name="还原", exact=True).click()
             page.reload()
+            page.get_by_role("button", name="维护导览与结构", exact=True).click()
             expect(title).to_have_value("Synthetic invoice journey")
             workspace = page.request.get(url + f"/api/v1/projects/{pid}/workspace").json()["data"]
             aid = workspace["selected_analysis_set"]["id"]
@@ -46,6 +48,7 @@ def test_v2_journey_save_history_and_passive_exploration(site):
             )
             assert queued.ok, queued.text()
             page.reload()
+            page.get_by_role("button", name="维护导览与结构", exact=True).click()
             expect(title).to_have_value("Synthetic invoice journey")
             title.fill("Unsaved local journey")
             changed = dict(row["dsl"], title="Another editor saved this")

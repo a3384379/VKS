@@ -17,7 +17,7 @@ def candidates(workspace):
                 entity_ids=[r["entity_id"] for r in rows],
                 revision_ids=[r["entity_revision_id"] for r in rows],
                 basis=basis,
-                review_status="candidate",
+                excluded=False,
                 reason=reason,
                 member_count=len(rows),
                 scope="有界任务输入；候选可重叠，采用后可在模块管理调整",

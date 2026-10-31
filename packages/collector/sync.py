@@ -37,7 +37,7 @@ def snapshot_delta(before, after, *, scope_before, scope_after):
         previous_file_count=len(before),
         current_file_count=len(after),
         scope_anomaly=shrink,
-        requires_review=bool(added or removed or changed),
+        has_changes=bool(added or removed or changed),
         unknowns=["字节变化未必表示业务规则变化；大规模缺失需要人工核对采集范围"] if shrink else [],
     )
 

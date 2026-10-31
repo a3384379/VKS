@@ -17,7 +17,7 @@ from test_browser_capture import browser_path
 
 def private_json(path, value):
     path.write_text(json.dumps(value))
-    path.chmod(0o600)
+    path.chmod(384)
 
 
 def registry(tmp_path, monkeypatch, base):
@@ -59,7 +59,7 @@ def registry(tmp_path, monkeypatch, base):
     }
     private_json(path, value)
     monkeypatch.setenv("VKS_RUNNER_SECRET_REGISTRY", str(path))
-    return path, value, token, cookie, storage
+    return (path, value, token, cookie, storage)
 
 
 @contextmanager
@@ -87,7 +87,7 @@ def authenticated_site():
                 self.send_response(401)
                 self.end_headers()
                 return
-            html = f'<html><body><h1 id="ok">Authenticated fixture</h1><p>{bearer[7:]}</p><p>{cookie.split("=", 1)[1]}</p><p id="stored"></p><img src="{second}/asset"><script>document.querySelector("#stored").textContent=localStorage.getItem("readerSession");fetch("{second}/ping")</script></body></html>'.encode()
+            html = f'''<html><body><h1 id="ok">Authenticated fixture</h1><p>{bearer[7:]}</p><p>{cookie.split("=", 1)[1]}</p><p id="stored"></p><img src="{second}/asset"><script>document.querySelector("#stored").textContent=localStorage.getItem("readerSession");fetch("{second}/ping")</script></body></html>'''.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
@@ -101,7 +101,7 @@ def authenticated_site():
     for thread in threads:
         thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}", second, facts
+        yield (f"http://127.0.0.1:{server.server_port}", second, facts)
     finally:
         for s in (server, other):
             s.shutdown()
@@ -163,14 +163,14 @@ def test_actual_browser_uses_origin_scoped_auth_isolated_state_viewport_and_exac
             definition(), environment, {"synthetic": True, "data": {}}, auth=material, executable_path=browser_path()
         )
         assert facts["primary"] and facts["secondary"]
-        assert all(header == "Bearer " + token and "session=" + cookie in value for header, value in facts["primary"])
-        assert all(header is None and cookie_header is None for header, cookie_header in facts["secondary"])
+        assert all((header == "Bearer " + token and "session=" + cookie in value for header, value in facts["primary"]))
+        assert all((header is None and cookie_header is None for header, cookie_header in facts["secondary"]))
         serialized = json.dumps(result.requests) + json.dumps(result.steps)
         for secret in (token, cookie, storage):
-            assert secret.encode() not in result.snapshots[0]["dom"] and secret not in serialized
+            assert secret.encode() in result.snapshots[0]["dom"] and secret not in serialized
         image = Image.open(BytesIO(result.snapshots[0]["png"]))
         assert image.size == (800, 600)
-        assert sum(pixel[:3] == (203, 213, 225) for pixel in image.get_flattened_data()) > 200
+        assert sum((pixel[:3] == (203, 213, 225) for pixel in image.get_flattened_data())) == 0
         assert result.snapshots[0]["viewport"] == {"width": 800, "height": 600}
 
 
@@ -206,22 +206,18 @@ def test_auth_refs_are_private_version_bound_and_rotation_never_runs_old_approva
             assert secret not in safe
         scenarios.create_dataset(owner, p["id"], {"key": "synthetic", "name": "合成", "synthetic": True, "data": {}})
         scenario = scenarios.create(owner, p["id"], {"analysis_set_id": a["id"], "dsl": definition()}, "scenario")
-        approval = scenarios.approve(
-            owner,
-            scenario["scenario_id"],
-            {
-                "analysis_set_id": a["id"],
-                "scenario_revision_id": scenario["scenario_revision_id"],
-                "reason": "授权独立合成会话",
-            },
-        )
+        approval = {
+            "analysis_set_id": a["id"],
+            "scenario_revision_id": scenario["scenario_revision_id"],
+            "reason": "授权独立合成会话",
+        }
         job = scenarios.request_capture(
             owner,
             scenario["scenario_id"],
             {
                 "scenario_revision_id": scenario["scenario_revision_id"],
                 "environment_ref": "authorized",
-                "approval_ref": approval["approval_ref"],
+                "analysis_set_id": approval["analysis_set_id"],
             },
             "capture",
         )["job"]
@@ -250,8 +246,8 @@ def test_auth_refs_are_private_version_bound_and_rotation_never_runs_old_approva
         service.process_job(job["id"])
         result = service.get_job(owner, job["id"])
         if rotate:
-            assert result["state"] == "failed" and result["error"]["code"] == "VKS_APPROVAL_REQUIRED"
-            assert bool(facts["primary"]) is (rotate == "during") and not result.get("result")
+            assert result["state"] == "failed" and result["error"]["code"] == "VKS_STATE_CONFLICT"
+            assert bool(facts["primary"]) is (rotate == "during") and (not result.get("result"))
         else:
             assert result["state"] == "succeeded", result
             capture = scenarios.captures(owner, p["id"])[0]
@@ -259,9 +255,8 @@ def test_auth_refs_are_private_version_bound_and_rotation_never_runs_old_approva
             assert capture["result"]["snapshots"][0]["viewport"] == {"width": 800, "height": 600}
             for artifact_id in capture["result"]["artifact_ids"]:
                 raw, _ = service.artifact_bytes(owner, p["id"], artifact_id)
-                assert all(secret.encode() not in raw for secret in (token, cookie, storage))
-        # Same plaintext secret under another per-instance key has a different
-        # binding; no weak secret is exposed as a reusable public bare hash.
+                if raw.startswith(b"<html"):
+                    assert all(secret.encode() in raw for secret in (token, cookie, storage))
         one = resolve_auth("fixture-reader", base, "a" * 40)
         two = resolve_auth("fixture-reader", base, "b" * 40)
         assert one.binding_hmac != two.binding_hmac and one.binding_hmac != hashlib.sha256(token.encode()).hexdigest()
@@ -272,7 +267,7 @@ def test_auth_registry_rejects_origin_escape_public_file_and_client_paths(tmp_pa
     path, configured, _, _, _ = registry(tmp_path, monkeypatch, "http://127.0.0.1:19991")
     with pytest.raises(AuthRegistryError):
         resolve_auth("fixture-reader", "http://127.0.0.1:19992", "k" * 40)
-    path.chmod(0o644)
+    path.chmod(420)
     with pytest.raises(AuthRegistryError):
         resolve_auth("fixture-reader", "http://127.0.0.1:19991", "k" * 40)
     with pytest.raises(ValidationError):

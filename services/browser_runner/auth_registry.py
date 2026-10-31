@@ -53,7 +53,6 @@ class AuthMaterial:
     binding_hmac: str
     headers: dict = field(repr=False)
     storage_state: dict = field(repr=False)
-    redactions: list[str] = field(repr=False)
     allowed_project_keys: list[str] | None = field(default=None, repr=False)
 
     @property
@@ -124,7 +123,6 @@ def _resolve_auth(auth_ref, base_origin, binding_key, project_key=None):
         fail()
     if len(state["cookies"]) > 100 or len(state["origins"]) > 1:
         fail()
-    redactions = list(headers.values())
     host = urlsplit(base_origin).hostname
     for cookie in state["cookies"]:
         if not isinstance(cookie, dict) or set(cookie) - {
@@ -148,7 +146,7 @@ def _resolve_auth(auth_ref, base_origin, binding_key, project_key=None):
             fail()
         if urlsplit(base_origin).scheme == "https" and cookie.get("secure") is not True:
             fail()
-        redactions.append(safe_value(cookie.get("value")))
+        safe_value(cookie.get("value"))
     for stored_origin in state["origins"]:
         if not isinstance(stored_origin, dict) or set(stored_origin) != {"origin", "localStorage"}:
             fail()
@@ -159,11 +157,8 @@ def _resolve_auth(auth_ref, base_origin, binding_key, project_key=None):
         for item in stored_origin["localStorage"]:
             if not isinstance(item, dict) or set(item) != {"name", "value"} or not isinstance(item["name"], str):
                 fail()
-            redactions.append(safe_value(item["value"]))
+            safe_value(item["value"])
     if not headers and not state["cookies"] and not state["origins"]:
-        fail()
-    redactions += [x.split(" ", 1)[1] for x in headers.values() if x.lower().startswith("bearer ")]
-    if sum(len(value) for value in redactions) > 128 * 1024 or len(redactions) > 200:
         fail()
     material = {
         "ref": auth_ref,
@@ -182,7 +177,6 @@ def _resolve_auth(auth_ref, base_origin, binding_key, project_key=None):
         fingerprint,
         headers,
         state,
-        sorted(set(redactions), key=len, reverse=True),
         project_keys,
     )
 
@@ -201,7 +195,7 @@ def rotated_cookies(lines, url):
     import time
 
     parsed = urlsplit(url)
-    output, secrets = [], []
+    output = []
     if len(lines) > 100:
         raise AuthRegistryError("认证响应Cookie数量超过限制")
     for line in lines:
@@ -214,24 +208,37 @@ def rotated_cookies(lines, url):
             continue
         for name, item in jar.items():
             value = item.value
-            if value:
-                secrets.append(value)
             domain, path = item["domain"].lstrip(".").lower(), item["path"]
             if not path:
                 path = parsed.path.rsplit("/", 1)[0] or "/"
             secure = bool(item["secure"])
             same_site = item["samesite"].capitalize() if item["samesite"] else "Lax"
-            if (not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", name) or len(value) > 4096
-                    or any(ord(c) < 32 or ord(c) == 127 for c in value)
-                    or domain and domain != parsed.hostname or not path.startswith("/")
-                    or secure != (parsed.scheme == "https")
-                    or same_site not in ("Strict", "Lax", "None")
-                    or same_site == "None" and not secure
-                    or name.startswith("__Secure-") and not secure
-                    or name.startswith("__Host-") and (not secure or domain or path != "/")):
+            if (
+                not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", name)
+                or len(value) > 4096
+                or any(ord(c) < 32 or ord(c) == 127 for c in value)
+                or domain
+                and domain != parsed.hostname
+                or not path.startswith("/")
+                or secure != (parsed.scheme == "https")
+                or same_site not in ("Strict", "Lax", "None")
+                or same_site == "None"
+                and not secure
+                or name.startswith("__Secure-")
+                and not secure
+                or name.startswith("__Host-")
+                and (not secure or domain or path != "/")
+            ):
                 continue
-            cookie = dict(name=name, value=value, domain=parsed.hostname, path=path,
-                          secure=secure, httpOnly=bool(item["httponly"]), sameSite=same_site)
+            cookie = dict(
+                name=name,
+                value=value,
+                domain=parsed.hostname,
+                path=path,
+                secure=secure,
+                httpOnly=bool(item["httponly"]),
+                sameSite=same_site,
+            )
             try:
                 if item["max-age"]:
                     cookie["expires"] = max(1, min(time.time() + int(item["max-age"]), time.time() + 365 * 86400))
@@ -240,4 +247,4 @@ def rotated_cookies(lines, url):
             except (ValueError, TypeError, OverflowError):
                 continue
             output.append(cookie)
-    return output, secrets
+    return output

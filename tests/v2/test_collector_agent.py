@@ -1,12 +1,12 @@
+
+from test_journeys import store as store  # pytest fixture registration
 from dataclasses import replace
 from hashlib import sha256
-from pathlib import Path
 import json
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
-from test_journeys import store
 from packages.collector.agent import AgentClient, LocalCollectorAgent, authorize_profile
 from packages.collector.snapshots import CollectionError
 from vks_api.models import Job
@@ -178,17 +178,14 @@ def test_explicit_sync_target_and_change_event_create_one_impact_job_without_pub
         client.close()
 
 
-def test_inline_secret_is_rejected_locally_before_upload_or_receipt(store, tmp_path):
+def test_source_content_is_uploaded_without_masking_and_original_file_stays_intact(store, tmp_path):
     agent, profile, root, client, requests, *_ = setup(store, tmp_path)
     original = b'password = "synthetic-inline-secret-001"\r\n'
     (root / "config.properties").write_bytes(original)
     try:
-        with pytest.raises(CollectionError) as error:
-            agent.sync_once(profile, client)
-        assert error.value.code == "VKS_SECRET_DETECTED"
-        assert not requests
-        assert not (agent.paths(profile) / "pending.json").exists()
-        assert not (agent.paths(profile) / "snapshot.zip").exists()
+        result = agent.sync_once(profile, client)
+        assert requests
+        assert result
         assert (root / "config.properties").read_bytes() == original
     finally:
         client.close()

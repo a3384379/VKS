@@ -14,7 +14,6 @@ from sqlalchemy import text
 from .service import Service, DomainError, Actor
 from .version import VERSION
 from .schemas import *
-from . import project_profile
 
 API = "/api/v1"
 MAX_UPLOAD = 128 * 1024 * 1024
@@ -111,6 +110,16 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
             ):
                 raise DomainError("VKS_FORBIDDEN", "CSRF 校验失败，请重新登录", 403)
         return a
+
+    @app.post("/api/v2/projects/{pid}/snapshots", status_code=201)
+    def save_snapshot(
+        pid: str,
+        payload: SnapshotInput,
+        request: Request,
+        a: Actor = Depends(actor),
+        idempotency_key: str = Header(...),
+    ):
+        return envelope(request, service.save_snapshot(a, pid, payload.model_dump(), idempotency_key))
 
     @app.get("/live")
     @app.get(API + "/live")
@@ -320,7 +329,7 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         depth: int = Query(2, ge=1, le=3),
         max_nodes: int = Query(50, ge=1, le=200),
         project_id: str | None = None,
-        relation_policy: str = Query("trusted", pattern="^(trusted|candidate|review)$"),
+        relation_policy: str = Query("valid", pattern="^(valid|outdated|all)$"),
         a: Actor = Depends(actor),
     ):
         pid = service.find_entity_project(a, eid)
@@ -400,34 +409,6 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         idempotency_key: str = Header(...),
     ):
         return envelope(request, service.propose_links(a, pid, payload.model_dump(), idempotency_key))
-
-    @app.post(API + "/relations/{rid}/review")
-    def review(
-        rid: str, payload: ReviewInput, request: Request, a: Actor = Depends(actor), if_match: str = Header(...)
-    ):
-        return envelope(request, service.review_relation(a, rid, payload.model_dump(), if_match))
-
-    @app.post(API + "/projects/{pid}/release-candidates", status_code=202)
-    def release_candidate(
-        pid: str,
-        payload: CandidateInput,
-        request: Request,
-        a: Actor = Depends(actor),
-        idempotency_key: str = Header(...),
-    ):
-        return envelope(
-            request, service.request_release(a, pid, payload.model_dump(exclude_none=True), idempotency_key)
-        )
-
-    @app.post(API + "/release-candidates/{cid}/confirm")
-    def release_confirm(cid: str, request: Request, a: Actor = Depends(actor)):
-        return envelope(request, service.confirm_release(a, cid))
-
-    @app.post(API + "/release-candidates/{cid}/publish", status_code=201)
-    def release_publish(
-        cid: str, payload: PublishInput, request: Request, a: Actor = Depends(actor), idempotency_key: str = Header(...)
-    ):
-        return envelope(request, service.publish(a, cid, payload.model_dump(), idempotency_key))
 
     @app.get(API + "/projects/{pid}/releases")
     def releases(pid: str, request: Request, a: Actor = Depends(actor)):
@@ -567,9 +548,6 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
 
     install_journeys(app, service, actor, envelope)
     install_workbench(app, service, actor, envelope)
-    from .review_inbox import install_review_inbox
-
-    install_review_inbox(app, service, actor, envelope)
     from .onboarding_report import install as install_onboarding_report
 
     install_onboarding_report(app, service, actor, envelope)

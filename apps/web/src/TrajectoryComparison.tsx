@@ -34,8 +34,7 @@ type Result = {
 export function TrajectoryComparison() {
   const { w } = useWorkspace();
   const key = `${w.project.id}:${w.selected_analysis_set?.id}:${w.selected_analysis_set?.selection_version}:${w.selected_release?.id}`;
-  const current = useRef(key);
-  current.current = key;
+  const requestSequence = useRef(0);
   const [options, setOptions] = useState<Option[]>([]),
     [left, setLeft] = useState(""),
     [right, setRight] = useState(""),
@@ -43,6 +42,9 @@ export function TrajectoryComparison() {
     [report, setReport] = useState<{ key: string; value: Result } | null>(null),
     [indices, setIndices] = useState([0, 0]),
     [busy, setBusy] = useState(false);
+  const pairKey = `${key}:${left}:${right}`;
+  const current = useRef(pairKey);
+  current.current = pairKey;
   const scope = new URLSearchParams(
     w.selected_release
       ? { release_id: w.selected_release.id }
@@ -51,6 +53,7 @@ export function TrajectoryComparison() {
         : {},
   );
   useEffect(() => {
+    ++requestSequence.current;
     const controller = new AbortController();
     setOptions([]);
     setReport(null);
@@ -73,7 +76,8 @@ export function TrajectoryComparison() {
     return () => controller.abort();
   }, [key]);
   async function compare() {
-    const requested = key;
+    const requested = pairKey;
+    const sequence = ++requestSequence.current;
     setBusy(true);
     setError("");
     try {
@@ -83,18 +87,23 @@ export function TrajectoryComparison() {
       const value = await api<Result>(
         `/api/v2/projects/${w.project.id}/trajectory-comparison?${q}`,
       );
-      if (current.current === requested) {
+      if (
+        current.current === requested &&
+        requestSequence.current === sequence
+      ) {
         setReport({ key: requested, value });
         setIndices([0, 0]);
       }
     } catch (e) {
-      if (current.current === requested) setError((e as Error).message);
+      if (current.current === requested && requestSequence.current === sequence)
+        setError((e as Error).message);
     } finally {
-      if (current.current === requested) setBusy(false);
+      if (current.current === requested && requestSequence.current === sequence)
+        setBusy(false);
     }
   }
   if (!w.scenarios.length) return null;
-  const result = report?.key === key ? report.value : null;
+  const result = report?.key === pairKey ? report.value : null;
   return (
     <Panel
       title="角色、前置条件与双轨迹对比"
@@ -114,8 +123,11 @@ export function TrajectoryComparison() {
               aria-label={title}
               value={value}
               onChange={(e) => {
+                ++requestSequence.current;
                 set(e.target.value);
                 setReport(null);
+                setBusy(false);
+                setError("");
               }}
             >
               {options.map((option) => (

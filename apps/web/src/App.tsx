@@ -41,7 +41,7 @@ import {
   entityIcon,
   label,
 } from "./components";
-import { ReadScope, WorkspaceContext } from "./context";
+import { ReadScope, WorkspaceContext, workspaceReadScope } from "./context";
 import {
   emptyNavigation,
   resolveExplanation,
@@ -51,11 +51,12 @@ import {
 import { hasProjectPermission } from "./permissions";
 import { LoginForm } from "./LoginForm";
 import { RenderBoundary } from "./RenderBoundary";
+import { moduleWorkspace } from "./module-context";
 import { flattenModules, moduleBaseline, type ModuleNode } from "./ModuleTree";
 import {
   Workbench,
   Documents,
-  Reviews,
+  Relations,
   Graph,
   Versions,
   Settings,
@@ -66,6 +67,13 @@ import { OnboardingWizard } from "./OnboardingWizard";
 import { JourneyCanvas } from "./JourneyCanvas";
 import { AgentWorkspace } from "./AgentWorkspace";
 import { HashRouteSync } from "./route-sync";
+import { workspaceBaseline } from "./workspace-baseline";
+import {
+  emptyJourneyNavigation,
+  readJourneyNavigation,
+  writeJourneyNavigation,
+  type JourneyNavigation,
+} from "./journey-navigation";
 import {
   primaryNavigation,
   navigationGroup,
@@ -102,10 +110,10 @@ const nav: {
     description: "阅读、关联与维护项目知识，让上下文始终连贯。",
   },
   {
-    id: "reviews",
-    title: "关联审核",
+    id: "relations",
+    title: "关联管理",
     icon: Link2,
-    description: "先检查来源和证据，再确认知识之间的关系。",
+    description: "查看来源与证据，按需纠错、移除或恢复关联。",
   },
   {
     id: "graph",
@@ -115,9 +123,9 @@ const nav: {
   },
   {
     id: "versions",
-    title: "变更与审核",
+    title: "变更与版本",
     icon: GitCompareArrows,
-    description: "固定来源组合，审核并发布可追溯的知识版本。",
+    description: "固定来源组合，保存可追溯的知识版本。",
   },
   {
     id: "settings",
@@ -129,16 +137,16 @@ const nav: {
 nav.push(
   {
     id: "journeys",
-    title: "业务流程画布",
+    title: "业务导览",
     icon: Network,
-    description: "固定每个业务步骤的知识修订，编辑和审核被动流程。",
+    description: "围绕业务目标阅读步骤、条件与结果，查看同一版本的知识依据。",
   },
   {
     id: "agent",
     title: "知识任务",
     icon: Command,
     description:
-      "按固定范围生成报告和候选，阶段可见、可取消，所有产物由人员审核。",
+      "按固定范围生成报告和候选，阶段可见、可取消，产物直接保存到当前知识版本。",
   },
 );
 const initial = routeParameters(
@@ -151,6 +159,8 @@ function workspaceHash(
   baseline: string,
   entity: string,
   explanation: ExplanationNavigation = emptyNavigation,
+  journey: JourneyNavigation = emptyJourneyNavigation,
+  moduleId = "",
 ) {
   const query = new URLSearchParams({ view });
   if (project) query.set("project", project);
@@ -160,6 +170,8 @@ function workspaceHash(
   if (explanation.scenarioId) query.set("scenario", explanation.scenarioId);
   if (explanation.stateKey) query.set("state", explanation.stateKey);
   if (explanation.actionId) query.set("action", explanation.actionId);
+  writeJourneyNavigation(query, journey);
+  if (moduleId) query.set("module", moduleId);
   return `#${query}`;
 }
 export default function App() {
@@ -198,6 +210,8 @@ export default function App() {
     stateKey: initial.get("state") || "",
     actionId: initial.get("action") || "",
   });
+  const [journey, setJourney] = useState(() => readJourneyNavigation(initial));
+  const [moduleId, setModuleId] = useState(initial.get("module") || "");
   const explanationRef = useRef(explanation);
   explanationRef.current = explanation;
   const workspaceRef = useRef(w);
@@ -210,6 +224,67 @@ export default function App() {
   const notify = useCallback((message: string, tone = "success") => {
     setToast({ message, tone });
   }, []);
+  const moduleScope = JSON.stringify([
+    moduleId,
+    w?.project.id,
+    baseline,
+    w?.selected_analysis_set?.selection_version,
+    w?.selected_release?.id,
+    session?.project_permissions?.[projectId] ?? session?.scopes ?? [],
+    w?.entities.map((entity) => entity.entity_revision_id).sort(),
+  ]);
+  const moduleScopeRef = useRef(moduleScope);
+  moduleScopeRef.current = moduleScope;
+  const [moduleMembers, setModuleMembers] = useState<{
+    scope: string;
+    entities: Entity[];
+  } | null>(null);
+  const moduleEntities =
+    moduleMembers?.scope === moduleScope ? moduleMembers.entities : null;
+  const explorationWorkspace =
+    w && moduleId ? moduleWorkspace(w, moduleEntities) : w;
+  const explorationRef = useRef(explorationWorkspace);
+  explorationRef.current = explorationWorkspace;
+  useEffect(() => {
+    if (!moduleId || !w || w.project.id !== projectId) return;
+    const controller = new AbortController();
+    const requested = moduleScope;
+    const query = moduleBaseline(
+      w.selected_analysis_set?.id,
+      w.selected_release?.id,
+    );
+    void api<{ entities: Entity[] }>(
+      `/projects/${projectId}/modules/${moduleId}/members?${query}`,
+      { signal: controller.signal },
+    )
+      .then((result) => {
+        if (!controller.signal.aborted && moduleScopeRef.current === requested)
+          setModuleMembers({ scope: requested, entities: result.entities });
+      })
+      .catch((error) => {
+        if (
+          !controller.signal.aborted &&
+          moduleScopeRef.current === requested
+        ) {
+          setModuleMembers({ scope: requested, entities: [] });
+          notify(error.message, "error");
+        }
+      });
+    return () => controller.abort();
+  }, [moduleScope, moduleId, projectId]);
+  const navigateJourney = useCallback(
+    (intent: JourneyNavigation, automatic = false) => {
+      if (unsavedChanges.current) {
+        notify("请先保存或还原当前草稿", "error");
+        return;
+      }
+      if (!automatic) beginUserRoute();
+      setJourney(intent);
+      setSelectedId(intent.journeyId);
+      setView("journeys");
+    },
+    [beginUserRoute, notify],
+  );
   const navigateExplanation = useCallback(
     (intent: NavigationIntent) => {
       if (!workspaceRef.current) return;
@@ -218,10 +293,28 @@ export default function App() {
         return;
       }
       try {
+        const scoped = explorationRef.current || workspaceRef.current;
+        const outsideModule =
+          !!moduleId &&
+          !!moduleEntities &&
+          ((intent.actionId &&
+            workspaceRef.current.actions.some(
+              (action) => action.id === intent.actionId,
+            ) &&
+            !scoped.actions.some((action) => action.id === intent.actionId)) ||
+            (intent.pageId &&
+              workspaceRef.current.pages.some(
+                (page) => page.id === intent.pageId,
+              ) &&
+              !scoped.pages.some((page) => page.id === intent.pageId)));
+        if (outsideModule) setModuleId("");
+        const targetWorkspace = outsideModule ? workspaceRef.current : scoped;
         const next = resolveExplanation(
-          workspaceRef.current,
+          targetWorkspace,
           explanationRef.current,
-          intent,
+          moduleId && !outsideModule && !targetWorkspace.scenarios.length
+            ? { ...intent, followTarget: false }
+            : intent,
         );
         beginUserRoute();
         explanationRef.current = next;
@@ -231,7 +324,7 @@ export default function App() {
         notify((error as Error).message, "error");
       }
     },
-    [notify, beginUserRoute],
+    [notify, beginUserRoute, moduleId, moduleEntities],
   );
   const setSelected = useCallback(
     (id: string) => {
@@ -240,7 +333,11 @@ export default function App() {
       } else {
         beginUserRoute();
         setSelectedId(id);
-        if (!id) setExplanation(emptyNavigation);
+        if (!id) {
+          setExplanation(emptyNavigation);
+          setJourney(emptyJourneyNavigation);
+          setModuleId("");
+        }
       }
     },
     [navigateExplanation, beginUserRoute],
@@ -257,11 +354,13 @@ export default function App() {
       w.selected_release?.id !== baseline.slice(8)
     )
       return;
+    if (moduleId && !moduleEntities) return;
+    const scopeWorkspace = explorationWorkspace || w;
     try {
       const actionId =
         explanation.actionId ||
-        (w.actions.some((a) => a.id === selected) ? selected : "");
-      const next = resolveExplanation(w, explanation, {
+        (scopeWorkspace.actions.some((a) => a.id === selected) ? selected : "");
+      const next = resolveExplanation(scopeWorkspace, explanation, {
         ...explanation,
         actionId,
         followTarget: false,
@@ -272,11 +371,24 @@ export default function App() {
         setSelectedId(next.actionId);
     } catch (error) {
       notify((error as Error).message, "error");
-      setExplanation(
-        resolveExplanation(w, emptyNavigation, { followTarget: false }),
-      );
+      const fallback = resolveExplanation(scopeWorkspace, emptyNavigation, {
+        followTarget: false,
+      });
+      setExplanation(fallback);
+      if (view === "workbench") setSelectedId(fallback.actionId);
     }
-  }, [w, projectId, baseline, view, selected, explanation, notify]);
+  }, [
+    w,
+    projectId,
+    baseline,
+    view,
+    selected,
+    explanation,
+    notify,
+    moduleId,
+    moduleEntities,
+    explorationWorkspace,
+  ]);
   const [projectSearch, setProjectSearch] = useState("");
   const [projectCursor, setProjectCursor] = useState<string | null>(null);
   const [projectLoading, setProjectLoading] = useState(false);
@@ -326,6 +438,7 @@ export default function App() {
           setBaseline("");
           setSelectedId("");
           setExplanation(emptyNavigation);
+          setJourney(emptyJourneyNavigation);
           setUnsavedChanges(false);
         }
         setProjectId((previous) =>
@@ -374,10 +487,33 @@ export default function App() {
       return;
     }
     let result: Workspace;
+    let retainedBaseline = "";
     try {
       result = await api<Workspace>(
         `/projects/${projectId}/workspace?${query}`,
       );
+      if (sequence !== workspaceRequest.current) return;
+      const current = workspaceRef.current;
+      const editingBaseline = current && workspaceBaseline(current);
+      if (
+        !baseline &&
+        unsavedChanges.current &&
+        current?.project.id === projectId &&
+        editingBaseline &&
+        workspaceBaseline(result) !== editingBaseline
+      ) {
+        // A moving default must not retarget an unsaved editor. Reauthorize
+        // its original fixed baseline instead of retaining stale visible data.
+        const fixed = new URLSearchParams(
+          editingBaseline.startsWith("release:")
+            ? { release_id: editingBaseline.slice(8) }
+            : { analysis_set_id: editingBaseline.slice(6) },
+        );
+        result = await api<Workspace>(
+          `/projects/${projectId}/workspace?${fixed}`,
+        );
+        retainedBaseline = editingBaseline;
+      }
     } catch (error) {
       if (sequence !== workspaceRequest.current) return;
       if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
@@ -394,6 +530,13 @@ export default function App() {
       throw error;
     }
     if (sequence !== workspaceRequest.current) return;
+    if (retainedBaseline) {
+      setBaseline(retainedBaseline);
+      notify(
+        "默认基线已变化；当前未保存草稿仍固定在原知识基线，保存或还原后可再切换。",
+        "info",
+      );
+    }
     setProjects((previous) =>
       previous.some((p) => p.id === result.project.id)
         ? previous
@@ -418,12 +561,19 @@ export default function App() {
       capabilities: result.capabilities || {},
     });
     setError("");
-  }, [projectId, baseline, loadProjects]);
+  }, [projectId, baseline, loadProjects, notify]);
   useEffect(() => {
     if (!session?.authenticated || !projectId) return;
     let active = true;
-    setWorkspace(null);
-    setLoading(true);
+    const current = workspaceRef.current;
+    const samePinnedBaseline =
+      current?.project.id === projectId &&
+      !!baseline &&
+      workspaceBaseline(current) === baseline;
+    if (!samePinnedBaseline) {
+      setWorkspace(null);
+      setLoading(true);
+    }
     void refresh()
       .catch((e) => {
         if (active) setError(e.message);
@@ -455,6 +605,8 @@ export default function App() {
       baseline,
       selected,
       explanation,
+      journey,
+      moduleId,
     );
     const mode = routeSync.current.commit(
       routeEpoch,
@@ -469,6 +621,8 @@ export default function App() {
     baseline,
     selected,
     explanation,
+    journey,
+    moduleId,
     session?.authenticated,
     routeEpoch,
   ]);
@@ -490,7 +644,10 @@ export default function App() {
         (query.get("action") || "") !== explanation.actionId ||
         (query.get("ui_page") || "") !== explanation.pageId ||
         (query.get("scenario") || "") !== explanation.scenarioId ||
-        (query.get("state") || "") !== explanation.stateKey;
+        (query.get("state") || "") !== explanation.stateKey ||
+        JSON.stringify(readJourneyNavigation(query)) !==
+          JSON.stringify(journey) ||
+        (query.get("module") || "") !== moduleId;
       if (changed && unsavedChanges.current) {
         const restored = workspaceHash(
           view,
@@ -498,12 +655,22 @@ export default function App() {
           baseline,
           selected,
           explanation,
+          journey,
+          moduleId,
         );
         routeSync.current.restore(restored);
         history.replaceState(
           null,
           "",
-          workspaceHash(view, projectId, baseline, selected, explanation),
+          workspaceHash(
+            view,
+            projectId,
+            baseline,
+            selected,
+            explanation,
+            journey,
+            moduleId,
+          ),
         );
         notify("草稿尚未保存，请先保存或还原本地修改", "error");
         return;
@@ -515,6 +682,8 @@ export default function App() {
       setProjectId(nextProject);
       setBaseline(nextBaseline);
       setSelectedId(nextEntity);
+      setJourney(readJourneyNavigation(query));
+      setModuleId(query.get("module") || "");
       setExplanation({
         pageId: query.get("ui_page") || "",
         scenarioId: query.get("scenario") || "",
@@ -534,6 +703,8 @@ export default function App() {
     baseline,
     selected,
     explanation,
+    journey,
+    moduleId,
     hasUnsavedChanges,
     notify,
   ]);
@@ -593,7 +764,75 @@ export default function App() {
     }
     beginUserRoute();
     setView(next);
+    if (next === "journeys" && entity?.type === "journey") {
+      setJourney({
+        journeyId: entity.entity_id,
+        revisionId: entity.entity_revision_id,
+        stepKey: "",
+        choices: {},
+      });
+    }
     if (entity) setSelected(entity.id);
+  }
+  function navigateReadEntity(
+    workspace: Workspace,
+    entity: Entity,
+    targetBaseline: string,
+    stepKey = "",
+  ) {
+    if (unsavedChanges.current || workspace.project.id !== projectId) return;
+    const available =
+      entity.type === "relation"
+        ? workspace.relations.some((relation) => relation.id === entity.id)
+        : workspace.entities.some(
+            (row) =>
+              row.entity_id === entity.entity_id &&
+              row.entity_revision_id === entity.entity_revision_id,
+          );
+    if (!available) return;
+    const scoped =
+      moduleId && moduleEntities
+        ? moduleWorkspace(workspace, moduleEntities)
+        : workspace;
+    const outsideModule =
+      !!moduleId &&
+      (entity.type === "action"
+        ? !scoped.actions.some((action) => action.id === entity.id)
+        : entity.type === "page"
+          ? !scoped.pages.some((page) => page.id === entity.id)
+          : false);
+    beginUserRoute();
+    setWorkspace(workspace);
+    setBaseline(targetBaseline);
+    setSelectedId(entity.id);
+    if (outsideModule) setModuleId("");
+    if (entity.type === "journey") {
+      setJourney({
+        journeyId: entity.entity_id,
+        revisionId: entity.entity_revision_id,
+        stepKey,
+        choices: {},
+      });
+      setView("journeys");
+    } else if (entity.type === "action" || entity.type === "page") {
+      const next = resolveExplanation(
+        outsideModule ? workspace : scoped,
+        emptyNavigation,
+        entity.type === "action"
+          ? { actionId: entity.id, followTarget: false }
+          : { pageId: entity.id, actionId: "", followTarget: false },
+      );
+      explanationRef.current = next;
+      setExplanation(next);
+      setView("workbench");
+    } else
+      setView(
+        entity.type === "relation"
+          ? "relations"
+          : ["document", "section"].includes(entity.type)
+            ? "documents"
+            : "graph",
+      );
   }
   async function signIn(
     mode: "password" | "bootstrap",
@@ -663,7 +902,7 @@ export default function App() {
                 <path d="M120 75 L240 130 L365 65 M240 130 L350 215" />
               </svg>
               <span className="illustration-caption">
-                <ShieldCheck size={14} /> 固定版本 · 人工审核 · 来源可追溯
+                <ShieldCheck size={14} /> 固定版本 · 直接保存 · 来源可追溯
               </span>
             </div>
           </section>
@@ -755,16 +994,6 @@ export default function App() {
                 return <Icon size={19} />;
               })()}
               <span>{n.title}</span>
-              {n.id === "versions" &&
-                !!w?.relations.filter((r) => r.review_status === "candidate")
-                  .length && (
-                  <b>
-                    {
-                      w.relations.filter((r) => r.review_status === "candidate")
-                        .length
-                    }
-                  </b>
-                )}
             </button>
           ))}
         </nav>
@@ -969,11 +1198,17 @@ export default function App() {
               value={{
                 w,
                 session,
+                moduleId,
+                moduleEntities,
+                navigationEpoch: routeEpoch,
                 selected,
                 setSelected,
                 explanation,
                 navigateExplanation,
+                journey,
+                navigateJourney,
                 navigate,
+                navigateReadEntity,
                 refresh,
                 notify,
                 run,
@@ -1000,7 +1235,7 @@ export default function App() {
                   : navigationGroup(view) === "workbench"
                     ? [
                         { id: "workbench" as View, title: "页面与状态" },
-                        { id: "journeys" as View, title: "业务流程画布" },
+                        { id: "journeys" as View, title: "业务导览" },
                         { id: "graph" as View, title: "知识地图" },
                       ]
                     : navigationGroup(view) === "imports"
@@ -1012,7 +1247,7 @@ export default function App() {
                       : navigationGroup(view) === "versions"
                         ? [
                             { id: "versions" as View, title: "版本与变更" },
-                            { id: "reviews" as View, title: "关联审核" },
+                            { id: "relations" as View, title: "关联管理" },
                           ]
                         : [
                             {
@@ -1030,6 +1265,25 @@ export default function App() {
                   </button>
                 ))}
               </nav>
+              {view !== "journeys" &&
+                journey.journeyId &&
+                w.entities.some(
+                  (row) =>
+                    row.entity_id === journey.journeyId &&
+                    row.entity_revision_id === journey.revisionId,
+                ) && (
+                  <div className="v2-return-context">
+                    <Button onClick={() => navigateJourney(journey)}>
+                      返回业务导览 ·{" "}
+                      {
+                        w.entities.find(
+                          (row) => row.entity_id === journey.journeyId,
+                        )?.name
+                      }
+                    </Button>
+                    <small>返回同一流程、步骤与阅读分支</small>
+                  </div>
+                )}
               {["documents", "graph"].includes(view) &&
                 explanation.actionId && (
                   <div className="v2-return-context">
@@ -1053,13 +1307,13 @@ export default function App() {
               ) : view === "workbench" ? (
                 <Workbench />
               ) : view === "journeys" ? (
-                <JourneyCanvas key={`${w.project.id}:${baseline}`} />
+                <JourneyCanvas />
               ) : view === "agent" ? (
                 <AgentWorkspace key={`${w.project.id}:${baseline}`} />
               ) : view === "documents" ? (
                 <Documents />
-              ) : view === "reviews" ? (
-                <Reviews />
+              ) : view === "relations" ? (
+                <Relations />
               ) : view === "graph" ? (
                 <ReadScope>
                   <Graph />
@@ -1105,20 +1359,16 @@ export default function App() {
       {searchOpen && (
         <SearchDialog
           w={w}
+          readScope={
+            w && session ? workspaceReadScope(w, session, baseline) : ""
+          }
           onClose={() => setSearchOpen(false)}
-          onSelect={(e) => {
+          onSelect={(e, workspace) => {
             if (hasUnsavedChanges) {
               notify("草稿尚未保存，请先保存或还原本地修改", "error");
               return;
             }
-            setSelected(e.id);
-            setView(
-              ["document", "document_section", "section"].includes(e.type)
-                ? "documents"
-                : ["action", "ui_action"].includes(e.type)
-                  ? "workbench"
-                  : "graph",
-            );
+            navigateReadEntity(workspace, e, workspaceBaseline(workspace));
             setSearchOpen(false);
           }}
         />
@@ -1141,7 +1391,7 @@ export default function App() {
               <section>
                 <h3>检查关联与证据</h3>
                 <p>
-                  在工作台选择动作，在关联审核页查看来源。确认与拒绝都将留下审核记录。
+                  在工作台选择动作，在关联管理页查看来源。纠错和移除均保留操作历史。
                 </p>
               </section>
             </div>
@@ -1158,7 +1408,7 @@ export default function App() {
           </div>
           <Notice>
             当前为 VKS 1.0
-            候选版。可完成资料接入、解析、审核与不可变发布；受控录制、OAuth
+            候选版。可完成资料接入、解析与不可变版本保存；受控录制、OAuth
             和模型辅助按项目配置开放。真实业务试点与性能门禁仍待验收。
           </Notice>
         </Modal>
@@ -1201,7 +1451,7 @@ function Welcome({ onCreate }: { onCreate: () => void }) {
       <div className="onboarding-cards">
         {[
           { n: "01", i: Upload, t: "接入资料", d: "保留原始文件与版本快照" },
-          { n: "02", i: Link2, t: "审核关联", d: "每一条关系，都有来源依据" },
+          { n: "02", i: Link2, t: "管理关联", d: "每一条关系，都有来源依据" },
           {
             n: "03",
             i: BookOpen,
@@ -1301,27 +1551,46 @@ function CreateProject({
 }
 function SearchDialog({
   w,
+  readScope,
   onClose,
   onSelect,
 }: {
   w: Workspace | null;
+  readScope: string;
   onClose: () => void;
-  onSelect: (e: Entity) => void;
+  onSelect: (e: Entity, workspace: Workspace) => void;
 }) {
-  const [moduleNodes, setModuleNodes] = useState<ModuleNode[]>([]),
+  const scopeRef = useRef(readScope);
+  scopeRef.current = readScope;
+  const targetRequest = useRef<AbortController | null>(null);
+  const [moduleData, setModuleData] = useState<{
+      scope: string;
+      nodes: ModuleNode[];
+    } | null>(null),
     [moduleId, setModuleId] = useState(""),
     [serviceKey, setServiceKey] = useState(""),
     [kind, setKind] = useState(""),
     [descendants, setDescendants] = useState(true);
   const [query, setQuery] = useState(""),
-    [results, setResults] = useState<Entity[]>([]),
+    [resultData, setResultData] = useState<{
+      scope: string;
+      rows: Entity[];
+    } | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const moduleNodes = moduleData?.scope === readScope ? moduleData.nodes : [];
+  const results = resultData?.scope === readScope ? resultData.rows : [];
+  const visibleModuleId = flattenModules(moduleNodes).some(
+    (row) => row.id === moduleId,
+  )
+    ? moduleId
+    : "";
   useEffect(() => {
     setModuleId("");
-    setModuleNodes([]);
     setServiceKey("");
     setKind("");
+  }, [w?.project.id, w?.selected_analysis_set?.id, w?.selected_release?.id]);
+  useEffect(() => {
     if (!w) return;
     const controller = new AbortController();
     void api<ModuleNode[]>(
@@ -1331,15 +1600,26 @@ function SearchDialog({
         moduleBaseline(w.selected_analysis_set?.id, w.selected_release?.id),
       { signal: controller.signal },
     )
-      .then(setModuleNodes)
+      .then((nodes) => {
+        if (controller.signal.aborted || scopeRef.current !== readScope) return;
+        setModuleData({ scope: readScope, nodes });
+        setModuleId((previous) =>
+          flattenModules(nodes).some((row) => row.id === previous)
+            ? previous
+            : "",
+        );
+      })
       .catch((error) => {
-        if (error.name !== "AbortError") setError(error.message);
+        if (!controller.signal.aborted && scopeRef.current === readScope)
+          setError(error.message);
       });
     return () => controller.abort();
-  }, [w?.project.id, w?.selected_analysis_set?.id, w?.selected_release?.id]);
+  }, [readScope]);
+  useEffect(() => () => targetRequest.current?.abort(), [readScope]);
   useEffect(() => {
+    setResultData(null);
+    setBusy(false);
     if (!w || !query.trim()) {
-      setResults([]);
       return;
     }
     const controller = new AbortController();
@@ -1354,8 +1634,8 @@ function SearchDialog({
             ? { release_id: w.selected_release.id }
             : { analysis_set_id: scope }),
           limit: 30,
-          ...(moduleId
-            ? { module_id: moduleId, include_descendants: descendants }
+          ...(visibleModuleId
+            ? { module_id: visibleModuleId, include_descendants: descendants }
             : {}),
           ...(serviceKey.trim() ? { service_key: serviceKey.trim() } : {}),
           ...(kind ? { kinds: [kind] } : {}),
@@ -1363,6 +1643,8 @@ function SearchDialog({
         signal: controller.signal,
       })
         .then((r) => {
+          if (controller.signal.aborted || scopeRef.current !== readScope)
+            return;
           const hits = (
             Array.isArray(r)
               ? r
@@ -1374,8 +1656,9 @@ function SearchDialog({
             entity_id?: string;
             id?: string;
           }>;
-          setResults(
-            hits
+          setResultData({
+            scope: readScope,
+            rows: hits
               .map((hit) =>
                 w.entities.find(
                   (e) =>
@@ -1383,18 +1666,55 @@ function SearchDialog({
                 ),
               )
               .filter((e): e is Entity => !!e),
-          );
+          });
         })
         .catch((e) => {
-          if (e.name !== "AbortError") setError(e.message);
+          if (!controller.signal.aborted && scopeRef.current === readScope)
+            setError(e.message);
         })
-        .finally(() => setBusy(false));
+        .finally(() => {
+          if (!controller.signal.aborted && scopeRef.current === readScope)
+            setBusy(false);
+        });
     }, 280);
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query, w, moduleId, serviceKey, kind, descendants]);
+  }, [query, readScope, visibleModuleId, serviceKey, kind, descendants]);
+  async function openResult(entity: Entity) {
+    if (!w) return;
+    targetRequest.current?.abort();
+    const controller = new AbortController();
+    targetRequest.current = controller;
+    const route = location.hash;
+    try {
+      const workspace = await api<Workspace>(
+        `/projects/${w.project.id}/workspace?${moduleBaseline(w.selected_analysis_set?.id, w.selected_release?.id)}`,
+        { signal: controller.signal },
+      );
+      if (
+        controller.signal.aborted ||
+        scopeRef.current !== readScope ||
+        location.hash !== route
+      )
+        return;
+      const current = workspace.entities.find(
+        (row) =>
+          row.entity_id === entity.entity_id &&
+          row.entity_revision_id === entity.entity_revision_id,
+      );
+      if (!current) {
+        setResultData(null);
+        setError("目标的准确修订已不在该版本的当前可见范围中，请重新检索");
+        return;
+      }
+      onSelect(current, workspace);
+    } catch (error) {
+      if (!controller.signal.aborted && scopeRef.current === readScope)
+        setError((error as Error).message);
+    }
+  }
   return (
     <Modal title="搜索项目知识" onClose={onClose} className="search-dialog">
       <div className="search-input">
@@ -1410,7 +1730,7 @@ function SearchDialog({
         <label>
           模块范围
           <select
-            value={moduleId}
+            value={visibleModuleId}
             onChange={(e) => setModuleId(e.target.value)}
           >
             <option value="">全部模块</option>
@@ -1443,7 +1763,7 @@ function SearchDialog({
           </select>
         </label>
       </div>
-      {moduleId && (
+      {visibleModuleId && (
         <label className="check-line">
           <input
             type="checkbox"
@@ -1465,7 +1785,7 @@ function SearchDialog({
       ) : results.length ? (
         <div className="search-results">
           {results.map((e) => (
-            <button key={e.id} onClick={() => onSelect(e)}>
+            <button key={e.id} onClick={() => void openResult(e)}>
               {entityIcon(e.type, 22)}
               <span>
                 <strong>{e.name}</strong>

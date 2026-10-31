@@ -1,14 +1,13 @@
 """V2 journeys on the existing immutable entity/revision/release model."""
 
-from .v2_contracts import Envelope, JourneyOutput, JourneyValidation, JourneyDecision
+from .v2_contracts import Envelope, JourneyOutput, JourneyValidation
 
 from fastapi import Depends, Header, Request
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Literal
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from packages.journey_dsl import Journey, validate_journey
-from .models import Analysis, Artifact, Audit, Entity, Release, Revision, Selection, uid
+from .models import Analysis, Artifact, Entity, Release, Revision, Selection, uid
 from .reading import ReadingService, artifact_policy
 from .service import DomainError, canonical, sha
 
@@ -17,14 +16,6 @@ class JourneyInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     analysis_set_id: str
     dsl: Journey
-
-
-class JourneyReviewInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    analysis_set_id: str
-    revision_id: str
-    decision: Literal["approve", "reject"]
-    reason: str = Field(min_length=1, max_length=2000)
 
 
 class JourneyService:
@@ -47,6 +38,22 @@ class JourneyService:
             raise DomainError("VKS_INVALID_INPUT", str(error)) from error
         revisions = {row.entity_id: row for row in self.service._revisions(s, analysis.id)}
         references = []
+        source_bindings = dsl.get("semantics", {}).get("source_refs", [])
+        if len({(ref["entity_id"], ref["revision_id"]) for ref in source_bindings}) != len(source_bindings):
+            raise DomainError("VKS_INVALID_INPUT", "流程声明来源修订不可重复")
+        for binding in source_bindings:
+            row = revisions.get(binding["entity_id"])
+            if (
+                not row
+                or row.id != binding["revision_id"]
+                or actor is not None
+                and not self.service._visible_revision(s, actor, analysis.project_id, row)
+            ):
+                raise DomainError("VKS_NOT_FOUND", "流程声明来源不在当前可见版本", 404)
+            source_entity = s.get(Entity, row.entity_id)
+            if source_entity.type == "journey":
+                raise DomainError("VKS_INVALID_INPUT", "业务声明来源需要材料或场景修订，不能引用其他流程")
+            references.append(row)
         for node in dsl["nodes"]:
             binding = node.get("binding")
             if not binding:
@@ -82,13 +89,56 @@ class JourneyService:
             dsl=row.metadata_json["journey_dsl"],
         )
 
-    def _save(self, s, actor, analysis, entity, dsl, references):
+    def _save(
+        self,
+        s,
+        actor,
+        analysis,
+        entity,
+        dsl,
+        references,
+        *,
+        previous_revision=None,
+        input_provenance=None,
+        input_revision_provenance=None,
+    ):
         data = canonical(dsl)
         raw = data.encode()
         policies = []
         from .journey_replay import replay_references
 
         _, capture_artifacts = replay_references(self.service, s, actor, analysis, dsl)
+        previous_artifact = s.get(Artifact, previous_revision.artifact_id) if previous_revision else None
+        inherited = (previous_artifact.metadata_json or {}) if previous_artifact else {}
+        if previous_artifact:
+            # Editing or rebinding a graph does not declassify the wording inherited
+            # from its previous revision, including titles and meaning descriptions.
+            policy = artifact_policy(s, previous_artifact)
+            policies.append((bool(policy.get("requires_source_read")), bool(policy.get("requires_trace_read"))))
+        input_artifact_ids = set(inherited.get("journey_input_artifacts", []))
+        inherited_provenance = list(inherited.get("input_provenance", []))
+        if input_provenance is not None:
+            inherited_provenance.extend(item for item in input_provenance if item not in inherited_provenance)
+            for item in input_provenance:
+                art = s.get(Artifact, item["artifact_id"])
+                if not art or art.project_id != analysis.project_id:
+                    raise DomainError("VKS_INVALID_EVIDENCE", "流程输入来源不属于当前项目")
+                input_artifact_ids.add(art.id)
+                policies.append((item["requires_source_read"], item["requires_trace_read"]))
+        for artifact_id in input_artifact_ids:
+            art = s.get(Artifact, artifact_id)
+            if not art or art.project_id != analysis.project_id:
+                policies.append((True, True))
+                continue
+            policy = artifact_policy(s, art)
+            policies.append(
+                (
+                    art.kind == "source"
+                    or art.sensitivity == "confidential"
+                    or bool(policy.get("requires_source_read")),
+                    art.kind in ("trace", "capture") or bool(policy.get("requires_trace_read")),
+                )
+            )
         for row in references:
             art = s.get(Artifact, row.artifact_id) if row.artifact_id else None
             policy = artifact_policy(s, art) if art else {}
@@ -112,8 +162,27 @@ class JourneyService:
             media_type="application/json",
             object_key=self.service._put_object(raw),
             metadata_json={
-                "journey_binding_revisions": [row.id for row in references],
-                "journey_capture_artifacts": [art.id for art in capture_artifacts],
+                "journey_binding_revisions": sorted(
+                    set(inherited.get("journey_binding_revisions", [])) | {row.id for row in references}
+                ),
+                "journey_capture_artifacts": sorted(
+                    set(inherited.get("journey_capture_artifacts", [])) | {art.id for art in capture_artifacts}
+                ),
+                "journey_input_artifacts": sorted(input_artifact_ids),
+                **(
+                    {
+                        "input_revision_provenance": [
+                            *inherited.get("input_revision_provenance", []),
+                            *(input_revision_provenance or []),
+                        ]
+                    }
+                    if inherited.get("input_revision_provenance") or input_revision_provenance
+                    else {}
+                ),
+                **({"input_provenance": inherited_provenance} if inherited_provenance else {}),
+                "generation_kind": "model"
+                if input_provenance is not None
+                else inherited.get("generation_kind", "declared"),
                 "requires_source_read": any(p[0] for p in policies)
                 or any(art.sensitivity == "confidential" for art in capture_artifacts),
                 "requires_trace_read": any(p[1] for p in policies) or bool(capture_artifacts),
@@ -121,7 +190,7 @@ class JourneyService:
         )
         s.add(art)
         s.flush()
-        metadata = {"journey_dsl": dsl, "evidence_origin": "declared", "review_status": "candidate"}
+        metadata = {"journey_dsl": dsl, "evidence_origin": "declared", "excluded": "candidate"}
         digest = sha(
             canonical(
                 dict(
@@ -195,7 +264,7 @@ class JourneyService:
                 dsl, refs = self._validate(s, actor, analysis, payload["dsl"])
                 if dsl["key"] != entity.stable_key:
                     raise DomainError("VKS_INVALID_INPUT", "流程逻辑键不可改变")
-                return self._save(s, actor, analysis, entity, dsl, refs)
+                return self._save(s, actor, analysis, entity, dsl, refs, previous_revision=previous)
 
             return self.service.idem(
                 s, actor, entity.project_id, "journey.update", key, dict(payload, base_revision_id=version), save
@@ -210,6 +279,11 @@ class JourneyService:
 
     def _selected_list(self, s, actor, pid, choices):
         """Read only selected journey bodies, with current reference policies."""
+        reading = ReadingService(self.service)
+        visible = self._selected_choices(s, actor, pid, choices)
+        return [self._dto(s, row) for row in reading.revision_rows(s, visible.values())]
+
+    def _selected_choices(self, s, actor, pid, choices):
         from .reading import chunks
 
         reading = ReadingService(self.service)
@@ -222,8 +296,19 @@ class JourneyService:
                     .where(Revision.project_id == pid, Revision.id.in_(batch), Entity.type == "journey")
                 ).all()
             )
-        visible = reading.visible_ids(s, actor, pid, journey_choices)
-        return [self._dto(s, row) for row in reading.revision_rows(s, visible.values())]
+        return reading.visible_ids(s, actor, pid, journey_choices)
+
+    def referencing(self, s, actor, pid, choices, revision_id, limit=200):
+        """Bound body reads after permission filtering; expose any incomplete scan."""
+        visible = self._selected_choices(s, actor, pid, choices)
+        rows = []
+        for row in ReadingService(self.service).revision_rows(s, sorted(visible.values())[:limit]):
+            dsl = row.metadata_json["journey_dsl"]
+            if any(node.get("binding", {}).get("revision_id") == revision_id for node in dsl["nodes"]) or any(
+                ref["revision_id"] == revision_id for ref in dsl.get("semantics", {}).get("source_refs", [])
+            ):
+                rows.append(self._dto(s, row))
+        return rows, len(visible) > limit
 
     def clone_for_analysis(self, s, actor, target, changed):
         from copy import deepcopy
@@ -235,6 +320,9 @@ class JourneyService:
                 continue
             original = row.metadata_json.get("journey_dsl", {})
             dsl = deepcopy(original)
+            for binding in dsl.get("semantics", {}).get("source_refs", []):
+                if binding["revision_id"] in changed:
+                    binding["revision_id"] = changed[binding["revision_id"]]
             for node in dsl.get("nodes", []):
                 binding = node.get("binding")
                 if binding and binding["revision_id"] in changed:
@@ -245,7 +333,7 @@ class JourneyService:
                         ref["scenario_revision_id"] = changed[ref["scenario_revision_id"]]
             if dsl != original:
                 dsl, refs = self._validate(s, actor, target, dsl)
-                saved = self._save(s, actor, target, entity, dsl, refs)
+                saved = self._save(s, actor, target, entity, dsl, refs, previous_revision=row)
                 replacements[row.id] = saved["revision_id"]
         if replacements:
             from .models import Relation
@@ -277,47 +365,6 @@ class JourneyService:
                 raise DomainError("VKS_NOT_FOUND", "未找到流程修订", 404)
             return self._dto(s, row)
 
-    def review(self, actor, jid, payload, version, key):
-        with self.service.db() as s:
-            return self._review(s, actor, jid, payload, version, key)
-
-    def _review(self, s, actor, jid, payload, version, key):
-        entity = s.get(Entity, jid)
-        if not entity or entity.type != "journey":
-            raise DomainError("VKS_NOT_FOUND", "未找到流程", 404)
-        analysis = self._analysis(s, actor, entity.project_id, payload["analysis_set_id"])
-        self.service.require(s, actor, entity.project_id, "links:review")
-        if not actor.human:
-            raise DomainError("VKS_FORBIDDEN", "流程审核需要人员身份", 403)
-
-        def decide():
-            choice = s.get(Selection, (analysis.id, jid))
-            if not choice:
-                raise DomainError("VKS_NOT_FOUND", "未找到流程", 404)
-            self.service._version(choice.entity_revision_id, version)
-            if payload["revision_id"] != choice.entity_revision_id:
-                raise DomainError("VKS_VERSION_CONFLICT", "审核目标已变化", 412)
-            row = s.get(Revision, choice.entity_revision_id)
-            self._validate(s, actor, analysis, row.metadata_json["journey_dsl"])
-            self.service.audit(
-                s,
-                actor,
-                entity.project_id,
-                "journey." + payload["decision"],
-                row.id,
-                metadata={
-                    "analysis_set_id": analysis.id,
-                    "sha256": row.content_sha256,
-                    "reason": payload["reason"],
-                },
-            )
-            analysis.selection_version += 1
-            return {"revision_id": row.id, "decision": payload["decision"]}
-
-        return self.service.idem(
-            s, actor, entity.project_id, "journey.review", key, dict(payload, version=version), decide
-        )
-
     def assert_publishable(self, s, analysis):
         blockers = []
         for row in self.service._revisions(s, analysis.id):
@@ -325,21 +372,6 @@ class JourneyService:
                 continue
             try:
                 self._validate(s, None, analysis, row.metadata_json["journey_dsl"])
-                latest = s.scalar(
-                    select(Audit)
-                    .where(
-                        Audit.project_id == analysis.project_id,
-                        Audit.resource_id == row.id,
-                        Audit.action.in_(["journey.approve", "journey.reject"]),
-                    )
-                    .order_by(Audit.created_at.desc(), Audit.id.desc())
-                )
-                if (
-                    not latest
-                    or latest.action != "journey.approve"
-                    or latest.metadata_json.get("sha256") != row.content_sha256
-                ):
-                    blockers.append("流程修订尚未人工审核：" + row.entity_id)
             except (DomainError, KeyError):
                 blockers.append("流程引用版本需要复核：" + row.entity_id)
         return blockers
@@ -372,10 +404,11 @@ def install_journeys(app, service, actor, envelope):
         response_model_exclude_none=True,
     )
     def validate(pid: str, payload: JourneyInput, request: Request, a=Depends(actor)):
+
         with service.db() as s:
             analysis = journeys._analysis(s, a, pid, payload.analysis_set_id)
             dsl, _ = journeys._validate(s, a, analysis, payload.dsl.model_dump(exclude_none=True))
-            return envelope(request, {"dsl": dsl, "sha256": sha(canonical(dsl)), "requires_review": True})
+            return envelope(request, {"dsl": dsl, "sha256": sha(canonical(dsl))})
 
     @app.post(
         api + "/journeys/{jid}/revisions", response_model=Envelope[JourneyOutput], response_model_exclude_none=True
@@ -400,14 +433,3 @@ def install_journeys(app, service, actor, envelope):
     )
     def revision(jid: str, rid: str, project_id: str, request: Request, a=Depends(actor)):
         return envelope(request, journeys.get(a, project_id, jid, rid))
-
-    @app.post(api + "/journeys/{jid}/review", response_model=Envelope[JourneyDecision])
-    def review(
-        jid: str,
-        payload: JourneyReviewInput,
-        request: Request,
-        a=Depends(actor),
-        if_match: str = Header(...),
-        idempotency_key: str = Header(...),
-    ):
-        return envelope(request, journeys.review(a, jid, payload.model_dump(), if_match.strip('"'), idempotency_key))

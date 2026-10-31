@@ -71,6 +71,13 @@ export function mergeJourney(
     nodes: collection("nodes", base.nodes, local.nodes, remote.nodes),
     edges: collection("edges", base.edges, local.edges, remote.edges),
   };
+  const semantics = field(
+    "semantics",
+    base.semantics,
+    local.semantics,
+    remote.semantics,
+  ) as JourneyDSL["semantics"];
+  if (semantics !== undefined) merged.semantics = semantics;
   return { merged, conflicts };
 }
 

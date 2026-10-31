@@ -96,7 +96,7 @@ export function Panel({
   );
 }
 const names: Record<string, string> = {
-  candidate: "待审核",
+  candidate: "待整理",
   confirmed: "已确认",
   rejected: "已拒绝",
   valid: "有效",
@@ -116,7 +116,7 @@ const names: Record<string, string> = {
   retry_wait: "等待重试",
   paused: "已暂停",
   draft: "草稿",
-  ready_for_review: "待审核",
+  ready_for_review: "待整理",
   frozen: "已冻结",
   released: "已发布",
   published: "已发布",
@@ -268,6 +268,21 @@ export function Modal({
     </div>
   );
 }
+function sourceHeading(
+  tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
+): NonNullable<Components["h1"]> {
+  return ({ node, children, ...props }) =>
+    createElement(
+      tag,
+      {
+        ...props,
+        "data-source-line": node?.position?.start.line,
+        tabIndex: -1,
+      },
+      children,
+    );
+}
+
 export function Markdown({
   content,
   documentId,
@@ -279,6 +294,12 @@ export function Markdown({
 }) {
   const renderers = useMemo<Components>(
     () => ({
+      h1: sourceHeading("h1"),
+      h2: sourceHeading("h2"),
+      h3: sourceHeading("h3"),
+      h4: sourceHeading("h4"),
+      h5: sourceHeading("h5"),
+      h6: sourceHeading("h6"),
       pre: ({ children }) => {
         const element = Children.toArray(children).find(isValidElement);
         const props = element?.props as
@@ -429,9 +450,7 @@ export function EvidenceList({ evidence }: { evidence: Evidence[] }) {
         </div>
       ))}
       {!evidence.length && (
-        <Notice tone="amber">
-          当前对象暂无可访问的证据。补充材料后再进行审核。
-        </Notice>
+        <Notice tone="amber">当前对象暂无可访问的证据。可补充来源材料。</Notice>
       )}
     </div>
   );
@@ -439,7 +458,7 @@ export function EvidenceList({ evidence }: { evidence: Evidence[] }) {
 export function RelationState({ relation }: { relation: Relation }) {
   return (
     <div className="row wrap">
-      <Tag value={relation.review_status} />
+      {relation.excluded && <Tag>已移除</Tag>}
       <Tag value={relation.validity_status} />
       {relation.manual_lock && (
         <span className="tag">

@@ -55,3 +55,10 @@
 .hljs-meta {
   color: #8b6c3d;
 }
+.document-reader [data-source-line] {
+  scroll-margin-top: 28px;
+}
+.document-reader [data-source-line]:focus {
+  outline: 2px solid #bfdbfe;
+  outline-offset: 4px;
+}

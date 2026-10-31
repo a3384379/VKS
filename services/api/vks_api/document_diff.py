@@ -9,6 +9,7 @@ from .documents import DocumentService
 from .versions import VersionService
 from .reading import ReadingService
 from .service import DomainError, canonical, sha
+
 from .v2_contracts import Envelope
 
 
@@ -40,7 +41,6 @@ class DocumentDiffOutput(BaseModel):
     denominator: dict[str, int]
     is_truncated: bool
     report_sha256: str
-    requires_document_review: bool = True
 
 
 class DocumentDiffService:
@@ -133,7 +133,6 @@ class DocumentDiffService:
                     unchanged_sections=unchanged,
                 ),
                 is_truncated=len(changes) > 200,
-                requires_document_review=True,
             )
             result["report_sha256"] = sha(canonical(result))
             return result

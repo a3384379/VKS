@@ -135,25 +135,15 @@ class Relation(Identified, Base):
     from_revision_id: Mapped[str] = mapped_column(ForeignKey("entity_revision.id"))
     to_revision_id: Mapped[str] = mapped_column(ForeignKey("entity_revision.id"))
     relation_type: Mapped[str] = mapped_column(String(40))
-    review_status: Mapped[str] = mapped_column(String(20), default="candidate")
+    excluded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     validity_status: Mapped[str] = mapped_column(String(20), default="valid")
     causal_basis: Mapped[str] = mapped_column(String(40), default="not_established")
     evidence_ids: Mapped[list] = mapped_column(JSON, default=list)
     reason: Mapped[str] = mapped_column(Text, default="")
     row_version: Mapped[int] = mapped_column(Integer, default=1)
     manual_lock: Mapped[bool] = mapped_column(Boolean, default=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     __mapper_args__ = {"version_id_col": row_version}
-
-
-class Review(Identified, Base):
-    __tablename__ = "review_decision"
-    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"))
-    subject_id: Mapped[str] = mapped_column(ForeignKey("relation.id"))
-    actor_id: Mapped[str] = mapped_column(String(36))
-    decision: Mapped[str] = mapped_column(String(20))
-    reason: Mapped[str] = mapped_column(Text)
-    base_version: Mapped[int] = mapped_column(Integer)
-    evidence_ids: Mapped[list] = mapped_column(JSON)
 
 
 class Job(Identified, Base):
@@ -196,20 +186,6 @@ class Release(Identified, Base):
     change_note: Mapped[str] = mapped_column(Text)
 
 
-class Candidate(Identified, Base):
-    __tablename__ = "release_candidate"
-    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"))
-    analysis_set_id: Mapped[str] = mapped_column(ForeignKey("analysis_set.id"))
-    manifest_sha256: Mapped[str] = mapped_column(String(64))
-    manifest_json: Mapped[dict] = mapped_column(JSON)
-    blockers: Mapped[list] = mapped_column(JSON)
-    job_id: Mapped[str] = mapped_column(ForeignKey("job.id"))
-    created_by: Mapped[str] = mapped_column(String(36))
-    confirmation_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    confirmation_actor: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    confirmation_expires: Mapped[str | None] = mapped_column(String(40), nullable=True)
-
-
 class Upload(Identified, Base):
     __tablename__ = "upload_session"
     project_id: Mapped[str] = mapped_column(ForeignKey("project.id"))
@@ -242,3 +218,11 @@ class Audit(Identified, Base):
     resource_id: Mapped[str] = mapped_column(String(36))
     outcome: Mapped[str] = mapped_column(String(20), default="succeeded")
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+def relation_payload(value):
+    """Read legacy immutable snapshots without rewriting their bytes/hash."""
+    row = dict(value)
+    legacy = row.pop("review_status", None)
+    row.setdefault("excluded", legacy == "rejected")
+    return row

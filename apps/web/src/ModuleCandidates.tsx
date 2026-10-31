@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, mutation } from "./api";
 import { Button, Notice, Tag } from "./components";
 import { useWorkspace } from "./context";
@@ -22,6 +22,24 @@ export function ModuleCandidates({
   const { run } = useWorkspace();
   const [selected, setSelected] = useState<string[]>([]),
     [reason, setReason] = useState("");
+  const pendingSelection = selected.filter(
+    (key) =>
+      candidates.some((candidate) => candidate.key === key) && !decisions[key],
+  );
+  useEffect(() => {
+    setSelected([]);
+    setReason("");
+  }, [jobId]);
+  useEffect(() => {
+    setSelected((rows) => {
+      const pending = rows.filter(
+        (key) =>
+          candidates.some((candidate) => candidate.key === key) &&
+          !decisions[key],
+      );
+      return pending.length === rows.length ? rows : pending;
+    });
+  }, [candidates, decisions]);
   return (
     <div>
       <Notice>
@@ -60,6 +78,9 @@ export function ModuleCandidates({
                         `/api/v2/knowledge-tasks/${jobId}/module-proposals/${candidate.key}/accept`,
                         mutation("POST", {}),
                       );
+                      setSelected((rows) =>
+                        rows.filter((key) => key !== candidate.key),
+                      );
                       await reload();
                     }, "已按人员决定创建模块分组")
                   }
@@ -80,19 +101,19 @@ export function ModuleCandidates({
         />
       </label>
       <Button
-        disabled={!selected.length || !reason.trim()}
+        disabled={!pendingSelection.length || !reason.trim()}
         onClick={() =>
           void run(async () => {
             await api(
               `/api/v2/knowledge-tasks/${jobId}/module-proposals/reject`,
-              mutation("POST", { candidate_keys: selected, reason }),
+              mutation("POST", { candidate_keys: pendingSelection, reason }),
             );
             setSelected([]);
             await reload();
           }, "已记录候选拒绝决定")
         }
       >
-        拒绝所选 {selected.length} 项
+        拒绝所选 {pendingSelection.length} 项
       </Button>
     </div>
   );

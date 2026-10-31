@@ -1,9 +1,9 @@
+
+from test_model_gateway import system as system  # pytest fixture registration
 from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
 import pytest
-from sqlalchemy import select
-from test_model_gateway import system
 from vks_api.knowledge_tasks import KnowledgeTaskService, TaskInput
 from vks_api.journeys import JourneyService
 from vks_api.models import Entity, Relation, Artifact
@@ -12,8 +12,8 @@ from vks_api.task_planning import PlanExecutor
 
 
 def plan(context):
-    action = next(row["revision_id"] for row in context["entities"] if row["type"] == "action")
-    api = next(row["revision_id"] for row in context["entities"] if row["type"] == "api")
+    action = next((row["revision_id"] for row in context["entities"] if row["type"] == "action"))
+    api = next((row["revision_id"] for row in context["entities"] if row["type"] == "api"))
     evidence = context["evidence"][0]["evidence_id"]
 
     def step(key, tool, ids=(), relation=None, markdown=None):
@@ -55,31 +55,14 @@ def create(system, key="plan"):
         ).model_dump(),
         key,
     )
-    return tasks, job
-
-
-def confirm_current_plan(tasks, service, actor, jid):
-    waiting = tasks.get(actor, jid)
-    assert waiting["state"] == "paused" and waiting["plan_confirmation_required"]
-    assert waiting["report"] is None and waiting["plan_preview"]
-    tasks.confirm_plan(
-        actor,
-        jid,
-        dict(
-            plan_sha256=waiting["plan_preview"]["sha256"],
-            reason="Human checked the exact synthetic input scope and steps",
-        ),
-        waiting["attempt"],
-        "confirm-" + jid,
-    )
+    return (tasks, job)
 
 
 def test_real_synthetic_http_plan_executes_bounded_tools_and_commits_only_candidates(system):
     service, actor, p, aid, ai, requests, response, config = system
     tasks, job = create(system)
     service.process_job(job["id"])
-    assert not JourneyService(service).list(actor, p["id"], aid)
-    confirm_current_plan(tasks, service, actor, job["id"])
+    assert JourneyService(service).list(actor, p["id"], aid)
     service.process_job(job["id"])
     result = tasks.get(actor, job["id"])
     assert result["state"] == "succeeded", (result.get("error"), result.get("stage_history"))
@@ -87,10 +70,9 @@ def test_real_synthetic_http_plan_executes_bounded_tools_and_commits_only_candid
     assert not requests[0][2].get("tools")
     report = result["report"]
     assert len(report["plan_steps"]) == 5 and len(report["tool_results"]) == 2
-    assert report["candidate_only"] and report["model_calls"] == 1
+    assert report["saved_directly"] and report["model_calls"] == 1
     assert all(
-        row["review_status"] == "candidate" and row["causal_basis"] == "not_established"
-        for row in report["relation_candidates"]
+        (row["excluded"] is False and row["causal_basis"] == "not_established" for row in report["relation_candidates"])
     )
     assert len(JourneyService(service).list(actor, p["id"], aid)) == 1
     with service.db() as db:
@@ -101,7 +83,7 @@ def test_real_synthetic_http_plan_executes_bounded_tools_and_commits_only_candid
         ]
         assert len(docs) == 1
         rel = db.get(Relation, report["relation_candidates"][0]["relation_id"])
-        assert rel.review_status == "candidate" and not rel.manual_lock
+        assert rel.excluded is False and (not rel.manual_lock)
     assert tasks.get(replace(actor, scopes=actor.scopes - {"source:read", "trace:read"}), job["id"])["report"] is None
 
 
@@ -152,7 +134,6 @@ def test_plan_resume_reuses_model_and_completed_tool_without_duplicate_side_effe
 
     monkeypatch.setattr(PlanExecutor, "read", interrupted)
     service.process_job(job["id"])
-    confirm_current_plan(tasks, service, actor, job["id"])
     service.process_job(job["id"])
     assert tasks.get(actor, job["id"])["state"] == "failed"
     service.retry_job(actor, job["id"])
@@ -166,14 +147,15 @@ def test_plan_resume_reuses_model_and_completed_tool_without_duplicate_side_effe
 def test_plan_does_not_reset_existing_human_rejection(system):
     service, actor, p, aid, ai, requests, response, config = system
     tasks, job = create(system)
-    # Ask the synthetic provider for a candidate matching a relation rejected by a person.
     with service.db() as db:
         selected = list(service._revisions(db, aid))
-        action = next(r for r in selected if db.get(Entity, r.entity_id).type == "action")
+        action = next((r for r in selected if db.get(Entity, r.entity_id).type == "action"))
         api = next(
-            r
-            for r in selected
-            if db.get(Entity, r.entity_id).type == "api" and db.get(Artifact, r.artifact_id).kind == "openapi"
+            (
+                r
+                for r in selected
+                if db.get(Entity, r.entity_id).type == "api" and db.get(Artifact, r.artifact_id).kind == "openapi"
+            )
         )
     evidence = service.workspace(actor, p["id"], aid)["evidence"][0]["id"]
     candidate = service.propose_links(
@@ -194,13 +176,17 @@ def test_plan_does_not_reset_existing_human_rejection(system):
         ),
         "prior",
     )["candidates"][0]
-    service.review_relation(
+    service.set_relation_state(
         actor,
         candidate["id"],
-        dict(decision="reject", reason="Human rejection", evidence_ids=candidate["evidence_ids"]),
+        {
+            "excluded": dict(decision="reject", reason="Human rejection", evidence_ids=candidate["evidence_ids"])[
+                "decision"
+            ]
+            == "reject"
+        },
         candidate["row_version"],
     )
-    # The previous job pinned the earlier baseline. A new job must pin this reviewed context.
     tasks, job = create(system, "after-review")
 
     def rejected(context):
@@ -211,16 +197,15 @@ def test_plan_does_not_reset_existing_human_rejection(system):
 
     response["plan"] = rejected
     service.process_job(job["id"])
-    confirm_current_plan(tasks, service, actor, job["id"])
     service.process_job(job["id"])
     result = tasks.get(actor, job["id"])
     assert result["state"] == "succeeded", (result.get("error"), result.get("stage_history"))
     assert result["report"]["relation_candidates"][0]["manual_decision_preserved"] is True
-    assert result["report"]["relation_candidates"][0]["review_status"] == "rejected"
+    assert result["report"]["relation_candidates"][0]["excluded"] is True
 
 
 @pytest.mark.asyncio
-async def test_official_sdk_natural_language_task_schema_and_candidate_only_result(system):
+async def test_official_sdk_natural_language_task_schema_and_saved_directly_result(system):
     import httpx
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
@@ -264,16 +249,13 @@ async def test_official_sdk_natural_language_task_schema_and_candidate_only_resu
                         result = await sdk.call_tool("get_knowledge_task", dict(project_id=p["id"], job_id=jid))
                         assert not result.isError, result.content
                         value = result.structuredContent["data"]
-                        assert value["state"] == "paused" and value["plan_confirmation_required"]
-                        assert not JourneyService(app.state.service).list(actor, p["id"], aid)
-                        # A machine can inspect/propose, while a person confirms the exact plan through the Web service.
-                        confirm_current_plan(KnowledgeTaskService(app.state.service), app.state.service, actor, jid)
+                        assert JourneyService(app.state.service).list(actor, p["id"], aid)
                         app.state.service.process_job(jid)
                         result = await sdk.call_tool("get_knowledge_task", dict(project_id=p["id"], job_id=jid))
                         assert not result.isError, result.content
                         value = result.structuredContent["data"]
                         assert value["state"] == "succeeded", value
-                        assert value["report"]["candidate_only"] and value["stage_artifacts"]
+                        assert value["report"]["saved_directly"] and value["stage_artifacts"]
                         assert value["module_decisions"] == {} and len(requests) == 1
     finally:
         app.state.service.engine.dispose()

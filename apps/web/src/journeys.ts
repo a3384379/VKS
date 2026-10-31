@@ -1,8 +1,16 @@
 import type { Entity } from "./types";
 export type JourneyNode = {
   key: string;
-  kind: "page" | "action" | "decision" | "branch" | "end" | "reference";
+  kind:
+    | "page"
+    | "action"
+    | "step"
+    | "decision"
+    | "branch"
+    | "end"
+    | "reference";
   title: string;
+  description?: string;
   x: number;
   y: number;
   binding?: { entity_id: string; revision_id: string };
@@ -22,9 +30,24 @@ export type JourneyDSL = {
   schema_version: "2.0";
   key: string;
   title: string;
+  semantics?: JourneySemantics;
   entry: string;
   nodes: JourneyNode[];
   edges: { key: string; source: string; target: string; label: string }[];
+};
+export type JourneySemantics = {
+  kind:
+    | "business_process"
+    | "operation_sequence"
+    | "evidence_navigation"
+    | "observation_comparison"
+    | "unclassified";
+  basis: "declared" | "observed" | "inferred" | "unknown";
+  purpose?: string;
+  outcome?: string;
+  preconditions?: string[];
+  unknowns?: string[];
+  source_refs?: { entity_id: string; revision_id: string }[];
 };
 export type JourneyRevision = {
   journey_id: string;
@@ -38,6 +61,53 @@ export type JourneyHistory = {
   present: JourneyDSL;
   future: JourneyDSL[];
 };
+export function prepareJourneyDraft(dsl: JourneyDSL): JourneyDSL {
+  function text(value: string | undefined) {
+    const result = value?.trim();
+    if (result && result.length > 2000)
+      throw new Error("说明文字不能超过 2000 字");
+    return result || undefined;
+  }
+  function lines(values: string[] | undefined, limit: number) {
+    if (!values) return undefined;
+    const result = values.map(text).filter((value): value is string => !!value);
+    if (result.length > limit) throw new Error(`最多填写 ${limit} 项`);
+    return result;
+  }
+  const next: JourneyDSL = {
+    ...dsl,
+    nodes: dsl.nodes.map((node) => {
+      if (node.kind === "step" && !text(node.description))
+        throw new Error("业务声明步骤请填写步骤说明");
+      if (node.description === undefined) return node;
+      const { description, ...rest } = node;
+      const value = text(description);
+      return value ? { ...rest, description: value } : rest;
+    }),
+  };
+  if (dsl.semantics) {
+    const { purpose, outcome, preconditions, unknowns, ...rest } =
+      dsl.semantics;
+    const goal = text(purpose),
+      result = text(outcome);
+    if (rest.kind === "business_process" && (!goal || !result))
+      throw new Error("业务场景请填写业务目标和预期结果");
+    if (
+      rest.kind === "business_process" &&
+      next.nodes.some((node) => node.kind === "step") &&
+      !rest.source_refs?.length
+    )
+      throw new Error("业务声明步骤请至少选择一项场景依据资料");
+    next.semantics = {
+      ...rest,
+      ...(goal ? { purpose: goal } : {}),
+      ...(result ? { outcome: result } : {}),
+      ...(preconditions ? { preconditions: lines(preconditions, 30) } : {}),
+      ...(unknowns ? { unknowns: lines(unknowns, 50) } : {}),
+    };
+  }
+  return next;
+}
 export function updateJourney(
   history: JourneyHistory,
   next: JourneyDSL,

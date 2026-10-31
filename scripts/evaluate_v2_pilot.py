@@ -41,7 +41,11 @@ def evaluate(gold, run):
     if len({row["key"] for row in relations}) != len(relations):
         raise ValueError("Duplicate candidate relationships")
     predicted_relations = {row["key"] for row in relations}
-    confirmed = [row for row in relations if row["review_status"] == "confirmed" and row["validity_status"] == "valid"]
+    confirmed = [
+        row
+        for row in relations
+        if not row.get("excluded", row.get("review_status") == "rejected") and row["validity_status"] == "valid"
+    ]
     traceable = set()
     for row in confirmed:
         refs = row.get("evidence", [])
@@ -87,7 +91,7 @@ def evaluate(gold, run):
     user_rate = ratio(successes, sum(users.values()))
     metrics = dict(
         action_explorability=dict(numerator=len(explored), denominator=30, value=len(explored) / 30, threshold=0.85),
-        confirmed_traceability=dict(
+        evidence_traceability=dict(
             numerator=len(traceable),
             denominator=len(confirmed),
             value=ratio(len(traceable), len(confirmed)),

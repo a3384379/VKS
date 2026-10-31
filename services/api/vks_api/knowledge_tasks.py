@@ -13,7 +13,7 @@ from .service import DomainError, canonical, sha
 from .jobs import current_actor
 from .reading import ReadingService
 
-STAGES = ["Plan", "Collect", "Analyze", "Propose", "Validate", "Review"]
+STAGES = ["Plan", "Collect", "Analyze", "Propose", "Validate", "Save"]
 KINDS = Literal[
     "project_overview",
     "module_analysis",
@@ -48,12 +48,6 @@ class TaskControlInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["pause", "resume"]
     expected_state: Literal["queued", "running", "retry_wait", "paused"]
-
-
-class PlanConfirmationInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    plan_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    reason: str = Field(min_length=1, max_length=2000)
 
 
 class ModuleRejection(BaseModel):
@@ -248,7 +242,7 @@ class KnowledgeTaskService:
                     row.get("entity_id", ""),
                 ),
             )
-            # Explicit ordered actions/model targets are retained even with a small preview budget.
+            # Explicit action scope/model targets are retained even with a small preview budget.
             chosen = [
                 row
                 for i, row in enumerate(ordered)
@@ -276,16 +270,13 @@ class KnowledgeTaskService:
                 if row.get("artifact_id") in origins:
                     row["source_path"], row["source_key"] = origins[row["artifact_id"]]
         action_revisions = {row["entity_revision_id"] for row in output["actions"]}
-        trusted = [
-            row for row in w["relations"] if row["review_status"] == "confirmed" and row["validity_status"] == "valid"
-        ]
+        from .knowledge_coverage import action_knowledge_revisions
+
         output["_connected_actions"] = sorted(
-            action_revisions & {rid for row in trusted for rid in (row["from_revision_id"], row["to_revision_id"])}
+            action_revisions & action_knowledge_revisions(w["entities"], w["relations"])
         )
-        output["_review_relation_ids"] = [
-            row["id"]
-            for row in w["relations"]
-            if row["review_status"] == "candidate" or row["validity_status"] != "valid"
+        output["_outdated_relation_ids"] = [
+            row["id"] for row in w["relations"] if (row["excluded"] is False) or row["validity_status"] != "valid"
         ][:200]
         output["relations"] = [
             row
@@ -308,7 +299,7 @@ class KnowledgeTaskService:
             "source_vector": w["sources"],
             "coverage": coverage(self.service, actor, pid, aid),
             "unknowns": w["unknowns"],
-            "candidate_only": True,
+            "saved_directly": True,
             "model_calls": 0,
             "entities": w["entities"][: payload["max_entities"]],
             "is_truncated": any(row["is_truncated"] for row in w["_scope"].values()),
@@ -319,23 +310,19 @@ class KnowledgeTaskService:
 
             report["module_candidates"] = candidates(w)
         if payload["task_kind"] == "evidence_gaps":
-            trusted = [
-                r for r in w["relations"] if r["review_status"] == "confirmed" and r["validity_status"] == "valid"
-            ]
-            connected = set(w.get("_connected_actions", [])) | {
-                rid for row in trusted for rid in (row["from_revision_id"], row["to_revision_id"])
-            }
+            connected = set(w["_connected_actions"])
             report["uncovered_actions"] = [
                 dict(entity_id=row["id"], revision_id=row["entity_revision_id"], name=row["name"])
                 for row in w["actions"]
                 if row["entity_revision_id"] not in connected
             ][: payload["max_entities"]]
-            report["requires_review_relation_ids"] = w["_review_relation_ids"]
+            report["outdated_relation_ids"] = w["_outdated_relation_ids"]
         if payload["task_kind"] == "difference_review":
             report["change_report"] = self.service.diff(actor, pid, payload["from_release_id"], aid)
         return report
 
     def _model_output(self, jid, operation):
+        from .ai_gateway import ModelNotSent
         from .task_checkpoints import TaskCheckpoints
 
         with self.service.db() as s:
@@ -348,12 +335,21 @@ class KnowledgeTaskService:
 
         def reserved_call():
             with self.service.db() as s:
-                job = s.get(Job, jid)
+                job = s.scalar(select(Job).where(Job.id == jid).with_for_update())
                 self._validate(s, job)
                 if job.attempt != attempt or job.input_json.get("_model_reserved"):
                     raise DomainError("VKS_LIMIT_EXCEEDED", "先前模型调用结果不确定；本任务的一次调用额度已用尽")
                 job.input_json = dict(job.input_json, _model_reserved=True)
-            return operation()
+            try:
+                return operation()
+            except ModelNotSent:
+                # Only a trusted gateway preflight can free the one-call slot.
+                # A late failure from an old attempt cannot unlock a newer one.
+                with self.service.db() as s:
+                    job = s.scalar(select(Job).where(Job.id == jid).with_for_update())
+                    if job and job.attempt == attempt:
+                        job.input_json = dict(job.input_json, _model_reserved=False)
+                raise
 
         return TaskCheckpoints(self, jid, attempt).run("ModelResult", inputs, reserved_call, track=False)
 
@@ -389,49 +385,22 @@ class KnowledgeTaskService:
             report["_knowledge_plan"] = payload["_model_plan"]
             report["tool_results"] = w.get("tool_results", [])
         if payload["task_kind"] == "business_flow":
+            from .journey_generation import action_evidence_navigation
+
             actions = {r["entity_id"]: r for r in w["actions"]}
             if (
                 not payload["action_ids"]
                 or len(set(payload["action_ids"])) != len(payload["action_ids"])
                 or any(eid not in actions for eid in payload["action_ids"])
             ):
-                raise DomainError("VKS_INVALID_INPUT", "业务流程模板需要明确有序且无重复的动作范围")
-            report["journey_dsl"] = dict(
-                schema_version="2.0",
-                key="task-" + jid,
-                title="业务流程候选",
-                entry="step-0",
-                nodes=[
-                    dict(
-                        key="step-" + str(i),
-                        title=actions[eid]["name"],
-                        kind="action",
-                        x=40 + (i % 4) * 240,
-                        y=40 + (i // 4) * 140,
-                        binding={"entity_id": eid, "revision_id": actions[eid]["entity_revision_id"]},
-                    )
-                    for i, eid in enumerate(payload["action_ids"])
-                ]
-                + [
-                    dict(
-                        key="done",
-                        title="结束",
-                        kind="end",
-                        x=40,
-                        y=160 + ((len(payload["action_ids"]) - 1) // 4) * 140,
-                    )
-                ],
-                edges=[
-                    dict(
-                        key="edge-" + str(i),
-                        source="step-" + str(i),
-                        target="step-" + str(i + 1) if i + 1 < len(payload["action_ids"]) else "done",
-                        label="",
-                    )
-                    for i in range(len(payload["action_ids"]))
-                ],
+                raise DomainError("VKS_INVALID_INPUT", "动作证据导航需要明确且无重复的动作范围")
+            report["journey_dsl"] = action_evidence_navigation(
+                "task-" + jid,
+                "动作证据导航候选",
+                [actions[eid] for eid in payload["action_ids"]],
+                basis="declared",
             )
-            report["unknowns"] = [*report["unknowns"], "顺序由任务发起人声明，尚未证明真实业务执行顺序"]
+            report["unknowns"] = [*report["unknowns"], *report["journey_dsl"]["semantics"]["unknowns"]]
         if payload["task_kind"] == "document_draft":
             from .ai_gateway import AiService
 
@@ -447,7 +416,7 @@ class KnowledgeTaskService:
                 from .task_planning import PlanExecutor
 
                 PlanExecutor(self, jid, None).validate(report["_knowledge_plan"], s)
-            if report.get("candidate_only") is not True or report.get("analysis_set_id") != analysis.id:
+            if report.get("saved_directly") is not True or report.get("analysis_set_id") != analysis.id:
                 raise DomainError("VKS_INVALID_EVIDENCE", "阶段产物不属于当前候选基线")
             if "journey_dsl" in report:
                 from .journeys import JourneyService
@@ -457,7 +426,11 @@ class KnowledgeTaskService:
                 from .ai_gateway import AiService
 
                 AiService(self.service).validate_inputs(
-                    s, actor, job.project_id, report["_document_output"].get("_input_provenance", [])
+                    s,
+                    actor,
+                    job.project_id,
+                    report["_document_output"].get("_input_provenance", []),
+                    report["_document_output"].get("_input_revision_provenance"),
                 )
             return {"validated": True}
 
@@ -473,9 +446,6 @@ class KnowledgeTaskService:
             payload["_model_plan"] = checkpoints.run(
                 "Plan", payload["_input_revision_ids"], lambda: self._plan(jid, actor, pid, aid, payload)
             )
-            digest = sha(canonical(payload["_model_plan"]))
-            if payload.get("_plan_confirmation", {}).get("plan_sha256") != digest:
-                raise TaskPause("PLAN_REVIEW")
 
         def collect():
             w = self._collect(actor, pid, aid, payload)
@@ -507,7 +477,11 @@ class KnowledgeTaskService:
         from .journeys import JourneyService
         from .models import Entity, Revision
 
-        result = {"analysis_set_id": analysis.id, "requires_review": True, "result_refs": []}
+        result = {"analysis_set_id": analysis.id, "result_refs": []}
+        model_inputs = (report.get("_knowledge_plan") or report.get("_document_output") or {}).get("_input_provenance")
+        model_revision_inputs = (report.get("_knowledge_plan") or report.get("_document_output") or {}).get(
+            "_input_revision_provenance"
+        )
         if "_document_output" in report:
             from .ai_gateway import AiService
 
@@ -515,16 +489,32 @@ class KnowledgeTaskService:
         if "journey_dsl" in report:
             journeys = JourneyService(self.service)
             dsl, refs = journeys._validate(s, actor, analysis, report["journey_dsl"])
+            plan = report.get("_knowledge_plan")
+            if plan:
+                # Every sent input can influence model titles and explanations, even
+                # when the resulting graph binds only otherwise public actions.
+                catalog_revisions = [s.get(Revision, item["revision_id"]) for item in plan["_catalog"]]
+                refs = list({row.id: row for row in [*refs, *catalog_revisions]}.values())
             entity = Entity(id=uid(), project_id=job.project_id, type="journey", stable_key=dsl["key"])
             s.add(entity)
             s.flush()
-            row = journeys._save(s, actor, analysis, entity, dsl, refs)
+            row = journeys._save(
+                s,
+                actor,
+                analysis,
+                entity,
+                dsl,
+                refs,
+                input_provenance=plan["_input_provenance"] if plan else None,
+                input_revision_provenance=plan.get("_input_revision_provenance") if plan else None,
+            )
             result["result_refs"].append({"kind": "journey_revision", "id": row["revision_id"]})
         if report.get("relation_candidates"):
             from .models import Relation
 
             self.service.require(s, actor, job.project_id, "links:propose")
             changed = False
+            provenance_artifact = None
             for candidate in report["relation_candidates"]:
                 row = s.scalar(
                     select(Relation).where(
@@ -535,14 +525,48 @@ class KnowledgeTaskService:
                     )
                 )
                 if not row:
+                    plan = report.get("_knowledge_plan")
+                    if plan and provenance_artifact is None:
+                        provenance = plan["_input_provenance"]
+                        raw = canonical({"input_provenance": provenance, "catalog": plan["_catalog"]}).encode()
+                        provenance_artifact = Artifact(
+                            id=uid(),
+                            project_id=job.project_id,
+                            snapshot_id=uid(),
+                            relative_path="model-relations/" + job.id + ".json",
+                            sha256=sha(raw),
+                            size_bytes=len(raw),
+                            kind="knowledge",
+                            media_type="application/json",
+                            object_key=self.service._put_object(raw),
+                            metadata_json={
+                                "generation_kind": "model",
+                                "input_provenance": provenance,
+                                **(
+                                    {"input_revision_provenance": plan["_input_revision_provenance"]}
+                                    if plan.get("_input_revision_provenance")
+                                    else {}
+                                ),
+                                "requires_source_read": any(item["requires_source_read"] for item in provenance),
+                                "requires_trace_read": any(item["requires_trace_read"] for item in provenance),
+                            },
+                        )
+                        s.add(provenance_artifact)
+                        s.flush()
                     row = Relation(
                         id=uid(),
                         project_id=job.project_id,
                         analysis_set_id=analysis.id,
-                        review_status="candidate",
+                        excluded=False,
                         validity_status="valid",
                         row_version=1,
-                        **{k: v for k, v in candidate.items() if k not in ("key", "review_status")},
+                        metadata_json={
+                            "generation_kind": "model",
+                            "model_provenance_artifact_ids": [provenance_artifact.id],
+                        }
+                        if provenance_artifact
+                        else {},
+                        **{k: v for k, v in candidate.items() if k not in ("key", "excluded")},
                     )
                     self.service._verify_relation(s, row)
                     s.add(row)
@@ -550,8 +574,8 @@ class KnowledgeTaskService:
                     changed = True
                 candidate.update(
                     relation_id=row.id,
-                    review_status=row.review_status,
-                    manual_decision_preserved=row.review_status != "candidate",
+                    excluded=row.excluded,
+                    manual_decision_preserved=row.manual_lock or (row.excluded is True),
                 )
             if changed:
                 analysis.selection_version += 1
@@ -565,6 +589,9 @@ class KnowledgeTaskService:
                 job.id,
                 metadata={"model_usage_id": plan["usage_id"], "step_ids": [step["id"] for step in plan["steps"]]},
             )
+        for candidate in report.get("relation_candidates", []):
+            candidate["excluded"] = s.get(Relation, candidate["relation_id"]).excluded
+        report["mode"] = "direct"
         raw = canonical(report).encode()
         all_input_ids = sorted(
             set(job.input_json["_input_revision_ids"]) | set(job.input_json.get("_historical_revision_ids", []))
@@ -586,6 +613,16 @@ class KnowledgeTaskService:
             object_key=self.service._put_object(raw),
             metadata_json={
                 "journey_binding_revisions": all_input_ids,
+                **({"input_revision_provenance": model_revision_inputs} if model_revision_inputs else {}),
+                **(
+                    {
+                        "input_provenance": model_inputs,
+                        "generation_kind": "model",
+                        "journey_input_artifacts": sorted({item["artifact_id"] for item in model_inputs}),
+                    }
+                    if model_inputs
+                    else {}
+                ),
                 "requires_source_read": any(
                     s.get(Entity, row.entity_id).type in ("symbol", "sql", "table") for row in revisions
                 )
@@ -606,7 +643,7 @@ class KnowledgeTaskService:
             job.input_json,
             _stage_history=[
                 *history,
-                {"stage": "Review", "state": "waiting_for_human", "at": now()},
+                {"stage": "Save", "state": "complete", "at": now()},
             ],
         )
         return result
@@ -659,8 +696,8 @@ class KnowledgeTaskService:
                     raise DomainError("VKS_VERSION_CONFLICT", "任务状态已变化，请刷新后操作", 412)
                 self._validate(s, job, allow_suspended=True)
                 if payload["action"] == "resume":
-                    if job.state != "paused" or job.stage == "PLAN_REVIEW":
-                        raise DomainError("VKS_STATE_CONFLICT", "模型计划需要人员核对准确范围后确认", 409)
+                    if job.state != "paused":
+                        raise DomainError("VKS_STATE_CONFLICT", "当前任务未暂停", 409)
                     self._enqueue(s, job)
                 elif job.state in ("queued", "retry_wait"):
                     job.state, job.stage, job.lease_until = "paused", "PAUSED", None
@@ -674,48 +711,6 @@ class KnowledgeTaskService:
 
             return self.service.idem(
                 s, actor, job.project_id, "knowledge_task.control", key, dict(payload, version=version), change
-            )
-
-    def confirm_plan(self, actor, jid, payload, version, key):
-        if not actor.human:
-            raise DomainError("VKS_FORBIDDEN", "模型计划的执行范围需要人员确认", 403)
-        if not payload["reason"].strip():
-            raise DomainError("VKS_INVALID_INPUT", "请记录计划范围确认依据")
-        with self.service.db() as s:
-            job = self._control_job(s, actor, jid)
-
-            def confirm():
-                if job.state != "paused" or job.stage != "PLAN_REVIEW":
-                    raise DomainError("VKS_STATE_CONFLICT", "任务当前没有待确认的模型计划", 409)
-                self.service._version(job.attempt, version)
-                self._validate(s, job, allow_suspended=True)
-                if not self._can_read_stages(s, actor, job):
-                    raise DomainError("VKS_NOT_FOUND", "未找到当前可见计划", 404)
-                plan = self._plan_record(s, job)
-                from .task_planning import PlanExecutor
-
-                PlanExecutor(self, jid, None).validate(plan, s, allow_suspended=True)
-                digest = sha(canonical(plan))
-                if digest != payload["plan_sha256"]:
-                    raise DomainError("VKS_VERSION_CONFLICT", "计划摘要已变化，请重新核对范围", 412)
-                job.input_json = dict(
-                    job.input_json,
-                    _plan_confirmation=dict(plan_sha256=digest, actor_id=actor.id, reason=payload["reason"]),
-                )
-                self._enqueue(s, job)
-                self.service.audit(
-                    s,
-                    actor,
-                    job.project_id,
-                    "knowledge_plan.confirm",
-                    jid,
-                    metadata=dict(plan_sha256=digest, reason=payload["reason"]),
-                )
-                s.flush()
-                return self.service.job_dto(job)
-
-            return self.service.idem(
-                s, actor, job.project_id, "knowledge_plan.confirm", key, dict(payload, version=version), confirm
             )
 
     def get(self, actor, jid, pid=None):
@@ -734,13 +729,14 @@ class KnowledgeTaskService:
                 stage_artifacts=[],
                 module_decisions={},
                 pause_requested=bool(job.input_json.get("_pause_requested")),
-                plan_confirmation_required=job.state == "paused" and job.stage == "PLAN_REVIEW",
                 plan_preview=None,
             )
             if self._can_read_stages(s, actor, job):
                 from .jobs import Checkpoint
 
-                if dto["plan_confirmation_required"]:
+                if job.input_json["task_kind"] == "knowledge_plan" and s.scalar(
+                    select(Checkpoint.id).where(Checkpoint.job_id == jid, Checkpoint.stage == "KNOWLEDGE_PLAN")
+                ):
                     try:
                         plan = self._plan_record(s, job)
                         dto["plan_preview"] = dict(
@@ -875,8 +871,7 @@ class KnowledgeTaskService:
             ):
                 raise DomainError("VKS_NOT_FOUND", "未找到模块候选任务", 404)
             self.service.require(s, actor, job.project_id, "knowledge:edit")
-            if not actor.human:
-                raise DomainError("VKS_FORBIDDEN", "采用模块分组需要人员身份", 403)
+
             analysis = s.get(Analysis, job.input_json["analysis_set_id"])
             if analysis.state == "frozen" or analysis.selection_version != job.input_json["_selection_version"]:
                 raise DomainError("VKS_VERSION_CONFLICT", "模块候选的固定基线已变化，请重新分析", 412)
@@ -963,8 +958,7 @@ class KnowledgeTaskService:
         with self.service.db() as s:
             job = s.get(Job, jid)
             self.service.require(s, actor, job.project_id, "knowledge:edit")
-            if not actor.human:
-                raise DomainError("VKS_FORBIDDEN", "拒绝模块候选需要人员身份", 403)
+
             analysis = s.get(Analysis, job.input_json["analysis_set_id"])
             if analysis.state == "frozen" or analysis.selection_version != job.input_json["_selection_version"]:
                 raise DomainError("VKS_VERSION_CONFLICT", "模块候选基线已变化，请重新分析", 412)
@@ -1024,17 +1018,6 @@ def install_tasks(app, service, actor, envelope):
         a=Depends(actor),
     ):
         return envelope(request, tasks.control(a, jid, payload.model_dump(), if_match, idempotency_key))
-
-    @app.post("/api/v2/knowledge-tasks/{jid}/confirm-plan", response_model=Envelope[JobOutput])
-    def confirm(
-        jid: str,
-        payload: PlanConfirmationInput,
-        request: Request,
-        if_match: str = Header(...),
-        idempotency_key: str = Header(...),
-        a=Depends(actor),
-    ):
-        return envelope(request, tasks.confirm_plan(a, jid, payload.model_dump(), if_match, idempotency_key))
 
     @app.get("/api/v2/knowledge-tasks/{jid}/stage-artifacts/{digest}", response_model=Envelope[dict])
     def stage(jid: str, digest: str, request: Request, a=Depends(actor)):

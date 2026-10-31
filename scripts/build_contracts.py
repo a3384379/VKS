@@ -49,24 +49,38 @@ def build() -> dict:
     extension = json.loads((CONTRACTS / "mcp_tools.v2.json").read_text())
     catalog["tools"].extend(extension["tools"])
     catalog["schema_version"] = "2.0-dev"
+
     def extend_job_enums(value):
         if isinstance(value, dict):
-            enum = value.get('enum', [])
-            if 'generate_documents' in enum and 'suggest_links' in enum and 'knowledge_task' not in enum:
-                enum.append('knowledge_task')
-            if all(state in enum for state in ('queued', 'running', 'succeeded', 'failed')) and 'paused' not in enum:
-                enum.append('paused')
-            if 'page' in enum and 'action' in enum and 'scenario' in enum and 'journey' not in enum:
-                enum.append('journey')
-            if 'review_batch' in enum and 'release_candidate' in enum:
-                enum.extend(item for item in ('journey_revision', 'task_report', 'document_revision') if item not in enum)
-            if 'VKS_INTERNAL_ERROR' in enum:
-                enum.extend(item for item in ('VKS_CANCELLED', 'VKS_SYNC_SCOPE_ANOMALY', 'VKS_SYNC_SCOPE_CHANGED', 'VKS_HASH_MISMATCH') if item not in enum)
+            enum = value.get("enum", [])
+            if "generate_documents" in enum and "suggest_links" in enum and "knowledge_task" not in enum:
+                enum.append("knowledge_task")
+            if all(state in enum for state in ("queued", "running", "succeeded", "failed")) and "paused" not in enum:
+                enum.append("paused")
+            if "page" in enum and "action" in enum and "scenario" in enum and "journey" not in enum:
+                enum.append("journey")
+            if {"artifact", "analysis_set", "scenario", "relation", "release", "export"} <= set(enum):
+                enum[:] = [item for item in enum if item not in ("review_batch", "release_candidate")]
+                enum.extend(
+                    item for item in ("journey_revision", "task_report", "document_revision") if item not in enum
+                )
+            if "VKS_INTERNAL_ERROR" in enum:
+                enum.extend(
+                    item
+                    for item in (
+                        "VKS_CANCELLED",
+                        "VKS_SYNC_SCOPE_ANOMALY",
+                        "VKS_SYNC_SCOPE_CHANGED",
+                        "VKS_HASH_MISMATCH",
+                    )
+                    if item not in enum
+                )
             for child in value.values():
                 extend_job_enums(child)
         elif isinstance(value, list):
             for child in value:
                 extend_job_enums(child)
+
     extend_job_enums(catalog)
     destination = CONTRACTS / "mcp_tools.resolved.json"
     destination.write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n")

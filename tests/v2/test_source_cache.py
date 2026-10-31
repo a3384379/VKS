@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import delete, func, select
 
-from test_journeys import store
+from test_journeys import store as store  # pytest fixture registration
 from vks_api.jobs import Checkpoint
 from vks_api.models import Job
 from vks_api.service import DomainError, future

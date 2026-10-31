@@ -192,7 +192,7 @@ def build(root, revision="HEAD"):
                         toLogicalKey=targets[0]["stable_key"],
                         relationType="may_call",
                         evidenceRefs=[eid],
-                        reason="固定模板操作与同版唯一字面路由的人工候选；需人员审核，不建立运行因果",
+                        reason="固定模板操作与同版唯一字面路由的人工候选；业务含义需核对，不建立运行因果",
                     )
                 )
         passive += "</main></body></html>"

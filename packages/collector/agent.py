@@ -278,7 +278,7 @@ class LocalCollectorAgent:
                 json=dict(kind="bundle", artifact_ids=[pending["upload"]["artifact_id"]]),
             )
             if not preflight.get("valid"):
-                raise CollectionError("VKS_INVALID_INPUT", "资料未通过 VKS 安全预检")
+                raise CollectionError("VKS_INVALID_INPUT", "资料未通过 VKS 格式预检")
             pending["request"] = dict(
                 profile_id=profile.id,
                 consent_sha256=profile.consent_sha256,

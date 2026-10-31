@@ -1,11 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from uuid import uuid4
-
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import select
-
 from vks_api.app import create_app
 from vks_api import identity
 from vks_api.models import Audit, Credential, Member
@@ -19,7 +17,7 @@ def store(tmp_path):
     service = Service(tmp_path / "store")
     _, owner = service.login(service.bootstrap_token)
     project = service.create_project(owner, {"key": "team-project", "name": "Team project"}, "team-project")
-    yield service, owner, project
+    yield (service, owner, project)
     service.stop_worker()
     service.engine.dispose()
 
@@ -39,7 +37,7 @@ def assign(service, owner, project, user, role="editor", status="active"):
 
 def login(service, username="alice"):
     secret, _ = identity.password_login(service, username, PASSWORD)
-    return secret, service.authenticate(secret, "session")
+    return (secret, service.authenticate(secret, "session"))
 
 
 def test_bootstrap_owner_migrates_without_changing_identity_and_secret(store):
@@ -64,7 +62,6 @@ def test_initial_owner_login_and_password_change_survive_restart(tmp_path):
     assert denied.value.status == 401
     token, actor = identity.password_login(restarted, "owner", PASSWORD)
     assert restarted.authenticate(token, "session").id == owner.id == actor.id
-    # The requested initial credential does not weaken user creation/reset.
     with pytest.raises(DomainError):
         identity.create_user(restarted, actor, {"username": "short", "display_name": "Short", "password": "owner"})
     with pytest.raises(DomainError):
@@ -80,7 +77,7 @@ def test_scrypt_hashes_are_salted_not_exposed_and_authentication_is_generic(stor
         hashes = [session.get(identity.UserIdentity, u["id"]).password_hash for u in (first, second)]
     assert hashes[0].startswith("scrypt$16384$8$1$") and hashes[0] != hashes[1]
     assert PASSWORD not in str(hashes)
-    assert not any("hash" in field or "password" == field for field in first)
+    assert not any(("hash" in field or "password" == field for field in first))
     errors = []
     for name in ("alice", "nonexistent"):
         with pytest.raises(DomainError) as exc:
@@ -106,8 +103,10 @@ def test_identity_login_failure_budget_is_persisted_and_does_not_log_secrets(sto
     with service.db() as session:
         rows = list(session.scalars(select(Audit)))
         assert all(
-            PASSWORD not in str(row.metadata_json) and "incorrect-password" not in str(row.metadata_json)
-            for row in rows
+            (
+                PASSWORD not in str(row.metadata_json) and "incorrect-password" not in str(row.metadata_json)
+                for row in rows
+            )
         )
 
 
@@ -194,8 +193,6 @@ def test_instance_owner_cannot_bypass_a_project_membership(store):
     service, owner, project = store
     user = add_user(service, owner)
     assign(service, owner, project, user, "admin")
-    # It is legal to hand the project to another administrator; owner is only
-    # an instance manager and is not re-added to projects implicitly.
     assign(service, owner, project, {"id": owner.id}, "viewer", "disabled")
     with pytest.raises(DomainError) as exc:
         service.get_project(owner, project["id"])
@@ -281,7 +278,9 @@ def test_disabling_user_preserves_last_project_admin_rule_and_invalidates_all_ac
             service.authenticate(value, kind)
     with pytest.raises(DomainError):
         identity.password_login(service, "alice", PASSWORD)
-    assert next(m for m in service.members(owner, project["id"]) if m["user_id"] == user["id"])["status"] == "disabled"
+    assert (
+        next((m for m in service.members(owner, project["id"]) if m["user_id"] == user["id"]))["status"] == "disabled"
+    )
     with pytest.raises(DomainError):
         identity.update_user(service, owner, owner.id, {"status": "disabled"}, 1)
 
@@ -330,7 +329,7 @@ def test_concurrent_last_admin_removal_accepts_only_one_operation(store):
                 f.result(timeout=10)
                 for f in (pool.submit(demote, service, alice), pool.submit(demote, second_service, bravo))
             ]
-        assert sum(isinstance(item, list) for item in results) == 1
+        assert sum((isinstance(item, list) for item in results)) == 1
         assert [item.status for item in results if isinstance(item, DomainError)] == [412]
         with service.db() as session:
             assert (
@@ -383,7 +382,7 @@ def test_identity_http_crud_csrf_roles_and_password_login(tmp_path):
         login_response = user_web.post("/api/v1/auth/login", json={"username": "ALICE", "password": PASSWORD})
         assert login_response.status_code == 200, login_response.text
         session = login_response.json()["data"]
-        assert session["user"]["display_name"] == "Alice" and not session["user"]["instance_admin"]
+        assert session["user"]["display_name"] == "Alice" and (not session["user"]["instance_admin"])
         assert user_web.get("/api/v1/projects").json()["data"][0]["id"] == project["id"]
         assert user_web.get("/api/v1/users").status_code == 403
         assert user_web.get(f"/api/v1/projects/{project['id']}/members").status_code == 403
@@ -457,7 +456,7 @@ def test_sensitive_grants_http_use_project_optimistic_version(tmp_path):
         forbidden = web.put(
             f"/api/v1/projects/{project['id']}/member-permissions",
             headers={**headers, "If-Match": str(response.json()["data"]["row_version"])},
-            json={"user_id": user["id"], "permissions": ["release:publish"]},
+            json={"user_id": user["id"], "permissions": ["knowledge:edit"]},
         )
         assert forbidden.status_code == 422
     service.engine.dispose()
@@ -478,7 +477,6 @@ def test_pre_team_machine_tokens_receive_owner_link_and_rotate_with_owner(store)
     from vks_api.service import sha
 
     service, owner, project = store
-    # Simulate an existing pre-team database, not an untrusted client request.
     with service.db() as session:
         session.execute(identity.MachineOwner.__table__.delete())
         session.execute(identity.MemberGrant.__table__.delete())

@@ -485,7 +485,10 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
     if manifest["project_key"] != expected_project_key:
         _fail("VKS_PROJECT_MISMATCH", "导入包不属于当前项目")
     result = ParsedBundle(manifest=manifest)
-    partial_allowed = not manifest.get("uiManifest") and not manifest.get("bindings") and len(manifest["artifacts"]) > 1
+    partial_allowed = (
+        not any(manifest.get(field) for field in ("uiManifest", "bindings", "selectionManifest"))
+        and len(manifest["artifacts"]) > 1
+    )
     failed_paths = set()
 
     def isolate_failure(item, error):
@@ -535,8 +538,6 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
             p.lower() in (".env", ".npmrc", ".pypirc", "id_rsa", "id_ed25519") for p in parts
         ):
             _fail("VKS_PRIVATE_MATERIAL", "包内含凭据文件或管理目录，需先排除")
-        if record["kind"] in ("capture", "trace"):
-            _fail("VKS_CAPTURE_UNVERIFIED", "当前未提供采集脱敏核验器，拒绝保存原始录制或 Trace 包")
         suffix = PurePosixPath(path).suffix.lower()
         if record["kind"] == "markdown" and suffix not in (".md", ".markdown"):
             _fail("VKS_MEDIA_TYPE_INVALID", "Markdown 制品扩展名不匹配")
@@ -580,16 +581,6 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 continue
             texts[path] = text
             item["detected_encoding"] = encoding
-            # Block common credential literals before any content reaches index.
-            # Raw unrecognized material is not claimed to be comprehensively scanned.
-            if re.search(
-                r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b",
-                text,
-            ) or re.search(
-                r"""(?i)\b(?:password|api[_-]?key|access[_-]?token|client[_-]?secret)\b\s*[:=]\s*["']([^"'\r\n]{8,})["']""",
-                text,
-            ):
-                _fail("VKS_SECRET_DETECTED", "材料中发现疑似秘密，请脱敏后导入")
         artifacts[path] = item
     extras = set(files) - set(artifacts) - {"manifest.json"}
     if extras:
@@ -607,6 +598,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
     for field, schema_name, expected_kind in [
         ("uiManifest", "import_manifest.schema.json", "ui_manifest"),
         ("bindings", "binding_manifest.schema.json", "binding_manifest"),
+        ("selectionManifest", "import_manifest.schema.json", "fixture"),
     ]:
         reference = manifest.get(field)
         if reference is None:
@@ -616,10 +608,24 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         if not artifact or artifact["kind"] != expected_kind or artifact["sha256"] != reference["sha256"]:
             _fail("VKS_REFERENCE_INVALID", "侧车清单引用无效")
         sidecar = _json(artifact["content"])
-        _schema(sidecar, schema_name, definition="uiManifestDocument" if field == "uiManifest" else None)
+        definition = {"uiManifest": "uiManifestDocument", "selectionManifest": "selectionManifestDocument"}.get(field)
+        _schema(sidecar, schema_name, definition=definition)
         if sidecar["projectKey"] != expected_project_key or sidecar["baselineKey"] != manifest["baseline_key"]:
             _fail("VKS_BASELINE_MISMATCH", "侧车清单与项目或基线不一致")
         sidecars[field] = sidecar
+    selection_artifacts = []
+    for path, artifact in artifacts.items():
+        if artifact["kind"] != "fixture":
+            continue
+        try:
+            value = _json(artifact["content"])
+        except BundleError:
+            continue
+        if value.get("kind") == "fixed_entity_selection":
+            selection_artifacts.append(path)
+    declared_selection = manifest.get("selectionManifest", {}).get("path")
+    if selection_artifacts != ([] if declared_selection is None else [declared_selection]):
+        _fail("VKS_REFERENCE_INVALID", "固定实体选择清单缺少准确引用或存在多个冲突声明")
     ui = sidecars.get("uiManifest", {"pages": [], "actions": [], "documentSections": [], "codeEntities": []})
     if "uiManifest" not in sidecars:
         from .ui_discovery import discover
@@ -693,11 +699,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                     "preview_mode": "snapshot",
                     "state_key": page.get("stateKey"),
                     "source_kind": "platform_analyzer" if page.get("_discovered") else "manual",
-                    **(
-                        {"discovery_basis": page["_discovery_basis"], "requires_review": True}
-                        if page.get("_discovered")
-                        else {}
-                    ),
+                    **({"discovery_basis": page["_discovery_basis"]} if page.get("_discovered") else {}),
                     "runtime_source_alignment": "unknown",
                     "script_content_blocked": dom.external_or_script,
                 },
@@ -739,7 +741,6 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                         {
                             "selector": action["_selector"],
                             "discovery_basis": action["_discovery_basis"],
-                            "requires_review": True,
                         }
                         if action.get("_discovered")
                         else {}
@@ -868,7 +869,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
             artifact_path=path,
             locator=locator,
             sha256=artifacts[path]["sha256"],
-            claim="原始静态 DOM 中存在唯一动作锚点及所属页面范围，业务含义待审核",
+            claim="原始静态 DOM 中存在唯一动作锚点及所属页面范围，业务含义以来源说明为准",
             content=texts[path].splitlines()[locator["startLine"] - 1][:2000],
             extractor_version=ANALYZER_VERSION,
         )
@@ -990,4 +991,36 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 "message": "本轮使用确定性解析，未配置或调用平台模型。",
             }
         )
+    selection = sidecars.get("selectionManifest")
+    if selection is not None:
+        selected = set()
+        for row in selection["entities"]:
+            checkpoint()
+            key = row["logicalKey"]
+            if key in selected:
+                _fail("VKS_DUPLICATE_LOGICAL_KEY", "实体选择清单的逻辑身份重复")
+            selected.add(key)
+            path = safe_path(row["artifactPath"])
+            artifact = artifacts.get(path)
+            entity = entity_map.get(key)
+            if (
+                not artifact
+                or artifact["sha256"] != row["sha256"]
+                or artifact["source_id"] != row["sourceId"]
+                or not entity
+                or entity["type"] != row["entityType"]
+                or entity.get("artifact_path") != path
+            ):
+                _fail("VKS_REFERENCE_INVALID", "实体选择无法匹配准确类型、来源文件和摘要")
+        if any(
+            row[field] not in selected for row in binding["bindings"] for field in ("fromLogicalKey", "toLogicalKey")
+        ):
+            _fail("VKS_REFERENCE_INVALID", "显式关系端点越出固定实体选择")
+        # The complete input is still hash-checked and retained. This boundary
+        # only removes unselected parsed knowledge; it cannot invent an entity,
+        # substitute a newer revision or transfer any prior review decision.
+        result.entities = [row for row in result.entities if row["stable_key"] in selected]
+        result.relations = [
+            row for row in result.relations if row["from_key"] in selected and row["to_key"] in selected
+        ]
     return result

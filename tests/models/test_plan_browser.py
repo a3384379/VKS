@@ -1,3 +1,5 @@
+
+from test_model_gateway import system as system  # pytest fixture registration
 from pathlib import Path
 from threading import Thread
 import os
@@ -11,7 +13,6 @@ from fastapi.staticfiles import StaticFiles
 from playwright.sync_api import expect, sync_playwright
 import uvicorn
 
-from test_model_gateway import system
 from test_task_planning import plan
 from vks_api.app import create_app
 from vks_api.journeys import JourneyService
@@ -19,7 +20,7 @@ from vks_api.journeys import JourneyService
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_real_browser_reviews_model_plan_then_worker_reuses_one_synthetic_call(system, tmp_path):
+def test_real_browser_executes_model_task_directly_with_one_synthetic_call(system, tmp_path):
     service, actor, project, aid, _, requests, response, _ = system
     if not shutil.which("node") or not (ROOT / "node_modules/vite").is_dir():
         pytest.skip("前端依赖未安装；运行 npm ci")
@@ -65,33 +66,19 @@ def test_real_browser_reviews_model_plan_then_worker_reuses_one_synthetic_call(s
                 page.get_by_label("知识任务说明").fill(
                     "Inspect this fixed action and propose a bounded flow and document"
                 )
-                page.get_by_role("checkbox", name="授权本任务至多一次模型调用", exact=False).check()
+                expect(page.get_by_role("checkbox", name="授权本任务至多一次模型调用", exact=False)).to_have_count(0)
                 with page.expect_response(
                     lambda r: "/knowledge-tasks" in r.url and r.request.method == "POST"
                 ) as created:
                     page.get_by_role("button", name="预检并创建任务", exact=True).click()
                 assert created.value.status == 202, created.value.text()
                 jid = created.value.json()["data"]["id"]
-                preview = page.get_by_role("region", name="待确认的模型计划")
-                expect(preview).to_be_visible(timeout=15000)
-                assert len(requests) == 1
-                assert not JourneyService(service).list(actor, project["id"], aid)
-                confirm = preview.get_by_role("button", name="确认计划并继续", exact=True)
-                expect(confirm).to_be_disabled()
-                page.get_by_label("已核对模型计划范围").check()
-                page.get_by_label("计划范围确认依据").fill(
-                    "Independent browser interaction checked the exact fixture scope"
-                )
-                with page.expect_response(
-                    lambda r: r.url.endswith("/confirm-plan") and r.request.method == "POST"
-                ) as approved:
-                    confirm.click()
-                assert approved.value.status == 200, approved.value.text()
                 expect(
-                    page.get_by_text("所有产物为待审草稿；静态与声明信息不能证明运行因果。", exact=True)
+                    page.get_by_text("产物直接保存到当前知识版本；静态与声明信息不能证明运行因果。", exact=True)
                 ).to_be_visible(timeout=15000)
+                expect(page.get_by_role("button", name="确认计划并继续", exact=True)).to_have_count(0)
                 current = page.request.get(url + f"/api/v2/knowledge-tasks/{jid}").json()["data"]
-                assert current["state"] == "succeeded" and current["report"]["candidate_only"]
+                assert current["state"] == "succeeded" and current["report"]["saved_directly"]
                 assert len(requests) == 1 and len(JourneyService(service).list(actor, project["id"], aid)) == 1
                 page.set_viewport_size(dict(width=375, height=1000))
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")

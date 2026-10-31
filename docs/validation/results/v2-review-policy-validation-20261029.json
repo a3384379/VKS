@@ -1,0 +1,101 @@
+{
+  "date": "2026-10-29",
+  "base_commit": "f947cc5f3f463bbae81c6b670f0d48a5ba52467e",
+  "working_tree_changes": true,
+  "source_aggregate_sha256": "2a15db021fbda4351b1d741b8a436819bc15e817068abb02db4481db720adc2d",
+  "source_file_count": 339,
+  "default_manual_review_enabled": false,
+  "projects": [
+    {
+      "project": "ruoyi",
+      "before": {
+        "relation": 1239,
+        "journey": 3,
+        "migration": 0,
+        "document": 1
+      },
+      "before_total": 1243,
+      "approved": 1243,
+      "blocked": 0,
+      "remaining": 0,
+      "manual_review_enabled": false,
+      "evidence_and_causal_axes_unchanged": true,
+      "immutable_revisions_unchanged": true,
+      "published": false
+    },
+    {
+      "project": "flowtest",
+      "before": {
+        "relation": 443,
+        "journey": 3,
+        "migration": 0,
+        "document": 2
+      },
+      "before_total": 448,
+      "approved": 448,
+      "blocked": 0,
+      "remaining": 0,
+      "manual_review_enabled": false,
+      "evidence_and_causal_axes_unchanged": true,
+      "immutable_revisions_unchanged": true,
+      "published": false
+    }
+  ],
+  "make_check": {
+    "command": "make check",
+    "exit_code": 0,
+    "seconds": 293.065,
+    "isolated_data": true,
+    "real_sources": [
+      "RuoYi",
+      "FlowTest"
+    ],
+    "python_passed": 461,
+    "python_skipped": 15,
+    "python_seconds": 267.25,
+    "frontend_passed": 42,
+    "build": "passed"
+  },
+  "postgres": {
+    "version": "17.6",
+    "passed": 1,
+    "deselected": 11,
+    "scope": "isolated concurrent project policy CAS, backlog approvals and duplicate-decision check",
+    "temporary_container_removed": true
+  },
+  "additional_browser_check": {
+    "passed": 4,
+    "seconds": 52.6,
+    "scope": "model-plan browser and three review/onboarding browser flows after final copy update"
+  },
+  "static_checks": [
+    "prettier",
+    "ruff E9,F63,F7,F82",
+    "git diff --check"
+  ],
+  "stage_failures": [
+    {
+      "stage": "first make check",
+      "passed": 458,
+      "failed": 2,
+      "skipped": 14,
+      "cause": "module-scoped browser fixture imported before function-scoped manual-mode environment; fixture now persists explicit manual policy"
+    },
+    {
+      "stage": "second make check",
+      "passed": 460,
+      "failed": 1,
+      "skipped": 15,
+      "cause": "copy changed after test collection; loaded assertion expected previous wizard message; frozen-input rerun required"
+    }
+  ],
+  "boundaries": {
+    "new_ddl": false,
+    "external_model_calls": 0,
+    "capacity_remeasured": false,
+    "full_postgres_suite_remeasured": false,
+    "production_release": false,
+    "git_commit_or_push_this_change": false,
+    "isolated_preview": "http://127.0.0.1:5174"
+  }
+}

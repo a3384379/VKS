@@ -4,7 +4,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.memory import create_connected_server_and_client_session
 import pytest
 
-from test_journeys import store, journey
+from test_journeys import store as store, journey  # pytest fixture registration
 from vks_api.mcp_gateway import APIBridge, create_server, create_http_app
 
 

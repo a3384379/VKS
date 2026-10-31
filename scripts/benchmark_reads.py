@@ -144,7 +144,7 @@ def seed(service):
                     "from_revision_id": source,
                     "to_revision_id": destination,
                     "relation_type": kind,
-                    "review_status": "confirmed",
+                    "excluded": False,
                     "validity_status": "valid",
                     "causal_basis": "not_established",
                     "evidence_ids": [eid],

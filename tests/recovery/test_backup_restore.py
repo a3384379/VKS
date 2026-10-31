@@ -15,23 +15,10 @@ def published(service, owner, p):
     service.process_job(job["id"])
     w = service.workspace(owner, p["id"])
     for r in w["relations"]:
-        service.review_relation(
-            owner,
-            r["id"],
-            {"decision": "confirm", "reason": "核对合成材料", "evidence_ids": r["evidence_ids"]},
-            r["row_version"],
-        )
-    candidate = service.request_release(
-        owner, p["id"], {"analysis_set_id": w["selected_analysis_set"]["id"]}, "precheck"
-    )
-    confirmation = service.confirm_release(owner, candidate["candidate_id"])
-    release = service.publish(
-        owner,
-        candidate["candidate_id"],
-        {k: confirmation[k] for k in ("expected_manifest_sha256", "human_confirmation_ref")}
-        | {"change_note": "备份恢复样例"},
-        "publish",
-    )
+        service.set_relation_state(owner, r["id"], {"excluded": ("confirm" == "reject")}, r["row_version"])
+    candidate = service.save_snapshot(owner, p["id"], {"analysis_set_id": w["selected_analysis_set"]["id"]}, "precheck")
+    confirmation = None
+    release = candidate
     return release, w
 
 

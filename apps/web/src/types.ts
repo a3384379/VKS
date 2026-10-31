@@ -4,7 +4,7 @@ export type View =
   | "imports"
   | "workbench"
   | "documents"
-  | "reviews"
+  | "relations"
   | "graph"
   | "versions"
   | "settings"
@@ -42,7 +42,7 @@ export interface Relation {
   to_name: string;
   type?: string;
   relation_type?: string;
-  review_status: string;
+  excluded: boolean;
   validity_status: string;
   causal_basis: string;
   evidence_ids: string[];
@@ -184,18 +184,6 @@ export interface Preflight {
   summary?: Dict;
   [key: string]: unknown;
 }
-export interface ReleaseCandidate {
-  id: string;
-  manifest_sha256?: string;
-  expected_manifest_sha256?: string;
-  preflight_sha256?: string;
-  issues?: unknown[];
-  blockers?: unknown[];
-  can_publish?: boolean;
-  human_confirmation_ref?: string;
-  [key: string]: unknown;
-}
-
 export interface TeamUser {
   id: string;
   username: string;

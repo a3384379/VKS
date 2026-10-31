@@ -1,11 +1,9 @@
-from copy import deepcopy
+
+from test_journeys import store as store  # pytest fixture registration
 from dataclasses import replace
-from pathlib import Path
-import json
 import pytest
 from sqlalchemy import select
-
-from test_journeys import store, journey
+from test_journeys import journey
 from vks_api.knowledge_tasks import KnowledgeTaskService, TaskInput
 from vks_api.models import Analysis, Artifact, Entity, Revision
 from vks_api.journeys import JourneyService
@@ -13,7 +11,7 @@ from vks_api.service import DomainError
 from vks_api.workbench_v2 import coverage, explanation
 
 
-def test_task_flow_is_durable_candidate_only_idempotent_and_bounded(store):
+def test_task_flow_is_durable_saved_directly_idempotent_and_bounded(store):
     service, actor, pid, w, _, _ = store
     tasks = KnowledgeTaskService(service)
     payload = TaskInput(
@@ -27,26 +25,15 @@ def test_task_flow_is_durable_candidate_only_idempotent_and_bounded(store):
     service.process_job(job["id"])
     result = tasks.get(actor, job["id"])
     assert result["state"] == "succeeded", result
-    assert result["stage"] == "READY_FOR_REVIEW"
-    assert result["report"]["candidate_only"] and result["report"]["model_calls"] == 0
-    assert result["stage_history"][-1]["stage"] == "Review"
+    assert result["stage"] == "COMPLETE"
+    assert result["report"]["saved_directly"] and result["report"]["model_calls"] == 0
+    assert result["stage_history"][-1]["stage"] == "Save"
     journeys = JourneyService(service).list(actor, pid, payload["analysis_set_id"])
     assert len(journeys) == 1
-    assert len(journeys[0]["dsl"]["nodes"]) == len(payload["action_ids"]) + 1
+    assert journeys[0]["dsl"]["semantics"]["kind"] == "evidence_navigation"
+    assert len([node for node in journeys[0]["dsl"]["nodes"] if node["kind"] == "action"]) == len(payload["action_ids"])
     with service.db() as s:
-        assert JourneyService(service).assert_publishable(s, s.get(Analysis, payload["analysis_set_id"]))
-    JourneyService(service).review(
-        actor,
-        journeys[0]["journey_id"],
-        dict(
-            analysis_set_id=payload["analysis_set_id"],
-            revision_id=journeys[0]["revision_id"],
-            decision="approve",
-            reason="Synthetic human review",
-        ),
-        journeys[0]["revision_id"],
-        "review",
-    )
+        assert not JourneyService(service).assert_publishable(s, s.get(Analysis, payload["analysis_set_id"]))
     with service.db() as s:
         assert not JourneyService(service).assert_publishable(s, s.get(Analysis, payload["analysis_set_id"]))
 
@@ -91,7 +78,7 @@ def test_coverage_explanation_same_fixed_baseline_and_no_false_trace(store, monk
     service, actor, pid, w, _, _ = store
     aid = w["selected_analysis_set"]["id"]
     result = coverage(service, actor, pid, aid)
-    assert result["actions"] == {"confirmed": 0, "total": len(w["actions"])}
+    assert result["actions"] == {"linked": len(w["actions"]), "total": len(w["actions"])}
     assert result["knowledge_health"]["unverified_runtime_actions"] == len(w["actions"])
     assert result["knowledge_health"]["action_denominator"] == len(w["actions"])
     monkeypatch.setattr(
@@ -102,9 +89,11 @@ def test_coverage_explanation_same_fixed_baseline_and_no_false_trace(store, monk
     action = w["actions"][0]
     result = explanation(service, actor, pid, action["entity_id"], aid)
     assert result["action_revision_id"] == action["entity_revision_id"]
-    assert not result["relations"]
+    assert result["relations"] and all(
+        not row["excluded"] and row["validity_status"] == "valid" for row in result["relations"]
+    )
     assert result["source_alignment"] == "unknown"
-    assert all("content" not in row for row in result["entities"])
+    assert all(("content" not in row for row in result["entities"]))
 
 
 def test_model_call_reservation_survives_failure_retry_without_extra_call(store, monkeypatch):
@@ -201,7 +190,6 @@ def test_observed_scenario_metadata_and_derived_journey_are_trace_restricted(sto
         entity = Entity(id=uid(), project_id=pid, type="scenario", stable_key="legacy-observed")
         s.add(entity)
         s.flush()
-        # A legacy synthetic record: reads must fail closed even before a capture is revalidated.
         metadata = {
             "dsl": {
                 "explanation_graph": {

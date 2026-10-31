@@ -2,7 +2,7 @@ from hashlib import sha256
 from io import BytesIO
 import json, zipfile
 from packages.collector.distribution import distribution
-from test_journeys import store
+from test_journeys import store as store  # pytest fixture registration
 from fastapi.testclient import TestClient
 
 

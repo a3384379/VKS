@@ -1,6 +1,6 @@
 from dataclasses import replace
 from fastapi.testclient import TestClient
-from test_capture_bindings import captured, binding_payload
+from test_capture_bindings import captured as captured, binding_payload  # pytest fixture registration
 from vks_api.app import create_app
 from vks_api.models import Artifact
 from vks_api.trajectory_comparison import TrajectoryService

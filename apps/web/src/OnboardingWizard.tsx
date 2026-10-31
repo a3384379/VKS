@@ -99,7 +99,7 @@ export function OnboardingWizard() {
             </p>
             <Notice>
               普通业务探索只读已保存状态。受控采集另需登记 Test/Mock
-              环境、合成数据和固定修订人员审批。
+              环境、数据集和当前固定修订。
             </Notice>
             <Button
               disabled={!canImport}
@@ -131,7 +131,7 @@ export function OnboardingWizard() {
               <Notice>
                 {report.issues.length
                   ? report.issues.join("；")
-                  : "当前接入范围检查完成，上传文件后继续执行内容安全预检。"}
+                  : "当前接入范围检查完成，上传文件后继续执行内容格式预检。"}
                 <small className="v2-hash">
                   预检摘要：{report.preflight_sha256}
                 </small>
@@ -143,7 +143,7 @@ export function OnboardingWizard() {
           </div>
         ) : (
           <div className="v2-wizard-body">
-            <h2>查看解析任务，建立可审核知识</h2>
+            <h2>查看解析任务，建立项目知识</h2>
             <p>
               当前可见 {w.jobs.length} 个近期任务、{w.pages.length} 个页面、
               {w.actions.length} 个动作。候选与确认分别保留。
@@ -151,7 +151,7 @@ export function OnboardingWizard() {
             <div className="row wrap">
               <Button onClick={() => navigate("agent")}>进入知识任务</Button>
               <Button onClick={() => navigate("workbench")}>探索业务</Button>
-              <Button onClick={() => navigate("reviews")}>审核候选</Button>
+              <Button onClick={() => navigate("relations")}>查看关联</Button>
             </div>
             <OnboardingFlowDraft />
           </div>

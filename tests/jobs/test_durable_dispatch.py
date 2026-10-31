@@ -1,7 +1,6 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-
 import pytest
 from sqlalchemy import select
 from vks_api.jobs import Checkpoint, DispatchState, dispatch_pending, load_parse_checkpoint, reconcile
@@ -14,7 +13,7 @@ def setup(tmp_path):
     service = Service(tmp_path)
     _, owner = service.login(service.bootstrap_token)
     project = service.create_project(owner, {"key": "charge-demo", "name": "持久任务"}, "project")
-    yield service, owner, project
+    yield (service, owner, project)
     service.engine.dispose()
 
 
@@ -81,7 +80,7 @@ def test_parse_checkpoint_retries_without_reparsing_and_validates_cache_hash(set
     service.process_job(job["id"])
     assert service.get_job(owner, job["id"])["state"] == "failed"
     with service.db() as s:
-        point = s.scalar(select(Checkpoint).where(Checkpoint.job_id == job["id"], Checkpoint.stage == 'PARSE'))
+        point = s.scalar(select(Checkpoint).where(Checkpoint.job_id == job["id"], Checkpoint.stage == "PARSE"))
         assert point and "object_key" in point.result_json
         key = point.result_json["object_key"]
         input_hash = point.input_hash
@@ -105,9 +104,11 @@ def test_expired_capture_lease_never_replays_a_business_action(setup):
         jid = job.id
     reconcile(service)
     result = service.get_job(owner, jid)
-    assert result["state"] == "failed" and result["error"]["code"] == "VKS_APPROVAL_REQUIRED"
-    with pytest.raises(DomainError):
-        service.retry_job(owner, jid)
+    assert result["state"] == "failed" and result["error"]["code"] == "VKS_STATE_CONFLICT"
+    assert result["error"]["retryable"] is False
+    assert service.get_job(owner, jid)["state"] == "failed"
+    restarted = service.retry_job(owner, jid)
+    assert restarted["state"] == "queued"
 
 
 def test_distributed_transient_task_retry_stops_after_three_attempts(setup, monkeypatch):

@@ -73,7 +73,18 @@ class CaptureJourneyService:
                 dsl = dict(
                     schema_version="2.0",
                     key="proposal-" + uid(),
-                    title=(scene.name + " · 流程候选")[:200],
+                    title=(scene.name + (" · 观察轨迹对比" if len(ids) > 1 else " · 操作顺序候选"))[:200],
+                    semantics=dict(
+                        kind="observation_comparison" if len(ids) > 1 else "operation_sequence",
+                        basis="observed" if ids else "declared",
+                        purpose="对照已保存录制轨迹" if len(ids) > 1 else "查看保存状态中的操作顺序",
+                        outcome="定位固定场景状态与原始来源",
+                        source_refs=[dict(entity_id=scene.entity_id, revision_id=scene.id)],
+                        unknowns=[
+                            "录制边只表示快照顺序，状态图边沿用原声明；不证明业务成功、完整流程或运行因果",
+                            "轨迹选择分支不代表真实业务判断条件，状态来源仍以各状态原记录为准",
+                        ],
+                    ),
                     entry=entry,
                     nodes=nodes,
                     edges=edges,
@@ -105,7 +116,7 @@ class CaptureJourneyService:
                 raise DomainError("VKS_NOT_FOUND", "未找到可用录制", 404)
             snapshots = capture.result.get("snapshots", [])
             if not snapshots:
-                raise DomainError("VKS_INVALID_EVIDENCE", "录制没有已脱敏快照")
+                raise DomainError("VKS_INVALID_EVIDENCE", "录制没有页面快照")
             previous = None
             for index, snapshot in enumerate(snapshots):
                 node = state_node(f"track-{track}-state-{index}", snapshot["name"], scene, capture=capture, index=index)
