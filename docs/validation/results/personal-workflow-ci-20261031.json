@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-31",
+  "base_commit": "3a561ea546b52be183a69721ab6f6e754338ae8c",
+  "source_aggregate_sha256": "53f113262a8bf9938f1861d020fe4f437794d9723db6e173cc428c83ad6e1f3d",
+  "source_file_count": 393,
+  "trigger": {
+    "pr_run": 41160342277,
+    "push_run": 41160336551,
+    "head": "3a561ea546b52be183a69721ab6f6e754338ae8c",
+    "stage": "pytest at 83 percent",
+    "job_limit_minutes": 20,
+    "observed_test_failures": 0,
+    "outcome": "job cancelled at runtime limit"
+  },
+  "collection": {
+    "total": 774,
+    "core": 712,
+    "ui": 62,
+    "disjoint": true,
+    "exact_full_suite_multiset": true
+  },
+  "job_limit_minutes_unchanged": 20,
+  "test_assertions_unchanged": true,
+  "application_code_unchanged": true,
+  "frontend_checks": "core shard retains npm test, production build and dependency audit",
+  "current_ci_evidence": "PR #2 Actions on the final head"
+}

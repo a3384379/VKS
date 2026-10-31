@@ -43,6 +43,10 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        pytest-shard: [core, ui]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -68,10 +72,13 @@ jobs:
           EOF
           sudo apparmor_parser -r /etc/apparmor.d/vks-playwright-chromium
       - run: uv run python scripts/build_demo.py
-      - run: uv run pytest -q --durations=15
-      - run: npm test
-      - run: npm run build
-      - run: npm audit --audit-level=high
+      - run: uv run python -m pytest -p scripts.pytest_ci_shards --vks-ci-shard=${{ matrix.pytest-shard }} -q --durations=15
+      - if: matrix.pytest-shard == 'core'
+        run: npm test
+      - if: matrix.pytest-shard == 'core'
+        run: npm run build
+      - if: matrix.pytest-shard == 'core'
+        run: npm audit --audit-level=high
   postgres-and-queue:
     runs-on: ubuntu-latest
     timeout-minutes: 15

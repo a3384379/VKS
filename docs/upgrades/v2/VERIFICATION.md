@@ -1,5 +1,13 @@
 # VKS 2.0 开发预览验证
 
+## 2026-10-31 Linux CI 全量分组
+
+审查补修后的本机完整 `make check` 已通过 **760 passed / 14 skipped**（481.96s）、前端 **59 passed**、构建成功（17.73s），392 个工程输入执行前后相同；对应 `3a561ea`。GitHub 的旧单作业在 20 分钟上限结束时停于 **83%**，已输出用例均无失败，Windows 与 PostgreSQL/队列通过。原始取消日志保留，不计为远端全量通过。
+
+Linux 改为 core/ui 两组并行，从完整 collection 后选择分组，保留跨目录夹具导入及原断言。独立收集验证 **774 = 712 core + 62 UI**，两组无交集、合并多重集合等于原全部用例；普通 `make check` 仍运行全套。每组仍限 20 分钟，core 保留前端测试、生产构建及依赖审计，Windows/PG 作业不改。本次只改变 CI 执行分组，无应用、Schema、数据库或权限变化。
+
+[CI 调整记录](../../validation/results/personal-workflow-ci-20261031.json)、[393 个工程输入清单](../../validation/results/personal-workflow-ci-source-manifest-20261031.json)，完整远端结果以 PR #2 最终 head 的 Actions 为准。
+
 ## 2026-10-31 PR 审查补修
 
 PR #2 在 `56b3d5a` 的自动审查指出两项问题，已各自复现并补修。保存已有知识版本和同键重放不再绕过当前权限：首次保存、已有版本及缓存响应均以准确 manifest 核对来源向量、修订、关联来源、端点和证据；拒绝访问不改写历史快照。证据缺口任务只列出未被用户移除且 stale/broken 的关联，正常关联不会占用 200 项列表配额。
