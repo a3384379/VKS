@@ -3,257 +3,313 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Visual Knowledge Studio 1.0 API Design Blueprint
   version: 1.0.0-design
-  description: |
-    设计契约，不代表服务已经实现。API 前缀 /api/v1。
-    固定分析集合/发布版；entity_revision 不可变；草稿通过 analysis_set_entity 选择修订。
-    review_status、validity_status、evidence_kind 和 causal_basis 独立。
-    OAuth bearer token 由已配置身份提供方签发；x-required-scopes 由服务端强制执行。
-    所有异步任务以至少一次投递建模。Idempotency-Key 相同但 payload 不同返回 409。
+  description: Personal project knowledge API. Saves are directly usable; snapshots
+    preserve exact revisions.
 servers:
-  - url: /api/v1
+- url: /api/v1
 security:
-  - BearerAuth: []
+- BearerAuth: []
 tags:
-  - name: Projects
-  - name: Imports
-  - name: Analysis
-  - name: Knowledge
-  - name: Scenarios
-  - name: Reviews
-  - name: Releases
-  - name: Search
+- name: Projects
+- name: Imports
+- name: Analysis
+- name: Knowledge
+- name: Scenarios
+- name: Releases
+- name: Search
 paths:
   /projects:
     get:
       operationId: listProjects
-      tags: [Projects]
+      tags:
+      - Projects
       summary: 当前身份可见项目列表
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           description: 游标分页项目
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ProjectListResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
     post:
       operationId: createProject
-      tags: [Projects]
+      tags:
+      - Projects
       summary: 新建私有项目
-      x-required-scopes: [project:manage]
+      x-required-scopes:
+      - project:manage
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/CreateProjectRequest'}
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
       responses:
         '201':
           description: 项目创建成功
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ProjectResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     get:
       operationId: getProject
-      tags: [Projects]
+      tags:
+      - Projects
       summary: 项目详情
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       responses:
         '200':
           description: 项目与行版本
           headers:
-            ETag: {$ref: '#/components/headers/ETag'}
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ProjectResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
     patch:
       operationId: updateProject
-      tags: [Projects]
+      tags:
+      - Projects
       summary: 乐观锁更新项目
-      x-required-scopes: [project:manage]
+      x-required-scopes:
+      - project:manage
       parameters:
-        - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IfMatch'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/UpdateProjectRequest'}
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
       responses:
         '200':
           description: 项目更新完成
           headers:
-            ETag: {$ref: '#/components/headers/ETag'}
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ProjectResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/members:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     get:
       operationId: listMembers
-      tags: [Projects]
+      tags:
+      - Projects
       summary: 项目成员与角色
-      x-required-scopes: [project:manage]
+      x-required-scopes:
+      - project:manage
       responses:
         '200':
           description: 成员列表
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/MemberListResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/MemberListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
     put:
       operationId: setProjectMember
-      tags: [Projects]
+      tags:
+      - Projects
       summary: 设置单个成员权限
       description: 不能移除最后管理员；不能授予调用人无权授予的角色。
-      x-required-scopes: [project:manage]
+      x-required-scopes:
+      - project:manage
       parameters:
-        - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IfMatch'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/Member'}
+            schema:
+              $ref: '#/components/schemas/Member'
       responses:
         '200':
           description: 已更新成员
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/MemberListResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/MemberListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/upload-sessions:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     post:
       operationId: createUploadSession
-      tags: [Imports]
+      tags:
+      - Imports
       summary: 申请受控上传会话
-      x-required-scopes: [source:import]
+      x-required-scopes:
+      - source:import
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/UploadRequest'}
+            schema:
+              $ref: '#/components/schemas/UploadRequest'
       responses:
         '201':
           description: 上传句柄；URL 只在短时效内有效，不进入审计正文
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/UploadResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/imports:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     post:
       operationId: importArtifacts
-      tags: [Imports]
+      tags:
+      - Imports
       summary: 校验制品并导入草稿
       description: 服务端确认上传完整、hash 一致、安全扫描通过后创建任务；不执行导入源码。
-      x-required-scopes: [source:import]
+      x-required-scopes:
+      - source:import
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/ImportRequest'}
+            schema:
+              $ref: '#/components/schemas/ImportRequest'
       responses:
-        '202': {$ref: '#/components/responses/JobAccepted'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/imports/{import_id}/report:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
-      - name: import_id
-        in: path
-        required: true
-        schema: {$ref: '#/components/schemas/UUID'}
+    - $ref: '#/components/parameters/ProjectId'
+    - name: import_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
     get:
       operationId: getImportReport
-      tags: [Imports]
+      tags:
+      - Imports
       summary: 导入结果与跳过原因
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       responses:
         '200':
           description: 导入报告
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ImportReportResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/ImportReportResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/analysis-sets:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     post:
       operationId: createAnalysisSet
-      tags: [Analysis]
+      tags:
+      - Analysis
       summary: 创建来源固定的草稿分析集合
       description: 来源版本向量固定。草稿实体修订选择由 analysis_set_entity 维护，不覆盖不可变 entity_revision。
-      x-required-scopes: [analysis:run]
+      x-required-scopes:
+      - analysis:run
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/CreateAnalysisSetRequest'}
+            schema:
+              $ref: '#/components/schemas/CreateAnalysisSetRequest'
       responses:
         '201':
           description: 新分析集合
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/AnalysisSetResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/AnalysisSetResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /analysis-sets/{analysis_set_id}/jobs:
     parameters:
-      - $ref: '#/components/parameters/AnalysisSetId'
+    - $ref: '#/components/parameters/AnalysisSetId'
     post:
       operationId: createAnalysisJob
-      tags: [Analysis]
+      tags:
+      - Analysis
       summary: 启动批准的分析/关联/差异任务
-      x-required-scopes: [analysis:run]
+      x-required-scopes:
+      - analysis:run
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/CreateJobRequest'}
+            schema:
+              $ref: '#/components/schemas/CreateJobRequest'
       responses:
-        '202': {$ref: '#/components/responses/JobAccepted'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /jobs/{job_id}:
     parameters:
-      - $ref: '#/components/parameters/JobId'
+    - $ref: '#/components/parameters/JobId'
     get:
       operationId: getJob
-      tags: [Analysis]
+      tags:
+      - Analysis
       summary: 查询任务，不把 partial 当状态
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       responses:
         '200':
           description: 任务状态与完整度
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/JobResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /jobs/{job_id}/cancel:
     parameters:
-      - $ref: '#/components/parameters/JobId'
+    - $ref: '#/components/parameters/JobId'
     post:
       operationId: cancelJob
-      tags: [Analysis]
+      tags:
+      - Analysis
       summary: 任务拥有者或管理员请求协作取消
-      description: 基础 knowledge:read 后，拥有者必须有该 job.kind 的原发起 scope；管理员必须有 project:manage。不能统一要求 analysis:run 阻止导入/采集拥有者取消。
-      x-required-scopes: [knowledge:read]
+      description: 基础 knowledge:read 后，拥有者必须有该 job.kind 的原发起 scope；管理员必须有 project:manage。不能统一要求
+        analysis:run 阻止导入/采集拥有者取消。
+      x-required-scopes:
+      - knowledge:read
       x-cancel-authorization:
         owner_requires_original_job_scope: true
         project_admin_scope: project:manage
@@ -273,428 +329,451 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [reason]
+              required:
+              - reason
               properties:
-                reason: {type: string, minLength: 1, maxLength: 500}
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
       responses:
         '200':
           description: 取消已接受或任务已终止；不承诺撤销既有外部动作
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/JobResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/pages:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     get:
       operationId: listUiPages
-      tags: [Knowledge]
+      tags:
+      - Knowledge
       summary: 发布版中的页面和状态目录
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       parameters:
-        - $ref: '#/components/parameters/ReleaseQuery'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/ReleaseQuery'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           description: 页面状态列表
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/EntityListResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/EntityListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /actions/{action_id}/context:
     parameters:
-      - name: action_id
-        in: path
-        required: true
-        schema: {$ref: '#/components/schemas/UUID'}
+    - name: action_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
     get:
       operationId: getActionContext
-      tags: [Knowledge]
+      tags:
+      - Knowledge
       summary: 操作关联的业务技术上下文
-      description: release_id 与 analysis_set_id 必须且只能指定一个；草稿还需 knowledge:edit 权限。两者都传或都不传返回 422。
-      x-required-scopes: [knowledge:read]
+      description: release_id 与 analysis_set_id 必须且只能指定一个；草稿还需 knowledge:edit 权限。两者都传或都不传返回
+        422。
+      x-required-scopes:
+      - knowledge:read
       parameters:
-        - name: relation_policy
-          in: query
-          description: 默认仅展示confirmed+valid；candidate与review分别查看候选及失效关系，不改变审核或因果字段。
-          schema: {type: string, enum: [trusted, candidate, review], default: trusted}
-        - name: release_id
-          in: query
-          schema: {$ref: '#/components/schemas/UUID'}
-        - name: analysis_set_id
-          in: query
-          schema: {$ref: '#/components/schemas/UUID'}
-        - name: depth
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 3, default: 2}
+      - name: relation_policy
+        in: query
+        description: 按关联有效性筛选
+        schema:
+          type: string
+          enum:
+          - valid
+          - outdated
+          - all
+          default: valid
+      - name: release_id
+        in: query
+        schema:
+          $ref: '#/components/schemas/UUID'
+      - name: analysis_set_id
+        in: query
+        schema:
+          $ref: '#/components/schemas/UUID'
+      - name: depth
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 3
+          default: 2
       responses:
         '200':
           description: 关联、证据、因果依据和未知项
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ContextResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/ContextResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /entities/{entity_id}/relations:
     parameters:
-      - name: entity_id
-        in: path
-        required: true
-        schema: {$ref: '#/components/schemas/UUID'}
+    - name: entity_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
     get:
       operationId: getEntityRelations
-      tags: [Knowledge]
+      tags:
+      - Knowledge
       summary: 限深度局部关系图
       description: release_id 与 analysis_set_id 必须且只能指定一个；草稿还需 knowledge:edit 权限。
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       parameters:
-        - name: release_id
-          in: query
-          schema: {$ref: '#/components/schemas/UUID'}
-        - name: analysis_set_id
-          in: query
-          schema: {$ref: '#/components/schemas/UUID'}
-        - name: depth
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 3, default: 1}
-        - name: max_nodes
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+      - name: release_id
+        in: query
+        schema:
+          $ref: '#/components/schemas/UUID'
+      - name: analysis_set_id
+        in: query
+        schema:
+          $ref: '#/components/schemas/UUID'
+      - name: depth
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 3
+          default: 1
+      - name: max_nodes
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
       responses:
         '200':
           description: 受限图与截断标记
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/GraphResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/GraphResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/scenarios:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     post:
       operationId: createScenario
-      tags: [Scenarios]
+      tags:
+      - Scenarios
       summary: 创建场景逻辑身份与首个不可变修订
-      x-required-scopes: [knowledge:edit]
+      x-required-scopes:
+      - knowledge:edit
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: './scenario.schema.json'}
+            schema:
+              $ref: ./scenario.schema.json
       responses:
         '201':
           description: 场景与修订
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ScenarioResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/ScenarioResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /scenarios/{scenario_id}/revisions:
     parameters:
-      - $ref: '#/components/parameters/ScenarioId'
+    - $ref: '#/components/parameters/ScenarioId'
     post:
       operationId: createScenarioRevision
-      tags: [Scenarios]
+      tags:
+      - Scenarios
       summary: 新建场景修订，不覆盖历史步骤
-      x-required-scopes: [knowledge:edit]
+      x-required-scopes:
+      - knowledge:edit
       parameters:
-        - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IfMatch'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: './scenario.schema.json'}
+            schema:
+              $ref: ./scenario.schema.json
       responses:
         '201':
           description: 新不可变修订
           headers:
-            ETag: {$ref: '#/components/headers/ETag'}
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ScenarioResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/ScenarioResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /scenarios/{scenario_id}/capture:
     parameters:
-      - $ref: '#/components/parameters/ScenarioId'
+    - $ref: '#/components/parameters/ScenarioId'
     post:
       operationId: requestCapture
-      tags: [Scenarios]
+      tags:
+      - Scenarios
       summary: 在授权环境执行指定场景修订
-      x-required-scopes: [capture:run]
+      x-required-scopes:
+      - capture:run
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/CaptureRequest'}
+            schema:
+              $ref: '#/components/schemas/CaptureRequest'
       responses:
         '202':
-          description: 已入队或仍需审批；approval_required 不运行浏览器
+          description: 采集已入队，执行当前固定配置
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/CaptureRequestResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/CaptureRequestResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /documents/{document_id}/revisions/{revision_id}:
     parameters:
-      - $ref: '#/components/parameters/DocumentId'
-      - name: revision_id
-        in: path
-        required: true
-        schema: {$ref: '#/components/schemas/UUID'}
+    - $ref: '#/components/parameters/DocumentId'
+    - name: revision_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
     get:
       operationId: getDocumentRevision
-      tags: [Knowledge]
+      tags:
+      - Knowledge
       summary: 读取不可变文档修订
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       responses:
         '200':
           description: Markdown、章节与源引用
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/DocumentResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /documents/{document_id}/draft:
     parameters:
-      - $ref: '#/components/parameters/DocumentId'
+    - $ref: '#/components/parameters/DocumentId'
     put:
       operationId: saveDocumentDraft
-      tags: [Knowledge]
+      tags:
+      - Knowledge
       summary: 新建文档修订并切换草稿选择
       description: 不原地修改 entity_revision；不回写导入仓库文件。
-      x-required-scopes: [knowledge:edit]
+      x-required-scopes:
+      - knowledge:edit
       parameters:
-        - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IfMatch'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/DocumentDraftRequest'}
+            schema:
+              $ref: '#/components/schemas/DocumentDraftRequest'
       responses:
         '200':
           description: 新修订与草稿行版本
           headers:
-            ETag: {$ref: '#/components/headers/ETag'}
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/DocumentResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /analysis-sets/{analysis_set_id}/link-candidates:
     parameters:
-      - $ref: '#/components/parameters/AnalysisSetId'
+    - $ref: '#/components/parameters/AnalysisSetId'
     get:
       operationId: listLinkCandidates
-      tags: [Reviews]
+      tags:
+      - Reviews
       summary: 候选关系及证据清单
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           description: 候选关系
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/RelationListResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
-  /relations/{relation_id}/review:
-    parameters:
-      - name: relation_id
-        in: path
-        required: true
-        schema: {$ref: '#/components/schemas/UUID'}
-    post:
-      operationId: reviewRelation
-      tags: [Reviews]
-      summary: 人员确认、拒绝或重新打开关系
-      description: 只改变 review_status；不自动清除 stale，也不把人工确认变成运行因果证据。
-      x-required-scopes: [links:review]
-      x-human-confirmation: true
-      parameters:
-        - $ref: '#/components/parameters/IfMatch'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/ReviewRequest'}
-      responses:
-        '200':
-          description: 决策与保留的独立有效性状态
-          headers:
-            ETag: {$ref: '#/components/headers/ETag'}
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ReviewResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
-  /projects/{project_id}/release-candidates:
-    parameters:
-      - $ref: '#/components/parameters/ProjectId'
-    post:
-      operationId: requestRelease
-      tags: [Releases]
-      summary: 创建发布预检和人工审核请求
-      description: 对应 MCP request_release，绝不直接发布。
-      x-required-scopes: [links:propose]
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/ReleaseCandidateRequest'}
-      responses:
-        '202':
-          description: 候选与审核入口
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ReleaseRequestResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
-  /release-candidates/{candidate_id}/publish:
-    parameters:
-      - name: candidate_id
-        in: path
-        required: true
-        schema: {$ref: '#/components/schemas/UUID'}
-    post:
-      operationId: publishRelease
-      tags: [Releases]
-      summary: 人员确认后原子发布固定 manifest
-      description: 拒绝普通 AI 服务身份；校验预检 hash、审批记录和当前行版本，任何变更需重新预检。
-      x-required-scopes: [release:publish]
-      x-human-confirmation: true
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/IfMatch'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/PublishRequest'}
-      responses:
-        '201':
-          description: 发布版和当前发布指针在同一事务创建
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ReleaseResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/RelationListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/releases:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     get:
       operationId: listReleases
-      tags: [Releases]
+      tags:
+      - Releases
       summary: 已发布知识版本
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           description: 发布清单
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ReleaseListResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/ReleaseListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/releases/{release_id}/diff:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
-      - name: release_id
-        in: path
-        required: true
-        schema: {$ref: '#/components/schemas/UUID'}
+    - $ref: '#/components/parameters/ProjectId'
+    - name: release_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
     get:
       operationId: compareRelease
-      tags: [Releases]
+      tags:
+      - Releases
       summary: 比较发布版与目标草稿分析集合
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       parameters:
-        - name: to_analysis_set_id
-          in: query
-          required: true
-          schema: {$ref: '#/components/schemas/UUID'}
+      - name: to_analysis_set_id
+        in: query
+        required: true
+        schema:
+          $ref: '#/components/schemas/UUID'
       responses:
         '200':
           description: 已生成的变化报告；未生成时返回 409 并给出可启动任务提示
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/DiffResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/DiffResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/search:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     post:
       operationId: searchKnowledge
-      tags: [Search]
+      tags:
+      - Search
       summary: 权限过滤后的精确/全文/语义搜索
-      x-required-scopes: [knowledge:read]
+      x-required-scopes:
+      - knowledge:read
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/SearchRequest'}
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
       responses:
         '200':
           description: 含来源引用的搜索结果
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/SearchResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/questions:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     post:
       operationId: askQuestion
-      tags: [Search]
+      tags:
+      - Search
       summary: 固定版本的引证式问答
-      x-required-scopes: [knowledge:ask]
+      x-required-scopes:
+      - knowledge:ask
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/QuestionRequest'}
+            schema:
+              $ref: '#/components/schemas/QuestionRequest'
       responses:
         '200':
           description: 一次性 JSON 答案；流式接口可作为后续兼容扩展
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/AnswerResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/AnswerResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/exports:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     post:
       operationId: exportKnowledge
-      tags: [Knowledge]
+      tags:
+      - Knowledge
       summary: 导出固定发布版
-      x-required-scopes: [knowledge:export]
+      x-required-scopes:
+      - knowledge:export
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/ExportRequest'}
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
       responses:
-        '202': {$ref: '#/components/responses/JobAccepted'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/audit-events:
     parameters:
-      - $ref: '#/components/parameters/ProjectId'
+    - $ref: '#/components/parameters/ProjectId'
     get:
       operationId: listAuditEvents
-      tags: [Projects]
-      summary: 脱敏审计记录
-      x-required-scopes: [audit:read]
+      tags:
+      - Projects
+      summary: 操作记录
+      x-required-scopes:
+      - audit:read
       parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           description: 不包含源码全文、令牌或凭据的审计记录
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/AuditListResponse'}
-        default: {$ref: '#/components/responses/ErrorResponse'}
+              schema:
+                $ref: '#/components/schemas/AuditListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
 components:
   securitySchemes:
     BearerAuth:
@@ -705,760 +784,1546 @@ components:
   headers:
     ETag:
       description: 强实体标签，例如带引号的版本值；写操作必须原样放入 If-Match。
-      schema: {type: string}
+      schema:
+        type: string
   parameters:
     ProjectId:
       name: project_id
       in: path
       required: true
-      schema: {$ref: '#/components/schemas/UUID'}
+      schema:
+        $ref: '#/components/schemas/UUID'
     AnalysisSetId:
       name: analysis_set_id
       in: path
       required: true
-      schema: {$ref: '#/components/schemas/UUID'}
+      schema:
+        $ref: '#/components/schemas/UUID'
     JobId:
       name: job_id
       in: path
       required: true
-      schema: {$ref: '#/components/schemas/UUID'}
+      schema:
+        $ref: '#/components/schemas/UUID'
     ScenarioId:
       name: scenario_id
       in: path
       required: true
-      schema: {$ref: '#/components/schemas/UUID'}
+      schema:
+        $ref: '#/components/schemas/UUID'
     DocumentId:
       name: document_id
       in: path
       required: true
-      schema: {$ref: '#/components/schemas/UUID'}
+      schema:
+        $ref: '#/components/schemas/UUID'
     ReleaseQuery:
       name: release_id
       in: query
       required: true
-      schema: {$ref: '#/components/schemas/UUID'}
+      schema:
+        $ref: '#/components/schemas/UUID'
     Cursor:
       name: cursor
       in: query
-      schema: {type: string, maxLength: 256}
+      schema:
+        type: string
+        maxLength: 256
     Limit:
       name: limit
       in: query
-      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
     IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: true
       description: 同身份/项目/操作范围内唯一；同 key 不同 payload 返回 409。
-      schema: {type: string, minLength: 1, maxLength: 128}
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
     IfMatch:
       name: If-Match
       in: header
       required: true
-      schema: {type: string, minLength: 1, maxLength: 128}
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
   responses:
     JobAccepted:
-      description: 异步任务已创建；此响应不表示分析、审核或发布已经完成。
+      description: 异步任务已创建；通过任务详情查询实际执行结果。
       content:
         application/json:
-          schema: {$ref: '#/components/schemas/JobResponse'}
+          schema:
+            $ref: '#/components/schemas/JobResponse'
     ErrorResponse:
-      description: |
-        401 未认证；403 无权限；404 不存在/为防枚举隐藏；409 幂等或状态冲突；
+      description: '401 未认证；403 无权限；404 不存在/为防枚举隐藏；409 幂等或状态冲突；
+
         412 If-Match 冲突；413 容量上限；422 Schema/证据验证失败；429 配额；503 依赖暂不可用。
+
+        '
       content:
         application/json:
-          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
   schemas:
-    UUID: {type: string, format: uuid}
-    SHA256: {type: string, pattern: '^[a-f0-9]{64}$'}
+    UUID:
+      type: string
+      format: uuid
+    SHA256:
+      type: string
+      pattern: ^[a-f0-9]{64}$
     Meta:
       type: object
       additionalProperties: false
-      required: [request_id]
+      required:
+      - request_id
       properties:
-        request_id: {$ref: '#/components/schemas/UUID'}
-        analysis_set_id: {$ref: '#/components/schemas/UUID'}
-        release_id: {$ref: '#/components/schemas/UUID'}
-        next_cursor: {type: [string, 'null']}
+        request_id:
+          $ref: '#/components/schemas/UUID'
+        analysis_set_id:
+          $ref: '#/components/schemas/UUID'
+        release_id:
+          $ref: '#/components/schemas/UUID'
+        next_cursor:
+          type:
+          - string
+          - 'null'
     Error:
       type: object
       additionalProperties: false
-      required: [code, message, retryable]
+      required:
+      - code
+      - message
+      - retryable
       properties:
         code:
-          enum: [VKS_UNAUTHENTICATED, VKS_FORBIDDEN, VKS_NOT_FOUND, VKS_IDEMPOTENCY_CONFLICT, VKS_STATE_CONFLICT, VKS_VERSION_CONFLICT, VKS_LIMIT_EXCEEDED, VKS_INVALID_INPUT, VKS_INVALID_EVIDENCE, VKS_APPROVAL_REQUIRED, VKS_RATE_LIMITED, VKS_DEPENDENCY_UNAVAILABLE, VKS_INTERNAL_ERROR]
-        message: {type: string, maxLength: 2000}
-        retryable: {type: boolean}
-        details: {type: object, additionalProperties: true, description: 仅结构化诊断元信息，不回传堆栈、SQL、凭据或未授权内容}
-    ErrorResponse:
-      type: object
-      additionalProperties: false
-      required: [error, meta]
-      properties:
-        error: {$ref: '#/components/schemas/Error'}
-        meta: {$ref: '#/components/schemas/Meta'}
+          enum:
+          - VKS_UNAUTHENTICATED
+          - VKS_FORBIDDEN
+          - VKS_NOT_FOUND
+          - VKS_IDEMPOTENCY_CONFLICT
+          - VKS_STATE_CONFLICT
+          - VKS_VERSION_CONFLICT
+          - VKS_LIMIT_EXCEEDED
+          - VKS_INVALID_INPUT
+          - VKS_INVALID_EVIDENCE
+          - VKS_RATE_LIMITED
+          - VKS_DEPENDENCY_UNAVAILABLE
+          - VKS_INTERNAL_ERROR
+        message:
+          type: string
+          maxLength: 2000
+        retryable:
+          type: boolean
+        details:
+          type: object
+          additionalProperties: true
+          description: 仅结构化诊断元信息，不回传堆栈、SQL、凭据或未授权内容
     CreateProjectRequest:
       type: object
       additionalProperties: false
-      required: [key, name]
+      required:
+      - key
+      - name
       properties:
-        key: {type: string, pattern: '^[a-z][a-z0-9._-]{0,95}$'}
-        name: {type: string, minLength: 1, maxLength: 160}
-        description: {type: string, maxLength: 4000}
+        key:
+          type: string
+          pattern: ^[a-z][a-z0-9._-]{0,95}$
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        description:
+          type: string
+          maxLength: 4000
     UpdateProjectRequest:
       type: object
       additionalProperties: false
       minProperties: 1
       properties:
-        name: {type: string, minLength: 1, maxLength: 160}
-        description: {type: string, maxLength: 4000}
-        status: {enum: [active, archived]}
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        description:
+          type: string
+          maxLength: 4000
+        status:
+          enum:
+          - active
+          - archived
     Project:
       type: object
       additionalProperties: false
-      required: [id, key, name, status, row_version]
+      required:
+      - id
+      - key
+      - name
+      - status
+      - row_version
       properties:
-        id: {$ref: '#/components/schemas/UUID'}
-        key: {type: string}
-        name: {type: string}
-        description: {type: string}
-        status: {enum: [active, archived]}
-        row_version: {type: integer, minimum: 1}
-        current_release_id: {$ref: '#/components/schemas/UUID'}
+        id:
+          $ref: '#/components/schemas/UUID'
+        key:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          enum:
+          - active
+          - archived
+        row_version:
+          type: integer
+          minimum: 1
+        current_release_id:
+          $ref: '#/components/schemas/UUID'
     ProjectResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        data: {$ref: '#/components/schemas/Project'}
-        meta: {$ref: '#/components/schemas/Meta'}
+        data:
+          $ref: '#/components/schemas/Project'
+        meta:
+          $ref: '#/components/schemas/Meta'
     ProjectListResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        data: {type: array, items: {$ref: '#/components/schemas/Project'}}
-        meta: {$ref: '#/components/schemas/Meta'}
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+        meta:
+          $ref: '#/components/schemas/Meta'
     Member:
       type: object
       additionalProperties: false
-      required: [user_id, role, status]
+      required:
+      - user_id
+      - role
+      - status
       properties:
-        user_id: {$ref: '#/components/schemas/UUID'}
-        role: {enum: [viewer, editor, reviewer, maintainer, admin]}
-        status: {enum: [active, disabled]}
+        user_id:
+          $ref: '#/components/schemas/UUID'
+        role:
+          enum:
+          - viewer
+          - editor
+          - maintainer
+          - admin
+        status:
+          enum:
+          - active
+          - disabled
     MemberListResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        data: {type: array, items: {$ref: '#/components/schemas/Member'}}
-        meta: {$ref: '#/components/schemas/Meta'}
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Member'
+        meta:
+          $ref: '#/components/schemas/Meta'
     UploadRequest:
       type: object
       additionalProperties: false
-      required: [filename, size_bytes, sha256, media_type]
+      required:
+      - filename
+      - size_bytes
+      - sha256
+      - media_type
       properties:
-        filename: {type: string, minLength: 1, maxLength: 255}
-        size_bytes: {type: integer, minimum: 1, maximum: 536870912}
-        sha256: {$ref: '#/components/schemas/SHA256'}
-        media_type: {type: string, maxLength: 128}
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        size_bytes:
+          type: integer
+          minimum: 1
+          maximum: 536870912
+        sha256:
+          $ref: '#/components/schemas/SHA256'
+        media_type:
+          type: string
+          maxLength: 128
     UploadResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: object
           additionalProperties: false
-          required: [upload_session_id, artifact_id, upload_url, expires_at]
+          required:
+          - upload_session_id
+          - artifact_id
+          - upload_url
+          - expires_at
           properties:
-            upload_session_id: {$ref: '#/components/schemas/UUID'}
-            artifact_id: {$ref: '#/components/schemas/UUID'}
-            upload_url: {type: string, format: uri}
-            expires_at: {type: string, format: date-time}
+            upload_session_id:
+              $ref: '#/components/schemas/UUID'
+            artifact_id:
+              $ref: '#/components/schemas/UUID'
+            upload_url:
+              type: string
+              format: uri
+            expires_at:
+              type: string
+              format: date-time
     ImportRequest:
       type: object
       additionalProperties: false
-      required: [kind, artifact_ids]
+      required:
+      - kind
+      - artifact_ids
       properties:
-        kind: {enum: [bundle, documents, prototype]}
-        artifact_ids: {type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: {$ref: '#/components/schemas/UUID'}}
-        analysis_set_id: {$ref: '#/components/schemas/UUID'}
-        prototype_mode: {enum: [axure_html, preview_bundle, screenshot_hotspots]}
+        kind:
+          enum:
+          - bundle
+          - documents
+          - prototype
+        artifact_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/UUID'
+        analysis_set_id:
+          $ref: '#/components/schemas/UUID'
+        prototype_mode:
+          enum:
+          - axure_html
+          - preview_bundle
+          - screenshot_hotspots
       allOf:
-        - if: {properties: {kind: {const: bundle}}, required: [kind]}
-          then: {properties: {artifact_ids: {maxItems: 1}}}
-        - if: {properties: {kind: {enum: [documents, prototype]}}, required: [kind]}
-          then: {required: [analysis_set_id]}
-        - if: {properties: {kind: {const: prototype}}, required: [kind]}
-          then: {required: [prototype_mode], properties: {artifact_ids: {maxItems: 1}}}
+      - if:
+          properties:
+            kind:
+              const: bundle
+          required:
+          - kind
+        then:
+          properties:
+            artifact_ids:
+              maxItems: 1
+      - if:
+          properties:
+            kind:
+              enum:
+              - documents
+              - prototype
+          required:
+          - kind
+        then:
+          required:
+          - analysis_set_id
+      - if:
+          properties:
+            kind:
+              const: prototype
+          required:
+          - kind
+        then:
+          required:
+          - prototype_mode
+          properties:
+            artifact_ids:
+              maxItems: 1
     ImportReportResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: object
           additionalProperties: false
-          required: [import_id, accepted_count, rejected_count, skipped, completeness]
+          required:
+          - import_id
+          - accepted_count
+          - rejected_count
+          - skipped
+          - completeness
           properties:
-            import_id: {$ref: '#/components/schemas/UUID'}
-            accepted_count: {type: integer, minimum: 0}
-            rejected_count: {type: integer, minimum: 0}
-            completeness: {enum: [none, partial, complete]}
-            snapshot_ids: {type: array, items: {$ref: '#/components/schemas/UUID'}}
+            import_id:
+              $ref: '#/components/schemas/UUID'
+            accepted_count:
+              type: integer
+              minimum: 0
+            rejected_count:
+              type: integer
+              minimum: 0
+            completeness:
+              enum:
+              - none
+              - partial
+              - complete
+            snapshot_ids:
+              type: array
+              items:
+                $ref: '#/components/schemas/UUID'
             skipped:
               type: array
               items:
                 type: object
                 additionalProperties: false
-                required: [relative_path, reason_code]
+                required:
+                - relative_path
+                - reason_code
                 properties:
-                  relative_path: {type: string}
-                  reason_code: {enum: [POLICY_EXCLUDED, TOO_LARGE, UNSUPPORTED, INVALID_ENCODING, UNSAFE_PATH, SENSITIVE_CONTENT, HASH_MISMATCH]}
+                  relative_path:
+                    type: string
+                  reason_code:
+                    enum:
+                    - POLICY_EXCLUDED
+                    - TOO_LARGE
+                    - UNSUPPORTED
+                    - INVALID_ENCODING
+                    - UNSAFE_PATH
+                    - SENSITIVE_CONTENT
+                    - HASH_MISMATCH
     SourceVersion:
       type: object
       additionalProperties: false
-      required: [source_snapshot_id, role, provider, content_sha256]
+      required:
+      - source_snapshot_id
+      - role
+      - provider
+      - content_sha256
       properties:
-        source_snapshot_id: {$ref: '#/components/schemas/UUID'}
-        role: {type: string, maxLength: 96}
-        provider: {enum: [git, svn, local]}
-        provider_revision: {type: string, maxLength: 128}
-        content_sha256: {$ref: '#/components/schemas/SHA256'}
-        deployment_id: {type: string, maxLength: 128}
+        source_snapshot_id:
+          $ref: '#/components/schemas/UUID'
+        role:
+          type: string
+          maxLength: 96
+        provider:
+          enum:
+          - git
+          - svn
+          - local
+        provider_revision:
+          type: string
+          maxLength: 128
+        content_sha256:
+          $ref: '#/components/schemas/SHA256'
+        deployment_id:
+          type: string
+          maxLength: 128
     CreateAnalysisSetRequest:
       type: object
       additionalProperties: false
-      required: [name, sources, ruleset_version]
+      required:
+      - name
+      - sources
+      - ruleset_version
       properties:
-        name: {type: string, minLength: 1, maxLength: 160}
-        sources: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/SourceVersion'}}
-        ruleset_version: {type: string, minLength: 1, maxLength: 96}
-    EntitySelection:
-      type: object
-      additionalProperties: false
-      required: [entity_id, entity_revision_id]
-      description: analysis_set_entity 的选择映射，草稿可切换，历史修订不可覆盖。
-      properties:
-        entity_id: {$ref: '#/components/schemas/UUID'}
-        entity_revision_id: {$ref: '#/components/schemas/UUID'}
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/SourceVersion'
+        ruleset_version:
+          type: string
+          minLength: 1
+          maxLength: 96
     AnalysisSet:
       type: object
       additionalProperties: false
-      required: [id, project_id, state, sources, ruleset_version, selection_version, runtime_alignment]
+      required:
+      - id
+      - project_id
+      - state
+      - sources
+      - ruleset_version
+      - selection_version
+      - runtime_alignment
       properties:
-        id: {$ref: '#/components/schemas/UUID'}
-        project_id: {$ref: '#/components/schemas/UUID'}
-        state: {enum: [draft, indexing, ready_for_review, frozen, archived]}
-        sources: {type: array, items: {$ref: '#/components/schemas/SourceVersion'}}
-        ruleset_version: {type: string}
-        selection_version: {type: integer, minimum: 1}
-        runtime_alignment: {enum: [unknown, matched, mismatched]}
+        id:
+          $ref: '#/components/schemas/UUID'
+        project_id:
+          $ref: '#/components/schemas/UUID'
+        state:
+          enum:
+          - draft
+          - indexing
+          - frozen
+          - archived
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceVersion'
+        ruleset_version:
+          type: string
+        selection_version:
+          type: integer
+          minimum: 1
+        runtime_alignment:
+          enum:
+          - unknown
+          - matched
+          - mismatched
     AnalysisSetResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        data: {$ref: '#/components/schemas/AnalysisSet'}
-        meta: {$ref: '#/components/schemas/Meta'}
+        data:
+          $ref: '#/components/schemas/AnalysisSet'
+        meta:
+          $ref: '#/components/schemas/Meta'
     CreateJobRequest:
       type: object
       additionalProperties: false
-      required: [kind]
+      required:
+      - kind
       properties:
-        kind: {enum: [index, generate_documents, suggest_links, detect_drift]}
-        analyzer_profile: {enum: [java-spring-mybatis-v1, frontend-web-v1, documents-v1, combined-v1]}
-        from_release_id: {$ref: '#/components/schemas/UUID'}
+        kind:
+          enum:
+          - index
+          - generate_documents
+          - suggest_links
+          - detect_drift
+        analyzer_profile:
+          enum:
+          - java-spring-mybatis-v1
+          - frontend-web-v1
+          - documents-v1
+          - combined-v1
+        from_release_id:
+          $ref: '#/components/schemas/UUID'
       allOf:
-        - if: {properties: {kind: {const: index}}, required: [kind]}
-          then: {required: [analyzer_profile]}
-        - if: {properties: {kind: {const: detect_drift}}, required: [kind]}
-          then: {required: [from_release_id]}
+      - if:
+          properties:
+            kind:
+              const: index
+          required:
+          - kind
+        then:
+          required:
+          - analyzer_profile
+      - if:
+          properties:
+            kind:
+              const: detect_drift
+          required:
+          - kind
+        then:
+          required:
+          - from_release_id
     Job:
       type: object
       additionalProperties: false
-      required: [id, project_id, kind, state, progress, completeness, stage, attempt, created_at]
+      required:
+      - id
+      - project_id
+      - kind
+      - state
+      - progress
+      - completeness
+      - stage
+      - attempt
+      - created_at
       properties:
-        id: {$ref: '#/components/schemas/UUID'}
-        project_id: {$ref: '#/components/schemas/UUID'}
-        kind: {enum: [import, index, capture, generate_documents, suggest_links, detect_drift, release_precheck, export]}
-        state: {enum: [queued, running, retry_wait, succeeded, failed, cancelling, cancelled]}
-        completeness: {enum: [none, partial, complete]}
-        progress: {type: integer, minimum: 0, maximum: 100}
-        stage: {type: string, maxLength: 96}
-        attempt: {type: integer, minimum: 0}
-        created_at: {type: string, format: date-time}
-        finished_at: {type: string, format: date-time}
-        result_refs: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/ResourceRef'}}
-        error: {$ref: '#/components/schemas/Error'}
+        id:
+          $ref: '#/components/schemas/UUID'
+        project_id:
+          $ref: '#/components/schemas/UUID'
+        kind:
+          enum:
+          - import
+          - index
+          - capture
+          - generate_documents
+          - suggest_links
+          - detect_drift
+          - release_precheck
+          - export
+        state:
+          enum:
+          - queued
+          - running
+          - retry_wait
+          - succeeded
+          - failed
+          - cancelling
+          - cancelled
+        completeness:
+          enum:
+          - none
+          - partial
+          - complete
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        stage:
+          type: string
+          maxLength: 96
+        attempt:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        result_refs:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ResourceRef'
+        error:
+          $ref: '#/components/schemas/Error'
     JobResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        data: {$ref: '#/components/schemas/Job'}
-        meta: {$ref: '#/components/schemas/Meta'}
+        data:
+          $ref: '#/components/schemas/Job'
+        meta:
+          $ref: '#/components/schemas/Meta'
     ResourceRef:
       type: object
       additionalProperties: false
-      required: [kind, id]
+      required:
+      - kind
+      - id
       properties:
-        kind: {enum: [artifact, analysis_set, scenario, relation, review_batch, release_candidate, release, export]}
-        id: {$ref: '#/components/schemas/UUID'}
+        kind:
+          enum:
+          - artifact
+          - analysis_set
+          - scenario
+          - relation
+          - release
+          - export
+        id:
+          $ref: '#/components/schemas/UUID'
     EntityRef:
       type: object
       additionalProperties: false
-      required: [entity_id, entity_revision_id, type, name, content_sha256, schema_version]
+      required:
+      - entity_id
+      - entity_revision_id
+      - type
+      - name
+      - content_sha256
+      - schema_version
       properties:
-        entity_id: {$ref: '#/components/schemas/UUID'}
-        entity_revision_id: {$ref: '#/components/schemas/UUID'}
-        type: {enum: [page, action, scenario, api, symbol, sql, table, document, section, rule, service]}
-        name: {type: string, maxLength: 500}
+        entity_id:
+          $ref: '#/components/schemas/UUID'
+        entity_revision_id:
+          $ref: '#/components/schemas/UUID'
+        type:
+          enum:
+          - page
+          - action
+          - scenario
+          - api
+          - symbol
+          - sql
+          - table
+          - document
+          - section
+          - rule
+          - service
+        name:
+          type: string
+          maxLength: 500
         content_sha256:
           $ref: '#/components/schemas/SHA256'
           description: 完整规范修订载荷摘要，包含artifact来源身份、locator、metadata、正文及schema版本；不是正文摘要。
         semantic_content_sha256:
           $ref: '#/components/schemas/SHA256'
           description: 可选的语义内容指纹，仅用于移动识别与版本化解析缓存，不用于复用带旧来源定位的修订。
-        schema_version: {type: string, maxLength: 40}
+        schema_version:
+          type: string
+          maxLength: 40
     ApiEndpoint:
       type: object
       additionalProperties: false
-      required: [entity_revision_id, service_key, method, normalized_route, condition_fingerprint]
+      required:
+      - entity_revision_id
+      - service_key
+      - method
+      - normalized_route
+      - condition_fingerprint
       description: 唯一键包含服务、HTTP方法、规范路径和条件指纹；params/headers/consumes 等不能被路径合并丢失。
       properties:
-        entity_revision_id: {$ref: '#/components/schemas/UUID'}
-        service_key: {type: string}
-        method: {enum: [GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, TRACE]}
-        normalized_route: {type: string, minLength: 1, maxLength: 2048}
-        condition_fingerprint: {$ref: '#/components/schemas/SHA256'}
+        entity_revision_id:
+          $ref: '#/components/schemas/UUID'
+        service_key:
+          type: string
+        method:
+          enum:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+          - OPTIONS
+          - HEAD
+          - TRACE
+        normalized_route:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        condition_fingerprint:
+          $ref: '#/components/schemas/SHA256'
         conditions:
           type: object
           additionalProperties: false
           properties:
-            params: {type: array, items: {type: string}}
-            headers: {type: array, items: {type: string}}
-            consumes: {type: array, items: {type: string}}
-            produces: {type: array, items: {type: string}}
-        operation_id: {type: string}
-        resolution_state: {enum: [resolved, ambiguous, external, dynamic, unsupported]}
+            params:
+              type: array
+              items:
+                type: string
+            headers:
+              type: array
+              items:
+                type: string
+            consumes:
+              type: array
+              items:
+                type: string
+            produces:
+              type: array
+              items:
+                type: string
+        operation_id:
+          type: string
+        resolution_state:
+          enum:
+          - resolved
+          - ambiguous
+          - external
+          - dynamic
+          - unsupported
     Relation:
       type: object
       additionalProperties: false
-      required: [id, analysis_set_id, from_revision_id, to_revision_id, relation_type, review_status, validity_status, causal_basis, evidence_ids, row_version]
+      required:
+      - id
+      - analysis_set_id
+      - from_revision_id
+      - to_revision_id
+      - relation_type
+      - validity_status
+      - causal_basis
+      - evidence_ids
+      - row_version
+      - excluded
       properties:
-        id: {$ref: '#/components/schemas/UUID'}
-        analysis_set_id: {$ref: '#/components/schemas/UUID'}
-        from_revision_id: {$ref: '#/components/schemas/UUID'}
-        to_revision_id: {$ref: '#/components/schemas/UUID'}
-        relation_type: {enum: [contains, renders, handler_of, may_call, observed_during, confirmed_trigger, implements, maps_to_sql, reads_table, writes_table, documents, depends_on, supersedes]}
-        review_status: {enum: [candidate, confirmed, rejected]}
-        validity_status: {enum: [valid, stale, broken, obsolete]}
-        causal_basis: {enum: [not_established, temporal_association, static_potential, correlated_runtime]}
-        evidence_ids: {type: array, minItems: 1, items: {$ref: '#/components/schemas/UUID'}}
-        causal_evidence_ids: {type: array, items: {$ref: '#/components/schemas/UUID'}}
-        reason: {type: string, maxLength: 4000}
-        row_version: {type: integer, minimum: 1}
+        id:
+          $ref: '#/components/schemas/UUID'
+        analysis_set_id:
+          $ref: '#/components/schemas/UUID'
+        from_revision_id:
+          $ref: '#/components/schemas/UUID'
+        to_revision_id:
+          $ref: '#/components/schemas/UUID'
+        relation_type:
+          enum:
+          - contains
+          - renders
+          - handler_of
+          - may_call
+          - observed_during
+          - confirmed_trigger
+          - implements
+          - maps_to_sql
+          - reads_table
+          - writes_table
+          - documents
+          - depends_on
+          - supersedes
+        validity_status:
+          enum:
+          - valid
+          - stale
+          - broken
+          - obsolete
+        causal_basis:
+          enum:
+          - not_established
+          - temporal_association
+          - static_potential
+          - correlated_runtime
+        evidence_ids:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/UUID'
+        causal_evidence_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/UUID'
+        reason:
+          type: string
+          maxLength: 4000
+        row_version:
+          type: integer
+          minimum: 1
+        excluded:
+          type: boolean
     Evidence:
       type: object
       additionalProperties: false
-      required: [id, evidence_kind, artifact_id, content_sha256, locator, captured_at, redaction_version]
+      required:
+      - id
+      - evidence_kind
+      - artifact_id
+      - content_sha256
+      - locator
+      - captured_at
       properties:
-        id: {$ref: '#/components/schemas/UUID'}
-        evidence_kind: {enum: [manual, semantic, static, observed]}
-        artifact_id: {$ref: '#/components/schemas/UUID'}
-        content_sha256: {$ref: '#/components/schemas/SHA256'}
+        id:
+          $ref: '#/components/schemas/UUID'
+        evidence_kind:
+          enum:
+          - manual
+          - semantic
+          - static
+          - observed
+        artifact_id:
+          $ref: '#/components/schemas/UUID'
+        content_sha256:
+          $ref: '#/components/schemas/SHA256'
         locator:
           type: object
           additionalProperties: false
-          required: [relative_path]
+          required:
+          - relative_path
           properties:
-            relative_path: {type: string}
-            line_start: {type: integer, minimum: 1}
-            line_end: {type: integer, minimum: 1}
-            step_key: {type: string}
-            request_id: {type: string}
-            trace_id: {type: string}
-        excerpt: {type: string, maxLength: 30000}
-        extractor_version: {type: string}
-        captured_at: {type: string, format: date-time}
-        redaction_version: {type: string}
+            relative_path:
+              type: string
+            line_start:
+              type: integer
+              minimum: 1
+            line_end:
+              type: integer
+              minimum: 1
+            step_key:
+              type: string
+            request_id:
+              type: string
+            trace_id:
+              type: string
+        excerpt:
+          type: string
+          maxLength: 30000
+        extractor_version:
+          type: string
+        captured_at:
+          type: string
+          format: date-time
     ContextResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: object
           additionalProperties: false
-          required: [project_id, analysis_set_id, baseline_kind, action, api_endpoints, entities, relations, evidence, unknowns, runtime_alignment]
+          required:
+          - project_id
+          - analysis_set_id
+          - baseline_kind
+          - action
+          - api_endpoints
+          - entities
+          - relations
+          - evidence
+          - unknowns
+          - runtime_alignment
           properties:
-            project_id: {$ref: '#/components/schemas/UUID'}
-            analysis_set_id: {$ref: '#/components/schemas/UUID'}
-            baseline_kind: {enum: [published, draft]}
-            release_id: {$ref: '#/components/schemas/UUID'}
-            action: {$ref: '#/components/schemas/EntityRef'}
-            api_endpoints: {type: array, items: {$ref: '#/components/schemas/ApiEndpoint'}}
-            entities: {type: array, items: {$ref: '#/components/schemas/EntityRef'}}
-            relations: {type: array, items: {$ref: '#/components/schemas/Relation'}}
-            evidence: {type: array, items: {$ref: '#/components/schemas/Evidence'}}
-            unknowns: {type: array, items: {type: string, maxLength: 1000}}
-            runtime_alignment: {enum: [unknown, matched, mismatched]}
+            project_id:
+              $ref: '#/components/schemas/UUID'
+            analysis_set_id:
+              $ref: '#/components/schemas/UUID'
+            baseline_kind:
+              enum:
+              - published
+              - draft
+            release_id:
+              $ref: '#/components/schemas/UUID'
+            action:
+              $ref: '#/components/schemas/EntityRef'
+            api_endpoints:
+              type: array
+              items:
+                $ref: '#/components/schemas/ApiEndpoint'
+            entities:
+              type: array
+              items:
+                $ref: '#/components/schemas/EntityRef'
+            relations:
+              type: array
+              items:
+                $ref: '#/components/schemas/Relation'
+            evidence:
+              type: array
+              items:
+                $ref: '#/components/schemas/Evidence'
+            unknowns:
+              type: array
+              items:
+                type: string
+                maxLength: 1000
+            runtime_alignment:
+              enum:
+              - unknown
+              - matched
+              - mismatched
     GraphResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: object
           additionalProperties: false
-          required: [nodes, edges, truncated, unknowns]
+          required:
+          - nodes
+          - edges
+          - truncated
+          - unknowns
           properties:
-            nodes: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/EntityRef'}}
-            edges: {type: array, items: {$ref: '#/components/schemas/Relation'}}
-            truncated: {type: boolean}
-            unknowns: {type: array, items: {type: string}}
+            nodes:
+              type: array
+              maxItems: 200
+              items:
+                $ref: '#/components/schemas/EntityRef'
+            edges:
+              type: array
+              items:
+                $ref: '#/components/schemas/Relation'
+            truncated:
+              type: boolean
+            unknowns:
+              type: array
+              items:
+                type: string
     EntityListResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        data: {type: array, items: {$ref: '#/components/schemas/EntityRef'}}
-        meta: {$ref: '#/components/schemas/Meta'}
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/EntityRef'
+        meta:
+          $ref: '#/components/schemas/Meta'
     EvidenceListResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        data: {type: array, items: {$ref: '#/components/schemas/Evidence'}}
-        meta: {$ref: '#/components/schemas/Meta'}
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Evidence'
+        meta:
+          $ref: '#/components/schemas/Meta'
     RelationListResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        data: {type: array, items: {$ref: '#/components/schemas/Relation'}}
-        meta: {$ref: '#/components/schemas/Meta'}
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Relation'
+        meta:
+          $ref: '#/components/schemas/Meta'
     ScenarioRevision:
       type: object
       additionalProperties: false
-      required: [scenario_id, scenario_revision_id, entity_revision_id, revision_no, content_sha256, created_at, dsl]
+      required:
+      - scenario_id
+      - scenario_revision_id
+      - entity_revision_id
+      - revision_no
+      - content_sha256
+      - created_at
+      - dsl
       description: scenario_revision 显式保存不可变 DSL 与步骤；scenario_step 外键指向 scenario_revision_id。
       properties:
-        scenario_id: {$ref: '#/components/schemas/UUID'}
-        scenario_revision_id: {$ref: '#/components/schemas/UUID'}
-        entity_revision_id: {$ref: '#/components/schemas/UUID'}
-        revision_no: {type: integer, minimum: 1}
+        scenario_id:
+          $ref: '#/components/schemas/UUID'
+        scenario_revision_id:
+          $ref: '#/components/schemas/UUID'
+        entity_revision_id:
+          $ref: '#/components/schemas/UUID'
+        revision_no:
+          type: integer
+          minimum: 1
         content_sha256:
           $ref: '#/components/schemas/SHA256'
           description: 完整不可变场景修订载荷摘要；不能只依据DSL正文相同而复用错误的来源定位。
-        created_at: {type: string, format: date-time}
-        dsl: {$ref: './scenario.schema.json'}
+        created_at:
+          type: string
+          format: date-time
+        dsl:
+          $ref: ./scenario.schema.json
     ScenarioResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        data: {$ref: '#/components/schemas/ScenarioRevision'}
-        meta: {$ref: '#/components/schemas/Meta'}
+        data:
+          $ref: '#/components/schemas/ScenarioRevision'
+        meta:
+          $ref: '#/components/schemas/Meta'
     CaptureRequest:
       type: object
       additionalProperties: false
-      required: [scenario_revision_id, environment_ref]
+      required:
+      - scenario_revision_id
+      - environment_ref
+      - analysis_set_id
       properties:
-        scenario_revision_id: {$ref: '#/components/schemas/UUID'}
-        environment_ref: {type: string, minLength: 1, maxLength: 96}
-        approval_ref: {$ref: '#/components/schemas/UUID'}
+        scenario_revision_id:
+          $ref: '#/components/schemas/UUID'
+        environment_ref:
+          type: string
+          minLength: 1
+          maxLength: 96
+        analysis_set_id:
+          type: string
+          format: uuid
     CaptureRequestResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
-          oneOf:
-            - type: object
-              additionalProperties: false
-              required: [decision, job]
-              properties:
-                decision: {const: accepted}
-                job: {$ref: '#/components/schemas/Job'}
-            - type: object
-              additionalProperties: false
-              required: [decision, approval_url, reason]
-              properties:
-                decision: {const: approval_required}
-                approval_url: {type: string, format: uri-reference}
-                reason: {type: string, maxLength: 1000}
+          type: object
+          additionalProperties: false
+          required:
+          - decision
+          - job
+          properties:
+            decision:
+              const: accepted
+            job:
+              $ref: '#/components/schemas/Job'
     DocumentDraftRequest:
       type: object
       additionalProperties: false
-      required: [analysis_set_id, base_revision_id, markdown, locked_section_ids]
+      required:
+      - analysis_set_id
+      - base_revision_id
+      - markdown
+      - locked_section_ids
       properties:
-        analysis_set_id: {$ref: '#/components/schemas/UUID'}
-        base_revision_id: {$ref: '#/components/schemas/UUID'}
-        markdown: {type: string, maxLength: 1000000}
-        locked_section_ids: {type: array, uniqueItems: true, items: {$ref: '#/components/schemas/UUID'}}
+        analysis_set_id:
+          $ref: '#/components/schemas/UUID'
+        base_revision_id:
+          $ref: '#/components/schemas/UUID'
+        markdown:
+          type: string
+          maxLength: 1000000
+        locked_section_ids:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/UUID'
     DocumentResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: object
           additionalProperties: false
-          required: [document_id, entity_revision_id, content_sha256, markdown, sections]
+          required:
+          - document_id
+          - entity_revision_id
+          - content_sha256
+          - markdown
+          - sections
           properties:
-            document_id: {$ref: '#/components/schemas/UUID'}
-            entity_revision_id: {$ref: '#/components/schemas/UUID'}
-            content_sha256: {$ref: '#/components/schemas/SHA256'}
-            markdown: {type: string}
-            sections: {type: array, items: {$ref: '#/components/schemas/EntityRef'}}
-    ReviewRequest:
-      type: object
-      additionalProperties: false
-      required: [decision, reason, evidence_ids]
-      properties:
-        decision: {enum: [confirm, reject, reopen]}
-        reason: {type: string, minLength: 1, maxLength: 2000}
-        evidence_ids: {type: array, minItems: 1, maxItems: 20, uniqueItems: true, items: {$ref: '#/components/schemas/UUID'}}
-      description: 不接受 validity_status 或 causal_basis 写入；审核不自动修复过期关系，也不生成运行因果证据。
-    ReviewResponse:
-      type: object
-      additionalProperties: false
-      required: [data, meta]
-      properties:
-        meta: {$ref: '#/components/schemas/Meta'}
-        data:
-          type: object
-          additionalProperties: false
-          required: [review_decision_id, relation]
-          properties:
-            review_decision_id: {$ref: '#/components/schemas/UUID'}
-            relation: {$ref: '#/components/schemas/Relation'}
+            document_id:
+              $ref: '#/components/schemas/UUID'
+            entity_revision_id:
+              $ref: '#/components/schemas/UUID'
+            content_sha256:
+              $ref: '#/components/schemas/SHA256'
+            markdown:
+              type: string
+            sections:
+              type: array
+              items:
+                $ref: '#/components/schemas/EntityRef'
     LinkProposalResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: object
           additionalProperties: false
-          required: [review_batch_id, candidates]
+          required:
+          - candidates
           properties:
-            review_batch_id: {$ref: '#/components/schemas/UUID'}
-            candidates: {type: array, items: {$ref: '#/components/schemas/Relation'}}
-    ReleaseCandidateRequest:
-      type: object
-      additionalProperties: false
-      required: [analysis_set_id]
-      properties:
-        analysis_set_id: {$ref: '#/components/schemas/UUID'}
-        review_batch_id: {$ref: '#/components/schemas/UUID'}
-    ReleaseRequestResponse:
-      type: object
-      additionalProperties: false
-      required: [data, meta]
-      properties:
-        meta: {$ref: '#/components/schemas/Meta'}
-        data:
-          type: object
-          additionalProperties: false
-          required: [candidate_id, precheck_job, review_url, published]
-          properties:
-            candidate_id: {$ref: '#/components/schemas/UUID'}
-            precheck_job: {$ref: '#/components/schemas/Job'}
-            review_url: {type: string, format: uri-reference}
-            published: {const: false}
-    PublishRequest:
-      type: object
-      additionalProperties: false
-      required: [expected_manifest_sha256, human_confirmation_ref, change_note]
-      properties:
-        expected_manifest_sha256: {$ref: '#/components/schemas/SHA256'}
-        human_confirmation_ref: {$ref: '#/components/schemas/UUID'}
-        change_note: {type: string, minLength: 1, maxLength: 2000}
-      description: confirmation_ref 指向绑定人员身份、候选 ID、manifest hash 和时效的服务器审批记录，不能由客户端声明即生效。
+            candidates:
+              type: array
+              items:
+                $ref: '#/components/schemas/Relation'
     Release:
       type: object
       additionalProperties: false
-      required: [id, project_id, analysis_set_id, release_no, manifest_sha256, published_at, published_by]
+      required:
+      - id
+      - project_id
+      - analysis_set_id
+      - release_no
+      - manifest_sha256
+      - published_at
+      - published_by
       properties:
-        id: {$ref: '#/components/schemas/UUID'}
-        project_id: {$ref: '#/components/schemas/UUID'}
-        analysis_set_id: {$ref: '#/components/schemas/UUID'}
-        release_no: {type: string, minLength: 1, maxLength: 64}
-        manifest_sha256: {$ref: '#/components/schemas/SHA256'}
-        published_at: {type: string, format: date-time}
-        published_by: {$ref: '#/components/schemas/UUID'}
-    ReleaseResponse:
-      type: object
-      additionalProperties: false
-      required: [data, meta]
-      properties:
-        data: {$ref: '#/components/schemas/Release'}
-        meta: {$ref: '#/components/schemas/Meta'}
+        id:
+          $ref: '#/components/schemas/UUID'
+        project_id:
+          $ref: '#/components/schemas/UUID'
+        analysis_set_id:
+          $ref: '#/components/schemas/UUID'
+        release_no:
+          type: string
+          minLength: 1
+          maxLength: 64
+        manifest_sha256:
+          $ref: '#/components/schemas/SHA256'
+        published_at:
+          type: string
+          format: date-time
+        published_by:
+          $ref: '#/components/schemas/UUID'
     ReleaseListResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        data: {type: array, items: {$ref: '#/components/schemas/Release'}}
-        meta: {$ref: '#/components/schemas/Meta'}
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Release'
+        meta:
+          $ref: '#/components/schemas/Meta'
     ProjectContextResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: object
           additionalProperties: false
-          required: [project, release, sources, modules, capabilities, unknowns]
+          required:
+          - project
+          - release
+          - sources
+          - modules
+          - capabilities
+          - unknowns
           properties:
-            project: {$ref: '#/components/schemas/Project'}
-            release: {$ref: '#/components/schemas/Release'}
-            sources: {type: array, items: {$ref: '#/components/schemas/SourceVersion'}}
-            modules: {type: array, items: {$ref: '#/components/schemas/BusinessModuleRef'}}
-            capabilities: {type: array, items: {type: string}}
-            unknowns: {type: array, items: {type: string}}
+            project:
+              $ref: '#/components/schemas/Project'
+            release:
+              $ref: '#/components/schemas/Release'
+            sources:
+              type: array
+              items:
+                $ref: '#/components/schemas/SourceVersion'
+            modules:
+              type: array
+              items:
+                $ref: '#/components/schemas/BusinessModuleRef'
+            capabilities:
+              type: array
+              items:
+                type: string
+            unknowns:
+              type: array
+              items:
+                type: string
     BusinessModuleRef:
       type: object
       additionalProperties: false
-      required: [id, key, name, description, sort_order, row_version, entity_count]
+      required:
+      - id
+      - key
+      - name
+      - description
+      - sort_order
+      - row_version
+      - entity_count
       properties:
-        id: {$ref: '#/components/schemas/UUID'}
-        parent_id: {$ref: '#/components/schemas/UUID'}
-        key: {type: string, maxLength: 96}
-        name: {type: string, maxLength: 160}
-        description: {type: string, maxLength: 8000}
-        sort_order: {type: integer}
-        row_version: {type: integer, minimum: 1}
-        entity_count: {type: integer, minimum: 0}
+        id:
+          $ref: '#/components/schemas/UUID'
+        parent_id:
+          $ref: '#/components/schemas/UUID'
+        key:
+          type: string
+          maxLength: 96
+        name:
+          type: string
+          maxLength: 160
+        description:
+          type: string
+          maxLength: 8000
+        sort_order:
+          type: integer
+        row_version:
+          type: integer
+          minimum: 1
+        entity_count:
+          type: integer
+          minimum: 0
     DiffResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: object
           additionalProperties: false
-          required: [from_release_id, to_analysis_set_id, changes, impacted_relations]
+          required:
+          - from_release_id
+          - to_analysis_set_id
+          - changes
+          - impacted_relations
           properties:
-            from_release_id: {$ref: '#/components/schemas/UUID'}
-            to_analysis_set_id: {$ref: '#/components/schemas/UUID'}
+            from_release_id:
+              $ref: '#/components/schemas/UUID'
+            to_analysis_set_id:
+              $ref: '#/components/schemas/UUID'
             changes:
               type: array
               items:
                 type: object
                 additionalProperties: false
-                required: [entity_id, change_kind]
+                required:
+                - entity_id
+                - change_kind
                 properties:
-                  entity_id: {$ref: '#/components/schemas/UUID'}
-                  change_kind: {enum: [added, modified, moved, renamed, removed, ambiguous]}
-                  old_revision_id: {$ref: '#/components/schemas/UUID'}
-                  new_revision_id: {$ref: '#/components/schemas/UUID'}
-            impacted_relations: {type: array, items: {$ref: '#/components/schemas/Relation'}}
+                  entity_id:
+                    $ref: '#/components/schemas/UUID'
+                  change_kind:
+                    enum:
+                    - added
+                    - modified
+                    - moved
+                    - renamed
+                    - removed
+                    - ambiguous
+                  old_revision_id:
+                    $ref: '#/components/schemas/UUID'
+                  new_revision_id:
+                    $ref: '#/components/schemas/UUID'
+            impacted_relations:
+              type: array
+              items:
+                $ref: '#/components/schemas/Relation'
             impact_paths:
               type: array
               items:
                 type: object
                 additionalProperties: false
-                required: [changed_entity_id, impacted_entity_id, entity_ids, relation_ids, depth]
+                required:
+                - changed_entity_id
+                - impacted_entity_id
+                - entity_ids
+                - relation_ids
+                - depth
                 properties:
-                  changed_entity_id: {$ref: '#/components/schemas/UUID'}
-                  impacted_entity_id: {$ref: '#/components/schemas/UUID'}
-                  entity_ids: {type: array, items: {$ref: '#/components/schemas/UUID'}}
-                  relation_ids: {type: array, items: {$ref: '#/components/schemas/UUID'}}
-                  depth: {type: integer, minimum: 1, maximum: 3}
-            proposal_ids: {type: array, items: {$ref: '#/components/schemas/UUID'}}
-            unknowns: {type: array, items: {type: string}}
+                  changed_entity_id:
+                    $ref: '#/components/schemas/UUID'
+                  impacted_entity_id:
+                    $ref: '#/components/schemas/UUID'
+                  entity_ids:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UUID'
+                  relation_ids:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UUID'
+                  depth:
+                    type: integer
+                    minimum: 1
+                    maximum: 3
+            proposal_ids:
+              type: array
+              items:
+                $ref: '#/components/schemas/UUID'
+            unknowns:
+              type: array
+              items:
+                type: string
     SearchRequest:
       type: object
       additionalProperties: false
-      required: [release_id, query]
+      required:
+      - release_id
+      - query
       properties:
-        release_id: {$ref: '#/components/schemas/UUID'}
-        query: {type: string, minLength: 1, maxLength: 2000}
-        kinds: {type: array, uniqueItems: true, items: {enum: [page, action, scenario, api, symbol, document, section, relation, sql, table]}}
-        module_id: {$ref: '#/components/schemas/UUID'}
-        include_descendants: {type: boolean, default: true}
-        service_key: {type: string, minLength: 1, maxLength: 96}
-        limit: {type: integer, minimum: 1, maximum: 50, default: 10}
+        release_id:
+          $ref: '#/components/schemas/UUID'
+        query:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        kinds:
+          type: array
+          uniqueItems: true
+          items:
+            enum:
+            - page
+            - action
+            - scenario
+            - api
+            - symbol
+            - document
+            - section
+            - relation
+            - sql
+            - table
+        module_id:
+          $ref: '#/components/schemas/UUID'
+        include_descendants:
+          type: boolean
+          default: true
+        service_key:
+          type: string
+          minLength: 1
+          maxLength: 96
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
     SearchResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: array
           items:
             type: object
             additionalProperties: false
-            required: [entity, excerpt, evidence_ids, match_kind]
+            required:
+            - entity
+            - excerpt
+            - evidence_ids
+            - match_kind
             properties:
-              entity: {$ref: '#/components/schemas/EntityRef'}
-              excerpt: {type: string, maxLength: 3000}
-              evidence_ids: {type: array, items: {$ref: '#/components/schemas/UUID'}}
-              match_kind: {enum: [exact, fulltext, semantic, hybrid]}
+              entity:
+                $ref: '#/components/schemas/EntityRef'
+              excerpt:
+                type: string
+                maxLength: 3000
+              evidence_ids:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UUID'
+              match_kind:
+                enum:
+                - exact
+                - fulltext
+                - semantic
+                - hybrid
     QuestionRequest:
       type: object
       additionalProperties: false
-      required: [release_id, question]
+      required:
+      - release_id
+      - question
       properties:
-        release_id: {$ref: '#/components/schemas/UUID'}
-        question: {type: string, minLength: 1, maxLength: 8000}
-        action_id: {$ref: '#/components/schemas/UUID'}
+        release_id:
+          $ref: '#/components/schemas/UUID'
+        question:
+          type: string
+          minLength: 1
+          maxLength: 8000
+        action_id:
+          $ref: '#/components/schemas/UUID'
     AnswerResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: object
           additionalProperties: false
-          required: [answer, evidence_ids, unknowns, model_id]
+          required:
+          - answer
+          - evidence_ids
+          - unknowns
+          - model_id
           properties:
-            answer: {type: string}
-            evidence_ids: {type: array, items: {$ref: '#/components/schemas/UUID'}}
-            unknowns: {type: array, items: {type: string}}
-            model_id: {type: string, maxLength: 160}
+            answer:
+              type: string
+            evidence_ids:
+              type: array
+              items:
+                $ref: '#/components/schemas/UUID'
+            unknowns:
+              type: array
+              items:
+                type: string
+            model_id:
+              type: string
+              maxLength: 160
     ExportRequest:
       type: object
       additionalProperties: false
-      required: [release_id, format]
+      required:
+      - release_id
+      - format
       properties:
-        release_id: {$ref: '#/components/schemas/UUID'}
-        format: {enum: [markdown_bundle, pdf, vksbundle]}
-        include_source: {type: boolean, default: false}
+        release_id:
+          $ref: '#/components/schemas/UUID'
+        format:
+          enum:
+          - markdown_bundle
+          - pdf
+          - vksbundle
+        include_source:
+          type: boolean
+          default: false
     AuditListResponse:
       type: object
       additionalProperties: false
-      required: [data, meta]
+      required:
+      - data
+      - meta
       properties:
-        meta: {$ref: '#/components/schemas/Meta'}
+        meta:
+          $ref: '#/components/schemas/Meta'
         data:
           type: array
           items:
             type: object
             additionalProperties: false
-            required: [id, actor_id, action, resource_id, outcome, created_at]
+            required:
+            - id
+            - actor_id
+            - action
+            - resource_id
+            - outcome
+            - created_at
             properties:
-              id: {$ref: '#/components/schemas/UUID'}
-              actor_id: {$ref: '#/components/schemas/UUID'}
-              action: {type: string}
-              resource_id: {$ref: '#/components/schemas/UUID'}
-              outcome: {enum: [allowed, denied, succeeded, failed]}
-              created_at: {type: string, format: date-time}
+              id:
+                $ref: '#/components/schemas/UUID'
+              actor_id:
+                $ref: '#/components/schemas/UUID'
+              action:
+                type: string
+              resource_id:
+                $ref: '#/components/schemas/UUID'
+              outcome:
+                enum:
+                - allowed
+                - denied
+                - succeeded
+                - failed
+              created_at:
+                type: string
+                format: date-time
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - error
+      - meta
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+        meta:
+          $ref: '#/components/schemas/Meta'

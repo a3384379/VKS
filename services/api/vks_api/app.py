@@ -14,7 +14,6 @@ from sqlalchemy import text
 from .service import Service, DomainError, Actor
 from .version import VERSION
 from .schemas import *
-from . import project_profile
 
 API = "/api/v1"
 MAX_UPLOAD = 128 * 1024 * 1024
@@ -112,6 +111,16 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
                 raise DomainError("VKS_FORBIDDEN", "CSRF 校验失败，请重新登录", 403)
         return a
 
+    @app.post("/api/v2/projects/{pid}/snapshots", status_code=201)
+    def save_snapshot(
+        pid: str,
+        payload: SnapshotInput,
+        request: Request,
+        a: Actor = Depends(actor),
+        idempotency_key: str = Header(...),
+    ):
+        return envelope(request, service.save_snapshot(a, pid, payload.model_dump(), idempotency_key))
+
     @app.get("/live")
     @app.get(API + "/live")
     def live():
@@ -163,8 +172,11 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
 
     @app.get(API + "/projects")
     def list_projects(
-        request: Request, cursor: str | None = None, limit: int = Query(20, ge=1, le=100),
-        q: str | None = Query(None, max_length=128), a: Actor = Depends(actor)
+        request: Request,
+        cursor: str | None = None,
+        limit: int = Query(20, ge=1, le=100),
+        q: str | None = Query(None, max_length=128),
+        a: Actor = Depends(actor),
     ):
         rows, next_cursor = service.list_projects(a, cursor, limit, q)
         return envelope(request, rows, next_cursor=next_cursor, limit=limit)
@@ -317,13 +329,15 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         depth: int = Query(2, ge=1, le=3),
         max_nodes: int = Query(50, ge=1, le=200),
         project_id: str | None = None,
-        relation_policy: str = Query("trusted", pattern="^(trusted|candidate|review)$"),
+        relation_policy: str = Query("valid", pattern="^(valid|outdated|all)$"),
         a: Actor = Depends(actor),
     ):
         pid = service.find_entity_project(a, eid)
         if project_id and project_id != pid:
             raise DomainError("VKS_NOT_FOUND", "未找到对象", 404)
-        return envelope(request, service.action_context(a, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_policy))
+        return envelope(
+            request, service.action_context(a, pid, eid, analysis_set_id, release_id, depth, max_nodes, relation_policy)
+        )
 
     @app.get(API + "/entities/{eid}/relations")
     def graph(
@@ -395,34 +409,6 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         idempotency_key: str = Header(...),
     ):
         return envelope(request, service.propose_links(a, pid, payload.model_dump(), idempotency_key))
-
-    @app.post(API + "/relations/{rid}/review")
-    def review(
-        rid: str, payload: ReviewInput, request: Request, a: Actor = Depends(actor), if_match: str = Header(...)
-    ):
-        return envelope(request, service.review_relation(a, rid, payload.model_dump(), if_match))
-
-    @app.post(API + "/projects/{pid}/release-candidates", status_code=202)
-    def release_candidate(
-        pid: str,
-        payload: CandidateInput,
-        request: Request,
-        a: Actor = Depends(actor),
-        idempotency_key: str = Header(...),
-    ):
-        return envelope(
-            request, service.request_release(a, pid, payload.model_dump(exclude_none=True), idempotency_key)
-        )
-
-    @app.post(API + "/release-candidates/{cid}/confirm")
-    def release_confirm(cid: str, request: Request, a: Actor = Depends(actor)):
-        return envelope(request, service.confirm_release(a, cid))
-
-    @app.post(API + "/release-candidates/{cid}/publish", status_code=201)
-    def release_publish(
-        cid: str, payload: PublishInput, request: Request, a: Actor = Depends(actor), idempotency_key: str = Header(...)
-    ):
-        return envelope(request, service.publish(a, cid, payload.model_dump(), idempotency_key))
 
     @app.get(API + "/projects/{pid}/releases")
     def releases(pid: str, request: Request, a: Actor = Depends(actor)):
@@ -557,6 +543,32 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     from .project_profile import install_project_profile
 
     install_project_profile(app, service, actor, envelope, API)
+    from .journeys import install_journeys
+    from .workbench_v2 import install_workbench
+
+    install_journeys(app, service, actor, envelope)
+    install_workbench(app, service, actor, envelope)
+    from .onboarding_report import install as install_onboarding_report
+
+    install_onboarding_report(app, service, actor, envelope)
+    from .source_alignment import install_source_alignment
+
+    install_source_alignment(app, service, actor, envelope)
+    from .source_sync import install_source_sync
+
+    install_source_sync(app, service, actor, envelope)
+    from .trajectory_comparison import install_trajectory_comparison
+
+    install_trajectory_comparison(app, service, actor, envelope)
+    from .document_diff import install_document_diff
+
+    install_document_diff(app, service, actor, envelope)
+    from .knowledge_tasks import install_tasks
+
+    install_tasks(app, service, actor, envelope)
+    from .capture_proposals import install_capture_proposals
+
+    install_capture_proposals(app, service, actor, envelope)
     return app
 
 

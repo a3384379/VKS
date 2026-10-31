@@ -1,52 +1,21 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 from tempfile import TemporaryDirectory
 from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 
-from bs4 import BeautifulSoup
 
 from packages.scenario_dsl import validate_dsl
 
 from .network import NetworkDenied, NetworkPolicy, origin
-
-PII = re.compile(
-    r'(?:bearer\s+[a-z0-9._-]+|(?:api[_-]?key|access[_-]?token|password|client[_-]?secret)\s*[:=]\s*["\']?[^\s<"\']+|(?<!\d)1[3-9]\d{9}(?!\d)|(?<!\d)(?:\d[ -]?){13,19}(?!\d)|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b)',
-    re.IGNORECASE,
-)
-MASK_SELECTOR = (
-    'input,textarea,select,canvas,img,video,iframe,[data-vks-sensitive],[data-sensitive],[autocomplete="cc-number"]'
-)
 
 
 class CaptureError(ValueError):
     def __init__(self, code, message):
         self.code, self.message = code, message
         super().__init__(message)
-
-
-def redact_text(text):
-    return PII.sub("[REDACTED]", text)
-
-
-def redact_dom(html):
-    soup = BeautifulSoup(html, "html.parser")
-    for node in soup.select("script,style,iframe,object,embed,meta,link,base,canvas,img,video,audio"):
-        node.decompose()
-    for node in soup.select("input,textarea,select,[data-vks-sensitive],[data-sensitive]"):
-        node.clear()
-        node.attrs = {"data-vks-redacted": "true"}
-        node.string = "[REDACTED]"
-    for node in soup.find_all(True):
-        node.attrs = {
-            k: v
-            for k, v in node.attrs.items()
-            if k in ("role", "aria-label", "data-testid", "data-vks-page", "data-vks-action", "data-vks-redacted")
-        }
-    return redact_text(str(soup))
 
 
 @dataclass
@@ -97,32 +66,9 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
         request_headers=environment.get("allowed_request_headers", {}),
     )
     if environment.get("auth_ref") and auth is None:
-        raise CaptureError("VKS_APPROVAL_REQUIRED", "测试认证引用未由服务器解析")
+        raise CaptureError("VKS_STATE_CONFLICT", "测试认证引用未由服务器解析")
     if auth is not None and auth.origin != policy.base_origin:
-        raise CaptureError("VKS_APPROVAL_REQUIRED", "测试认证引用来源不匹配")
-    raw_redactions = set(auth.redactions) if auth else set()
-    redactions = []
-
-    def remember(values):
-        from html import escape
-        from urllib.parse import quote, quote_plus
-
-        raw_redactions.update(v for v in values if v)
-        expanded = set(raw_redactions)
-        for value in raw_redactions:
-            encoded = (escape(value), escape(value, quote=False), quote(value, safe=""), quote_plus(value, safe=""))
-            expanded.update(encoded)
-            expanded.update(re.sub(r"%[A-Fa-f0-9]{2}", lambda match: match[0].lower(), v) for v in encoded)
-        redactions[:] = sorted(expanded, key=len, reverse=True)
-        if len(redactions) > 200 or sum(map(len, redactions)) > 128 * 1024:
-            raise NetworkDenied("认证材料超过隔离会话脱敏预算")
-
-    remember([])
-
-    def mask_text(value):
-        for secret in redactions:
-            value = value.replace(secret, "[REDACTED]")
-        return redact_text(value)
+        raise CaptureError("VKS_STATE_CONFLICT", "测试认证引用来源不匹配")
 
     viewport = environment.get("viewport", {"width": 1440, "height": 900})
     if (
@@ -134,7 +80,7 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
         raise CaptureError("VKS_INVALID_INPUT", "视口超出受控范围")
     result = CaptureOutput()
     start = time.monotonic()
-    allow_write = dsl["risk_level"] == "test_write" and environment["kind"] in ("mock", "test") and dataset["synthetic"]
+    allow_write = dsl["risk_level"] == "test_write" and environment["kind"] in ("mock", "test")
     with TemporaryDirectory(prefix="vks-browser-") as browser_home, sync_playwright() as driver:
         # Page code runs in a browser with an isolated profile and receives no
         # database, broker, model, provider, or application credentials in env.
@@ -200,8 +146,6 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
                         )
                 if cancelled():
                     raise NetworkDenied("请求发送前授权已失效")
-                remember([value for name, value in request.headers.items()
-                          if name.lower() in policy.request_headers.get(origin(request.url), set())])
                 status, headers, body = policy.fetch(
                     request.url,
                     request.method,
@@ -213,11 +157,11 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
                 )
                 if auth is not None and origin(request.url) == auth.origin:
                     from .auth_registry import rotated_cookies, AuthRegistryError
+
                     try:
-                        cookies, values = rotated_cookies(getattr(headers, "set_cookies", []), request.url)
+                        cookies = rotated_cookies(getattr(headers, "set_cookies", []), request.url)
                     except AuthRegistryError:
                         raise NetworkDenied("认证响应Cookie策略不符") from None
-                    remember(values)
                     if cookies:
                         if len(context.cookies()) + len(cookies) > 100:
                             raise NetworkDenied("隔离会话Cookie数量超过限制")
@@ -232,7 +176,7 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
                         "duration_ms": round((time.monotonic() - request_started) * 1000),
                         "method": request.method,
                         "origin": origin(request.url),
-                        "path": mask_text(urlsplit(request.url).path)[:2048],
+                        "path": urlsplit(request.url).path[:2048],
                         "path_truncated": len(urlsplit(request.url).path) > 2048,
                         "status": status,
                         "body_saved": False,
@@ -281,28 +225,22 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
                 elif kind == "snapshot":
                     if len(result.snapshots) >= 20:
                         raise CaptureError("VKS_LIMIT_EXCEEDED", "单次采集最多保存20个状态快照")
-                    # Redact all inputs/media + recognized sensitive text before screenshot bytes leave the browser.
-                    dom = redact_dom(mask_text(page.content())).encode()
-                    masks = [page.locator(MASK_SELECTOR), page.get_by_text(PII)]
-                    if redactions:
-                        masks.append(page.get_by_text(re.compile("|".join(re.escape(value) for value in redactions))))
-                    png = page.screenshot(
-                        full_page=step.get("full_page", True), mask=masks, mask_color="#cbd5e1", timeout=timeout
-                    )
+                    # Capture the actual page state. Passive rendering sanitizes HTML separately.
+                    dom = page.content().encode()
+                    png = page.screenshot(full_page=step.get("full_page", True), timeout=timeout)
                     budget["capture_bytes"] += len(dom) + len(png)
                     if (
                         len(dom) > 2 * 1024 * 1024
                         or len(png) > 20 * 1024 * 1024
                         or budget["capture_bytes"] > 50 * 1024 * 1024
                     ):
-                        raise CaptureError("VKS_LIMIT_EXCEEDED", "脱敏快照超过采集体积预算")
+                        raise CaptureError("VKS_LIMIT_EXCEEDED", "页面快照超过采集体积预算")
                     result.snapshots.append(
                         {
                             "step_key": step["step_key"],
-                            "name": mask_text(step["name"]),
+                            "name": step["name"],
                             "dom": dom,
                             "png": png,
-                            "redaction_version": "vks-runner-redact-1",
                             "captured_ms": round((time.monotonic() - start) * 1000),
                             "viewport": viewport,
                         }
@@ -355,7 +293,7 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
                         "assertion_passed": True,
                         "started_ms": round((step_started - start) * 1000),
                         "duration_ms": round((time.monotonic() - step_started) * 1000),
-                        "route_path": mask_text(urlsplit(page.url).path),
+                        "route_path": urlsplit(page.url).path,
                         **({"action_entity_id": step["action_entity_id"]} if step.get("action_entity_id") else {}),
                     }
                 )

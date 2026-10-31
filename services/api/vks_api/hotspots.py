@@ -362,16 +362,41 @@ class HotspotService:
             for relation in s.scalars(select(Relation).where(Relation.analysis_set_id == analysis.id)):
                 if relation.from_revision_id not in replaced and relation.to_revision_id not in replaced:
                     continue
+                target = s.get(Revision, relation.to_revision_id)
+                static_membership = (
+                    old_page.artifact_id == new_page.artifact_id
+                    and old_page.content == new_page.content
+                    and old_page.locator == new_page.locator
+                    and relation.from_revision_id == old_page.id
+                    and relation.relation_type == "contains"
+                    and relation.to_revision_id not in replaced
+                    and relation.validity_status == "valid"
+                    and target is not None
+                    and target.artifact_id == artifact.id
+                    and target.metadata_json.get("evidence_origin") == "static"
+                    and target.metadata_json.get("discovery_basis") in ("explicit_dom_attribute", "unique_dom_id")
+                    and bool(relation.evidence_ids)
+                    and all(
+                        (ev := s.get(Evidence, eid)) is not None
+                        and ev.artifact_id == artifact.id
+                        and ev.content_sha256 == artifact.sha256
+                        and ev.evidence_kind == "static"
+                        for eid in relation.evidence_ids
+                    )
+                )
                 relation.from_revision_id = replaced.get(relation.from_revision_id, relation.from_revision_id)
                 relation.to_revision_id = replaced.get(relation.to_revision_id, relation.to_revision_id)
                 relation.validity_status = (
                     "broken"
                     if remove and new_action.id in (relation.from_revision_id, relation.to_revision_id)
+                    else "valid"
+                    if static_membership
                     else "stale"
                 )
                 if relation.causal_basis == "correlated_runtime":
                     relation.causal_basis = "not_established"
-                relation.evidence_ids = list(dict.fromkeys([*relation.evidence_ids, evidence.id]))
+                if not static_membership:
+                    relation.evidence_ids = list(dict.fromkeys([*relation.evidence_ids, evidence.id]))
                 relation.row_version += 1
             if not remove:
                 for relation_type in ("contains", "renders"):
@@ -390,11 +415,11 @@ class HotspotService:
                             from_revision_id=new_page.id,
                             to_revision_id=new_action.id,
                             relation_type=relation_type,
-                            review_status="candidate",
+                            excluded=False,
                             validity_status="valid",
                             causal_basis="not_established",
                             evidence_ids=[evidence.id],
-                            reason="人工被动热点标注，待独立审核",
+                            reason="人工被动热点标注，保存后可用",
                             manual_lock=False,
                         )
                         s.add(relation)

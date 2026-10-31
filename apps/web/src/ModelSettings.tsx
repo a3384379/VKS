@@ -178,7 +178,7 @@ export function ModelSettings() {
       >
         <Notice>
           <ShieldCheck size={16} />
-          模型只收到当前身份有权读取的知识和证据，结果仍需审核。实例出站允许清单与项目预算共同约束每次调用。
+          模型只收到当前身份有权读取的知识和证据，结果直接保存并标注来源。实例出站允许清单与项目预算共同约束每次调用。
         </Notice>
         {error && (
           <Notice tone="red">
@@ -367,7 +367,14 @@ export function ModelSettings() {
                   </td>
                   <td>
                     <Tag value={row.state === "succeeded" ? "valid" : "static"}>
-                      {row.state}
+                      {(
+                        {
+                          not_sent: "未发送（未计费）",
+                          succeeded: "已完成",
+                          failed: "失败",
+                          reserved: "额度已预留",
+                        } as Record<string, string>
+                      )[row.state] || row.state}
                     </Tag>
                   </td>
                   <td>

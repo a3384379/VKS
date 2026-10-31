@@ -1,0 +1,413 @@
+{
+  "schema_version": 3,
+  "date": "2026-10-28",
+  "status": "engineering_and_synthetic_validation_passed_external_acceptance_pending",
+  "source_commit": "6b49e9ab43d74cb9294e86e6768fcd16af01cf42",
+  "source_manifest": "v2-remaining-source-manifest-20261028.json",
+  "source_sha256": "3d5fee96daf1874fec25482e2bd96ae287d92207016c712bb8d904b212eeeb1a",
+  "source_files": 333,
+  "new_ddl": false,
+  "production_release": false,
+  "real_external_model_calls": 0,
+  "pr_url": "https://github.com/a3384379/VKS/pull/2",
+  "implemented": [
+    "ING-06 current dependency closures and durable semantic shards",
+    "permission-filtered atomic relation/document/migration/journey review batches",
+    "human exact-plan confirmation and stage-boundary pause/resume",
+    "onboarding ordered-action flow draft without binding JSON"
+  ],
+  "full_suite": {
+    "status": "pass",
+    "exit_code": 0,
+    "python_passed": 443,
+    "python_skipped": 15,
+    "pytest_seconds": 247.08,
+    "frontend_passed": 41,
+    "frontend_failed": 0,
+    "build_seconds": 16.9,
+    "total_seconds": 270.33,
+    "isolated_data_dir": true,
+    "inherited_vks_configuration_cleared": true,
+    "skip_categories": {
+      "postgres": 6,
+      "rabbitmq": 1,
+      "windows_native": 3,
+      "svn_docker": 1,
+      "compose": 1,
+      "pg_restore": 1,
+      "v2_pg_restore": 1,
+      "real_flowtest": 1
+    }
+  },
+  "targeted": {
+    "dependency_and_cache_bounds": {
+      "passed": 17,
+      "seconds": 1.09
+    },
+    "contract_official_sdk_and_controls": {
+      "passed": 25,
+      "seconds": 15.83
+    },
+    "migration_review_and_immutable_documents": {
+      "passed": 12,
+      "seconds": 4.31
+    },
+    "review_onboarding_real_chromium": {
+      "passed": 2,
+      "seconds": 6.84
+    },
+    "plan_confirmation_real_chromium": {
+      "passed": 1,
+      "seconds": 28.4,
+      "synthetic_http_calls": 1,
+      "external_provider_calls": 0
+    },
+    "scope": "targeted results overlap the full suite and are not added to its denominator"
+  },
+  "postgres_v2": {
+    "status": "pass",
+    "passed": 1,
+    "seconds": 3.57,
+    "scope": "isolated PostgreSQL 17.6; concurrent mixed batches one success/one 412 with no partial audits; pause/resume; candidates; human release; immutable checkpoint backup/restore; token revocation"
+  },
+  "compose": {
+    "status": "pass",
+    "passed": 1,
+    "seconds": 106.83,
+    "scope": "new isolated current-source image; real model queue, durable pause/resume, checkpoints, unified human review, publish blockers, frozen read and PDF/bundle export; own stack removed"
+  },
+  "contracts": {
+    "original_mcp_tools": 18,
+    "total_mcp_tools": 23,
+    "machine_plan_confirmation_or_approval": false,
+    "v2_openapi_matches_runtime": true,
+    "actual_official_stdio_http_sdk": true
+  },
+  "integrity": {
+    "original_v1_files": 44,
+    "original_v2_files": 3,
+    "byte_identical": true,
+    "changed_text_utf8_no_bom_lf": true,
+    "ruff_critical_checks": "pass",
+    "prettier_changed_frontend": "pass",
+    "git_diff_check": "pass"
+  },
+  "raw_failures_preserved": [
+    "obsolete full-dependency expected count exposed the new bounded behavior; cold-fact assertions retained",
+    "Button aria-label was dropped before forwarding native accessibility attributes",
+    "task UI initially lacked attempt in its local TypeScript type; fixed then formal build passed",
+    "plan execution tests and SDK enum initially assumed immediate success; updated to exercise required human confirmation and additive paused state",
+    "isolated model browser initially skipped because default Chromium path was unavailable; explicit installed test-browser fallback then executed successfully",
+    "Windows versus Unix ZIP outer-byte equality initially failed; all 33 entry bytes and manifest match. ZIP create_system differs 0 versus 3. Independently validated each platform archive hash and entry hashes."
+  ],
+  "external_gates_pending": [
+    "authorized business domain and two fixed source revisions plus three controlled business branches",
+    "independently frozen 30-action Gold and five independent paired participants",
+    "approved real model provider, egress policy and cost ceiling",
+    "specified benchmark machine/network and enterprise Windows acceptance",
+    "human release sign-off and deployment/switch-over"
+  ],
+  "ci": {
+    "source_commit": "6b49e9ab43d74cb9294e86e6768fcd16af01cf42",
+    "run_id": 40622170618,
+    "status": "success",
+    "linux": {
+      "status": "success",
+      "job_id": 122598548529,
+      "python_passed": 443,
+      "python_skipped": 15,
+      "pytest_seconds": 399.98,
+      "frontend_passed": 41,
+      "frontend_failed": 0,
+      "build_seconds": 33.68,
+      "npm_audit_high_vulnerabilities": 0
+    },
+    "windows": {
+      "status": "pass",
+      "source_commit": "6b49e9ab43d74cb9294e86e6768fcd16af01cf42",
+      "run_id": 40622170618,
+      "job_id": 122598548241,
+      "artifact_id": 12787732173,
+      "artifact_archive_sha256": "139744838c1a9f59497336910f3134366b19d0d4bdae286e420171f704990110",
+      "agent_zip_sha256": "c4a81baba5409c9245a3f6f3ddd9c0886474df68397e8f80f7669d033593622a",
+      "distribution_files": 33,
+      "tests_passed": 25,
+      "tests_skipped": 1,
+      "tests_seconds": 27.33,
+      "packaged_clean_venv_hash_locked_install_and_tk_start": true,
+      "independent_archive_checks": true,
+      "current_source_entry_bytes_and_manifest_match": true,
+      "zip_create_system_ci_local": [
+        [
+          0
+        ],
+        [
+          3
+        ]
+      ],
+      "zip_container_bytes_equal": false,
+      "zip_container_difference": "Python ZipInfo platform field Windows 0 versus Unix 3; every manifest/source entry byte matches",
+      "scope": "native synthetic Windows CI, not enterprise target device acceptance"
+    },
+    "postgres_and_queue": {
+      "status": "success",
+      "tests_passed": 7,
+      "seconds": 16.51,
+      "v2_restore_passed": 1,
+      "v2_restore_seconds": 4.46
+    },
+    "push_and_pr_checks": [
+      {
+        "bucket": "pass",
+        "link": "https://github.com/a3384379/VKS/actions/runs/40622170618/job/122598548529",
+        "name": "verify",
+        "state": "SUCCESS"
+      },
+      {
+        "bucket": "pass",
+        "link": "https://github.com/a3384379/VKS/actions/runs/40622170618/job/122598548506",
+        "name": "postgres-and-queue",
+        "state": "SUCCESS"
+      },
+      {
+        "bucket": "pass",
+        "link": "https://github.com/a3384379/VKS/actions/runs/40622170618/job/122598548241",
+        "name": "windows-collector",
+        "state": "SUCCESS"
+      },
+      {
+        "bucket": "pass",
+        "link": "https://github.com/a3384379/VKS/actions/runs/40622164993/job/122598529887",
+        "name": "windows-collector",
+        "state": "SUCCESS"
+      },
+      {
+        "bucket": "pass",
+        "link": "https://github.com/a3384379/VKS/actions/runs/40622164993/job/122598530218",
+        "name": "verify",
+        "state": "SUCCESS"
+      },
+      {
+        "bucket": "pass",
+        "link": "https://github.com/a3384379/VKS/actions/runs/40622164993/job/122598530091",
+        "name": "postgres-and-queue",
+        "state": "SUCCESS"
+      }
+    ],
+    "all_six_current_runtime_checks_passed": true
+  },
+  "historical_read_capacity": {
+    "report": "v2-engineering-validation-20261028.json",
+    "source_commit": "0a3becc910fb1c8f97d94aed3927c68014f45c12",
+    "not_rerun_this_round": true,
+    "scope": "Prior 600s HTTP remains historical evidence. Current existing read/auth/composer methods are AST-identical; changed existing methods are only Service.cancel_job, Service.review_relation and JourneyService.review. No new current-binary 600s result is claimed.",
+    "implementation_comparison": {
+      "baseline": "0a3becc910fb1c8f97d94aed3927c68014f45c12",
+      "current": "6b49e9ab43d74cb9294e86e6768fcd16af01cf42",
+      "files": {
+        "services/api/vks_api/reading.py": {
+          "changed_existing_functions": [],
+          "added": [],
+          "removed": [],
+          "identical_existing_functions": 26
+        },
+        "services/api/vks_api/service.py": {
+          "changed_existing_functions": [
+            "Service.cancel_job",
+            "Service.review_relation"
+          ],
+          "added": [
+            "Service._review_relation"
+          ],
+          "removed": [],
+          "identical_existing_functions": 87
+        },
+        "services/api/vks_api/identity.py": {
+          "changed_existing_functions": [],
+          "added": [],
+          "removed": [],
+          "identical_existing_functions": 33
+        },
+        "services/api/vks_api/workbench_v2.py": {
+          "changed_existing_functions": [],
+          "added": [],
+          "removed": [],
+          "identical_existing_functions": 3
+        },
+        "services/api/vks_api/journeys.py": {
+          "changed_existing_functions": [
+            "JourneyService.review"
+          ],
+          "added": [
+            "JourneyService._review"
+          ],
+          "removed": [],
+          "identical_existing_functions": 13
+        },
+        "scripts/benchmark_reads.py": {
+          "changed_existing_functions": [],
+          "added": [],
+          "removed": [],
+          "identical_existing_functions": 5
+        }
+      }
+    }
+  },
+  "large_analysis": {
+    "profile": "AT-35 local PoC; not specified benchmark-machine acceptance",
+    "source_files": 5000,
+    "source_bytes": 104857600,
+    "zip_entries_including_manifest": 5001,
+    "manifest_bytes": 1525432,
+    "transport_bytes": 61959867,
+    "expanded_container_bytes": 106383032,
+    "quotas": {
+      "material_files": 5000,
+      "material_bytes": 104857600,
+      "manifest_bytes": 4194304,
+      "transport_bytes": 134217728
+    },
+    "sha256": "9ecc837e1a368ea6d4b8f3e3262469c442d02065eb0c643a762f49d34f02eb30",
+    "phases_seconds": {
+      "generate": 0.09160233399597928,
+      "package": 1.571954333980102,
+      "zip_validate_and_read": 0.2597206669743173,
+      "parse_bundle_including_zip_schema_and_static": 2.9511652079527266
+    },
+    "static_metrics": {
+      "java_files": 5000,
+      "xml_files": 0,
+      "parsed_files": 5000,
+      "methods": 5000,
+      "calls": 0,
+      "resolved_calls": 0,
+      "unresolved_calls": 0,
+      "syntax_parsed_files": 5000,
+      "syntax_reused_files": 0,
+      "entity_count": 10000,
+      "relation_count": 5000,
+      "unsupported_or_unresolved": 0,
+      "parser_version": "vks-java-spring-mybatis-1",
+      "dependency_recomputed_files": 5000
+    },
+    "cancel": {
+      "cancelled": true,
+      "java_files_started": 382,
+      "checks": 22,
+      "seconds_from_start": 2.1524120829999447,
+      "files_after_threshold": 372,
+      "poll_interval_seconds": 0.1,
+      "seconds_after_request": 0.10425562498858199
+    },
+    "external_model_calls": 0,
+    "fixture_complexity": "5000 simple Java classes with one method each; deterministic hex comments pad to 100MiB, not enterprise code complexity",
+    "source_sha256": {
+      "packages/analyzers/vks_ingest.py": "07354e042d996f6813d791de9989a0a0bd6c1c85c969672e2d6828fb81baf728",
+      "packages/analyzers/java_spring.py": "4a5ba71fce048cbb02a792f508abf0c8b95bacf1838d6178c71e46a6f7797071",
+      "packages/analyzers/incremental.py": "7d6987a16b1ceeac5265503d622384860f7720bbd212b1a917a874413b912585",
+      "packages/analyzers/syntax_cache.py": "2682905b0c568301c087d47e2df2a3db1d657e9f37378509c660373b80bbecb1",
+      "packages/analyzers/async_topology.py": "7dd44ecca16d5f42ff796f4d772ca962333177bb830e9c3414aa78bd01f96a48",
+      "packages/analyzers/cancellation.py": "560c481c276a278b8097173bedd1ea059e03bddc8cd8d41c85dd004b612323e4",
+      "packages/analyzers/document_links.py": "f01f94d9a811c25dd0cbfc2f5f3503ec6e46d8531bbc4909470b7b474be9440a",
+      "services/api/vks_api/knowledge.py": "5f6bff6e2c051c37be342811d12753bcb079e9db4df9765505a14b0c42a3ee79",
+      "services/api/vks_api/jobs.py": "e1aac76523ff54569f1a9089f67b05808a59277feb752bcf4f4fe6ab35434b1a",
+      "services/api/vks_api/source_cache.py": "d5d0695797efb314fca45f02ee0d97391541e0d60ed27f96818e0e31fc9424dc",
+      "scripts/benchmark_analysis.py": "58421e84380fa5977ca30ae624e3554fde969f6f5cb39f80d8c5f4347411ab16"
+    },
+    "job": {
+      "transport": "HTTP loopback upload + 20 concurrent submissions",
+      "id": "e449ee4c-2285-48a2-8a3c-7c3188dc5fa7",
+      "state": "succeeded",
+      "execution_seconds": 562.8118196249707,
+      "upload_seconds": 0.24962979200063273,
+      "submission": {
+        "concurrency": 20,
+        "requests": 20,
+        "p50_seconds": 0.489642,
+        "p95_seconds": 0.852802,
+        "p99_seconds": 0.852802
+      },
+      "issue_count": 0,
+      "result": {
+        "result_refs": [
+          {
+            "kind": "analysis_set",
+            "id": "2b2bfc31-1453-4b35-bef9-dd88ebccff76"
+          }
+        ],
+        "analysis_set_id": "2b2bfc31-1453-4b35-bef9-dd88ebccff76",
+        "accepted_count": 5000,
+        "snapshot_ids": [
+          "ea85226a-60e3-4dd2-b1ea-faaf2b127e85"
+        ],
+        "issues": [],
+        "reused": false,
+        "analysis_metrics": {
+          "java_files": 5000,
+          "syntax_parsed_files": 5000,
+          "methods": 5000,
+          "parsed_files": 5000,
+          "syntax_reused_files": 0,
+          "entity_count": 10000,
+          "relation_count": 5000,
+          "unsupported_or_unresolved": 0,
+          "parser_version": "vks-java-spring-mybatis-1",
+          "dependency_indexed_files": 5000,
+          "dependency_fingerprint_misses": 5000,
+          "dependency_recomputed_files": 5000,
+          "dependency_reused_files": 0,
+          "dependency_calls_recomputed": 0,
+          "dependency_cache_fallbacks": 0
+        }
+      }
+    },
+    "incremental": {
+      "changed_files": 50,
+      "total_files": 5000,
+      "source_bytes": 104857600,
+      "submission_seconds": 0.22085108404280618,
+      "execution_seconds": 193.66628587496234,
+      "state": "succeeded",
+      "metrics": {
+        "java_files": 5000,
+        "syntax_parsed_files": 50,
+        "methods": 5000,
+        "parsed_files": 5000,
+        "syntax_reused_files": 4950,
+        "entity_count": 10000,
+        "relation_count": 5000,
+        "unsupported_or_unresolved": 0,
+        "parser_version": "vks-java-spring-mybatis-1",
+        "dependency_indexed_files": 5000,
+        "dependency_fingerprint_misses": 50,
+        "dependency_recomputed_files": 50,
+        "dependency_reused_files": 4950,
+        "dependency_calls_recomputed": 0,
+        "dependency_cache_fallbacks": 0
+      },
+      "dependency_scope": "all current summaries indexed; only affected dependency contexts analyzed"
+    },
+    "source_changed_during_run": false,
+    "hardware": {
+      "platform": "macOS arm64",
+      "cpu_count": 10,
+      "memory_bytes": 17179869184,
+      "docker_cpu": 10,
+      "docker_memory_bytes": 8321515520,
+      "postgres": "17.6",
+      "network": "loopback HTTP and localhost Docker PostgreSQL"
+    },
+    "latency_comparison_note": "The new path validates dependency summaries and semantic shards. On this simple zero-call fixture it takes longer than the historical syntax-only incremental path (121.987s); it proves bounded dependency work, not a total-time speedup against that older path.",
+    "durable_project_cache": {
+      "units": 15150,
+      "bytes": 27557980
+    }
+  },
+  "cleanup": {
+    "own_compose_stack_removed": true,
+    "owned_postgres_removal_pending": false,
+    "user_existing_services_restarted": false,
+    "production_database_migrated": false,
+    "owned_postgres_removed": true
+  }
+}

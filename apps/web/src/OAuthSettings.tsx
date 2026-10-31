@@ -210,7 +210,7 @@ export function OAuthSettings() {
       <Notice>
         <ShieldCheck size={16} />
         OAuth 客户端先通过登记公钥验证，再按 subject、client_id
-        和项目范围授权。客户端不能审核、批准或发布。
+        和项目范围授权。授权客户端可直接编辑知识和保存版本。
       </Notice>
       {error && (
         <Notice tone="red">

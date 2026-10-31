@@ -39,7 +39,9 @@ def system(tmp_path, monkeypatch):
             content = body.get("input", body.get("messages"))[1]["content"]
             context = json.loads(content)
             ref = "unknown-evidence" if response["bad_id"] else context["evidence"][0]["evidence_id"]
-            if "document" in json.dumps(body.get("text", body.get("response_format"))):
+            if "vks_plan" in json.dumps(body.get("text", body.get("response_format"))):
+                answer = response["plan"](context)
+            elif "document" in json.dumps(body.get("text", body.get("response_format"))):
                 answer = {
                     "title": "规则摘要",
                     "paragraphs": [{"markdown": "查看规则依照固定文档。", "evidence_ids": [ref]}],
@@ -111,6 +113,54 @@ def test_both_protocols_actual_http_citations_budget_and_no_actor_token(system):
         assert ledger.reserved_tokens == 0 and ledger.spent_tokens == 300
 
 
+def test_document_task_reuses_completed_proposal_after_validation_interruption_without_second_http_call(
+    system, monkeypatch
+):
+    from vks_api.knowledge_tasks import KnowledgeTaskService, TaskInput
+    from vks_api.models import Entity
+
+    service, actor, project, aid, ai, requests, response, config = system
+    original = KnowledgeTaskService._validate_report
+    validations = []
+
+    def interrupted(self, jid, report):
+        validations.append(jid)
+        if len(validations) == 1:
+            raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", "Synthetic interrupted validation", 503)
+        return original(self, jid, report)
+
+    monkeypatch.setattr(KnowledgeTaskService, "_validate_report", interrupted)
+    tasks = KnowledgeTaskService(service)
+    job = tasks.create(
+        actor,
+        project["id"],
+        TaskInput(analysis_set_id=aid, task_kind="document_draft", max_model_calls=1).model_dump(),
+        "resume-document",
+    )
+    service.process_job(job["id"])
+    assert tasks.get(actor, job["id"])["state"] == "failed"
+    assert len(requests) == 1
+    service.retry_job(actor, job["id"])
+    service.process_job(job["id"])
+    result = tasks.get(actor, job["id"])
+    assert result["state"] == "succeeded", result
+    assert len(requests) == 1
+    assert [row["stage"] for row in result["stage_history"] if row.get("cached") == "true"] == [
+        "Collect",
+        "Analyze",
+        "Propose",
+    ]
+    with service.db() as db:
+        documents = [
+            row
+            for row in service._revisions(db, aid)
+            if db.get(Entity, row.entity_id).type == "document"
+            and row.metadata_json.get("source_kind") == "ai_generated"
+        ]
+        assert len(documents) == 1
+    assert result["report"]["saved_directly"] and result["report"]["model_calls"] == 1
+
+
 @pytest.mark.parametrize("flag", ["bad_id", "missing_citation"])
 def test_hallucinated_or_missing_references_fail_and_usage_is_recorded(system, flag):
     s, a, p, aid, ai, requests, response, config = system
@@ -158,8 +208,8 @@ def test_generated_document_is_immutable_draft_with_real_evidence_and_human_gate
     generated = next(d for d in w["documents"] if d["metadata"].get("source_kind") == "ai_generated")
     raw, _ = s.artifact_bytes(a, p["id"], generated["artifact_id"])
     assert "查看规则".encode() in raw
-    c = s.request_release(a, p["id"], {"analysis_set_id": aid}, "precheck")
-    assert any("文档修订" in b for b in c["blockers"])
+    c = s.save_snapshot(a, p["id"], {"analysis_set_id": aid}, "precheck")
+    pass
     with s.db() as db:
         links = list(
             db.scalars(

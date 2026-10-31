@@ -1,0 +1,319 @@
+{
+  "projects": {
+    "ruoyi": {
+      "project_id": "f1fe38ea-b2e7-45b4-af56-56d518cd6750",
+      "analysis_set_id": "252f83af-85bc-4f21-9ca3-a3f7617b4330",
+      "counts": {
+        "page": 6,
+        "action": 25,
+        "api": 89,
+        "symbol": 553,
+        "sql": 74,
+        "table": 6,
+        "section": 6,
+        "journey": 3
+      },
+      "relations": 1239,
+      "comparison_sha256": "c090ae89b1d429f78a8aae2983a9dedcd6b979009648320cea0393ae67b5d6bf",
+      "runtime_source_alignment": "unknown",
+      "import_preflight_valid": true,
+      "import_artifacts": 52,
+      "parser_diagnostics": 645
+    },
+    "flowtest": {
+      "project_id": "4abdce99-a5e7-4d86-9655-7c2396331149",
+      "analysis_set_id": "9ef83d52-e4b8-40bd-9597-06f0b1f6f4ac",
+      "counts": {
+        "page": 1,
+        "action": 30,
+        "api": 912,
+        "symbol": 408,
+        "sql": 0,
+        "table": 0,
+        "section": 118,
+        "journey": 3
+      },
+      "relations": 443,
+      "comparison_sha256": "c2c5e4dae35718d0251843047a8894ad0bafc43dbf562446a684b84c902926d0",
+      "runtime_source_alignment": "unknown",
+      "import_preflight_valid": true,
+      "import_artifacts": 82,
+      "parser_diagnostics": 76
+    }
+  },
+  "captures": [
+    {
+      "project": "ruoyi",
+      "case": "success",
+      "job_id": "5fc6e55e-06b1-4464-b500-8aa58379385b",
+      "capture_id": "f7d57b31-99c1-439f-9567-492455701934",
+      "snapshots": 1,
+      "requests": 29,
+      "session_refresh_posts": 0,
+      "business_write_requests": 0,
+      "secret_scan": "passed",
+      "source_alignment": "unknown"
+    },
+    {
+      "project": "ruoyi",
+      "case": "validation",
+      "job_id": "be9430d1-c5fa-4db3-8cf0-d3506b4265fd",
+      "capture_id": "6a44d187-f1a6-47a9-a5b1-1d6507bdd762",
+      "snapshots": 1,
+      "requests": 29,
+      "session_refresh_posts": 0,
+      "business_write_requests": 0,
+      "secret_scan": "passed",
+      "source_alignment": "unknown"
+    },
+    {
+      "project": "ruoyi",
+      "case": "forbidden",
+      "job_id": "686291c7-f556-4039-80b1-121064ff9b82",
+      "capture_id": "cb08aa23-a1f2-495d-9b2e-ca2df50e7466",
+      "snapshots": 1,
+      "requests": 4,
+      "session_refresh_posts": 0,
+      "business_write_requests": 0,
+      "secret_scan": "passed",
+      "source_alignment": "unknown"
+    },
+    {
+      "project": "flowtest",
+      "case": "success",
+      "job_id": "648acf9d-6167-4fd3-8cde-f5a88b386ed1",
+      "capture_id": "465e2d6c-7407-4ca1-8fe2-fc20f81c4d7d",
+      "snapshots": 1,
+      "requests": 57,
+      "session_refresh_posts": 1,
+      "business_write_requests": 0,
+      "secret_scan": "passed",
+      "source_alignment": "unknown"
+    },
+    {
+      "project": "flowtest",
+      "case": "validation",
+      "job_id": "34b37654-6152-4501-865f-a2d5838bf752",
+      "capture_id": "5133bfb8-8bef-4abe-9c1b-db98447dfcfa",
+      "snapshots": 1,
+      "requests": 57,
+      "session_refresh_posts": 1,
+      "business_write_requests": 0,
+      "secret_scan": "passed",
+      "source_alignment": "unknown"
+    },
+    {
+      "project": "flowtest",
+      "case": "forbidden",
+      "job_id": "5c713313-b5f4-43de-8a0c-10695cc8a8ac",
+      "capture_id": "c2c80729-af2c-4557-ba11-9f920f191f0a",
+      "snapshots": 1,
+      "requests": 57,
+      "session_refresh_posts": 1,
+      "business_write_requests": 0,
+      "secret_scan": "passed",
+      "source_alignment": "unknown"
+    }
+  ],
+  "tasks": [
+    {
+      "project": "ruoyi",
+      "kind": "project_overview",
+      "job_id": "520b9765-850a-4320-a25c-9dfc6018a224",
+      "state": "succeeded",
+      "model_calls": 0
+    },
+    {
+      "project": "ruoyi",
+      "kind": "module_analysis",
+      "job_id": "0fb1091f-0bc3-4238-8957-ce0b167610a6",
+      "state": "succeeded",
+      "model_calls": 0
+    },
+    {
+      "project": "ruoyi",
+      "kind": "evidence_gaps",
+      "job_id": "d68a38ad-c0ca-4efd-8e34-ccd90b902ae1",
+      "state": "succeeded",
+      "model_calls": 0
+    },
+    {
+      "project": "ruoyi",
+      "kind": "business_flow",
+      "job_id": "fac9c837-9515-44b3-ba6b-b3e8a6d2fd9c",
+      "state": "succeeded",
+      "model_calls": 0
+    },
+    {
+      "project": "flowtest",
+      "kind": "project_overview",
+      "job_id": "2edf24c7-8043-4ead-97d7-c92c6e41a6cb",
+      "state": "succeeded",
+      "model_calls": 0
+    },
+    {
+      "project": "flowtest",
+      "kind": "module_analysis",
+      "job_id": "3ec62206-3e2e-4fd6-9629-cf5a7c890780",
+      "state": "succeeded",
+      "model_calls": 0
+    },
+    {
+      "project": "flowtest",
+      "kind": "evidence_gaps",
+      "job_id": "fdd2ed3d-9611-4e6d-8469-8b21f6d539be",
+      "state": "succeeded",
+      "model_calls": 0
+    },
+    {
+      "project": "flowtest",
+      "kind": "business_flow",
+      "job_id": "d2ff1919-d036-4a7d-b341-77d50fe11132",
+      "state": "succeeded",
+      "model_calls": 0
+    }
+  ],
+  "machine_boundaries": [
+    {
+      "project": "ruoyi",
+      "operation": "journey_review",
+      "status": 403
+    },
+    {
+      "project": "ruoyi",
+      "operation": "other_project",
+      "status": 404
+    },
+    {
+      "project": "flowtest",
+      "operation": "journey_review",
+      "status": 403
+    },
+    {
+      "project": "flowtest",
+      "operation": "other_project",
+      "status": 404
+    }
+  ],
+  "source_unchanged": true,
+  "platform_model_calls": 0,
+  "external_provider_calls": 0,
+  "candidate_only": true,
+  "published": false,
+  "task_count": 8,
+  "schema_version": 1,
+  "date": "2026-10-29",
+  "source_commit": "df2e3f77a109d0c178d2d8534ccb2cc6da244eba",
+  "source_aggregate_sha256": "0bd5ce6f03f854a3f38813000f213a4cc96fb7ae4ee9de51fe67e1caa5980805",
+  "full_check": {
+    "command": "make check",
+    "exit_code": 0,
+    "seconds": 271.942,
+    "isolated_data": true,
+    "real_sources": [
+      "RuoYi",
+      "FlowTest"
+    ]
+  },
+  "python": {
+    "passed": 449,
+    "skipped": 14,
+    "seconds": 249.28
+  },
+  "frontend": {
+    "passed": 42,
+    "skipped": 0
+  },
+  "build": {
+    "exit_code": 0,
+    "seconds": 16.49
+  },
+  "original_design_files_verified": 47,
+  "actual_repo_tests": {
+    "command": "VKS_RUOYI_SOURCE_ROOT=... VKS_FLOWTEST_SOURCE_ROOT=... uv run pytest -q tests/pilot",
+    "passed": 4,
+    "seconds": 5.88
+  },
+  "mcp": {
+    "transport": "official SDK stdio subprocess -> isolated real HTTP API",
+    "tools": 23,
+    "codex_link_candidates": 23,
+    "codex_journeys": 4,
+    "task_generated_journeys": 2,
+    "revocation_checks": [
+      {
+        "project": "ruoyi",
+        "status": 401
+      },
+      {
+        "project": "flowtest",
+        "status": 401
+      }
+    ]
+  },
+  "passive_browser": {
+    "ruoyi": {
+      "requests": 7,
+      "external_requests": 0,
+      "write_requests": 0,
+      "roles": [
+        "test administrator",
+        "viewer"
+      ]
+    },
+    "flowtest": {
+      "requests": 7,
+      "external_requests": 0,
+      "write_requests": 0,
+      "roles": [
+        "test administrator",
+        "viewer"
+      ]
+    }
+  },
+  "cleanup": {
+    "target_containers_removed": true,
+    "temporary_mcp_tokens_revoked": true,
+    "existing_user_services_restarted": false
+  },
+  "scope": {
+    "business_targets": [
+      "local RuoYi",
+      "local FlowTest"
+    ],
+    "cloud_charge_required": false,
+    "extra_model_provider_required": false,
+    "independent_gold": "not_evaluated",
+    "five_person_ux": "not_run",
+    "designated_hardware_capacity": "historical_PoC_only",
+    "production_deployment": false
+  },
+  "raw_failures": [
+    {
+      "stage": "previous_target_start",
+      "reason": "RUOYI_LISTENING_PORT_MISMATCH",
+      "resolved": true
+    },
+    {
+      "stage": "capture_fixture",
+      "reason": "AMBIGUOUS_HEADING_LOCATOR",
+      "resolved": true
+    },
+    {
+      "stage": "synthetic_viewer_login",
+      "reason": "RUOYI_PASSWORD_EXCEEDED_MAX_LENGTH",
+      "resolved": true
+    },
+    {
+      "stage": "flowtest_capture",
+      "reason": "RANDOM_FRONTEND_ORIGIN_NOT_REGISTERED",
+      "resolved": true
+    }
+  ],
+  "source_revisions": {
+    "ruoyi": "3b3941abeb5402297e5b4de82a30e6471c2239f3",
+    "flowtest": "cfe3594d055e1feb988df18041ed9dbedda8bc6b"
+  },
+  "encoding": "UTF-8 without BOM, LF for changed files",
+  "static_checks": "Ruff E9,F63,F7,F82 and git diff --check passed"
+}

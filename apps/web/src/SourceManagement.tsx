@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import {
   Check,
   Copy,
@@ -17,15 +24,22 @@ import {
   Spinner,
   Tag,
 } from "./components";
-import { useWorkspace, usePermission } from "./context";
+import { useWorkspace, usePermission, useReadScope } from "./context";
 import type { Source, SourceConnector } from "./types";
 
 export function SourceManagement() {
   const { w, notify } = useWorkspace();
   const canManage = usePermission("project:manage"),
     canRead = usePermission("knowledge:edit");
-  const [connectors, setConnectors] = useState<SourceConnector[]>([]),
-    [snapshots, setSnapshots] = useState<Source[]>([]),
+  const scope = useReadScope();
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+  const request = useRef<AbortController | null>(null);
+  const [data, setData] = useState<{
+      scope: string;
+      connectors: SourceConnector[];
+      snapshots: Source[];
+    } | null>(null),
     [loading, setLoading] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -35,7 +49,21 @@ export function SourceManagement() {
     [name, setName] = useState(""),
     [locator, setLocator] = useState(""),
     [secretRef, setSecretRef] = useState("");
+  const connectors = canManage && data?.scope === scope ? data.connectors : [];
+  const snapshots = canRead && data?.scope === scope ? data.snapshots : [];
+  useLayoutEffect(() => {
+    setOpen(false);
+    setKey("");
+    setName("");
+    setLocator("");
+    setSecretRef("");
+  }, [w.project.id, canManage]);
   const reload = useCallback(async () => {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    const isCurrent = () =>
+      !controller.signal.aborted && currentScope.current === scope;
     setLoading(true);
     setError("");
     try {
@@ -43,23 +71,27 @@ export function SourceManagement() {
         canManage
           ? api<SourceConnector[]>(
               `/projects/${w.project.id}/source-connectors`,
+              { signal: controller.signal },
             )
           : Promise.resolve([]),
         canRead
-          ? api<Source[]>(`/projects/${w.project.id}/source-snapshots`)
+          ? api<Source[]>(`/projects/${w.project.id}/source-snapshots`, {
+              signal: controller.signal,
+            })
           : Promise.resolve([]),
       ]);
-      setConnectors(rows[0]);
-      setSnapshots(rows[1]);
+      if (isCurrent())
+        setData({ scope, connectors: rows[0], snapshots: rows[1] });
     } catch (e) {
-      setError((e as Error).message);
+      if (isCurrent()) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [w.project.id, canManage, canRead]);
+  }, [w.project.id, canManage, canRead, scope]);
   useEffect(() => {
     void reload();
-  }, [reload, w.sources.length]);
+    return () => request.current?.abort();
+  }, [reload]);
   async function save(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -75,6 +107,7 @@ export function SourceManagement() {
           ...(secretRef.trim() ? { secret_ref: secretRef.trim() } : {}),
         }),
       );
+      if (currentScope.current !== scope) return;
       setOpen(false);
       setSecretRef("");
       notify("只读来源已登记；采集在你指定的客户端目录执行");
@@ -232,7 +265,7 @@ export function SourceManagement() {
           </li>
         </ul>
       </details>
-      {open && (
+      {open && canManage && (
         <Modal title="登记只读来源" onClose={() => setOpen(false)}>
           <form
             onSubmit={(e) => {

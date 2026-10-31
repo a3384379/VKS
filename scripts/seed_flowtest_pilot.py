@@ -131,7 +131,7 @@ def seed(data_dir, bundle_path):
         "chapters": sum(e["type"] == "section" for e in w["entities"]),
         "scenarios": len(w["scenarios"]),
         "relations": len(w["relations"]),
-        "review_status": "candidate",
+        "saved_directly": True,
         "published": False,
         "runtime_source_alignment": w["selected_analysis_set"]["runtime_alignment"],
         "platform_model_calls": 0,

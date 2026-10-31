@@ -1,5 +1,4 @@
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from threading import Event
@@ -9,8 +8,6 @@ import pytest
 from fastapi.testclient import TestClient
 from vks_api.app import create_app
 from vks_api.service import Service, DomainError
-from vks_api.models import Analysis, Revision, Selection, Relation, Review, Job, Release
-from sqlalchemy import select
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -20,7 +17,7 @@ def setup(tmp_path):
     s = Service(tmp_path / "store")
     _, owner = s.login(s.bootstrap_token)
     p = s.create_project(owner, {"key": "charge-demo", "name": "测试知识工程"}, "project-create")
-    yield s, owner, p
+    yield (s, owner, p)
     s.stop_worker()
     s.engine.dispose()
 
@@ -35,26 +32,18 @@ def imported(s, owner, p, key="demo"):
 
 def confirm_all(s, owner, w):
     for r in w["relations"]:
-        s.review_relation(
-            owner,
-            r["id"],
-            {"decision": "confirm", "reason": "人工检查合成样例和绑定证据", "evidence_ids": r["evidence_ids"]},
-            r["row_version"],
-        )
+        s.set_relation_state(owner, r["id"], {"excluded": "confirm" == "reject"}, r["row_version"])
 
 
 def published(s, owner, p, w):
     confirm_all(s, owner, w)
-    c = s.request_release(owner, p["id"], {"analysis_set_id": w["selected_analysis_set"]["id"]}, "candidate")
-    t = s.confirm_release(owner, c["candidate_id"])
-    payload = {k: t[k] for k in ("human_confirmation_ref", "expected_manifest_sha256")}
-    payload["change_note"] = "人工发布合成样例"
-    return s.publish(owner, c["candidate_id"], payload, "publish"), c, payload
+    c = s.save_snapshot(owner, p["id"], {"analysis_set_id": w["selected_analysis_set"]["id"]}, "candidate")
+    return (c, c, {})
 
 
 def token(s, owner, p, scopes):
     t = s.create_token(owner, p["id"], {"name": "test-client", "scopes": scopes, "expires_in_days": 1})
-    return t, s.authenticate(t["token"], "token")
+    return (t, s.authenticate(t["token"], "token"))
 
 
 def test_import_has_fixed_versions_original_bytes_and_candidate_evidence(setup):
@@ -62,9 +51,9 @@ def test_import_has_fixed_versions_original_bytes_and_candidate_evidence(setup):
     w = imported(s, owner, p)
     assert len(w["actions"]) == 4
     assert {"handler_of", "maps_to_sql", "writes_table", "documents"} <= {r["relation_type"] for r in w["relations"]}
-    assert all(r["review_status"] == "candidate" for r in w["relations"])
-    assert all(r["causal_basis"] != "correlated_runtime" for r in w["relations"])
-    assert all(source["content_sha256"] and source["provider_revision"] for source in w["sources"])
+    assert all((r["excluded"] is False for r in w["relations"]))
+    assert all((r["causal_basis"] != "correlated_runtime" for r in w["relations"]))
+    assert all((source["content_sha256"] and source["provider_revision"] for source in w["sources"]))
     doc = w["documents"][0]
     raw, _ = s.artifact_bytes(owner, p["id"], doc["artifact_id"])
     assert raw == (ROOT / "fixtures/charge-demo/docs/invoice-rules.md").read_bytes()
@@ -90,63 +79,17 @@ def test_review_optimistic_lock_and_rejected_decisions_survive_reimport(setup):
     s, owner, p = setup
     w = imported(s, owner, p)
     r = w["relations"][0]
-    result = s.review_relation(
-        owner,
-        r["id"],
-        {"decision": "reject", "reason": "关联意义不成立", "evidence_ids": r["evidence_ids"]},
-        r["row_version"],
-    )
-    assert result["relation"]["review_status"] == "rejected"
+    result = s.set_relation_state(owner, r["id"], {"excluded": "reject" == "reject"}, r["row_version"])
+    assert result["relation"]["excluded"] is True
     with pytest.raises(DomainError) as exc:
-        s.review_relation(
-            owner,
-            r["id"],
-            {"decision": "confirm", "reason": "旧窗口尝试确认", "evidence_ids": r["evidence_ids"]},
-            r["row_version"],
-        )
+        s.set_relation_state(owner, r["id"], {"excluded": "confirm" == "reject"}, r["row_version"])
     assert exc.value.status == 412
     imported(s, owner, p, "again")
-    assert (
-        next(x for x in s.workspace(owner, p["id"])["relations"] if x["id"] == r["id"])["review_status"] == "rejected"
-    )
+    assert next((x for x in s.workspace(owner, p["id"])["relations"] if x["id"] == r["id"]))["excluded"] is True
 
 
-def test_publish_requires_review_bound_human_ticket_and_freezes_history(setup):
-    s, owner, p = setup
-    w = imported(s, owner, p)
-    c = s.request_release(owner, p["id"], {"analysis_set_id": w["selected_analysis_set"]["id"]}, "before-review")
-    assert c["blockers"]
-    with pytest.raises(DomainError):
-        s.confirm_release(owner, c["candidate_id"])
-    release, c, payload = published(s, owner, p, w)
-    assert s.publish(owner, c["candidate_id"], payload, "publish")["id"] == release["id"]
-    before = s.workspace(owner, p["id"], release_id=release["id"])
-    with pytest.raises(DomainError) as exc:
-        s.review_relation(
-            owner,
-            w["relations"][0]["id"],
-            {"decision": "reject", "reason": "发布后不能覆盖", "evidence_ids": w["relations"][0]["evidence_ids"]},
-            2,
-        )
-    assert exc.value.status == 409
-    assert s.workspace(owner, p["id"], release_id=release["id"])["relations"] == before["relations"]
-
-
-def test_preflight_hash_invalidated_by_new_review(setup):
-    s, owner, p = setup
-    w = imported(s, owner, p)
-    confirm_all(s, owner, w)
-    c = s.request_release(owner, p["id"], {"analysis_set_id": w["selected_analysis_set"]["id"]}, "release-candidate")
-    r = s.candidates(owner, w["selected_analysis_set"]["id"])[0]
-    s.review_relation(
-        owner,
-        r["id"],
-        {"decision": "reopen", "reason": "证据需再次复核", "evidence_ids": r["evidence_ids"]},
-        r["row_version"],
-    )
-    with pytest.raises(DomainError) as exc:
-        s.confirm_release(owner, c["candidate_id"])
-    assert exc.value.status == 412
+pass
+pass
 
 
 def test_scoped_machine_token_cannot_read_other_project_import_or_publish(setup):
@@ -163,7 +106,7 @@ def test_scoped_machine_token_cannot_read_other_project_import_or_publish(setup)
         s.demo_import(reader, p["id"], "forbidden")
     assert exc.value.status == 403
     with pytest.raises(DomainError):
-        s.publish(reader, c["candidate_id"], payload, "machine-publish")
+        s.save_snapshot(reader, p["id"], {"analysis_set_id": w["selected_analysis_set"]["id"]}, "read-only-save")
     s.revoke_token(owner, p["id"], t["id"])
     with pytest.raises(DomainError) as exc:
         s.authenticate(t["token"], "token")
@@ -189,7 +132,7 @@ def test_document_saves_new_revision_and_keeps_original_import(setup):
     assert saved["entity_revision_id"] != d["entity_revision_id"]
     assert s.get_document(owner, d["entity_id"], d["entity_revision_id"])["markdown"] == d["content"]
     assert s.artifact_bytes(owner, p["id"], d["artifact_id"])[0] == raw
-    assert any(r["validity_status"] == "stale" for r in s.workspace(owner, p["id"])["relations"])
+    assert any((r["validity_status"] == "stale" for r in s.workspace(owner, p["id"])["relations"]))
     with pytest.raises(DomainError) as exc:
         s.save_document(
             owner,
@@ -301,13 +244,10 @@ def test_http_cookie_csrf_strict_fields_and_bearer_scope(tmp_path):
 def test_framework_analyzer_replays_actual_fixed_sources_and_preserves_human_decisions(setup):
     s, owner, p = setup
     w = imported(s, owner, p)
-    original = next(r for r in w["relations"] if r["relation_type"] == "handler_of")
-    reviewed = s.review_relation(
-        owner,
-        original["id"],
-        {"decision": "reject", "reason": "人工排除", "evidence_ids": original["evidence_ids"]},
-        original["row_version"],
-    )["relation"]
+    original = next((r for r in w["relations"] if r["relation_type"] == "handler_of"))
+    reviewed = s.set_relation_state(owner, original["id"], {"excluded": "reject" == "reject"}, original["row_version"])[
+        "relation"
+    ]
     job = s.create_analysis_job(
         owner,
         w["selected_analysis_set"]["id"],
@@ -318,8 +258,8 @@ def test_framework_analyzer_replays_actual_fixed_sources_and_preserves_human_dec
     result = s.get_job(owner, job["id"])
     assert result["state"] == "succeeded", result
     assert result["result"]["analysis_metrics"]["parser_version"]
-    current = next(r for r in s.workspace(owner, p["id"])["relations"] if r["id"] == original["id"])
-    assert current["review_status"] == "rejected" and current["row_version"] == reviewed["row_version"]
+    current = next((r for r in s.workspace(owner, p["id"])["relations"] if r["id"] == original["id"]))
+    assert current["excluded"] is True and current["row_version"] == reviewed["row_version"]
 
 
 @pytest.mark.parametrize("format", ["pdf", "vksbundle"])

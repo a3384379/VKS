@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "base_commit": "b8926b0d2665034f24d85a534ec258d544398990",
+  "branch": "codex/vks-2-upgrade",
+  "working_tree": "uncommitted_includes_preexisting_document_reaudit",
+  "mcp": {
+    "original_tools": 18,
+    "additive_tools": 5,
+    "total_tools": 23,
+    "official_stdio_sdk": true,
+    "official_streamable_http_sdk": true,
+    "machine_approval_publish": false
+  },
+  "database": {
+    "new_ddl": false,
+    "local_test_engine": "SQLite",
+    "postgres_environment_tests_rerun": false
+  },
+  "not_executed": [
+    "real_model_provider",
+    "real_business_trial",
+    "independent_30_action_gold",
+    "five_user_ux_trial",
+    "production_capacity",
+    "postgres_upgrade_restore",
+    "rabbitmq_environment",
+    "enterprise_idp_acceptance",
+    "github_push_ci",
+    "deployment"
+  ],
+  "v2_originals": [
+    {
+      "path": "docs/upgrades/v2/design/VKS_2.0_Codex_任务拆解与实施提示词.md",
+      "size_bytes": 7870,
+      "sha256": "1989e229ce94f800d5ca900ba63e2b5b2f0d931666dc99c7db7682efe534f3c1"
+    },
+    {
+      "path": "docs/upgrades/v2/design/VKS_2.0_UI_概念原型.html",
+      "size_bytes": 54844,
+      "sha256": "dfdfa214d8a9eee5dd51479b0eed7fda4164a30fe0232023fe7e2141f73c5f6c"
+    },
+    {
+      "path": "docs/upgrades/v2/design/VKS_2.0_完整产品升级与技术设计.md",
+      "size_bytes": 56260,
+      "sha256": "5d3559e429ceea120cb65e3a8f9e1553779a8405bff0e65347604c9e283eebf6"
+    }
+  ],
+  "real_external_model_calls": 0,
+  "production_release": false,
+  "date": "2026-10-28",
+  "status": "development_preview_continuation_local_synthetic_passed_not_v2_release",
+  "source_manifest": "v2-continuation-source-manifest-20261028.json",
+  "source_sha256": "ff0488c04fab3ab2d0af5eec116bfa7a4654c8ae5dcfbac579c5b1fe46579dba",
+  "make_check": {
+    "exit_code": 0,
+    "duration_seconds": 176.09,
+    "python": {
+      "passed": 355,
+      "skipped": 11,
+      "failed": 0,
+      "duration_seconds": 153.62
+    },
+    "frontend": {
+      "passed": 36,
+      "failed": 0,
+      "duration_ms": 736.506666
+    },
+    "build": {
+      "passed": true,
+      "duration_seconds": 17.1
+    }
+  },
+  "supplemental_checks": {
+    "capture_recovery_contract_sdk_browser": {
+      "passed": 20,
+      "duration_seconds": 22.44
+    },
+    "incremental_and_synthetic_model_http": {
+      "passed": 13,
+      "duration_seconds": 6.01
+    },
+    "official_sdk_replay_fields_and_stage_cache_flag": {
+      "passed": 1,
+      "duration_seconds": 1.18,
+      "note": "Additional assertions added after full pytest collection and verified separately"
+    }
+  },
+  "static_checks": {
+    "prettier": true,
+    "ruff_E9_F63_F7_F82": true,
+    "git_diff_check": true,
+    "original_v1_design_44_files": true,
+    "original_v2_design_3_files": true,
+    "utf8_without_bom_lf": true,
+    "verified_text_files": 80,
+    "source_manifest_matches_current_bytes": true
+  },
+  "skipped_environment": {
+    "postgresql": 6,
+    "rabbitmq": 1,
+    "svn_container": 1,
+    "compose": 1,
+    "postgres_restore": 1,
+    "real_flowtest": 1
+  },
+  "incremental": {
+    "cache_scope": "project_private_content_addressed_syntax_only",
+    "formats": [
+      "java_tree_sitter",
+      "mybatis_xml_and_statement_spans"
+    ],
+    "cache_limits": {
+      "units": 8192,
+      "bytes": 134217728
+    },
+    "changed_file_fixture": {
+      "total_files": 100,
+      "changed_files": 1,
+      "syntax_parsed": 1,
+      "syntax_reused": 99,
+      "dependency_recomputed": 100,
+      "cold_fact_equivalence": true
+    },
+    "cross_file_dependencies": "recomputed_from_full_current_authorized_file_set",
+    "corruption": "reparse_original_authorized_bytes",
+    "capacity_benchmark_run": false
+  },
+  "task_recovery": {
+    "stages": [
+      "Collect",
+      "Analyze",
+      "Propose",
+      "Validate"
+    ],
+    "fixed_plan_inputs_versions_permissions": true,
+    "checksums": true,
+    "current_model_policy_required": true,
+    "cancellation_and_attempt_lease_checked": true,
+    "no_duplicate_candidates": true,
+    "synthetic_document_resume_outbound_http_calls": 1,
+    "real_external_model_calls": 0
+  },
+  "capture_journeys": {
+    "max_recordings": 10,
+    "candidate_only": true,
+    "cyclic_state_graph_rejected": true,
+    "exact_snapshot_reference": true,
+    "multiple_recordings": "finite_candidate_navigation_branches_only",
+    "original_scenario_capture_and_release_preserved": true,
+    "clone_rebinds_new_scenario_revision": true,
+    "trace_permissions_rechecked": true,
+    "browser_isolated": true,
+    "browser_replays_business_actions": false
+  },
+  "remaining_engineering": [
+    "Windows_collector_agent_UI",
+    "natural_language_multi_tool_planning",
+    "arbitrary_tool_chain_resume",
+    "semantic_comparison_of_roles_and_true_branch_conditions",
+    "Kafka_XXLJob_adapters",
+    "full_multi_source_alignment_diagnostics",
+    "automatic_change_events_and_full_section_diff_inbox"
+  ]
+}

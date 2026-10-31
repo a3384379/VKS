@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:vks:contracts:scenario:1.0",
   "title": "VKS 1.0 Declarative UI Scenario",
-  "description": "仅支持声明式浏览器动作；steps 始终是一次线性录制，不是分支执行器。可选 explanation_graph 将多次录制或明确标记的模拟分支组织为讲解状态图。无 eval、任意 JS、shell、外部 URL 或凭据明文字段。Schema 通过不等于获准执行；环境、数据集、审批及风险由服务器另行校验。",
+  "description": "声明式浏览器场景；线性步骤用于录制，explanation_graph 用于讲解。环境、输入版本和网络配置由服务端验证。",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -42,10 +42,6 @@
         "read_only",
         "test_write"
       ]
-    },
-    "approval_ref": {
-      "type": "string",
-      "format": "uuid"
     },
     "timeout_ms": {
       "type": "integer",
@@ -87,23 +83,6 @@
     }
   },
   "allOf": [
-    {
-      "if": {
-        "properties": {
-          "risk_level": {
-            "const": "test_write"
-          }
-        },
-        "required": [
-          "risk_level"
-        ]
-      },
-      "then": {
-        "required": [
-          "approval_ref"
-        ]
-      }
-    },
     {
       "if": {
         "properties": {
@@ -206,11 +185,23 @@
             "declared"
           ]
         },
-        "pageKey": {"$ref": "#/$defs/key"},
-        "actionKey": {"$ref": "#/$defs/key"},
-        "actionBindingOrigin": {"const": "declared"},
-        "pageBindingOrigin": {"const": "declared"},
-        "snapshotIndex": {"type": "integer", "minimum": 0, "maximum": 19},
+        "pageKey": {
+          "$ref": "#/$defs/key"
+        },
+        "actionKey": {
+          "$ref": "#/$defs/key"
+        },
+        "actionBindingOrigin": {
+          "const": "declared"
+        },
+        "pageBindingOrigin": {
+          "const": "declared"
+        },
+        "snapshotIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 19
+        },
         "captureRef": {
           "type": "string",
           "format": "uuid"
@@ -544,10 +535,6 @@
         },
         "risk": {
           "$ref": "#/$defs/risk"
-        },
-        "redact": {
-          "type": "boolean",
-          "default": true
         }
       }
     },
@@ -732,7 +719,7 @@
       "risk_level": "read_only",
       "timeout_ms": 90000,
       "preconditions": [
-        "mock-demo 已通过审核，数据为合成样例",
+        "mock-demo 本地样例环境，数据为合成样例",
         "查看原型不发起真实开票"
       ],
       "steps": [
@@ -753,7 +740,6 @@
           "value": {
             "fixture_field": "client.name"
           },
-          "redact": true,
           "timeout_ms": 5000,
           "risk": "read_only"
         },

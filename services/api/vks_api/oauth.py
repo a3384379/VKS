@@ -6,10 +6,7 @@ Project grants are independent of token scopes and checked on every request.
 """
 
 from __future__ import annotations
-import hashlib
-import json
 import os
-import secrets
 from urllib.parse import urlsplit
 import jwt
 from jwt import PyJWK
@@ -17,7 +14,7 @@ from fastapi import Depends, Request, Header
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import String, Integer, JSON, Boolean, ForeignKey, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, mapped_column
-from .models import Base, Identified, Project, Credential, uid
+from .models import Base, Identified, Project, uid
 
 
 class OAuthIssuer(Identified, Base):
@@ -349,7 +346,7 @@ def install_oauth(app, service, actor, envelope, API="/api/v1"):
     @app.post(API + "/projects/{pid}/oauth-grants", status_code=201)
     def add_grant(pid: str, payload: GrantInput, request: Request, a=Depends(actor)):
         if set(payload.scopes) - MACHINE_SCOPES or "knowledge:read" not in payload.scopes:
-            raise DomainError("VKS_INVALID_INPUT", "OAuth客户端不能获得管理员/审核/发布权限")
+            raise DomainError("VKS_INVALID_INPUT", "OAuth客户端不能获得管理员权限")
         with service.db() as s:
             service.require(s, a, pid, "project:manage")
             if not a.human:

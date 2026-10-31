@@ -1,0 +1,85 @@
+{
+  "schema_version": 3,
+  "date": "2026-10-28",
+  "status": "engineering_and_synthetic_validation_passed_external_acceptance_pending",
+  "source_commit": "aab485870f8e3d6daf2a3c14157aaf727f2c0b96",
+  "source_manifest": "v2-remaining-ui-source-manifest-20261028.json",
+  "source_files": 333,
+  "source_sha256": "87f48837fef27d0d11e16f1e0cb534f6d56597852659312bf49413b3ff822d9d",
+  "new_ddl": false,
+  "production_release": false,
+  "real_external_model_calls": 0,
+  "pr_url": "https://github.com/a3384379/VKS/pull/2",
+  "fix": {
+    "problem": "Late state-replay response replaced TrajectoryComparison with a fresh component, discarding the selected saved trajectory and completed comparison before permission revocation was tested.",
+    "implementation": "Always retain a stable Fragment/sibling position for TrajectoryComparison; mount the state panel conditionally inside it. Ignore aborted state responses.",
+    "deterministic_reproduction": "Hold actual state-replay requests, select the observed trajectory and complete comparison, then release responses. Old UI resets selection to scenario and fails; fixed UI preserves selection/hash/snapshot with no new options or comparison requests.",
+    "old_code_reproduction": "failed",
+    "fixed_browser_combination": {
+      "passed": 14,
+      "seconds": 34.15
+    },
+    "does_not_weaken_permission_revocation_assertions": true
+  },
+  "prior_head_ci": {
+    "head_sha": "8cc6fed0e777620d89f1e9c52d22b3e7301eee9a",
+    "pr_run": {
+      "id": 40623647135,
+      "result": "success",
+      "python_passed": 443,
+      "python_skipped": 15,
+      "seconds": 599.19,
+      "frontend_passed": 41,
+      "build_seconds": 55.82
+    },
+    "push_run": {
+      "id": 40623640957,
+      "result": "failure",
+      "python_passed": 442,
+      "python_failed": 1,
+      "python_skipped": 15,
+      "seconds": 629.61,
+      "failed_test": "test_revoked_sensitive_grants_clear_previously_loaded_trajectory_on_workspace_refresh",
+      "failure_before_revocation": true
+    },
+    "original_failure_preserved": true,
+    "failed_job_not_rerun": true
+  },
+  "reused_environment_evidence": {
+    "report": "v2-remaining-validation-20261028.json",
+    "large_analysis_source_commit": "6b49e9ab43d74cb9294e86e6768fcd16af01cf42",
+    "large_analysis_source_inputs_verified_unchanged": 11,
+    "scope": "Only frontend rendering and browser regression tests changed. All eleven measured analysis inputs and all API read paths remain byte-identical to the prior large-scale run; no new PG/HTTP measurement is claimed.",
+    "native_windows_distribution_source_unchanged": true,
+    "previous_windows_agent_zip_sha256": "c4a81baba5409c9245a3f6f3ddd9c0886474df68397e8f80f7669d033593622a"
+  },
+  "external_gates_pending": [
+    "authorized business domain and two fixed source revisions plus three controlled business branches",
+    "independently frozen 30-action Gold and five independent paired participants",
+    "approved real model provider, egress policy and cost ceiling",
+    "specified benchmark machine/network and enterprise Windows acceptance",
+    "human release sign-off and deployment/switch-over"
+  ],
+  "full_suite": {
+    "status": "pass",
+    "exit_code": 0,
+    "python_passed": 444,
+    "python_skipped": 15,
+    "pytest_seconds": 236.67,
+    "frontend_passed": 41,
+    "frontend_failed": 0,
+    "build_seconds": 16.46,
+    "total_seconds": 259.183,
+    "isolated_data_dir": true,
+    "inherited_vks_configuration_cleared": true
+  },
+  "integrity": {
+    "ruff_critical": "pass",
+    "prettier_changed_frontend": "pass",
+    "git_diff_check": "pass",
+    "source_inputs_unchanged": true,
+    "original_v1_files": 44,
+    "original_v2_files": 3,
+    "byte_integrity": "pass"
+  }
+}

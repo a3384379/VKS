@@ -292,8 +292,7 @@ def _headings(text: str) -> list[dict]:
         while parents and parents[-1][0] >= level:
             parents.pop()
         parents.append((level, title))
-        out.append({"level": level, "title": title, "line": token.map[0] + 1,
-                    "path": [p[1] for p in parents]})
+        out.append({"level": level, "title": title, "line": token.map[0] + 1, "path": [p[1] for p in parents]})
     return out
 
 
@@ -486,7 +485,10 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
     if manifest["project_key"] != expected_project_key:
         _fail("VKS_PROJECT_MISMATCH", "导入包不属于当前项目")
     result = ParsedBundle(manifest=manifest)
-    partial_allowed = not manifest.get("uiManifest") and not manifest.get("bindings") and len(manifest["artifacts"]) > 1
+    partial_allowed = (
+        not any(manifest.get(field) for field in ("uiManifest", "bindings", "selectionManifest"))
+        and len(manifest["artifacts"]) > 1
+    )
     failed_paths = set()
 
     def isolate_failure(item, error):
@@ -536,8 +538,6 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
             p.lower() in (".env", ".npmrc", ".pypirc", "id_rsa", "id_ed25519") for p in parts
         ):
             _fail("VKS_PRIVATE_MATERIAL", "包内含凭据文件或管理目录，需先排除")
-        if record["kind"] in ("capture", "trace"):
-            _fail("VKS_CAPTURE_UNVERIFIED", "当前未提供采集脱敏核验器，拒绝保存原始录制或 Trace 包")
         suffix = PurePosixPath(path).suffix.lower()
         if record["kind"] == "markdown" and suffix not in (".md", ".markdown"):
             _fail("VKS_MEDIA_TYPE_INVALID", "Markdown 制品扩展名不匹配")
@@ -581,16 +581,6 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 continue
             texts[path] = text
             item["detected_encoding"] = encoding
-            # Block common credential literals before any content reaches index.
-            # Raw unrecognized material is not claimed to be comprehensively scanned.
-            if re.search(
-                r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b",
-                text,
-            ) or re.search(
-                r"""(?i)\b(?:password|api[_-]?key|access[_-]?token|client[_-]?secret)\b\s*[:=]\s*["']([^"'\r\n]{8,})["']""",
-                text,
-            ):
-                _fail("VKS_SECRET_DETECTED", "材料中发现疑似秘密，请脱敏后导入")
         artifacts[path] = item
     extras = set(files) - set(artifacts) - {"manifest.json"}
     if extras:
@@ -608,6 +598,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
     for field, schema_name, expected_kind in [
         ("uiManifest", "import_manifest.schema.json", "ui_manifest"),
         ("bindings", "binding_manifest.schema.json", "binding_manifest"),
+        ("selectionManifest", "import_manifest.schema.json", "fixture"),
     ]:
         reference = manifest.get(field)
         if reference is None:
@@ -617,11 +608,30 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         if not artifact or artifact["kind"] != expected_kind or artifact["sha256"] != reference["sha256"]:
             _fail("VKS_REFERENCE_INVALID", "侧车清单引用无效")
         sidecar = _json(artifact["content"])
-        _schema(sidecar, schema_name, definition="uiManifestDocument" if field == "uiManifest" else None)
+        definition = {"uiManifest": "uiManifestDocument", "selectionManifest": "selectionManifestDocument"}.get(field)
+        _schema(sidecar, schema_name, definition=definition)
         if sidecar["projectKey"] != expected_project_key or sidecar["baselineKey"] != manifest["baseline_key"]:
             _fail("VKS_BASELINE_MISMATCH", "侧车清单与项目或基线不一致")
         sidecars[field] = sidecar
+    selection_artifacts = []
+    for path, artifact in artifacts.items():
+        if artifact["kind"] != "fixture":
+            continue
+        try:
+            value = _json(artifact["content"])
+        except BundleError:
+            continue
+        if value.get("kind") == "fixed_entity_selection":
+            selection_artifacts.append(path)
+    declared_selection = manifest.get("selectionManifest", {}).get("path")
+    if selection_artifacts != ([] if declared_selection is None else [declared_selection]):
+        _fail("VKS_REFERENCE_INVALID", "固定实体选择清单缺少准确引用或存在多个冲突声明")
     ui = sidecars.get("uiManifest", {"pages": [], "actions": [], "documentSections": [], "codeEntities": []})
+    if "uiManifest" not in sidecars:
+        from .ui_discovery import discover
+
+        ui, discovered_issues = discover({p: a for p, a in artifacts.items() if p not in failed_paths}, texts)
+        result.issues.extend(discovered_issues)
     entity_map: dict[str, dict] = {}
 
     def add(entity: dict) -> None:
@@ -671,7 +681,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
     for page in ui["pages"]:
         artifact, text = referenced_artifact(page, ("prototype", "source"))
         dom = doms.setdefault(page["artifactPath"], _DOM(text))
-        if page["logicalKey"] not in dom.pages:
+        if not page.get("_discovered") and page["logicalKey"] not in dom.pages:
             _fail("VKS_LOCATOR_INVALID", "页面 logicalKey 无法在 DOM 属性定位")
         add(
             _entity(
@@ -680,11 +690,16 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 page["name"],
                 text,
                 page["artifactPath"],
-                {"kind": "dom_attribute", "pageKey": page["logicalKey"]},
+                (
+                    {"kind": "file_lines", "startLine": page["_line"], "endLine": page["_line"]}
+                    if page.get("_discovered")
+                    else {"kind": "dom_attribute", "pageKey": page["logicalKey"]}
+                ),
                 {
                     "preview_mode": "snapshot",
                     "state_key": page.get("stateKey"),
-                    "source_kind": "manual",
+                    "source_kind": "platform_analyzer" if page.get("_discovered") else "manual",
+                    **({"discovery_basis": page["_discovery_basis"]} if page.get("_discovered") else {}),
                     "runtime_source_alignment": "unknown",
                     "script_content_blocked": dom.external_or_script,
                 },
@@ -704,7 +719,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         if not page or page["type"] != "page":
             _fail("VKS_REFERENCE_INVALID", "动作所属页面不存在")
         dom = doms[page["artifact_path"]]
-        if dom.actions.get(action["logicalKey"]) != {action["pageKey"]}:
+        if not action.get("_discovered") and dom.actions.get(action["logicalKey"]) != {action["pageKey"]}:
             _fail("VKS_LOCATOR_INVALID", "动作无法唯一归属声明页面的 DOM 属性")
         add(
             _entity(
@@ -713,11 +728,23 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 action["label"],
                 action["label"],
                 page["artifact_path"],
-                {"kind": "dom_attribute", "pageKey": action["pageKey"], "actionKey": action["logicalKey"]},
+                (
+                    {"kind": "file_lines", "startLine": action["_line"], "endLine": action["_line"]}
+                    if action.get("_discovered")
+                    else {"kind": "dom_attribute", "pageKey": action["pageKey"], "actionKey": action["logicalKey"]}
+                ),
                 {
                     "page_key": action["pageKey"],
                     "event": action["event"],
-                    "evidence_origin": "manual",
+                    "evidence_origin": "static" if action.get("_discovered") else "manual",
+                    **(
+                        {
+                            "selector": action["_selector"],
+                            "discovery_basis": action["_discovery_basis"],
+                        }
+                        if action.get("_discovered")
+                        else {}
+                    ),
                     "runtime_source_alignment": "unknown",
                 },
             )
@@ -825,6 +852,39 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 "causal_basis": "not_established",
             }
         )
+    for action in ui["actions"]:
+        if not action.get("_discovered"):
+            continue
+        target = entity_map[action["logicalKey"]]
+        path, locator = target["artifact_path"], target["locator"]
+        key = (
+            "ui.discovery."
+            + sha256(canonical_json([path, action["logicalKey"], artifacts[path]["sha256"]])).hexdigest()[:40]
+        )
+        if key in evidence_map:
+            _fail("VKS_DUPLICATE_LOGICAL_KEY", "显式证据与发现证据的 key 冲突")
+        evidence = dict(
+            stable_key=key,
+            kind="static",
+            artifact_path=path,
+            locator=locator,
+            sha256=artifacts[path]["sha256"],
+            claim="原始静态 DOM 中存在唯一动作锚点及所属页面范围，业务含义以来源说明为准",
+            content=texts[path].splitlines()[locator["startLine"] - 1][:2000],
+            extractor_version=ANALYZER_VERSION,
+        )
+        evidence_map[key] = evidence
+        result.evidence.append(evidence)
+        result.relations.append(
+            dict(
+                from_key=action["pageKey"],
+                to_key=action["logicalKey"],
+                type="contains",
+                evidence_keys=[key],
+                reason="静态 DOM 页面范围内的锚点；未执行页面或推断业务调用",
+                causal_basis="not_established",
+            )
+        )
     from .java_spring import analyze_sources
 
     try:
@@ -931,4 +991,36 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 "message": "本轮使用确定性解析，未配置或调用平台模型。",
             }
         )
+    selection = sidecars.get("selectionManifest")
+    if selection is not None:
+        selected = set()
+        for row in selection["entities"]:
+            checkpoint()
+            key = row["logicalKey"]
+            if key in selected:
+                _fail("VKS_DUPLICATE_LOGICAL_KEY", "实体选择清单的逻辑身份重复")
+            selected.add(key)
+            path = safe_path(row["artifactPath"])
+            artifact = artifacts.get(path)
+            entity = entity_map.get(key)
+            if (
+                not artifact
+                or artifact["sha256"] != row["sha256"]
+                or artifact["source_id"] != row["sourceId"]
+                or not entity
+                or entity["type"] != row["entityType"]
+                or entity.get("artifact_path") != path
+            ):
+                _fail("VKS_REFERENCE_INVALID", "实体选择无法匹配准确类型、来源文件和摘要")
+        if any(
+            row[field] not in selected for row in binding["bindings"] for field in ("fromLogicalKey", "toLogicalKey")
+        ):
+            _fail("VKS_REFERENCE_INVALID", "显式关系端点越出固定实体选择")
+        # The complete input is still hash-checked and retained. This boundary
+        # only removes unselected parsed knowledge; it cannot invent an entity,
+        # substitute a newer revision or transfer any prior review decision.
+        result.entities = [row for row in result.entities if row["stable_key"] in selected]
+        result.relations = [
+            row for row in result.relations if row["from_key"] in selected and row["to_key"] in selected
+        ]
     return result

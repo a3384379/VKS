@@ -106,33 +106,20 @@ async def test_same_release_web_mcp_import_review_publish_read(tmp_path):
                 },
             )
             assert proposal["candidates"][0]["id"] == relation["id"]
-            for relation in workspace["relations"]:
-                write(
-                    f"/relations/{relation['id']}/review",
-                    {
-                        "decision": "confirm",
-                        "reason": "人工核对合成材料中的定位与含义",
-                        "evidence_ids": relation["evidence_ids"],
-                    },
-                    {"If-Match": f'"{relation["row_version"]}"'},
-                )
-            request = await call(
-                "request_release",
-                {"project_id": pid, "analysis_set_id": analysis, "idempotency_key": "sdk-preflight-1"},
-            )
-            assert request["published"] is False
-            confirmation = write(f"/release-candidates/{request['candidate_id']}/confirm")
-            released = write(
-                f"/release-candidates/{request['candidate_id']}/publish",
+            released = await call(
+                "save_knowledge_snapshot",
                 {
-                    **{k: confirmation[k] for k in ("human_confirmation_ref", "expected_manifest_sha256")},
-                    "change_note": "Web 人工审核发布",
+                    "project_id": pid,
+                    "analysis_set_id": analysis,
+                    "change_note": "Direct SDK snapshot",
+                    "idempotency_key": "sdk-save-1",
                 },
             )
+            assert released["manifest_sha256"]
             rid = released["id"]
             context = await call("get_action_context", {"project_id": pid, "release_id": rid, "action_id": action})
             assert context["release_id"] == rid and context["baseline_kind"] == "published"
-            assert all(r["review_status"] == "confirmed" for r in context["relations"])
+            assert all((r["excluded"] is False) for r in context["relations"])
             assert (await call("get_project_context", {"project_id": pid, "release_id": rid}))["release"]["id"] == rid
             assert await call("search_knowledge", {"project_id": pid, "release_id": rid, "query": "开票"})
             graph = await call(

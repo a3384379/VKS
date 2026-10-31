@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-31",
+  "base_commit": "56b3d5adb343f3df7055697f9af71db90be2611d",
+  "working_tree_changes": true,
+  "source_aggregate_sha256": "86c54f076520753b3839937062660f336e367f5f8e5e0f17af06ac7e0bd3286a",
+  "source_file_count": 392,
+  "reviewed_pr": 2,
+  "reviewed_commit": "56b3d5adb343f3df7055697f9af71db90be2611d",
+  "regression_red": {
+    "failed": 9,
+    "passed": 0
+  },
+  "targeted_green": {
+    "passed": 26,
+    "failed": 0
+  },
+  "postgres": {
+    "passed": 8,
+    "legacy_upgrade": "passed",
+    "isolated": true
+  },
+  "fixes": [
+    "Authorize exact snapshot source vectors, selected revisions, relation provenance, endpoints and evidence before first save, existing-version return and idempotent replay",
+    "Evidence-gap reports include only non-excluded stale/broken associations before the 200-item bound"
+  ],
+  "history_preserved": true,
+  "full_ci_evidence": "PR #2 Actions on the final head; this record reports targeted checks only"
+}

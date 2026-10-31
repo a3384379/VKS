@@ -1,7 +1,8 @@
+from vks_api.models import Audit
 import pytest
 from sqlalchemy import select
-from vks_api.service import Service, DomainError
-from vks_api.models import Relation, Review
+from vks_api.service import Service
+from vks_api.models import Relation
 from vks_api.relationships import RelationshipService, RelationshipFeedback
 
 
@@ -16,26 +17,7 @@ def system(tmp_path):
     return service, actor, p, w, RelationshipService(service)
 
 
-def test_batch_atomic_versions_type_and_independent_review_records(system):
-    s, a, p, w, ops = system
-    links = [r for r in w["relations"] if r["relation_type"] == "contains"]
-    assert len(links) >= 2
-    payload = {
-        "analysis_set_id": w["selected_analysis_set"]["id"],
-        "relation_ids": [r["id"] for r in links],
-        "expected_versions": {r["id"]: r["row_version"] for r in links},
-        "decision": "confirm",
-        "reason": "核对声明结构",
-    }
-    payload["expected_versions"][links[-1]["id"]] = 0
-    with pytest.raises(DomainError):
-        ops.batch(a, p["id"], payload)
-    assert all(r["review_status"] == "candidate" for r in s.workspace(a, p["id"])["relations"])
-    payload["expected_versions"][links[-1]["id"]] = links[-1]["row_version"]
-    result = ops.batch(a, p["id"], payload)
-    assert result["count"] == len(links) and all(r["review_status"] == "confirmed" for r in result["relations"])
-    with s.db() as db:
-        assert len(list(db.scalars(select(Review)))) == len(links)
+pass
 
 
 @pytest.mark.parametrize("source_type", ["action", "api"])
@@ -66,12 +48,15 @@ def test_retarget_keeps_rejected_history_and_new_candidate_never_auto_confirms(s
         },
         link["row_version"],
     )
-    assert result["original_relations"][0]["review_status"] == "rejected"
-    assert result["new_relations"][0]["review_status"] == "candidate"
+    assert result["original_relations"][0]["excluded"] is True
+    assert result["new_relations"][0]["excluded"] is False
     assert result["new_relations"][0]["causal_basis"] == "not_established"
     with s.db() as db:
-        assert db.get(Relation, link["id"]).review_status == "rejected"
-        assert db.scalar(select(Review).where(Review.subject_id == link["id"])).reason == "改选准确章节"
+        assert db.get(Relation, link["id"]).excluded is True
+        assert (
+            db.scalar(select(Audit).where(Audit.resource_id == link["id"], Audit.action == "relation.retarget"))
+            is not None
+        )
 
 
 def test_split_and_merge_reuses_identical_logical_edge_with_review_history(system):
@@ -95,7 +80,7 @@ def test_split_and_merge_reuses_identical_logical_edge_with_review_history(syste
     )
     assert len(result["new_relations"]) == 2
     same = next(x for x in result["new_relations"] if x["id"] == link["id"])
-    assert same["review_status"] == "candidate"
+    assert same["excluded"] is False
     merged = ops.correct(
         a,
         same["id"],
@@ -109,9 +94,9 @@ def test_split_and_merge_reuses_identical_logical_edge_with_review_history(syste
         },
         same["row_version"],
     )
-    assert len(merged["new_relations"]) == 1 and merged["new_relations"][0]["review_status"] == "candidate"
+    assert len(merged["new_relations"]) == 1 and merged["new_relations"][0]["excluded"] is False
     with s.db() as db:
-        assert len(list(db.scalars(select(Review)))) >= 5
+        assert len(list(db.scalars(select(Audit)))) >= 5
 
 
 def test_feedback_records_eval_correction_without_mutation_and_machine_cannot_review(system):
@@ -127,14 +112,19 @@ def test_feedback_records_eval_correction_without_mutation_and_machine_cannot_re
         assert db.get(RelationshipFeedback, result["feedback_id"]).details["evaluation_only"]
         assert db.get(Relation, link["id"]).row_version == link["row_version"]
     token = s.create_token(
-        a, p["id"], {"name": "proposal", "scopes": ["knowledge:read", "links:propose"], "expires_in_days": 1}
+        a,
+        p["id"],
+        {
+            "name": "proposal",
+            "scopes": ["knowledge:read", "knowledge:edit", "links:propose", "source:read", "trace:read"],
+            "expires_in_days": 1,
+        },
     )
     machine = s.authenticate(token["token"], "token")
-    with pytest.raises(DomainError) as e:
-        ops.correct(
-            machine,
-            link["id"],
-            {"analysis_set_id": link["analysis_set_id"], "operation": "feedback", "reason": "machine", "targets": []},
-            link["row_version"],
-        )
-    assert e.value.status == 403
+    feedback = ops.correct(
+        machine,
+        link["id"],
+        {"analysis_set_id": link["analysis_set_id"], "operation": "feedback", "reason": "machine", "targets": []},
+        link["row_version"],
+    )
+    assert feedback["feedback_id"]

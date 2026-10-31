@@ -5,26 +5,20 @@ from __future__ import annotations
 import json
 from collections import deque
 from hashlib import sha256
-from typing import ClassVar, Literal
 
 from fastapi import Depends, Header, Request
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import JSON, ForeignKey, Integer, String, Text, UniqueConstraint, select
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import select
 
 from .documents import body_fingerprint
 from .models import (
     Analysis,
     Artifact,
-    Base,
     Entity,
     Evidence,
-    Identified,
     Relation,
     Release,
-    Review,
     Revision,
-    now,
     uid,
 )
 
@@ -37,28 +31,6 @@ def fail(code, message, status=422, details=None):
     from .service import DomainError
 
     raise DomainError(code, message, status, details)
-
-
-class UpdateProposal(Identified, Base):
-    __tablename__ = "update_proposal"
-    __table_args__ = (UniqueConstraint("analysis_set_id", "fingerprint"),)
-    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
-    analysis_set_id: Mapped[str] = mapped_column(ForeignKey("analysis_set.id"), index=True)
-    from_release_id: Mapped[str] = mapped_column(ForeignKey("knowledge_release.id"))
-    fingerprint: Mapped[str] = mapped_column(String(64))
-    kind: Mapped[str] = mapped_column(String(24))
-    entity_id: Mapped[str | None] = mapped_column(ForeignKey("entity.id"), nullable=True)
-    source_relation_id: Mapped[str | None] = mapped_column(ForeignKey("relation.id"), nullable=True)
-    target_relation_id: Mapped[str | None] = mapped_column(ForeignKey("relation.id"), nullable=True)
-    old_revision_id: Mapped[str | None] = mapped_column(ForeignKey("entity_revision.id"), nullable=True)
-    new_revision_id: Mapped[str | None] = mapped_column(ForeignKey("entity_revision.id"), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="pending")
-    row_version: Mapped[int] = mapped_column(Integer, default=1)
-    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    reason: Mapped[str] = mapped_column(Text, default="")
-    decided_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    updated_at: Mapped[str] = mapped_column(String(40), default=now)
-    __mapper_args__: ClassVar[dict] = {"version_id_col": row_version}
 
 
 class VersionService:
@@ -76,6 +48,16 @@ class VersionService:
         before = {x["entity_id"]: s.get(Revision, x["entity_revision_id"]) for x in old.manifest_json["selections"]}
         after = {r.entity_id: r for r in self.service._revisions(s, new.id)}
         changes = []
+        java_tokens = {}
+
+        def lexical(artifact):
+            if artifact.id not in java_tokens:
+                from packages.analyzers.java_spring import java_lexical_sha
+
+                raw = (self.service.data_dir / "objects" / artifact.object_key).read_bytes()
+                java_tokens[artifact.id] = java_lexical_sha(raw) if sha256(raw).hexdigest() == artifact.sha256 else None
+            return java_tokens[artifact.id]
+
         for eid in sorted(set(before) | set(after)):
             a, b = before.get(eid), after.get(eid)
             if a and b and a.id == b.id:
@@ -86,6 +68,8 @@ class VersionService:
             if b:
                 row["new_revision_id"] = b.id
             if a and b:
+                first = s.get(Artifact, a.artifact_id) if a.artifact_id else None
+                second = s.get(Artifact, b.artifact_id) if b.artifact_id else None
                 same_body = (
                     a.semantic_content_sha256 == b.semantic_content_sha256
                     or s.get(Entity, eid).type == "section"
@@ -100,6 +84,21 @@ class VersionService:
                     and s.get(Artifact, a.artifact_id).relative_path != s.get(Artifact, b.artifact_id).relative_path
                 ):
                     row["change_kind"] = "moved"
+                if (
+                    first
+                    and second
+                    and first.kind == second.kind == "source"
+                    and first.relative_path == second.relative_path
+                    and first.relative_path.lower().endswith(".java")
+                    and first.sha256 != second.sha256
+                ):
+                    token = lexical(first)
+                    if token is not None and token == lexical(second):
+                        row.update(
+                            change_kind="non_semantic",
+                            semantic_boundary="whole_file_java_tokens_equal_comments_or_formatting_only",
+                        )
+            row["entity_type"] = s.get(Entity, eid).type
             changes.append(row)
         changed = {c["entity_id"] for c in changes}
         relations = list(s.scalars(select(Relation).where(Relation.analysis_set_id == new.id)))
@@ -108,16 +107,78 @@ class VersionService:
             for r in relations
             if any(s.get(Revision, rid).entity_id in changed for rid in (r.from_revision_id, r.to_revision_id))
         ]
+        paths, path_scope = self.impact_paths(s, changed, relations, with_scope=True)
+        affected = changed | {path["impacted_entity_id"] for path in paths}
+        journey_impacts = []
+        for revision in [*before.values(), *after.values()]:
+            if s.get(Entity, revision.entity_id).type != "journey":
+                continue
+            dsl = revision.metadata_json.get("journey_dsl", {})
+            for binding in dsl.get("semantics", {}).get("source_refs", []):
+                if binding["entity_id"] in affected:
+                    journey_impacts.append(
+                        dict(
+                            journey_id=revision.entity_id,
+                            journey_revision_id=revision.id,
+                            step_key="semantics",
+                            binding_entity_id=binding["entity_id"],
+                            binding_revision_id=binding["revision_id"],
+                            basis="explicit_journey_source",
+                        )
+                    )
+            for node in dsl.get("nodes", []):
+                bindings = [node.get("binding", {})]
+                for field in ("state_ref", "capture_ref"):
+                    if node.get(field):
+                        bindings.append(
+                            dict(entity_id=node[field]["scenario_id"], revision_id=node[field]["scenario_revision_id"])
+                        )
+                for binding in bindings:
+                    if binding.get("entity_id") in affected:
+                        journey_impacts.append(
+                            dict(
+                                journey_id=revision.entity_id,
+                                journey_revision_id=revision.id,
+                                step_key=node["key"],
+                                binding_entity_id=binding["entity_id"],
+                                binding_revision_id=binding["revision_id"],
+                                basis="explicit_journey_binding",
+                            )
+                        )
+        removed_count = sum(row["change_kind"] == "removed" for row in changes)
+        all_journey_impacts = list({canonical(row): row for row in journey_impacts}.values())
+        path_relation_ids = {rid for path in paths for rid in path["relation_ids"]}
         return {
             "from_release_id": from_release_id,
             "to_analysis_set_id": to_analysis_set_id,
+            "to_selection_version": new.selection_version,
+            "source_vectors": {"from": old.manifest_json.get("sources", []), "to": new.sources},
+            "impact_scope": dict(
+                path_scope,
+                journey_limit=200,
+                journey_truncated=len(all_journey_impacts) > 200,
+                is_truncated=path_scope["is_truncated"] or len(all_journey_impacts) > 200,
+            ),
+            "_target_revision_ids": sorted(row.id for row in after.values()),
+            "_path_relations": [
+                dict(
+                    id=row.id,
+                    from_revision_id=row.from_revision_id,
+                    to_revision_id=row.to_revision_id,
+                    evidence_ids=list(row.evidence_ids),
+                )
+                for row in relations
+                if row.id in path_relation_ids
+            ],
             "changes": changes,
             "impacted_relations": impacted,
-            "impact_paths": self.impact_paths(s, changed, relations),
+            "journey_impacts": all_journey_impacts[:200],
+            "scope_anomaly": len(before) >= 10 and removed_count / len(before) >= 0.25,
+            "impact_paths": paths,
             "unknowns": ["材料或定位变化不等于业务语义已改变；重新确认不产生运行因果证据"],
         }
 
-    def impact_paths(self, s, seeds, relations, depth=3, max_nodes=200):
+    def impact_paths(self, s, seeds, relations, depth=3, max_nodes=200, *, with_scope=False, path_limit=2000):
         adjacency = {}
         for relation in relations:
             source = s.get(Revision, relation.from_revision_id).entity_id
@@ -125,16 +186,26 @@ class VersionService:
             adjacency.setdefault(source, []).append((target, relation.id))
             adjacency.setdefault(target, []).append((source, relation.id))
         output = []
+        depth_truncated, nodes_truncated, paths_truncated = False, False, False
         for seed in sorted(seeds):
             queue = deque([(seed, [seed], [])])
             seen = {seed}
             while queue and len(seen) <= max_nodes:
                 current, nodes, edges = queue.popleft()
                 if len(edges) >= depth:
+                    depth_truncated = depth_truncated or any(
+                        target not in seen for target, _ in adjacency.get(current, [])
+                    )
                     continue
-                for target, relation in adjacency.get(current, []):
-                    if target in seen or len(seen) >= max_nodes:
+                for target, relation in sorted(adjacency.get(current, [])):
+                    if target in seen:
                         continue
+                    if len(seen) >= max_nodes:
+                        nodes_truncated = True
+                        continue
+                    if len(output) >= path_limit:
+                        paths_truncated = True
+                        break
                     seen.add(target)
                     path = [*nodes, target]
                     links = [*edges, relation]
@@ -148,7 +219,20 @@ class VersionService:
                         }
                     )
                     queue.append((target, path, links))
-        return output
+                if paths_truncated:
+                    break
+            if paths_truncated:
+                break
+        scope = dict(
+            max_hops=depth,
+            max_nodes_per_change=max_nodes,
+            path_limit=path_limit,
+            depth_truncated=depth_truncated,
+            nodes_truncated=nodes_truncated,
+            paths_truncated=paths_truncated,
+            is_truncated=depth_truncated or nodes_truncated or paths_truncated,
+        )
+        return (output, scope) if with_scope else output
 
     def _copy_evidence(self, s, analysis, ids):
         output = []
@@ -179,340 +263,242 @@ class VersionService:
         return output
 
     def detect_drift(self, s, pid, from_release_id, to_analysis_set_id, actor_id=None):
+        from .models import relation_payload
+
         old, new = self._baselines(s, pid, from_release_id, to_analysis_set_id)
-        if new.state == "frozen":
-            fail("VKS_STATE_CONFLICT", "只能向未发布草稿生成更新提案", 409)
         s.refresh(new, with_for_update=True)
+        if new.state == "frozen":
+            fail("VKS_STATE_CONFLICT", "只能更新可编辑知识版本", 409)
+        report = self.compare(s, pid, old.id, new.id)
+        if report.get("scope_anomaly"):
+            fail("VKS_SYNC_SCOPE_ANOMALY", "大量实体缺失，请核对采集范围", 409)
         after = {r.entity_id: r for r in self.service._revisions(s, new.id)}
-        changed = False
-        proposals = []
-        historical_relations = list(old.manifest_json["relations"])
-        published_ids = {row["id"] for row in historical_relations}
-        # Rejected decisions are intentionally absent from the public release
-        # graph, but remain part of the frozen baseline's review history.
-        historical_relations.extend(
-            self.service.relation_dto(relation)
-            for relation in s.scalars(
-                select(Relation).where(
-                    Relation.analysis_set_id == old.analysis_set_id, Relation.review_status == "rejected"
-                )
+        historical = [relation_payload(row) for row in old.manifest_json["relations"]]
+        ids = {row["id"] for row in historical}
+        historical.extend(
+            self.service.relation_dto(row)
+            for row in s.scalars(
+                select(Relation).where(Relation.analysis_set_id == old.analysis_set_id, Relation.excluded == True)
             )
-            if relation.id not in published_ids
+            if row.id not in ids
         )
-        for old_relation in historical_relations:
-            old_source = s.get(Revision, old_relation["from_revision_id"])
-            old_target = s.get(Revision, old_relation["to_revision_id"])
-            source, target = after.get(old_source.entity_id), after.get(old_target.entity_id)
-            if source and target and source.id == old_source.id and target.id == old_target.id:
+        changed = False
+        for prior in historical:
+            before = [s.get(Revision, prior[k]) for k in ("from_revision_id", "to_revision_id")]
+            source, target = [after.get(row.entity_id) for row in before]
+            source_id, target_id = [
+                current.id if current else previous.id for current, previous in zip((source, target), before)
+            ]
+            if source_id == before[0].id and target_id == before[1].id and source and target:
                 continue
-            source_id = source.id if source else old_source.id
-            target_id = target.id if target else old_target.id
-            fingerprint = sha256(
-                canonical([old.id, old_relation["id"], source_id, target_id, old_relation["relation_type"]]).encode()
-            ).hexdigest()
-            proposal = s.scalar(
-                select(UpdateProposal).where(
-                    UpdateProposal.analysis_set_id == new.id, UpdateProposal.fingerprint == fingerprint
-                )
-            )
-            if proposal:
-                proposals.append(proposal)
-                continue
-            current = s.scalar(
-                select(Relation).where(
-                    Relation.analysis_set_id == new.id,
-                    Relation.from_revision_id == source_id,
-                    Relation.to_revision_id == target_id,
-                    Relation.relation_type == old_relation["relation_type"],
-                )
-            )
-            if not current:
-                current = s.scalar(
+            fingerprint = sha256(canonical([old.id, prior["id"], source_id, target_id]).encode()).hexdigest()
+            rows = list(
+                s.scalars(
                     select(Relation).where(
-                        Relation.analysis_set_id == new.id,
-                        Relation.from_revision_id == old_source.id,
-                        Relation.to_revision_id == old_target.id,
-                        Relation.relation_type == old_relation["relation_type"],
+                        Relation.analysis_set_id == new.id, Relation.relation_type == prior["relation_type"]
                     )
                 )
-            old_evidence = self._copy_evidence(s, new, old_relation["evidence_ids"])
-            original = s.get(Relation, old_relation["id"])
-            prior_lock = original.manual_lock if original else bool(old_relation.get("manual_lock", False))
+            )
+            current = next((r for r in rows if (r.from_revision_id, r.to_revision_id) == (source_id, target_id)), None)
             if not current:
-                # A missing endpoint is retained as an explicit historical
-                # reference in this new draft, never patched into a guessed ID.
+                current = next(
+                    (r for r in rows if (r.from_revision_id, r.to_revision_id) == (before[0].id, before[1].id)), None
+                )
+            if current and fingerprint in (current.metadata_json or {}).get("drift_inputs", []):
+                continue
+            original = s.get(Relation, prior["id"])
+            evidence = self._copy_evidence(s, new, prior["evidence_ids"])
+            if not current:
                 current = Relation(
                     id=uid(),
                     project_id=pid,
                     analysis_set_id=new.id,
                     from_revision_id=source_id,
                     to_revision_id=target_id,
-                    relation_type=old_relation["relation_type"],
-                    review_status=old_relation["review_status"],
-                    validity_status="broken" if not source or not target else "stale",
+                    relation_type=prior["relation_type"],
+                    excluded=prior["excluded"],
+                    manual_lock=original.manual_lock if original else False,
+                    evidence_ids=evidence,
                     causal_basis="not_established",
-                    evidence_ids=old_evidence,
-                    reason=old_relation.get("reason", ""),
-                    row_version=1,
-                    manual_lock=prior_lock,
+                    reason=prior.get("reason", ""),
+                    metadata_json=dict(original.metadata_json or {}) if original else {},
                 )
                 s.add(current)
-                s.flush()
             else:
-                # Do not overwrite a newer manual decision in the target draft.
-                reviewed = s.scalar(select(Review).where(Review.subject_id == current.id))
-                current.from_revision_id = source_id
-                current.to_revision_id = target_id
-                current.validity_status = "broken" if not source or not target else "stale"
+                current.from_revision_id, current.to_revision_id = source_id, target_id
+                current.evidence_ids = list(dict.fromkeys([*current.evidence_ids, *evidence]))
                 if current.causal_basis == "correlated_runtime":
                     current.causal_basis = "not_established"
-                if not reviewed:
-                    current.review_status = old_relation["review_status"]
-                    current.manual_lock = prior_lock
-                    current.evidence_ids = list(dict.fromkeys([*current.evidence_ids, *old_evidence]))
                 current.row_version += 1
-            proposal = UpdateProposal(
-                id=uid(),
-                project_id=pid,
-                analysis_set_id=new.id,
-                from_release_id=old.id,
-                fingerprint=fingerprint,
-                kind="relation_migration",
-                source_relation_id=old_relation["id"],
-                target_relation_id=current.id,
-                old_revision_id=old_target.id,
-                new_revision_id=target.id if target else None,
-                metadata_json={
-                    "from_entity_id": old_source.entity_id,
-                    "to_entity_id": old_target.entity_id,
-                    "source_revision_id": old_source.id,
-                    "target_revision_id": old_target.id,
-                    "new_source_revision_id": source.id if source else None,
-                    "new_target_revision_id": target.id if target else None,
-                    "previous_causal_basis": old_relation["causal_basis"],
-                    "boundary": "旧审核结论保留；证据变化必须单独复核有效性",
-                },
-            )
-            s.add(proposal)
-            s.flush()
-            proposals.append(proposal)
+            current.validity_status = "stale" if source and target else "broken"
+            metadata = dict(current.metadata_json or {})
+            metadata["drift_inputs"] = list(dict.fromkeys([*metadata.get("drift_inputs", []), fingerprint]))
+            current.metadata_json = metadata
             changed = True
-        report = self.compare(s, pid, old.id, new.id)
-        for change in report["changes"]:
-            fingerprint = sha256(canonical([old.id, "entity", change]).encode()).hexdigest()
-            proposal = s.scalar(
-                select(UpdateProposal).where(
-                    UpdateProposal.analysis_set_id == new.id, UpdateProposal.fingerprint == fingerprint
-                )
-            )
-            if not proposal:
-                proposal = UpdateProposal(
-                    id=uid(),
-                    project_id=pid,
-                    analysis_set_id=new.id,
-                    from_release_id=old.id,
-                    fingerprint=fingerprint,
-                    kind="entity_change",
-                    entity_id=change["entity_id"],
-                    old_revision_id=change.get("old_revision_id"),
-                    new_revision_id=change.get("new_revision_id"),
-                    metadata_json=change,
-                )
-                s.add(proposal)
-                s.flush()
-                changed = True
-            proposals.append(proposal)
         if changed:
             new.selection_version += 1
+            s.flush()
             self.service.audit(
-                s,
-                actor_id or new.created_by,
-                pid,
-                "version.detect_drift",
-                new.id,
-                metadata={"from_release_id": old.id, "proposal_count": len(proposals)},
+                s, actor_id or new.created_by, pid, "version.detect_drift", new.id, metadata={"from_release_id": old.id}
             )
-        report["proposal_ids"] = [p.id for p in proposals]
+        report = self.compare(s, pid, old.id, new.id)
+        report["to_selection_version"] = new.selection_version
         return report
 
-    def _visible_proposal(self, s, actor, proposal):
-        ids = {
-            rid
-            for rid in (
-                proposal.old_revision_id,
-                proposal.new_revision_id,
-                *[
-                    proposal.metadata_json.get(k)
-                    for k in (
-                        "source_revision_id",
-                        "target_revision_id",
-                        "new_source_revision_id",
-                        "new_target_revision_id",
-                    )
-                ],
-            )
-            if rid
-        }
-        visible = bool(ids) and all(
-            (rev := s.get(Revision, rid)) and self.service._visible_revision(s, actor, proposal.project_id, rev)
-            for rid in ids
-        )
-        relation = s.get(Relation, proposal.target_relation_id) if proposal.target_relation_id else None
-        return visible and (
-            not relation
-            or all(
-                (evidence := s.get(Evidence, eid))
-                and self.service._visible_evidence(s, actor, proposal.project_id, evidence)
-                for eid in relation.evidence_ids
-            )
-        )
-
-    def proposal_dto(self, s, proposal):
-        relation = s.get(Relation, proposal.target_relation_id) if proposal.target_relation_id else None
-        return {
-            "id": proposal.id,
-            "analysis_set_id": proposal.analysis_set_id,
-            "from_release_id": proposal.from_release_id,
-            "kind": proposal.kind,
-            "status": proposal.status,
-            "row_version": proposal.row_version,
-            "entity_id": proposal.entity_id,
-            "old_revision_id": proposal.old_revision_id,
-            "new_revision_id": proposal.new_revision_id,
-            "source_relation_id": proposal.source_relation_id,
-            "target_relation_id": proposal.target_relation_id,
-            "relation": self.service.relation_dto(relation) if relation else None,
-            "details": proposal.metadata_json,
-            "reason": proposal.reason,
-            "decided_by": proposal.decided_by,
-            "updated_at": proposal.updated_at,
-        }
-
-    def list_proposals(self, actor, pid, aid):
-        with self.service.db() as s:
-            self.service.require(s, actor, pid, "knowledge:edit")
-            analysis = s.get(Analysis, aid)
-            if not analysis or analysis.project_id != pid:
-                fail("VKS_NOT_FOUND", "未找到分析集合", 404)
-            return [
-                self.proposal_dto(s, p)
-                for p in s.scalars(
-                    select(UpdateProposal)
-                    .where(UpdateProposal.analysis_set_id == aid)
-                    .order_by(UpdateProposal.created_at, UpdateProposal.id)
+    def public_report(self, actor, pid, result, session=None):
+        if session is None:
+            with self.service.db() as s:
+                return self.public_report(actor, pid, result, s)
+        s = session
+        self.service.require(s, actor, pid)
+        self.service._selected(s, actor, pid, result["to_analysis_set_id"], None)
+        report = self.service._filter_diff(
+            s,
+            actor,
+            pid,
+            {
+                k: v
+                for k, v in result.items()
+                if not k.startswith("_")
+                and k
+                not in (
+                    "impact_paths",
+                    "proposal_ids",
+                    "journey_impacts",
+                    "scope_anomaly",
+                    "source_vectors",
+                    "impact_scope",
                 )
-                if self._visible_proposal(s, actor, p)
+            },
+        )
+        old, new = self._baselines(s, pid, result["from_release_id"], result["to_analysis_set_id"])
+        selected_ids = {row["entity_revision_id"] for row in old.manifest_json["selections"]}
+        selected_ids.update(
+            result["_target_revision_ids"]
+            if "_target_revision_ids" in result
+            else [r.id for r in self.service._revisions(s, new.id)]
+        )
+        visible_relations = {row["id"] for row in report["impacted_relations"]}
+        # Impact traversal can pass through unchanged relations too. Filter
+        # every edge and both baseline revisions before returning a path.
+        path_relations = result.get("_path_relations")
+        if path_relations is None:
+            path_relations = [
+                self.service.relation_dto(row)
+                for row in s.scalars(select(Relation).where(Relation.analysis_set_id == new.id))
             ]
-
-    def public_report(self, actor, pid, result):
-        with self.service.db() as s:
-            self.service.require(s, actor, pid)
-            self.service._selected(s, actor, pid, result["to_analysis_set_id"], None)
-            report = self.service._filter_diff(
-                s, actor, pid, {k: v for k, v in result.items() if k not in ("impact_paths", "proposal_ids")}
-            )
-            old, new = self._baselines(s, pid, result["from_release_id"], result["to_analysis_set_id"])
-            selected_ids = {row["entity_revision_id"] for row in old.manifest_json["selections"]}
-            selected_ids.update(r.id for r in self.service._revisions(s, new.id))
-            visible_relations = {row["id"] for row in report["impacted_relations"]}
-            # Impact traversal can pass through unchanged relations too. Filter
-            # every edge and both baseline revisions before returning a path.
-            for relation in s.scalars(select(Relation).where(Relation.analysis_set_id == new.id)):
-                if all(
+        for relation in path_relations:
+            if (
+                self.service._visible_relation(s, actor, pid, relation)
+                and all(
                     (revision := s.get(Revision, rid)) and self.service._visible_revision(s, actor, pid, revision)
-                    for rid in (relation.from_revision_id, relation.to_revision_id)
-                ) and all(
+                    for rid in (relation["from_revision_id"], relation["to_revision_id"])
+                )
+                and all(
                     (evidence := s.get(Evidence, eid)) and self.service._visible_evidence(s, actor, pid, evidence)
-                    for eid in relation.evidence_ids
-                ):
-                    visible_relations.add(relation.id)
-            visible = set()
-            for path in result.get("impact_paths", []):
-                revisions = list(
-                    s.scalars(
-                        select(Revision).where(
-                            Revision.entity_id.in_(path["entity_ids"]), Revision.id.in_(selected_ids)
-                        )
-                    )
+                    for eid in relation["evidence_ids"]
                 )
-                per_entity = {eid: [] for eid in path["entity_ids"]}
-                for revision in revisions:
-                    per_entity[revision.entity_id].append(revision)
-                if all(
-                    rows and all(self.service._visible_revision(s, actor, pid, r) for r in rows)
-                    for rows in per_entity.values()
-                ) and all(rid in visible_relations for rid in path["relation_ids"]):
-                    visible.add(canonical(path))
-            report["impact_paths"] = [p for p in result.get("impact_paths", []) if canonical(p) in visible]
-            report["proposal_ids"] = [
-                identifier
-                for identifier in result.get("proposal_ids", [])
-                if (p := s.get(UpdateProposal, identifier))
-                and p.project_id == pid
-                and self._visible_proposal(s, actor, p)
-            ]
-            return report
-
-    def decide(self, actor, proposal_id, payload, version):
-        with self.service.db() as s:
-            proposal = s.get(UpdateProposal, proposal_id)
-            if not proposal:
-                fail("VKS_NOT_FOUND", "未找到更新提案", 404)
-            self.service.require(s, actor, proposal.project_id, "links:review")
-            if not actor.human:
-                fail("VKS_FORBIDDEN", "更新提案审核需要人员会话", 403)
-            if not self._visible_proposal(s, actor, proposal):
-                fail("VKS_NOT_FOUND", "未找到更新提案", 404)
-            self.service._version(proposal.row_version, version)
-            analysis = s.get(Analysis, proposal.analysis_set_id)
-            s.refresh(analysis, with_for_update=True)
-            if analysis.state == "frozen":
-                fail("VKS_STATE_CONFLICT", "已发布提案不可修改", 409)
-            if proposal.status != "pending":
-                fail("VKS_STATE_CONFLICT", "提案已处理", 409)
-            relation = s.get(Relation, proposal.target_relation_id) if proposal.target_relation_id else None
-            if relation and payload["decision"] == "reject":
-                relation.review_status = "rejected"
-                relation.validity_status = "obsolete"
-                relation.row_version += 1
-                s.add(
-                    Review(
-                        project_id=proposal.project_id,
-                        subject_id=relation.id,
-                        actor_id=actor.id,
-                        decision="reject",
-                        reason=payload["reason"],
-                        base_version=relation.row_version - 1,
-                        evidence_ids=relation.evidence_ids,
-                    )
+            ):
+                visible_relations.add(relation["id"])
+        visible = set()
+        for path in result.get("impact_paths", []):
+            revisions = list(
+                s.scalars(
+                    select(Revision).where(Revision.entity_id.in_(path["entity_ids"]), Revision.id.in_(selected_ids))
                 )
-            proposal.status = "accepted" if payload["decision"] == "accept" else "rejected"
-            proposal.reason = payload["reason"]
-            proposal.decided_by = actor.id
-            proposal.updated_at = now()
-            proposal.row_version += 1
-            analysis.selection_version += 1
-            self.service.audit(
-                s,
-                actor,
-                proposal.project_id,
-                "version.proposal_review",
-                proposal.id,
-                metadata={"decision": payload["decision"]},
             )
-            s.flush()
-            return self.proposal_dto(s, proposal)
+            per_entity = {eid: [] for eid in path["entity_ids"]}
+            for revision in revisions:
+                per_entity[revision.entity_id].append(revision)
+            if all(
+                rows and all(self.service._visible_revision(s, actor, pid, r) for r in rows)
+                for rows in per_entity.values()
+            ) and all(rid in visible_relations for rid in path["relation_ids"]):
+                visible.add(canonical(path))
+        report["impact_paths"] = [p for p in result.get("impact_paths", []) if canonical(p) in visible]
+        report["journey_impacts"] = []
+        journey_entities = {
+            eid for item in result.get("journey_impacts", []) for eid in (item["journey_id"], item["binding_entity_id"])
+        }
+        baseline_revisions = {}
+        from .reading import chunks
+
+        for entities in chunks(journey_entities, 200):
+            for revisions in chunks(selected_ids):
+                for row in s.scalars(
+                    select(Revision).where(
+                        Revision.project_id == pid, Revision.entity_id.in_(entities), Revision.id.in_(revisions)
+                    )
+                ):
+                    baseline_revisions.setdefault(row.entity_id, []).append(row)
+        for item in result.get("journey_impacts", []):
+            journey = s.get(Revision, item["journey_revision_id"])
+            binding = s.get(Revision, item["binding_revision_id"])
+            if all(
+                row and row.id in selected_ids and self.service._visible_revision(s, actor, pid, row)
+                for row in (journey, binding)
+            ) and all(
+                baseline_revisions.get(eid)
+                and all(self.service._visible_revision(s, actor, pid, row) for row in baseline_revisions[eid])
+                for eid in (item["journey_id"], item["binding_entity_id"])
+            ):
+                report["journey_impacts"].append(item)
+        if self.service._can(s, actor, pid, "source:read") and self.service._can(s, actor, pid, "trace:read"):
+            report["scope_anomaly"] = result.get("scope_anomaly", False)
+        if "source_vectors" in result:
+            report["source_vectors"] = {
+                name: self.service._visible_sources(s, actor, pid, result["source_vectors"].get(name, []))
+                for name in ("from", "to")
+            }
+        if "impact_scope" in result:
+            original_scope = result["impact_scope"]
+            scope = {
+                key: original_scope[key]
+                for key in ("max_hops", "max_nodes_per_change", "journey_limit", "path_limit")
+                if key in original_scope
+            }
+            complete_visibility = self.service._can(s, actor, pid, "source:read") and self.service._can(
+                s, actor, pid, "trace:read"
+            )
+            scope.update(
+                visibility_limited=not complete_visibility,
+                returned_path_count=len(report["impact_paths"]),
+                returned_journey_count=len(report["journey_impacts"]),
+            )
+            if complete_visibility:
+                scope.update(
+                    {
+                        key: bool(original_scope.get(key))
+                        for key in ("depth_truncated", "nodes_truncated", "paths_truncated", "journey_truncated")
+                    }
+                )
+                scope["is_truncated"] = (
+                    bool(original_scope.get("is_truncated"))
+                    or len(report["impact_paths"]) < len(result.get("impact_paths", []))
+                    or len(report["journey_impacts"]) < len(result.get("journey_impacts", []))
+                )
+            else:
+                scope["is_truncated"] = True
+            report["impact_scope"] = scope
+            if scope["is_truncated"]:
+                report["unknowns"] = [
+                    *report.get("unknowns", []),
+                    "影响分析受遍历上限或当前可见范围限制，返回数量只计可见结果，不能视为全量影响",
+                ]
+        return report
 
     def revalidate(self, actor, rid, payload, version):
         with self.service.db() as s:
             relation = s.get(Relation, rid)
             if not relation:
                 fail("VKS_NOT_FOUND", "未找到关系", 404)
-            self.service.require(s, actor, relation.project_id, "links:review")
+            self.service.require(s, actor, relation.project_id, "knowledge:edit")
             if not actor.human:
                 fail("VKS_FORBIDDEN", "有效性复核需要人员会话", 403)
             if relation.analysis_set_id != payload["analysis_set_id"]:
                 fail("VKS_NOT_FOUND", "未找到当前基线关系", 404)
+            if not self.service._visible_relation(s, actor, relation.project_id, relation):
+                fail("VKS_NOT_FOUND", "未找到关系", 404)
             analysis = s.get(Analysis, relation.analysis_set_id)
             s.refresh(analysis, with_for_update=True)
             if analysis.state == "frozen":
@@ -546,44 +532,11 @@ class VersionService:
             relation.evidence_ids = list(dict.fromkeys(payload["evidence_ids"]))
             relation.validity_status = "valid"
             relation.row_version += 1
-            # Evidence validity and human review remain independent axes.
+            # Revalidating evidence preserves the user's independent exclusion choice.
             self.service._verify_relation(s, relation)
-            s.add(
-                Review(
-                    project_id=analysis.project_id,
-                    subject_id=relation.id,
-                    actor_id=actor.id,
-                    decision="revalidate",
-                    reason=payload["reason"],
-                    base_version=relation.row_version - 1,
-                    evidence_ids=relation.evidence_ids,
-                )
-            )
-            analysis.selection_version += 1
             self.service.audit(s, actor, analysis.project_id, "relation.revalidate", relation.id)
             s.flush()
             return self.service.relation_dto(relation)
-
-    @staticmethod
-    def assert_publishable(s, analysis):
-        blockers = []
-        for proposal in s.scalars(
-            select(UpdateProposal).where(
-                UpdateProposal.analysis_set_id == analysis.id,
-                UpdateProposal.kind == "relation_migration",
-                UpdateProposal.status == "pending",
-            )
-        ):
-            relation = s.get(Relation, proposal.target_relation_id)
-            if relation and relation.review_status == "confirmed" and relation.validity_status != "valid":
-                blockers.append("更新迁移提案尚未复核：" + proposal.id)
-        return blockers
-
-
-class ProposalReviewInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    decision: Literal["accept", "reject"]
-    reason: str = Field(min_length=1, max_length=2000)
 
 
 class RevalidateInput(BaseModel):
@@ -595,24 +548,7 @@ class RevalidateInput(BaseModel):
 
 def install_versions(app, service, actor, envelope, API="/api/v1"):
     versions = VersionService(service)
-    actor_dependency = Depends(actor)
-
-    @app.get(API + "/projects/{pid}/change-proposals")
-    def proposals(pid: str, analysis_set_id: str, request: Request, a=actor_dependency):
-        return envelope(request, versions.list_proposals(a, pid, analysis_set_id))
-
-    @app.post(API + "/change-proposals/{proposal_id}/review")
-    def review(
-        proposal_id: str,
-        payload: ProposalReviewInput,
-        request: Request,
-        a=actor_dependency,
-        if_match: str = Header(...),
-    ):
-        return envelope(request, versions.decide(a, proposal_id, payload.model_dump(), if_match))
 
     @app.post(API + "/relations/{rid}/revalidate")
-    def revalidate(
-        rid: str, payload: RevalidateInput, request: Request, a=actor_dependency, if_match: str = Header(...)
-    ):
+    def revalidate(rid: str, payload: RevalidateInput, request: Request, a=Depends(actor), if_match: str = Header(...)):
         return envelope(request, versions.revalidate(a, rid, payload.model_dump(), if_match))

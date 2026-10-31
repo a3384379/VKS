@@ -37,28 +37,11 @@ class ImportInput(Input):
     prototype_mode: Literal["axure_html", "preview_bundle", "screenshot_hotspots"] | None = None
 
 
-class ReviewInput(Input):
-    decision: Literal["confirm", "reject", "reopen"]
-    reason: str = Field(min_length=1, max_length=2000)
-    evidence_ids: list[str] = Field(min_length=1, max_length=20)
-
-
 class DraftInput(Input):
     analysis_set_id: str
     base_revision_id: str
     markdown: str = Field(max_length=1000000)
     locked_section_ids: list[str] = Field(default_factory=list)
-
-
-class CandidateInput(Input):
-    analysis_set_id: str
-    review_batch_id: str | None = None
-
-
-class PublishInput(Input):
-    expected_manifest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    human_confirmation_ref: str
-    change_note: str = Field(min_length=1, max_length=2000)
 
 
 class TokenInput(Input):
@@ -124,5 +107,10 @@ class ProposalInput(Input):
 
 class MemberInput(Input):
     user_id: str
-    role: Literal["viewer", "editor", "reviewer", "maintainer", "admin"]
+    role: Literal["viewer", "editor", "maintainer", "admin"]
     status: Literal["active", "disabled"]
+
+
+class SnapshotInput(Input):
+    analysis_set_id: str
+    change_note: str = Field(default="保存知识版本", max_length=2000)

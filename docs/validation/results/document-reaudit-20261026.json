@@ -1,0 +1,100 @@
+{
+  "validated_at": "2026-10-26T05:19:29.011279+00:00",
+  "audit_baseline": "b8926b0d2665034f24d85a534ec258d544398990",
+  "head_unchanged": true,
+  "local_uncommitted_changes": true,
+  "source_sha256": "2fd8411272ceaf76e32612b50ccb10e22944ee11b8634e62018fe8c74e482466",
+  "source_manifest": "document-reaudit-source-manifest-20261026.json",
+  "source_files": 207,
+  "initial_reproduction": {
+    "command": "uv run pytest -q tests/audit/test_document_reaudit.py",
+    "failed": 2,
+    "passed": 1,
+    "baseline": "b8926b0d2665034f24d85a534ec258d544398990"
+  },
+  "legacy_c5c93ee_comparison": "Provided by user; not rerun in this task.",
+  "items": {
+    "R01": {
+      "status": "fixed in local code and synthetic validation",
+      "membership": "Server-owned ordered section_revision_ids participates in the document revision hash.",
+      "legacy": "Prefer agreeing hash-verified frozen manifests; exact legacy links or unique complete content/locator matching; otherwise typed HTTP409 gap, with no latest or dedup substitution.",
+      "original_revisions_and_releases": "not rewritten"
+    },
+    "R02": {
+      "status": "fixed in local code and synthetic validation",
+      "identity": "Explicit keys precede heuristics after project/logical source/document validation.",
+      "evidence": "Exact payload reuse or new evidence; current links stale on change, old evidence/reviews retained."
+    }
+  },
+  "executed": {
+    "related_regressions": {
+      "command": "uv run pytest -q tests/audit/test_document_reaudit.py tests/documents tests/ingest tests/models tests/audit/test_batch_one.py tests/exports tests/mcp tests/knowledge tests/versions",
+      "passed": 100,
+      "seconds": 15.81,
+      "stage": "before final extra coverage"
+    },
+    "reaudit_regressions": {
+      "command": "uv run pytest -q tests/audit/test_document_reaudit.py",
+      "passed": 13,
+      "seconds": 1.47,
+      "includes": "Real official MCP SDK + ASGI/HTTP continuity, without a real model."
+    },
+    "make_check": {
+      "exit_code": 0,
+      "environment": {
+        "inherited_VKS_variables": "removed",
+        "VKS_DATA_DIR": ".vks/reaudit/runtime",
+        "VKS_TASK_MODE": "local"
+      },
+      "python": {
+        "passed": 314,
+        "skipped": 11,
+        "warnings": 1,
+        "seconds": 113.21
+      },
+      "frontend": {
+        "passed": 34
+      },
+      "typescript_vite": {
+        "status": "passed",
+        "vite_seconds": 16.26
+      },
+      "ui_browser_tests_in_python": 13
+    },
+    "npm run format:check": "passed",
+    "ruff E9/F63/F7/F82 services packages tests": "passed",
+    "git diff --check": "passed",
+    "original_design_files_byte_verified": 44,
+    "existing_modified_encoding_checked": 6,
+    "encoding": "Existing UTF-8/BOM/line endings preserved; new text UTF-8 without BOM and LF."
+  },
+  "skipped_environment_tests": {
+    "PostgreSQL": 6,
+    "RabbitMQ": 1,
+    "SVN_container": 1,
+    "Compose": 1,
+    "PostgreSQL_restore": 1,
+    "real_FlowTest": 1
+  },
+  "schema_migration": "None; uses existing JSON fields. No actual instance migration/backfill performed.",
+  "risks": [
+    "Legacy histories lacking one provable exact set remain an explicit gap; reimport can create a new mapped draft, not invent old history.",
+    "Deploy API and worker coherently; old readers/writers do not enforce the new mapping.",
+    "No real business acceptance or capacity gate in this task."
+  ],
+  "not_executed": [
+    "Maven",
+    "real business systems",
+    "real model",
+    "real IdP",
+    "real customer data",
+    "real database migration",
+    "remote CI",
+    "commit",
+    "push",
+    "PR",
+    "deployment"
+  ],
+  "full_report": "../../AUDIT_REAUDIT_R01_R02.md",
+  "private_logs": ".vks/reaudit/"
+}

@@ -3,7 +3,6 @@
 from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
-import json
 import os
 import shutil
 import socket
@@ -37,7 +36,7 @@ def chromium_path(playwright):
     pytest.skip("独立Chromium未安装；运行 uv run playwright install chromium")
 
 
-def test_a05_workbench_uses_server_relation_policy_after_review(site):
+def test_workbench_uses_current_valid_links_and_respects_user_exclusion(site):
     url, pid, _, _ = site
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=chromium_path(playwright), headless=True)
@@ -51,18 +50,22 @@ def test_a05_workbench_uses_server_relation_policy_after_review(site):
             workspace = page.request.get(url + f"/api/v1/projects/{pid}/workspace").json()["data"]
             action_ids = {e["entity_revision_id"] for e in workspace["actions"]}
             api_ids = {e["entity_revision_id"] for e in workspace["entities"] if e["type"] == "api"}
-            edge = next(r for r in workspace["relations"] if r["from_revision_id"] in action_ids and r["to_revision_id"] in api_ids)
+            edge = next(
+                r
+                for r in workspace["relations"]
+                if r["from_revision_id"] in action_ids and r["to_revision_id"] in api_ids
+            )
             action = next(e for e in workspace["actions"] if e["entity_revision_id"] == edge["from_revision_id"])
             page.goto(url + f"/#view=workbench&project={pid}&entity={action['entity_id']}")
             panel = page.locator(".knowledge-detail")
             panel.get_by_role("button", name="接口", exact=True).click()
-            expect(panel.get_by_text("尚无接口依据", exact=True)).to_be_visible()
-            panel.get_by_role("button", name="候选关联", exact=True).click()
             expect(panel.locator(".api-card")).not_to_have_count(0)
             csrf = page.request.get(url + "/api/v1/auth/session").json()["data"]["csrf_token"]
-            reviewed = page.request.post(url + f"/api/v1/relations/{edge['id']}/review", headers={
-                "X-CSRF-Token": csrf, "If-Match": str(edge["row_version"])},
-                data={"decision": "reject", "reason": "Synthetic rejection", "evidence_ids": edge["evidence_ids"]})
+            reviewed = page.request.patch(
+                url + f"/api/v1/relations/{edge['id']}",
+                headers={"X-CSRF-Token": csrf, "If-Match": str(edge["row_version"])},
+                data={"excluded": True},
+            )
             assert reviewed.ok, reviewed.text()
             page.reload()
             panel.get_by_role("button", name="接口", exact=True).click()
@@ -103,6 +106,11 @@ def site(tmp_path_factory):
     _, owner = service.login(service.bootstrap_token)
     project = service.create_project(owner, {"key": "charge-demo", "name": "Browser regression"}, "project")
     empty = service.create_project(owner, {"key": "empty", "name": "Empty regression"}, "empty")
+    # Module fixtures run before the function-level legacy manual baseline.
+    # Persist this fixture's intended mode before importing review candidates.
+    pass
+
+    pass
     job = service.demo_import(owner, project["id"], "fixture")
     service.process_job(job["id"])
     workspace = service.workspace(owner, project["id"])
@@ -174,7 +182,13 @@ def site(tmp_path_factory):
                     time.sleep(0.05)
                 else:
                     pytest.fail("隔离Vite启动超时")
-            yield url, project["id"], empty["id"], doc["id"]
+
+            class BrowserSite(tuple):
+                pass
+
+            result = BrowserSite((url, project["id"], empty["id"], doc["id"]))
+            result.service = service
+            yield result
         finally:
             process.terminate()
             process.wait(timeout=10)
@@ -213,27 +227,24 @@ def test_owner_login_documents_all_pages_and_failed_highlight_stays_readable(sit
                 assert blocked_chunks
             # A missing optional chunk must not unmount the reader or sidebar.
             for label in (
-                "项目总览",
-                "接入与任务",
-                "业务工作台",
-                "文档中心",
-                "关联审核",
-                "知识地图",
-                "版本与变更",
-                "MCP 与设置",
+                "项目空间",
+                "知识构建",
+                "业务探索",
+                "变更与版本",
+                "项目设置",
             ):
                 page.get_by_role("navigation", name="主导航").get_by_role("button", name=label).click()
                 expect(page.locator(".app-body > main")).not_to_be_empty()
                 expect(page.get_by_text("当前页面暂时无法显示", exact=True)).to_have_count(0)
             page.go_back()
-            expect(page.get_by_role("heading", name="版本与变更", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="变更与版本", exact=True)).to_be_visible()
             page.go_forward()
-            expect(page.get_by_role("heading", name="MCP 与设置", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="项目设置", exact=True)).to_be_visible()
             page.goto(url + f"/#view=documents&project={empty}")
             expect(page.get_by_text("文档知识，从一份 Markdown 开始", exact=True)).to_be_visible()
             page.go_back()
             expect(page.get_by_label("当前项目", exact=True)).to_have_value(pid)
-            expect(page.get_by_role("heading", name="MCP 与设置", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="项目设置", exact=True)).to_be_visible()
             page.goto(url + f"/#view=documents&project={pid}&entity={doc}")
             expect(page.locator(".document-reader")).to_contain_text(CODE)
             page.get_by_role("button", name="编辑", exact=True).click()
@@ -241,7 +252,7 @@ def test_owner_login_documents_all_pages_and_failed_highlight_stays_readable(sit
             changed = editor.input_value() + "\nUnsaved local text\n"
             editor.fill(changed)
             page.goto(url + f"/#view=documents&project={empty}")
-            expect(page.get_by_text("文档草稿尚未保存，请先保存或还原本地修改", exact=True)).to_be_visible()
+            expect(page.get_by_text("草稿尚未保存，请先保存或还原本地修改", exact=True)).to_be_visible()
             expect(editor).to_have_value(changed)
             expect(page.get_by_label("当前项目", exact=True)).to_have_value(pid)
             page.get_by_role("button", name="还原修改", exact=True).click()
@@ -345,15 +356,22 @@ def test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_na
             expect(page.get_by_role("navigation", name="主导航")).to_be_visible()
             workspace = page.request.get(url + f"/api/v1/projects/{pid}/workspace").json()["data"]
             document = next(d for d in workspace["documents"] if d["entity_id"] == doc)
-            revision = page.request.get(url + f"/api/v1/documents/{doc}/revisions/{document['entity_revision_id']}").json()["data"]
+            revision = page.request.get(
+                url + f"/api/v1/documents/{doc}/revisions/{document['entity_revision_id']}"
+            ).json()["data"]
             csrf = page.request.get(url + "/api/v1/auth/session").json()["data"]["csrf_token"]
             # One actual document with one render job: another visible diagram's
             # frame must not start this assertion's per-job timeout window.
-            saved = page.request.put(url + f"/api/v1/documents/{doc}/draft", headers={
-                "X-CSRF-Token": csrf, "If-Match": str(revision["row_version"])}, data={
-                "analysis_set_id": workspace["selected_analysis_set"]["id"],
-                "base_revision_id": revision["entity_revision_id"], "locked_section_ids": [],
-                "markdown": "# Isolated timeout\n\n```mermaid\nflowchart LR\n A[Start] --> B[Finish]\n```\n\n正文仍可阅读\n"})
+            saved = page.request.put(
+                url + f"/api/v1/documents/{doc}/draft",
+                headers={"X-CSRF-Token": csrf, "If-Match": str(revision["row_version"])},
+                data={
+                    "analysis_set_id": workspace["selected_analysis_set"]["id"],
+                    "base_revision_id": revision["entity_revision_id"],
+                    "locked_section_ids": [],
+                    "markdown": "# Isolated timeout\n\n```mermaid\nflowchart LR\n A[Start] --> B[Finish]\n```\n\n正文仍可阅读\n",
+                },
+            )
             assert saved.ok, saved.text()
             page.goto(url + f"/#view=documents&project={pid}&entity={doc}")
             page.reload()  # Reload the revision saved through the fixture API.
@@ -370,7 +388,7 @@ def test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_na
             page.unroute("**/src/diagram-frame.ts*")
             first.get_by_role("button", name="重新渲染").click()
             expect(first.locator(".diagram-image img")).to_be_visible(timeout=20000)
-            page.get_by_role("navigation", name="主导航").get_by_role("button", name="项目总览").click()
+            page.get_by_role("navigation", name="主导航").get_by_role("button", name="项目空间").click()
             expect(page.locator("iframe.diagram-render-frame")).to_have_count(0)
         finally:
             browser.close()

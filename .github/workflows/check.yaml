@@ -1,8 +1,52 @@
 name: VKS checks
 on: [push, pull_request]
 jobs:
+  windows-collector:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: '1'
+      VKS_TASK_MODE: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: astral-sh/setup-uv@v6
+        with: {enable-cache: true}
+      - run: uv sync --frozen --python "$env:pythonLocation/python.exe"
+      - run: uv run python scripts/build_demo.py
+      - run: uv run pytest -q tests/collector tests/v2/test_sync.py tests/v2/test_collector_agent.py tests/v2/test_collector_distribution.py
+      - run: uv run python scripts/build_collector_agent.py
+      - name: Install and start the packaged Windows Agent in isolation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packageRoot = Join-Path $env:RUNNER_TEMP "vks-agent-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Path $packageRoot | Out-Null
+          $declared = (Get-Content output/collector/vks-collector-2.0.sha256).Split(' ')[0]
+          $actual = (Get-FileHash output/collector/vks-collector-2.0.zip -Algorithm SHA256).Hash.ToLower()
+          if ($declared -ne $actual) { throw 'Agent archive SHA-256 differs' }
+          Expand-Archive output/collector/vks-collector-2.0.zip -DestinationPath $packageRoot
+          py -3.12 -m venv "$packageRoot/.venv"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$packageRoot/.venv/Scripts/python.exe" -m pip install --require-hashes -r "$packageRoot/requirements.lock.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location $packageRoot
+          & "$packageRoot/.venv/Scripts/python.exe" -c "from pathlib import Path; import tkinter as tk; import packages.collector.agent_gui as gui; assert Path(gui.__file__).resolve().is_relative_to(Path.cwd()); root = tk.Tk(); root.withdraw(); app = gui.CollectorWindow(root, directory=Path('.vks/collector')); app.root.update_idletasks(); app.root.update(); assert not app.consent.get() and not app.schedule.get(); app.close(); print('PACKAGED_AGENT_STARTUP_OK')"
+          $agentExit = $LASTEXITCODE
+          Pop-Location
+          if ($agentExit -ne 0) { exit $agentExit }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vks-collector-windows
+          path: output/collector/*
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        pytest-shard: [core, ui]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -28,12 +72,16 @@ jobs:
           EOF
           sudo apparmor_parser -r /etc/apparmor.d/vks-playwright-chromium
       - run: uv run python scripts/build_demo.py
-      - run: uv run pytest -q
-      - run: npm test
-      - run: npm run build
-      - run: npm audit --audit-level=high
+      - run: uv run python -m pytest -p scripts.pytest_ci_shards --vks-ci-shard=${{ matrix.pytest-shard }} -q --durations=15
+      - if: matrix.pytest-shard == 'core'
+        run: npm test
+      - if: matrix.pytest-shard == 'core'
+        run: npm run build
+      - if: matrix.pytest-shard == 'core'
+        run: npm audit --audit-level=high
   postgres-and-queue:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
@@ -63,3 +111,17 @@ jobs:
       - run: uv run alembic upgrade head
       - run: uv run alembic check
       - run: uv run pytest -q tests/backend/test_postgres.py tests/jobs/test_rabbitmq.py
+      - name: Create isolated V2 recovery databases
+        run: |
+          uv run python - <<'PY'
+          import os, psycopg
+          with psycopg.connect(os.environ['VKS_DATABASE_URL'].replace('postgresql+psycopg://', 'postgresql://'), autocommit=True) as db:
+              db.execute('CREATE DATABASE vks2_recovery_source')
+              db.execute('CREATE DATABASE vks2_recovery_target')
+          PY
+      - name: V2 concurrent edits and PostgreSQL checkpoint restore
+        env:
+          VKS_TEST_V2_POSTGRES_URL: postgresql+psycopg://vks:synthetic-ci-database-only@127.0.0.1:5432/vks2_recovery_source
+          VKS_TEST_V2_RECOVERY_TARGET_URL: postgresql+psycopg://vks:synthetic-ci-database-only@127.0.0.1:5432/vks2_recovery_target
+          VKS_TEST_PG_TOOLS_CONTAINER: ${{ job.services.postgres.id }}
+        run: uv run pytest -q tests/v2/test_postgres_v2.py

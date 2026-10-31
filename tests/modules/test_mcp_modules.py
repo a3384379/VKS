@@ -30,21 +30,12 @@ async def test_official_sdk_reads_filtered_module_context_and_search(tmp_path):
         owner, pid, child["id"], {"analysis_set_id": aid, "entity_ids": [symbol["entity_id"], doc["entity_id"]]}, 1
     )
     for relation in workspace["relations"]:
-        service.review_relation(
-            owner,
-            relation["id"],
-            {"decision": "confirm", "reason": "Inspected fixture", "evidence_ids": relation["evidence_ids"]},
-            relation["row_version"],
+        service.set_relation_state(
+            owner, relation["id"], {"excluded": ("confirm" == "reject")}, relation["row_version"]
         )
-    candidate = service.request_release(owner, pid, {"analysis_set_id": aid}, "candidate")
-    ticket = service.confirm_release(owner, candidate["candidate_id"])
-    release = service.publish(
-        owner,
-        candidate["candidate_id"],
-        {key: ticket[key] for key in ("human_confirmation_ref", "expected_manifest_sha256")}
-        | {"change_note": "SDK baseline"},
-        "publish",
-    )
+    candidate = service.save_snapshot(owner, pid, {"analysis_set_id": aid}, "candidate")
+    ticket = None
+    release = candidate
     token = service.create_token(
         owner, pid, {"name": "SDK reader", "scopes": ["knowledge:read", "source:read"], "expires_in_days": 1}
     )

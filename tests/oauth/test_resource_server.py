@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import json
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -149,7 +149,7 @@ def test_metadata_is_resource_discovery_and_private_jwks_are_rejected(system):
         client.post(
             f"/api/v1/projects/{p['id']}/oauth-grants",
             headers=h,
-            json={"issuer_id": "invalid", "subject": "a", "client_id": "b", "scopes": ["release:publish"]},
+            json={"issuer_id": "invalid", "subject": "a", "client_id": "b", "scopes": ["knowledge:edit"]},
         ).status_code
         == 422
     )

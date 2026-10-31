@@ -111,6 +111,21 @@ def isolated_api(service, actor, pid, store, enabled):
 
 def run(args):
     started = time.monotonic()
+    root = Path(__file__).resolve().parents[1]
+    source_names = (
+        "packages/analyzers/vks_ingest.py",
+        "packages/analyzers/java_spring.py",
+        "packages/analyzers/incremental.py",
+        "packages/analyzers/syntax_cache.py",
+        "packages/analyzers/async_topology.py",
+        "packages/analyzers/cancellation.py",
+        "packages/analyzers/document_links.py",
+        "services/api/vks_api/knowledge.py",
+        "services/api/vks_api/jobs.py",
+        "services/api/vks_api/source_cache.py",
+        "scripts/benchmark_analysis.py",
+    )
+    source_hashes = {name: sha256((root / name).read_bytes()).hexdigest() for name in source_names}
     files = {}
     target_bytes = 100 * 1024 * 1024
     count = 5000
@@ -204,17 +219,7 @@ def run(args):
         },
         "external_model_calls": 0,
         "fixture_complexity": "5000 simple Java classes with one method each; deterministic hex comments pad to 100MiB, not enterprise code complexity",
-        "source_sha256": {
-            name: sha256((Path(__file__).resolve().parents[1] / name).read_bytes()).hexdigest()
-            for name in (
-                "packages/analyzers/vks_ingest.py",
-                "packages/analyzers/java_spring.py",
-                "packages/analyzers/cancellation.py",
-                "packages/analyzers/document_links.py",
-                "services/api/vks_api/knowledge.py",
-                "services/api/vks_api/jobs.py",
-            )
-        },
+        "source_sha256": source_hashes,
     }
     assert cancelled and cancel_requested_at is not None and time.monotonic() - cancel_requested_at < 10
     if args.persist_job:
@@ -286,7 +291,74 @@ def run(args):
                 "result": state.get("result"),
             }
             assert state["state"] == "succeeded", state
+            if args.incremental:
+                changed = dict(files)
+                for path in sorted(changed)[:50]:
+                    changed[path] = changed[path].replace(b"public int read()", b"public int load()", 1)
+                incremental_raw = bundle_bytes(
+                    Snapshot("local", "synthetic-100mib-1percent", changed),
+                    "at35-poc",
+                    "source-2",
+                    source_key="source",
+                    role="backend",
+                )
+                meta = dict(
+                    filename="source-2.vksbundle.zip",
+                    size_bytes=len(incremental_raw),
+                    sha256=sha256(incremental_raw).hexdigest(),
+                    media_type="application/zip",
+                )
+                tick = time.monotonic()
+                if client:
+                    response = client.post(f"/api/v1/projects/{project['id']}/upload-sessions", json=meta)
+                    response.raise_for_status()
+                    next_upload = response.json()["data"]
+                    response = client.put(
+                        next_upload["upload_url"], content=incremental_raw, headers={"Content-Type": "application/zip"}
+                    )
+                    response.raise_for_status()
+                    response = client.post(
+                        f"/api/v1/projects/{project['id']}/imports",
+                        json=dict(kind="bundle", artifact_ids=[next_upload["artifact_id"]]),
+                        headers={"Idempotency-Key": "incremental-1-percent"},
+                    )
+                    response.raise_for_status()
+                    next_job = response.json()["data"]
+                else:
+                    next_upload = service.create_upload(actor, project["id"], meta)
+                    service.put_upload(actor, project["id"], next_upload["upload_session_id"], incremental_raw)
+                    next_job = service.import_bundle(
+                        actor,
+                        project["id"],
+                        dict(kind="bundle", artifact_ids=[next_upload["artifact_id"]]),
+                        "incremental-1-percent",
+                    )
+                submission_seconds = time.monotonic() - tick
+                tick = time.monotonic()
+                service.process_job(next_job["id"])
+                next_state = service.get_job(actor, next_job["id"])
+                assert next_state["state"] == "succeeded", next_state
+                metrics = next_state["result"]["analysis_metrics"]
+                result["incremental"] = dict(
+                    changed_files=50,
+                    total_files=5000,
+                    source_bytes=sum(map(len, changed.values())),
+                    submission_seconds=submission_seconds,
+                    execution_seconds=time.monotonic() - tick,
+                    state=next_state["state"],
+                    metrics=metrics,
+                    dependency_scope="all current summaries indexed; only affected dependency contexts analyzed",
+                )
+                assert metrics["syntax_parsed_files"] == 50 and metrics["syntax_reused_files"] == 4950, metrics
+                assert metrics["dependency_indexed_files"] == 5000, metrics
+                assert metrics["dependency_recomputed_files"] == 50 and metrics["dependency_reused_files"] == 4950, (
+                    metrics
+                )
+                assert metrics["dependency_cache_fallbacks"] == 0, metrics
         service.engine.dispose()
+    result["source_changed_during_run"] = any(
+        sha256((root / name).read_bytes()).hexdigest() != source_hashes[name] for name in source_names
+    )
     Path(args.output).write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(result, ensure_ascii=False))
 
@@ -296,4 +368,12 @@ if __name__ == "__main__":
     parser.add_argument("--output", required=True)
     parser.add_argument("--persist-job", action="store_true")
     parser.add_argument("--http", action="store_true")
-    run(parser.parse_args())
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="After a persisted cold job, modify exactly 1%% of files and measure durable syntax and dependency reuse",
+    )
+    args = parser.parse_args()
+    if args.incremental and not args.persist_job:
+        parser.error("--incremental requires --persist-job")
+    run(args)

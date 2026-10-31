@@ -1,0 +1,401 @@
+{
+  "$defs": {
+    "Binding": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "revision_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "revision_id"
+      ],
+      "title": "Binding",
+      "type": "object"
+    },
+    "CaptureReference": {
+      "additionalProperties": false,
+      "properties": {
+        "scenario_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Scenario Id",
+          "type": "string"
+        },
+        "scenario_revision_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Scenario Revision Id",
+          "type": "string"
+        },
+        "capture_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Capture Id",
+          "type": "string"
+        },
+        "snapshot_index": {
+          "maximum": 19,
+          "minimum": 0,
+          "title": "Snapshot Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "scenario_id",
+        "scenario_revision_id",
+        "capture_id",
+        "snapshot_index"
+      ],
+      "title": "CaptureReference",
+      "type": "object"
+    },
+    "Edge": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "pattern": "^[a-zA-Z0-9_.-]{1,96}$",
+          "title": "Key",
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 96,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 96,
+          "minLength": 1,
+          "title": "Target",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 160,
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "source",
+        "target",
+        "label"
+      ],
+      "title": "Edge",
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "pattern": "^[a-zA-Z0-9_.-]{1,96}$",
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "page",
+            "action",
+            "step",
+            "decision",
+            "branch",
+            "end",
+            "reference"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "x": {
+          "maximum": 4000,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "maximum": 4000,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        },
+        "binding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Binding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StateReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "capture_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CaptureReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "title",
+        "x",
+        "y"
+      ],
+      "title": "Node",
+      "type": "object"
+    },
+    "Semantics": {
+      "additionalProperties": false,
+      "description": "An author's meaning claim; neither approval nor runtime/business validation.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "business_process",
+            "operation_sequence",
+            "evidence_navigation",
+            "observation_comparison",
+            "unclassified"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "basis": {
+          "enum": [
+            "declared",
+            "observed",
+            "inferred",
+            "unknown"
+          ],
+          "title": "Basis",
+          "type": "string"
+        },
+        "purpose": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Purpose"
+        },
+        "preconditions": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 30,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preconditions"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome"
+        },
+        "unknowns": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 50,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unknowns"
+        },
+        "source_refs": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Binding"
+              },
+              "maxItems": 50,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Refs"
+        }
+      },
+      "required": [
+        "kind",
+        "basis"
+      ],
+      "title": "Semantics",
+      "type": "object"
+    },
+    "StateReference": {
+      "additionalProperties": false,
+      "properties": {
+        "scenario_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Scenario Id",
+          "type": "string"
+        },
+        "scenario_revision_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Scenario Revision Id",
+          "type": "string"
+        },
+        "state_key": {
+          "pattern": "^[a-zA-Z0-9_.-]{1,96}$",
+          "title": "State Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scenario_id",
+        "scenario_revision_id",
+        "state_key"
+      ],
+      "title": "StateReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "key": {
+      "pattern": "^[a-zA-Z0-9_.-]{1,96}$",
+      "title": "Key",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "semantics": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Semantics"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "entry": {
+      "maxLength": 96,
+      "minLength": 1,
+      "title": "Entry",
+      "type": "string"
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/Node"
+      },
+      "maxItems": 120,
+      "minItems": 1,
+      "title": "Nodes",
+      "type": "array"
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/Edge"
+      },
+      "maxItems": 240,
+      "title": "Edges",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "key",
+    "title",
+    "entry",
+    "nodes",
+    "edges"
+  ],
+  "title": "Journey",
+  "type": "object"
+}

@@ -1,0 +1,135 @@
+{
+  "date": "2026-10-30",
+  "base_commit": "f947cc5f3f463bbae81c6b670f0d48a5ba52467e",
+  "working_tree_changes": true,
+  "source_file_count": 385,
+  "source_aggregate_sha256": "08e3bf9477b4fcfd1201b5dd0384a8d78c9415d8447d77c75d586b8ac67fff2e",
+  "scope": [
+    "read-first journeys with explicit meaning, business goal, conditions, outcome and exact declaration sources",
+    "bounded structured model plans; independent action evidence and observations do not imply a business sequence",
+    "same-version inline pages, knowledge and source attachments; exact history and return navigation",
+    "saved snapshot enlargement, zoom, original size, fit, keyboard focus and permission revocation",
+    "module scope, cockpit denominators, task results, review targets and late-response invalidation",
+    "directional technical context and reverse references; structural membership is not knowledge coverage",
+    "fixed impact reports, source vectors, selection version, bounded traversal and visible-only completeness",
+    "all actual model evidence and catalog input permissions, dynamic classification, egress policy and sensitive replay",
+    "legacy relation provenance migration, immutable history, clone/edit/export and permission-safe reimport"
+  ],
+  "make_check": {
+    "command": "make check",
+    "exit_code": 0,
+    "seconds": 455.076,
+    "isolated_data": true,
+    "real_sources": [
+      "RuoYi",
+      "FlowTest"
+    ],
+    "source_file_count": 385,
+    "source_aggregate_sha256": "08e3bf9477b4fcfd1201b5dd0384a8d78c9415d8447d77c75d586b8ac67fff2e",
+    "source_unchanged": true,
+    "after_source_aggregate_sha256": "08e3bf9477b4fcfd1201b5dd0384a8d78c9415d8447d77c75d586b8ac67fff2e",
+    "python_passed": 575,
+    "python_skipped": 15,
+    "python_seconds": 428.19,
+    "frontend_passed": 59,
+    "build": "passed",
+    "build_seconds": 18.87
+  },
+  "postgres": {
+    "exit_code": 0,
+    "seconds": 18.517,
+    "server_version": "PostgreSQL 17.11 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "legacy_relation_upgrade_backfill_preserves_all_axes": true,
+    "downgrade_reupgrade": true,
+    "isolated_container": "vks-design-audit-20261030",
+    "disposable_databases": 7,
+    "python_passed": 9,
+    "source_aggregate_sha256": "f237f1ceaa6977dbb2b75023194001866933abcf452d15e2373dc237d3ebb974",
+    "includes_project_policy_concurrent_cas": true,
+    "temporary_container_removed": true,
+    "temporary_credentials_removed": true,
+    "backend_inputs_unchanged_in_final_source": true,
+    "scoped_input_count": 93
+  },
+  "independent_audits": {
+    "reasoning": "max",
+    "implementation_reasoning": "xhigh",
+    "business_journey_remaining_findings": 0,
+    "business_journey_final_lifecycle": {
+      "passed": 14,
+      "failed": 0,
+      "seconds": 54.76,
+      "frozen_source_hashes_unchanged": true
+    },
+    "product_remaining_findings": 0,
+    "product_design_matrix_rows": 31,
+    "product_final_browser": {
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 40.97
+    },
+    "platform": {
+      "passed": 103,
+      "skipped": 1,
+      "seconds": 54.58,
+      "remaining_confirmed_P1": 0,
+      "skipped_policy_concurrency_verified_in_separate_postgres_run": true
+    },
+    "counts_are_overlapping_and_not_summed": true
+  },
+  "first_full_run": {
+    "python_passed": 572,
+    "python_skipped": 15,
+    "failed": 2,
+    "seconds": 456.12,
+    "cause": "A new saved journey was hidden against the workspace from before creation; maintenance could not continue.",
+    "original_behavior_assertions_retained": true,
+    "raw_failure_preserved": true,
+    "frontend_and_build_not_run": true
+  },
+  "save_lifecycle_remediation": {
+    "visible_workspace_refreshed_after_creation": true,
+    "default_alias_pin_preserves_maintenance_and_undo": true,
+    "dirty_default_drift_uses_fresh_authorized_original_baseline": true,
+    "old_draft_not_written_to_new_default": true,
+    "visibility_guard_retained": true,
+    "toast_assertion_only_text_updated": true
+  },
+  "real_local_pilots": {
+    "projects": [
+      "RuoYi",
+      "FlowTest"
+    ],
+    "new_business_guides": 2,
+    "exact_selected_references": 24,
+    "independently_hash_checked_objects": 10,
+    "fixed_git_materials_byte_verified": 8,
+    "original_six_journey_definitions_unchanged": true,
+    "current_pending_review_per_project": 0,
+    "separate_drafts_preserve_old_baselines": true,
+    "external_model_calls": 0,
+    "target_business_writes": 0,
+    "old_capture_baselines_not_rewritten": true,
+    "preview": "http://127.0.0.1:5174"
+  },
+  "design_integrity": {
+    "tracked_design_directory_files": 48,
+    "all_original_bytes_unchanged": true
+  },
+  "static_checks": {
+    "basic_ruff": "E9,F63,F7,F82 passed",
+    "git_diff_check": "passed",
+    "frontend_formatting": "passed"
+  },
+  "boundaries": {
+    "environment_skips_not_counted_as_passed": true,
+    "real_business_write_chain_not_executed": true,
+    "real_model_quality_not_evaluated": true,
+    "independent_gold_and_five_user_study_not_run": true,
+    "hardware_capacity_and_enterprise_target_not_remeasured": true,
+    "commit_or_push": false,
+    "remote_CI": false,
+    "production_release": false
+  }
+}

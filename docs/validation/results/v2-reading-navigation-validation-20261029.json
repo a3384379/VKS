@@ -1,0 +1,80 @@
+{
+  "date": "2026-10-29",
+  "base_commit": "f947cc5f3f463bbae81c6b670f0d48a5ba52467e",
+  "working_tree_changes": true,
+  "source_aggregate_sha256": "0505e4091049c870ba5b640131a235f3b430bc7506c519acfa544abae6d10fc7",
+  "source_file_count": 340,
+  "scope": [
+    "graph node selection independent from graph expansion root",
+    "full-document directory navigation by exact Markdown source line",
+    "sticky desktop directory with independent long-directory scrolling and bounded mobile height"
+  ],
+  "targeted_browser": {
+    "passed": 2,
+    "seconds": 9.14,
+    "coverage": [
+      "56-node graph positions, node set, zoom and scroll stable after three selections",
+      "no knowledge-map refetch from selection; explicit expansion fetches the new two-node graph",
+      "empty parent section retains child and surrounding text",
+      "duplicate heading source lines, focus and URL survive reload",
+      "sticky directory stays in viewport; directory scroll does not move document",
+      "375px layout and directory height bound",
+      "immutable prior document revision unchanged"
+    ]
+  },
+  "make_check": {
+    "command": "make check",
+    "exit_code": 0,
+    "seconds": 302.811,
+    "isolated_data": true,
+    "real_sources": [
+      "RuoYi",
+      "FlowTest"
+    ],
+    "python_passed": 463,
+    "python_skipped": 15,
+    "python_seconds": 278.17,
+    "frontend_passed": 42,
+    "build": "passed"
+  },
+  "stage_failures": [
+    {
+      "stage": "initial behavior reproduction",
+      "failed": 2,
+      "seconds": 10.76,
+      "cause": "node selection changes root and replaces 56-node graph with two nodes; directory selection replaces complete document with empty parent section"
+    },
+    {
+      "stage": "intermediate document assertion",
+      "failed": 1,
+      "passed": 1,
+      "seconds": 10.89,
+      "cause": "last repeated heading cannot align to viewport top at natural document end; longer directory fixture now checks independent scrolling and exact focus"
+    },
+    {
+      "stage": "scroll diagnostic",
+      "failed": 1,
+      "deselected": 1,
+      "seconds": 4.67,
+      "cause": "confirmed browser maximum page-scroll clamp; no product timeout or retry added"
+    }
+  ],
+  "static_checks": [
+    "Prettier",
+    "Ruff E9,F63,F7,F82",
+    "git diff --check"
+  ],
+  "runtime_checks": {
+    "ruoyi_map_selection": "three nodes and two relations retained while details switch to selected page",
+    "flowtest_document": "9.14 organization heading reached with complete following content and sticky directory visible",
+    "preview": "http://127.0.0.1:5174"
+  },
+  "boundaries": {
+    "knowledge_content_or_approval_changed": false,
+    "new_schema_or_api": false,
+    "new_dependencies": false,
+    "postgres_remeasured": false,
+    "production_release": false,
+    "commit_or_push": false
+  }
+}

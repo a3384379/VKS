@@ -33,11 +33,21 @@ def test_document_and_proposal_migration_upgrades_existing_source_schema(tmp_pat
             )
         )
     engine.dispose()
-    migrate("upgrade", "e41f77dd4504")
+    migrate("upgrade", "head")
     engine = create_engine(url)
-    assert {"document_workflow", "document_review", "update_proposal"} <= set(inspect(engine).get_table_names())
+    assert not {
+        "document_workflow",
+        "document_review",
+        "update_proposal",
+        "capture_approval",
+        "release_candidate",
+        "review_decision",
+    } & set(inspect(engine).get_table_names())
+    assert "excluded" in {row["name"] for row in inspect(engine).get_columns("relation")}
+    assert "review_status" not in {row["name"] for row in inspect(engine).get_columns("relation")}
+    assert "input_sha256" in {row["name"] for row in inspect(engine).get_columns("capture_session")}
     with engine.connect() as db:
         assert db.scalar(text("SELECT name FROM project")) == "Preserved"
+        assert not db.exec_driver_sql("PRAGMA foreign_key_check").all()
     engine.dispose()
-    migrate("downgrade", "d31f66cc3403")
-    migrate("upgrade", "e41f77dd4504")
+    migrate("upgrade", "head")

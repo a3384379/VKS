@@ -1,12 +1,11 @@
-"""Independent audit regressions across read, export and mutation boundaries."""
+from vks_api.models import Relation
 
+"Independent audit regressions across read, export and mutation boundaries."
 from io import BytesIO
 from pathlib import Path
 import json
 import zipfile
-
 import pytest
-
 from packages.analyzers.vks_ingest import parse_bundle
 from vks_api.service import Service, DomainError
 
@@ -19,8 +18,6 @@ def published(tmp_path):
     _, owner = service.login(service.bootstrap_token)
     project = service.create_project(owner, {"key": "charge-demo", "name": "Access audit", "description": ""}, "create")
     bundle = parse_bundle((ROOT / "fixtures/charge-demo.vksbundle.zip").read_bytes(), "charge-demo")
-    # Mark the imported MD confidential using the legitimate import metadata,
-    # before committing it. No marker is inserted into logs or secret fields.
     for item in bundle.artifacts:
         if item["kind"] == "markdown":
             item["sensitivity"] = "confidential"
@@ -29,34 +26,17 @@ def published(tmp_path):
     aid = result["analysis_set_id"]
     workspace = service.workspace(owner, project["id"], aid)
     for edge in workspace["relations"]:
-        service.review_relation(
-            owner,
-            edge["id"],
-            {
-                "decision": "confirm",
-                "reason": "Audit fixture: accept synthetic candidate",
-                "evidence_ids": edge["evidence_ids"],
-            },
-            edge["row_version"],
-        )
-    candidate = service.request_release(owner, project["id"], {"analysis_set_id": aid}, "release-candidate")
-    ticket = service.confirm_release(owner, candidate["candidate_id"])
-    release = service.publish(
-        owner,
-        candidate["candidate_id"],
-        {
-            **{k: ticket[k] for k in ("human_confirmation_ref", "expected_manifest_sha256")},
-            "change_note": "Synthetic access audit release",
-        },
-        "publish",
-    )
+        service.set_relation_state(owner, edge["id"], {"excluded": "confirm" == "reject"}, edge["row_version"])
+    candidate = service.save_snapshot(owner, project["id"], {"analysis_set_id": aid}, "release-candidate")
+    ticket = None
+    release = candidate
     token = service.create_token(
         owner,
         project["id"],
         {"name": "Business reader", "scopes": ["knowledge:read", "knowledge:export"], "expires_in_days": 1},
     )
     reader = service.authenticate(token["token"], "token")
-    yield service, owner, reader, project, aid, release, workspace
+    yield (service, owner, reader, project, aid, release, workspace)
     service.engine.dispose()
 
 
@@ -64,7 +44,7 @@ def test_confidential_document_cannot_leak_through_workspace_or_search(published
     service, owner, reader, project, aid, release, _ = published
     workspace = service.workspace(reader, project["id"], release_id=release["id"])
     assert not workspace["documents"], "Confidential Markdown is returned to a reader without source:read"
-    assert not any(e["type"] == "section" for e in workspace["entities"])
+    assert not any((e["type"] == "section" for e in workspace["entities"]))
     assert (
         service.search(reader, project["id"], {"release_id": release["id"], "query": "申请金额必须大于零", "limit": 50})
         == []
@@ -90,14 +70,14 @@ def test_business_export_omits_confidential_body_and_hidden_relation_ids(publish
     service.process_job(job["id"])
     raw, _ = service.download_export(reader, project["id"], job["id"])
     with zipfile.ZipFile(BytesIO(raw)) as archive:
-        texts = "\n".join(archive.read(name).decode() for name in archive.namelist())
+        texts = "\n".join((archive.read(name).decode() for name in archive.namelist()))
         assert "申请金额必须大于零" not in texts
         manifest = json.loads(archive.read("knowledge-manifest.json"))
         visible = {
             e["entity_revision_id"]
             for e in service.workspace(reader, project["id"], release_id=release["id"])["entities"]
         }
-        assert all(r["from_revision_id"] in visible and r["to_revision_id"] in visible for r in manifest["relations"])
+        assert all((r["from_revision_id"] in visible and r["to_revision_id"] in visible for r in manifest["relations"]))
 
 
 def test_proposal_endpoint_rejects_invalid_relation_endpoint_types(tmp_path):
@@ -109,7 +89,7 @@ def test_proposal_endpoint_rejects_invalid_relation_endpoint_types(tmp_path):
         result = service._commit_bundle(session, project["id"], owner.id, bundle)
     workspace = service.workspace(owner, project["id"], result["analysis_set_id"])
     action = workspace["actions"][0]
-    section = next(e for e in workspace["entities"] if e["type"] == "section")
+    section = next((e for e in workspace["entities"] if e["type"] == "section"))
     evidence_ids = workspace["relations"][0]["evidence_ids"]
     with pytest.raises(DomainError):
         service.propose_links(
@@ -137,9 +117,8 @@ def test_two_application_instances_cannot_both_accept_same_review_version(tmp_pa
     """A Python mutex alone does not coordinate separate API/worker processes."""
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier, BrokenBarrierError
-    from sqlalchemy import select
-    from vks_api.models import Review
 
+    pass
     first = Service(tmp_path / "store")
     _, owner = first.login(first.bootstrap_token)
     project = first.create_project(owner, {"key": "charge-demo", "name": "Two reviewer race"}, "p")
@@ -157,30 +136,23 @@ def test_two_application_instances_cannot_both_accept_same_review_version(tmp_pa
             try:
                 barrier.wait(timeout=0.3)
             except BrokenBarrierError:
-                # Correct DB-level serialization may keep the second transaction
-                # outside this gate until the first commit has completed.
                 pass
 
         service._version = gated_version
 
     def review(service, decision):
         try:
-            return service.review_relation(
-                owner,
-                edge["id"],
-                {"decision": decision, "reason": "concurrent fixture review", "evidence_ids": edge["evidence_ids"]},
-                1,
-            )
+            return service.set_relation_state(owner, edge["id"], {"excluded": decision == "reject"}, 1)
         except DomainError as error:
             return error
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(review, first, "confirm"), pool.submit(review, second, "reject")]
         results = [f.result(timeout=10) for f in futures]
-    assert sum(isinstance(r, dict) for r in results) == 1, "Both stale writes were accepted"
+    assert sum((isinstance(r, dict) for r in results)) == 1, "Both stale writes were accepted"
     assert [r.status for r in results if isinstance(r, DomainError)] == [412]
     with first.db() as session:
-        assert len(list(session.scalars(select(Review)))) == 1
+        assert session.get(Relation, edge["id"]).row_version == 2
     first.engine.dispose()
     second.engine.dispose()
 
@@ -225,7 +197,7 @@ def test_simultaneous_first_boot_keeps_one_owner_identity(tmp_path, monkeypatch)
 
     def gated_exists(path):
         exists = original_exists(path)
-        if path == store / "owner-id" and not exists:
+        if path == store / "owner-id" and (not exists):
             try:
                 barrier.wait(timeout=0.3)
             except BrokenBarrierError:

@@ -123,18 +123,18 @@ def test_actual_mock_request_produces_only_unique_temporal_candidates_and_preser
         saved = scenarios.create(owner, project["id"], {"analysis_set_id": aid, "dsl": dsl}, "scenario")
 
         def capture(revision, key):
-            approval = scenarios.approve(
-                owner,
-                saved["scenario_id"],
-                {"analysis_set_id": aid, "scenario_revision_id": revision, "reason": "批准独立合成写入，不是生产操作"},
-            )
+            approval = {
+                "analysis_set_id": aid,
+                "scenario_revision_id": revision,
+                "reason": "批准独立合成写入，不是生产操作",
+            }
             value = scenarios.request_capture(
                 owner,
                 saved["scenario_id"],
                 {
                     "scenario_revision_id": approval["scenario_revision_id"],
                     "environment_ref": "mock-test",
-                    "approval_ref": approval["approval_ref"],
+                    "analysis_set_id": approval["analysis_set_id"],
                 },
                 key,
             )
@@ -154,19 +154,12 @@ def test_actual_mock_request_produces_only_unique_temporal_candidates_and_preser
         if mode == "unique":
             assert len(observed) == 1
             relation = observed[0]
-            assert relation.review_status == "candidate" and relation.causal_basis == "temporal_association"
+            assert relation.excluded is False and relation.causal_basis == "temporal_association"
             evidence = service.get_evidence(owner, project["id"], relation.evidence_ids)[0]
             assert evidence["evidence_kind"] == "observed" and evidence["locator"]["source_kind"] == "runtime_capture"
             assert evidence["locator"]["request_id"] and evidence["locator"]["step_key"] == "click"
-            reviewed = service.review_relation(
-                owner,
-                relation.id,
-                {
-                    "decision": "confirm",
-                    "reason": "只确认同窗观察，不确认触发因果",
-                    "evidence_ids": relation.evidence_ids,
-                },
-                relation.row_version,
+            reviewed = service.set_relation_state(
+                owner, relation.id, {"excluded": "confirm" == "reject"}, relation.row_version
             )["relation"]
             capture(revision, "capture-2")
             with service.db() as session:
@@ -179,9 +172,9 @@ def test_actual_mock_request_produces_only_unique_temporal_candidates_and_preser
         else:
             assert observed == []
             capture_result = scenarios.captures(owner, project["id"])[0]["result"]
-            post = next(request for request in capture_result["requests"] if request["method"] == "POST")
+            post = next((request for request in capture_result["requests"] if request["method"] == "POST"))
             resolution = next(
-                row for row in capture_result["network_resolution"] if row["request_id"] == post["request_id"]
+                (row for row in capture_result["network_resolution"] if row["request_id"] == post["request_id"])
             )
             assert resolution["state"] == "unresolved"
             assert resolution["reason_code"] == (

@@ -1,26 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { layeredMap } from "./graph-layout";
+import { BusinessReferences } from "./BusinessReferences";
+
+import { StateReplay } from "./StateReplay";
+
+import { moduleWorkspace } from "./module-context";
+import { BusinessModuleExplorer } from "./BusinessModuleExplorer";
+import { ActionChain } from "./ActionChain";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
-  Boxes,
   Check,
   CheckCircle2,
   ChevronRight,
-  Clock3,
   Code2,
   Copy,
   FileArchive,
   FileCheck2,
   FileText,
   Folder,
-  GitBranch,
-  GitCompareArrows,
   Globe2,
   Info,
   Layers3,
   Link2,
-  ListFilter,
   LockKeyhole,
   Maximize,
   MousePointer2,
@@ -28,13 +31,11 @@ import {
   Plus,
   Save,
   Search,
-  Send,
   ShieldCheck,
   Sparkles,
   SquareArrowOutUpRight,
   Terminal,
   Upload,
-  X,
 } from "lucide-react";
 import { api, date, mutation } from "./api";
 import {
@@ -55,7 +56,7 @@ import {
   issueText,
   label,
 } from "./components";
-import { useWorkspace, usePermission } from "./context";
+import { ReadScope, useWorkspace, usePermission } from "./context";
 import { TeamSettings } from "./TeamSettings";
 import { SourceManagement } from "./SourceManagement";
 import { NewDraftButton } from "./DraftActions";
@@ -65,21 +66,12 @@ import ScenarioStudio from "./ScenarioStudio";
 import { ObservedStateSurface } from "./CaptureResults";
 import { OAuthSettings } from "./OAuthSettings";
 import { ModelSettings } from "./ModelSettings";
-import { DocumentWorkflow } from "./DocumentWorkflow";
-import { ChangeProposals } from "./ChangeProposals";
+
 import { ModuleTree } from "./ModuleTree";
 import { AuditSearch } from "./AuditSearch";
 import { ProjectProfile } from "./ProjectProfile";
-import { RelationOperations, BatchRelationReview } from "./RelationOperations";
-import type {
-  Dict,
-  Entity,
-  Evidence,
-  Job,
-  Relation,
-  ReleaseCandidate,
-  Token,
-} from "./types";
+
+import type { Entity, Evidence, Relation, Token } from "./types";
 
 function field(e: Entity | undefined, key: string) {
   return String(e?.metadata?.[key] ?? "");
@@ -87,9 +79,7 @@ function field(e: Entity | undefined, key: string) {
 function relationType(r: Relation) {
   return r.relation_type || r.type || "";
 }
-function entityAt(entities: Entity[], revision: string) {
-  return entities.find((e) => e.entity_revision_id === revision);
-}
+
 function relationEvidence(relations: Relation[], evidence: Evidence[]) {
   const ids = new Set(relations.flatMap((r) => r.evidence_ids || []));
   return evidence.filter((e) => ids.has(e.id));
@@ -107,375 +97,13 @@ function downloadable(
   URL.revokeObjectURL(u);
 }
 
-export function Overview() {
-  const { w, navigate, setSelected } = useWorkspace();
-  const confirmed = w.relations.filter((r) => r.review_status === "confirmed"),
-    pending = w.relations.filter((r) => r.review_status === "candidate"),
-    broken = w.relations.filter((r) =>
-      ["stale", "broken"].includes(r.validity_status),
-    );
-  const confirmedActions = new Set(
-    confirmed
-      .flatMap((r) => [r.from_revision_id, r.to_revision_id])
-      .filter((id) => w.actions.some((a) => a.entity_revision_id === id)),
-  );
-  const cards = w.scenarios.length ? w.scenarios : w.pages;
-  return (
-    <>
-      <div className="stats-grid">
-        {[
-          {
-            icon: Boxes,
-            label: "业务页面与场景",
-            value: w.pages.length + w.scenarios.length,
-            note: `${w.actions.length} 个可探索动作`,
-            tone: "blue",
-            view: "workbench" as const,
-          },
-          {
-            icon: Link2,
-            label: "已确认关联",
-            value: confirmed.length,
-            note: `共 ${w.relations.length} 条关系`,
-            tone: "green",
-            view: "graph" as const,
-          },
-          {
-            icon: Clock3,
-            label: "待审核关联",
-            value: pending.length,
-            note: "核对证据后，确认业务含义",
-            tone: "amber",
-            view: "reviews" as const,
-          },
-          {
-            icon: FileCheck2,
-            label: "待复核关系",
-            value: broken.length,
-            note: `${w.documents.length} 份原始文档`,
-            tone: "purple",
-            view: "versions" as const,
-          },
-        ].map((s) => (
-          <button
-            className="stat-card"
-            key={s.label}
-            onClick={() => navigate(s.view)}
-          >
-            <span className={`stat-icon ${s.tone}`}>
-              <s.icon size={23} />
-            </span>
-            <div>
-              <span>{s.label}</span>
-              <strong>{s.value}</strong>
-              <small>{s.note}</small>
-            </div>
-            <ChevronRight size={17} />
-          </button>
-        ))}
-      </div>
-      {!w.entities.length ? (
-        <div className="empty-project">
-          <div>
-            <span className="eyebrow">START WITH CONTEXT</span>
-            <h2>把第一份材料，变成可探索的知识。</h2>
-            <p>
-              先导入 Markdown、原型与显式绑定清单，
-              <br />
-              再检查证据、审核关系，发布你的第一个知识版本。
-            </p>
-            <div className="row">
-              <Button kind="primary" onClick={() => navigate("imports")}>
-                <Upload size={16} />
-                接入项目资料
-              </Button>
-              <span className="muted">也可从合成示例开始</span>
-            </div>
-          </div>
-          <div className="empty-project-art">
-            <FileText size={32} />
-            <Link2 size={22} />
-            <Boxes size={32} />
-          </div>
-        </div>
-      ) : (
-        <div className="overview-layout">
-          <div className="overview-main">
-            <Panel
-              title="业务探索"
-              action={
-                <ArrowLink onClick={() => navigate("workbench")}>
-                  打开工作台
-                </ArrowLink>
-              }
-            >
-              <div className="scenario-list">
-                {cards.length ? (
-                  cards.map((s, i) => (
-                    <button
-                      key={s.id}
-                      className="scenario-card"
-                      onClick={() => {
-                        setSelected(s.id);
-                        navigate("workbench");
-                      }}
-                    >
-                      <div className="scenario-preview">
-                        <div className="mini-browser">
-                          <i />
-                          <i />
-                          <i />
-                        </div>
-                        <div className="mini-layout">
-                          <span />
-                          <span />
-                          <span />
-                          <span />
-                        </div>
-                        <span className="preview-type">
-                          {w.scenarios.length ? "场景" : "页面"}{" "}
-                          {String(i + 1).padStart(2, "0")}
-                        </span>
-                      </div>
-                      <div className="scenario-copy">
-                        <h3>{s.name}</h3>
-                        <p>
-                          {field(s, "description") ||
-                            field(s, "route") ||
-                            "选择页面动作，查看同一基线中的文档与技术依据。"}
-                        </p>
-                        <div className="row">
-                          <Tag value="manual">
-                            {field(s, "evidence_origin") || "导入原型"}
-                          </Tag>
-                          <Tag>
-                            {
-                              w.actions.filter(
-                                (a) =>
-                                  field(a, "page_key") === s.stable_key ||
-                                  field(a, "pageKey") === s.stable_key,
-                              ).length
-                            }{" "}
-                            个动作
-                          </Tag>
-                        </div>
-                      </div>
-                      <span className="scenario-open">
-                        进入工作台 <ArrowRight size={14} />
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <Empty
-                    title="还没有业务页面"
-                    description="当前已导入文档或接口资料，可继续添加 UI manifest 与原型。"
-                    action={
-                      <Button onClick={() => navigate("imports")}>
-                        添加原型
-                      </Button>
-                    }
-                  />
-                )}
-              </div>
-            </Panel>
-            <Panel
-              title="知识来源"
-              action={
-                <ArrowLink onClick={() => navigate("imports")}>
-                  管理接入
-                </ArrowLink>
-              }
-            >
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>来源</th>
-                      <th>类型</th>
-                      <th>固定版本</th>
-                      <th>内容指纹</th>
-                      <th>状态</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {w.sources.map((s) => (
-                      <tr key={s.id || s.source_id}>
-                        <td>
-                          <span className="table-name">
-                            <Folder size={17} />
-                            {s.name ||
-                              s.source_id ||
-                              s.root ||
-                              s.id.slice(0, 8)}
-                          </span>
-                        </td>
-                        <td>{s.role}</td>
-                        <td title={s.provider_revision}>
-                          {s.provider_revision &&
-                          /^[a-f0-9]{64}$/.test(s.provider_revision)
-                            ? `本地快照 · ${s.provider_revision.slice(0, 12)}`
-                            : s.provider_revision || s.provider}
-                        </td>
-                        <td>
-                          <code>{s.content_sha256?.slice(0, 12) || "—"}</code>
-                        </td>
-                        <td>
-                          <Tag value="valid">已固定快照</Tag>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {!w.sources.length && (
-                  <Empty
-                    title="暂无来源快照"
-                    description="导入后会在这里显示每份来源的版本与内容指纹。"
-                  />
-                )}
-              </div>
-            </Panel>
-          </div>
-          <div className="overview-aside">
-            <Panel
-              title="待处理"
-              action={
-                <ArrowLink onClick={() => navigate("reviews")}>
-                  查看全部
-                </ArrowLink>
-              }
-            >
-              {pending.length ? (
-                <div className="todo-list">
-                  {pending.slice(0, 4).map((r) => (
-                    <button
-                      key={r.id}
-                      onClick={() => {
-                        setSelected(r.id);
-                        navigate("reviews");
-                      }}
-                    >
-                      <i />
-                      <span>
-                        <strong>
-                          {r.from_name}
-                          <ArrowRight size={13} />
-                          {r.to_name}
-                        </strong>
-                        <small>
-                          {label(relationType(r))} ·{" "}
-                          {(r.evidence_ids || []).length} 项证据
-                        </small>
-                      </span>
-                      <ChevronRight size={15} />
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="quiet-state">
-                  <CheckCircle2 size={25} />
-                  <strong>当前没有待审核关联</strong>
-                  <p>新导入的绑定将进入审核列表。</p>
-                </div>
-              )}
-            </Panel>
-            <Panel
-              title="最近活动"
-              action={
-                <ArrowLink onClick={() => navigate("settings")}>
-                  审计记录
-                </ArrowLink>
-              }
-            >
-              <div className="timeline">
-                {w.audit_events.slice(0, 5).map((e, i) => (
-                  <div key={e.id}>
-                    <i className={i === 0 ? "active" : ""} />
-                    <div>
-                      <strong>{auditLabel(e.action)}</strong>
-                      <p>
-                        {e.result || "已记录"} · {e.actor || "本地用户"}
-                      </p>
-                      <small>{date(e.created_at)}</small>
-                    </div>
-                  </div>
-                ))}
-                {!w.audit_events.length && (
-                  <p className="muted">
-                    后续导入、审核与发布操作会在这里留痕。
-                  </p>
-                )}
-              </div>
-            </Panel>
-            <Panel title="关联覆盖" className="coverage">
-              <div className="row between">
-                <span>具备已确认关联的动作</span>
-                <strong>
-                  {confirmedActions.size} / {w.actions.length}
-                </strong>
-              </div>
-              <div className="progress-track">
-                <i
-                  style={{
-                    width: `${w.actions.length ? (confirmedActions.size / w.actions.length) * 100 : 0}%`,
-                  }}
-                />
-              </div>
-              <p>分母为当前基线中的全部业务动作。候选关联不计入已确认数。</p>
-              <div className="row between">
-                <span>
-                  <ShieldCheck size={14} />
-                  固定来源版本
-                </span>
-                <Tag value="valid">{w.sources.length} 份来源</Tag>
-              </div>
-            </Panel>
-          </div>
-        </div>
-      )}
-      <div className="capability-strip">
-        <div>
-          <ShieldCheck size={19} />
-          <strong>有依据，也有边界</strong>
-        </div>
-        <p>
-          {w.unknowns.length
-            ? `${w.unknowns.length} 项能力或资料缺口待补充`
-            : "当前使用离线资料建立知识关联"}{" "}
-          · 可用范围取决于当前项目策略与环境授权
-        </p>
-        <ArrowLink onClick={() => navigate("settings")}>查看接入能力</ArrowLink>
-      </div>
-    </>
-  );
-}
-function auditLabel(action: string) {
-  const map: Record<string, string> = {
-    "project.create": "创建项目",
-    "import.create": "提交资料导入",
-    "import.complete": "资料导入完成",
-    "relation.review": "完成关联审核",
-    "release.publish": "发布知识版本",
-    "token.create": "创建客户端凭证",
-    "token.revoke": "撤销客户端凭证",
-    "document.save": "保存文档草稿",
-    "job.create": "提交知识处理任务",
-    "job.succeeded": "知识处理任务完成",
-    "job.failed": "知识处理任务失败",
-    "job.cancel": "取消知识处理任务",
-    "export.download": "下载知识包",
-    "evidence.read": "查看来源证据",
-    "artifact.download": "下载原始文件",
-    "upload.complete": "资料上传完成",
-    "release.confirmation": "确认发布清单",
-  };
-  return map[action] || action.replaceAll("_", " ");
-}
-
 export { ImportCenter as Imports } from "./ImportCenter";
 
 export function Workbench() {
   const {
     w,
+    moduleId,
+    moduleEntities,
     selected,
     navigate,
     notify,
@@ -497,10 +125,15 @@ export function Workbench() {
       model_id?: string;
     } | null>(null),
     [contextError, setContextError] = useState("");
+  const scopeWorkspace = moduleId
+    ? moduleWorkspace(w, moduleEntities || null)
+    : w;
+  const scopePages = scopeWorkspace.pages;
   const pageId = explanation?.pageId || "";
   const stateGraph = (
-    w.scenarios.find((scene) => scene.id === explanation?.scenarioId)?.metadata
-      .dsl as
+    scopeWorkspace.scenarios.find(
+      (scene) => scene.id === explanation?.scenarioId,
+    )?.metadata.dsl as
       | {
           explanation_graph?: {
             states: Array<{
@@ -516,27 +149,27 @@ export function Workbench() {
   const explanationState = stateGraph?.states.find(
     (state) => state.stateKey === explanation?.stateKey,
   );
-  const activeActions = w.actions.filter(
+  const activeActions = scopeWorkspace.actions.filter(
     (item) => item.metadata?.status !== "removed",
   );
   const preferredAction =
     activeActions.find((a) => a.id === selected) || activeActions[0];
   const explicitlySelectedAction = activeActions.find((a) => a.id === selected);
   const page =
-    w.pages.find(
+    scopePages.find(
       (p) =>
         explicitlySelectedAction &&
         (field(explicitlySelectedAction, "page_key") === p.stable_key ||
           field(explicitlySelectedAction, "pageKey") === p.stable_key),
     ) ||
-    w.pages.find((p) => p.id === pageId) ||
-    w.pages.find(
+    scopePages.find((p) => p.id === pageId) ||
+    scopePages.find(
       (p) =>
         preferredAction &&
         (field(preferredAction, "page_key") === p.stable_key ||
           field(preferredAction, "pageKey") === p.stable_key),
     ) ||
-    w.pages[0];
+    scopePages[0];
   const actions = activeActions.filter(
     (a) =>
       !page ||
@@ -547,7 +180,7 @@ export function Workbench() {
   const action =
     availableActions.find((item) => item.id === selected) ||
     availableActions[0];
-  const [relationPolicy, setRelationPolicy] = useState("trusted");
+  const [relationPolicy, setRelationPolicy] = useState("valid");
   const contextKey = [
     w.project.id,
     baseline,
@@ -618,14 +251,23 @@ export function Workbench() {
       });
     return () => controller.abort();
   }, [contextKey]);
-  if (!w.actions.length && !w.pages.length)
+  if (!activeActions.length && !scopePages.length)
     return (
       <>
-        <ScenarioStudio />
+        <ReadScope>
+          <BusinessModuleExplorer />
+        </ReadScope>
+        {!moduleId && <ScenarioStudio />}
         <Panel>
           <Empty
-            title="还没有可探索的业务动作"
-            description="导入带有稳定动作标识的原型与 UI manifest，便可从页面操作进入项目知识。"
+            title={
+              moduleId ? "当前模块尚无可探索的动作" : "还没有可探索的业务动作"
+            }
+            description={
+              moduleId
+                ? "请在当前模块范围中打开已有材料，或选择其他业务模块。"
+                : "导入带有稳定动作标识的原型与 UI manifest，便可从页面操作进入项目知识。"
+            }
             action={
               <Button kind="primary" onClick={() => navigate("imports")}>
                 <Upload size={16} />
@@ -638,7 +280,11 @@ export function Workbench() {
     );
   return (
     <>
-      <ScenarioStudio />
+      <ReadScope>
+        <BusinessModuleExplorer />
+      </ReadScope>
+      {!moduleId && <ScenarioStudio />}
+      <ReadScope>{!moduleId && <StateReplay />}</ReadScope>
       <Notice>
         <strong>讲解模式只选择知识对象</strong>
         <span className="notice-detail">
@@ -649,18 +295,18 @@ export function Workbench() {
         <Panel
           className="scenario-tree"
           title="业务场景"
-          action={<span className="tag">{w.pages.length} 页</span>}
+          action={<span className="tag">{scopePages.length} 页</span>}
         >
           <div className="tree-label">
             <Folder size={15} />
             当前项目资料
           </div>
-          {w.pages.map((p) => (
+          {scopePages.map((p) => (
             <button
               key={p.id}
               className={`tree-item ${page?.id === p.id ? "selected" : ""}`}
               onClick={() => {
-                const a = w.actions.find(
+                const a = activeActions.find(
                   (a) => field(a, "page_key") === p.stable_key,
                 );
                 navigateExplanation({
@@ -810,18 +456,18 @@ export function Workbench() {
             <div className="row wrap">
               {direct.length ? (
                 <Tag>
-                  {relationPolicy === "trusted"
-                    ? "已确认且有效"
-                    : relationPolicy === "candidate"
-                      ? "候选待审核"
-                      : "待复核"}
+                  {relationPolicy === "valid"
+                    ? "有效关联"
+                    : relationPolicy === "all"
+                      ? "全部关联"
+                      : "失效关联"}
                 </Tag>
               ) : (
                 <Tag>尚无关联</Tag>
               )}
               <Tag>{direct.length} 条直接关系</Tag>
             </div>
-            {relationPolicy === "review" &&
+            {relationPolicy === "outdated" &&
               direct.map((relation) => (
                 <div key={relation.id}>
                   <RelationState relation={relation} />
@@ -831,9 +477,9 @@ export function Workbench() {
           </div>
           <div className="row wrap" role="group" aria-label="讲解关联范围">
             {[
-              ["trusted", "可信知识"],
-              ["candidate", "候选关联"],
-              ["review", "待复核关联"],
+              ["valid", "有效知识"],
+              ["all", "全部关联"],
+              ["outdated", "失效关联"],
             ].map(([value, name]) => (
               <Button
                 key={value}
@@ -844,15 +490,15 @@ export function Workbench() {
               </Button>
             ))}
           </div>
-          {relationPolicy !== "trusted" && (
+          {relationPolicy !== "valid" && (
             <Notice>
-              {relationPolicy === "candidate"
-                ? "候选关联尚未审核，不属于当前可信知识。"
-                : "以下关联已失效或断链，需要人员复核。"}
+              {relationPolicy === "all"
+                ? "包含有效与失效关联，状态由来源版本决定。"
+                : "以下关联的来源已变化或缺失，可纠错或移除。"}
             </Notice>
           )}
           <div className="detail-tabs">
-            {["业务说明", "接口", "实现", "文档", "证据"].map((t) => (
+            {["业务说明", "接口", "实现", "数据", "文档", "证据"].map((t) => (
               <button
                 key={t}
                 className={tab === t ? "active" : ""}
@@ -871,7 +517,7 @@ export function Workbench() {
                   <p>
                     {action?.content ||
                       field(action, "description") ||
-                      "此动作由导入的 UI manifest 声明。业务含义以关联文档与审核结果为准。"}
+                      "此动作由导入的 UI manifest 声明。业务含义以关联文档和来源证据为准。"}
                   </p>
                   <code className="logical-key">{action?.stable_key}</code>
                 </div>
@@ -1047,6 +693,27 @@ export function Workbench() {
                   />
                 )}
               </>
+            ) : tab === "数据" ? (
+              <>
+                {entities
+                  .filter((e) => ["sql", "table"].includes(e.type))
+                  .map((e) => (
+                    <div className="code-evidence" key={e.id}>
+                      <strong>{e.name}</strong>
+                      <code>{e.stable_key}</code>
+                      <pre>{e.content}</pre>
+                      <ArrowLink onClick={() => navigate("graph", e)}>
+                        查看原始定位
+                      </ArrowLink>
+                    </div>
+                  ))}
+                {!entities.some((e) => ["sql", "table"].includes(e.type)) && (
+                  <Empty
+                    title="尚无数据对象依据"
+                    description="动态 SQL 与参数不按接口名称推断。"
+                  />
+                )}
+              </>
             ) : tab === "文档" ? (
               <>
                 {sections.map((e) => (
@@ -1097,6 +764,11 @@ export function Workbench() {
           </div>
         </Panel>
       </div>
+      {action && (
+        <ReadScope>
+          <ActionChain actionId={action.id} />
+        </ReadScope>
+      )}
     </>
   );
 }
@@ -1120,7 +792,9 @@ export function Documents() {
     [lockedSections, setLockedSections] = useState<string[]>([]),
     [savedVersion, setSavedVersion] = useState(0),
     [baseRevision, setBaseRevision] = useState(""),
-    [saveError, setSaveError] = useState("");
+    [saveError, setSaveError] = useState(""),
+    [scrollRequest, setScrollRequest] = useState(0),
+    [anchorError, setAnchorError] = useState("");
   const selectedEntity = w.entities.find((e) => e.id === selected);
   const doc =
     w.documents.find((d) => d.id === selected) ||
@@ -1192,17 +866,43 @@ export function Documents() {
     setUnsavedChanges(dirty);
     return () => setUnsavedChanges(false);
   }, [dirty, setUnsavedChanges]);
-  useEffect(() => {
-    if (section && mode === "阅读") {
-      window.setTimeout(
-        () =>
-          document
-            .querySelector(".document-reader")
-            ?.scrollIntoView({ behavior: "smooth", block: "nearest" }),
-        50,
-      );
+  const reader = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (mode !== "阅读" || dirty || !reader.current) return;
+    const line = Number(
+      section?.locator?.startLine ?? section?.locator?.line_start,
+    );
+    const heading =
+      Number.isInteger(line) && line > 0
+        ? reader.current.querySelector<HTMLElement>(
+            `[data-source-line="${line}"]`,
+          )
+        : null;
+    // A heading-less document has one section beginning at the first line.
+    const target =
+      heading ||
+      (section && line === 1
+        ? reader.current.querySelector<HTMLElement>(".markdown")
+        : !section
+          ? reader.current
+          : null);
+    setAnchorError(
+      section && !target
+        ? "当前章节缺少准确的正文定位，已保留完整文档供阅读。"
+        : "",
+    );
+    target?.scrollIntoView({ block: "start", behavior: "auto" });
+    heading?.focus({ preventScroll: true });
+  }, [section?.id, doc?.entity_revision_id, mode, scrollRequest, dirty]);
+  function selectChapter(id: string) {
+    if (dirty) {
+      notify("当前草稿尚未保存，目录定位前请先保存或还原", "error");
+      return;
     }
-  }, [section?.id, mode]);
+    setMode("阅读");
+    setSelected(id);
+    setScrollRequest((value) => value + 1);
+  }
   async function save() {
     if (!doc || !w.selected_analysis_set) return;
     setSaveError("");
@@ -1268,39 +968,43 @@ export function Documents() {
           <Folder size={15} />
           项目文档
         </div>
-        {w.documents
-          .filter((d) => d.name.includes(filter))
-          .map((d) => (
-            <div key={d.id}>
-              <button
-                className={`tree-item ${doc.id === d.id ? "selected" : ""}`}
-                onClick={() => {
-                  if (dirty) {
-                    notify("当前草稿尚未保存，切换前请先保存或还原", "error");
-                    return;
-                  }
-                  setSelected(d.id);
-                }}
-              >
-                <FileText size={16} />
-                {d.name}
-              </button>
-              {doc.id === d.id && (
-                <div className="section-tree">
-                  {sections.map((s, i) => (
-                    <button
-                      key={s.id}
-                      className={section?.id === s.id ? "selected" : ""}
-                      onClick={() => setSelected(s.id)}
-                    >
-                      <span>{String(i + 1).padStart(2, "0")}</span>
-                      {s.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+        <div className="document-tree-content">
+          {w.documents
+            .filter((d) => d.name.includes(filter))
+            .map((d) => (
+              <div key={d.id}>
+                <button
+                  className={`tree-item ${doc.id === d.id ? "selected" : ""}`}
+                  onClick={() => {
+                    if (dirty) {
+                      notify("当前草稿尚未保存，切换前请先保存或还原", "error");
+                      return;
+                    }
+                    setMode("阅读");
+                    setSelected(d.id);
+                    setScrollRequest((value) => value + 1);
+                  }}
+                >
+                  <FileText size={16} />
+                  {d.name}
+                </button>
+                {doc.id === d.id && (
+                  <div className="section-tree">
+                    {sections.map((s, i) => (
+                      <button
+                        key={s.id}
+                        className={section?.id === s.id ? "selected" : ""}
+                        onClick={() => selectChapter(s.id)}
+                      >
+                        <span>{String(i + 1).padStart(2, "0")}</span>
+                        {s.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+        </div>
         <div className="tree-bottom">
           <ShieldCheck size={16} />
           <small>
@@ -1415,11 +1119,9 @@ export function Documents() {
           </Notice>
         )}
         {mode === "阅读" ? (
-          <div className="document-reader">
-            <span className="eyebrow">
-              {section ? "当前章节" : "原始资料阅读层"}
-            </span>
-            <h2>{current.name}</h2>
+          <div className="document-reader" ref={reader}>
+            <span className="eyebrow">原始资料阅读层</span>
+            <h2>{doc.name}</h2>
             {section && (
               <div className="chapter-indicator">
                 <FileCheck2 size={14} />
@@ -1427,8 +1129,9 @@ export function Documents() {
                 <Tag>准确章节定位</Tag>
               </div>
             )}
+            {anchorError && <Notice tone="amber">{anchorError}</Notice>}
             <Markdown
-              content={dirty && !section ? draft : current.content}
+              content={dirty ? draft : doc.content}
               documentId={doc.id}
               revisionId={doc.entity_revision_id}
             />
@@ -1436,7 +1139,7 @@ export function Documents() {
               <div className="chapter-outline">
                 <h3>可关联章节</h3>
                 {sections.map((s) => (
-                  <button key={s.id} onClick={() => setSelected(s.id)}>
+                  <button key={s.id} onClick={() => selectChapter(s.id)}>
                     {s.name}
                     <ArrowRight size={14} />
                   </button>
@@ -1512,7 +1215,7 @@ export function Documents() {
             </div>
           </div>
         )}
-        <DocumentWorkflow document={doc} dirty={dirty} />
+
         <div className="document-status">
           <span>
             {dirty ? (
@@ -1535,6 +1238,9 @@ export function Documents() {
         title="当前章节的关联"
         action={<Link2 size={18} />}
       >
+        <ReadScope>
+          <BusinessReferences entityId={current.entity_id || current.id} />
+        </ReadScope>
         <div className="current-chapter">
           <FileText size={18} />
           <strong>{current.name}</strong>
@@ -1578,9 +1284,9 @@ export function Documents() {
           <EvidenceList evidence={relationEvidence(related, w.evidence)} />
         </div>
         <div className="chapter-bottom">
-          <Button kind="full" onClick={() => navigate("reviews")}>
+          <Button kind="full" onClick={() => navigate("relations")}>
             <Link2 size={15} />
-            查看关联审核
+            查看关联管理
           </Button>
           <p>
             原始字节文件通过发布知识包导出保留。此处“下载”导出当前 Markdown
@@ -1592,376 +1298,83 @@ export function Documents() {
   );
 }
 
-export function Reviews() {
-  const canReview = usePermission("links:review");
-  const { w, selected, setSelected, navigate, run, busy } = useWorkspace();
-  const [status, setStatus] = useState("candidate"),
-    [query, setQuery] = useState(""),
-    [reason, setReason] = useState("");
-  const filtered = w.relations.filter(
-    (r) =>
-      r.review_status === status &&
-      `${r.from_name} ${r.to_name} ${r.reason}`.includes(query),
-  );
-  const relation = filtered.find((r) => r.id === selected) || filtered[0];
-  const source = entityAt(w.entities, relation?.from_revision_id),
-    target = entityAt(w.entities, relation?.to_revision_id);
-  const evidence = relationEvidence(relation ? [relation] : [], w.evidence);
-  useEffect(() => {
-    setReason("");
-  }, [relation?.id]);
-  async function review(decision: "confirm" | "reject") {
-    if (!relation) return;
-    const result = await run(
-      () =>
-        api(
-          `/relations/${relation.id}/review`,
-          mutation(
-            "POST",
-            { decision, reason, evidence_ids: relation.evidence_ids },
-            relation.row_version,
-          ),
-        ),
-      decision === "confirm"
-        ? "关联已确认，发布前仍需进行版本预检"
-        : "候选已拒绝，审核记录已保留",
-    );
-    if (result) {
-      setReason("");
-      setSelected("");
-    }
-  }
-  return (
-    <>
-      <div className="review-filters">
-        <div className="segmented">
-          {["candidate", "confirmed", "rejected"].map((s) => (
-            <button
-              className={status === s ? "active" : ""}
-              key={s}
-              onClick={() => setStatus(s)}
-            >
-              {label(s)}
-              <span>
-                {w.relations.filter((r) => r.review_status === s).length}
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="filter-input">
-          <Search size={16} />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="筛选业务、接口或文档关键词…"
-          />
-        </div>
-        <BatchRelationReview />
-        <Tag>{w.selected_analysis_set?.name || "当前基线"}</Tag>
-      </div>
-      {!filtered.length ? (
-        <Panel>
-          <Empty
-            title={
-              status === "candidate"
-                ? "当前没有待审核候选"
-                : `暂无${label(status)}的关系`
-            }
-            description={
-              status === "candidate"
-                ? "导入显式绑定包后，候选将显示在这里。所有确认与拒绝都会留痕。"
-                : "切换筛选条件，或继续导入资料建立新的候选关系。"
-            }
-            icon="link"
-            action={
-              <Button onClick={() => navigate("imports")}>接入资料</Button>
-            }
-          />
-        </Panel>
-      ) : (
-        <div className="review-layout">
-          <Panel
-            className="candidate-list"
-            title="关联候选"
-            action={<ListFilter size={16} />}
-          >
-            <div>
-              {filtered.map((r, i) => (
-                <button
-                  className={relation?.id === r.id ? "selected" : ""}
-                  key={r.id}
-                  onClick={() => setSelected(r.id)}
-                >
-                  <span className="candidate-number">{i + 1}</span>
-                  <div>
-                    <strong>
-                      {r.from_name}
-                      <ArrowRight size={12} />
-                      {r.to_name}
-                    </strong>
-                    <p>{r.reason || label(relationType(r))}</p>
-                    <div className="row between">
-                      <small>
-                        <FileText size={12} />
-                        {(r.evidence_ids || []).length} 项证据
-                      </small>
-                      <Tag value={r.validity_status} />
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </Panel>
-          <Panel className="review-comparison">
-            <div className="comparison-heading">
-              <div className="row wrap">
-                <h2>{relation.from_name}</h2>
-                <ArrowRight size={19} />
-                <h2>{relation.to_name}</h2>
-              </div>
-              <p>
-                {relation.reason ||
-                  "检查候选端点、来源定位与业务含义，再作出审核决定。"}
-              </p>
-              <div className="row">
-                <Tag>{label(relationType(relation))}</Tag>
-                <Tag>{label(relation.causal_basis)}</Tag>
-              </div>
-            </div>
-            <div className="comparison-tabs">
-              <span>对比证据</span>
-              <small>固定在同一知识基线</small>
-            </div>
-            <div className="comparison-entities">
-              {[
-                { e: source, t: "来源对象", i: MousePointer2 },
-                { e: target, t: "目标对象", i: FileText },
-              ].map((x) => (
-                <div className="comparison-entity" key={x.t}>
-                  <div>
-                    <x.i size={18} />
-                    <strong>{x.t}</strong>
-                    <Tag>{label(x.e?.type)}</Tag>
-                  </div>
-                  <h3>{x.e?.name}</h3>
-                  <code>{x.e?.stable_key}</code>
-                  <div className="comparison-content">
-                    {x.e &&
-                    ["section", "document", "document_section"].includes(
-                      x.e.type,
-                    ) ? (
-                      <Markdown content={x.e.content} />
-                    ) : (
-                      <pre>
-                        {x.e?.content ||
-                          JSON.stringify(x.e?.metadata || {}, null, 2)}
-                      </pre>
-                    )}
-                  </div>
-                  {x.e && (
-                    <ArrowLink
-                      onClick={() =>
-                        navigate(
-                          ["action", "ui_action"].includes(x.e!.type)
-                            ? "workbench"
-                            : [
-                                  "document",
-                                  "section",
-                                  "document_section",
-                                ].includes(x.e!.type)
-                              ? "documents"
-                              : "graph",
-                          x.e,
-                        )
-                      }
-                    >
-                      查看原始上下文
-                    </ArrowLink>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="review-evidence">
-              <h3>
-                <ShieldCheck size={17} />
-                支持证据
-              </h3>
-              <EvidenceList evidence={evidence} />
-            </div>
-          </Panel>
-          <Panel className="review-decision" title="审核结论">
-            {!canReview && (
-              <Notice>当前账户只能查看候选。确认或拒绝需要审核者权限。</Notice>
-            )}
-            <div className={`decision-state ${relation.review_status}`}>
-              <span className="status-dot amber" />
-              <div>
-                <strong>
-                  {relation.review_status === "candidate"
-                    ? "待人工判断"
-                    : label(relation.review_status)}
-                </strong>
-                <p>
-                  确认关联表示接受业务对应关系，不会改变证据类别或运行因果。
-                </p>
-              </div>
-            </div>
-            <div className="decision-checks">
-              <div>
-                <CheckCircle2 size={19} />
-                <span>
-                  <strong>对象版本已固定</strong>
-                  <small>来源与目标属于当前基线</small>
-                </span>
-              </div>
-              <div>
-                <ShieldCheck size={19} />
-                <span>
-                  <strong>{evidence.length} 项可访问证据</strong>
-                  <small>逐项查看文件与定位信息</small>
-                </span>
-              </div>
-              <div className="amber-text">
-                <Info size={19} />
-                <span>
-                  <strong>业务含义仍需核验</strong>
-                  <small>名称相近或结构一致不等于语义正确</small>
-                </span>
-              </div>
-            </div>
-            <Notice tone="amber">
-              涉及金额、权限或重复提交的关系，应结合明确业务规则核对。
-            </Notice>
-            <label>
-              审核备注
-              <textarea
-                rows={5}
-                value={reason}
-                maxLength={2000}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="填写确认依据或拒绝原因…"
-              />
-            </label>
-            <span className="character-count">{reason.length}/2000</span>
-            <div className="checkbox-label">
-              <LockKeyhole size={14} />
-              确认后保留人工决定，重新分析不会覆盖
-            </div>
-            <div className="decision-actions">
-              <Button
-                kind="primary"
-                disabled={
-                  busy ||
-                  !reason.trim() ||
-                  !canReview ||
-                  relation.review_status !== "candidate" ||
-                  w.selected_analysis_set?.state === "frozen"
-                }
-                onClick={() => {
-                  void review("confirm");
-                }}
-              >
-                <Check size={16} />
-                确认关联
-              </Button>
-              <Button
-                disabled={
-                  busy ||
-                  !reason.trim() ||
-                  !canReview ||
-                  relation.review_status !== "candidate" ||
-                  w.selected_analysis_set?.state === "frozen"
-                }
-                onClick={() => {
-                  void review("reject");
-                }}
-              >
-                <X size={16} />
-                拒绝
-              </Button>
-            </div>
-            <RelationOperations relation={relation} />
-            <p className="fine-print">
-              <Info size={13} />
-              审核后仍需单独发布知识版本，才进入稳定知识集合。
-            </p>
-            {relation.review_status !== "candidate" && (
-              <RelationState relation={relation} />
-            )}
-          </Panel>
-        </div>
-      )}
-    </>
-  );
-}
-
 export function Graph() {
   const { w, selected, setSelected, navigate } = useWorkspace();
   const [depth, setDepth] = useState(1),
     [query, setQuery] = useState(""),
-    [confirmedOnly, setConfirmedOnly] = useState(false),
-    [zoom, setZoom] = useState(1);
-  const center =
-    w.entities.find((e) => e.id === selected) || w.actions[0] || w.entities[0];
-  const graph = useMemo(() => {
-    if (!center)
-      return { nodes: [] as Entity[], edges: [] as Relation[], total: 0 };
-    const all = w.relations.filter(
-      (r) => !confirmedOnly || r.review_status === "confirmed",
-    );
-    const reached = new Set([center.entity_revision_id]);
-    let frontier = new Set(reached);
-    for (let i = 0; i < depth; i++) {
-      const next = new Set<string>();
-      for (const r of all) {
-        if (frontier.has(r.from_revision_id)) next.add(r.to_revision_id);
-        if (frontier.has(r.to_revision_id)) next.add(r.from_revision_id);
-      }
-      for (const n of next) reached.add(n);
-      frontier = next;
-    }
-    const nodes = [
-      center,
-      ...w.entities.filter(
-        (e) => e.id !== center.id && reached.has(e.entity_revision_id),
+    [validOnly, setValidOnly] = useState(false),
+    [zoom, setZoom] = useState(1),
+    [rootId, setRootId] = useState(selected);
+  // Inspecting a node must not replace the local graph's expansion root.
+  const root =
+    w.entities.find((e) => e.id === rootId) || w.actions[0] || w.entities[0];
+  const center = w.entities.find((e) => e.id === selected) || root;
+  type MapData = {
+    nodes: Entity[];
+    edges: Relation[];
+    truncated: boolean;
+    unknowns: string[];
+  };
+  const [mapResult, setMapResult] = useState<{
+      key: string;
+      value: MapData;
+    } | null>(null),
+    [mapError, setMapError] = useState("");
+  const visibility = w.entities.map((row) => row.entity_revision_id).join(",");
+  const mapKey = `${w.project.id}:${w.selected_analysis_set?.id}:${w.selected_analysis_set?.selection_version}:${w.selected_release?.id}:${root?.entity_revision_id}:${depth}:${validOnly}:${visibility}`;
+  useEffect(() => {
+    const controller = new AbortController();
+    setMapResult(null);
+    setMapError("");
+    if (!root) return;
+    const q = new URLSearchParams({
+      project_id: w.project.id,
+      depth: String(depth),
+      max_nodes: "100",
+      valid_only: String(validOnly),
+      ...(w.selected_release
+        ? { release_id: w.selected_release.id }
+        : { analysis_set_id: w.selected_analysis_set?.id || "" }),
+    });
+    void api<MapData>(`/api/v2/entities/${root.id}/knowledge-map?${q}`, {
+      signal: controller.signal,
+    })
+      .then((value) => {
+        if (!controller.signal.aborted) setMapResult({ key: mapKey, value });
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setMapError(e.message);
+      });
+    return () => controller.abort();
+  }, [mapKey]);
+  const mapData = mapResult?.key === mapKey ? mapResult.value : null;
+  const graph = {
+    nodes: mapData?.nodes || [],
+    edges: mapData?.edges || [],
+    total: mapData?.nodes.length || 0,
+    truncated: mapData?.truncated || false,
+  };
+  const layout = useMemo(
+    () =>
+      layeredMap(
+        (mapData?.nodes || []).map((row) => row.entity_revision_id),
+        mapData?.edges || [],
+        root?.entity_revision_id || "",
       ),
-    ];
-    const shown = nodes.slice(0, 13);
-    const ids = new Set(shown.map((e) => e.entity_revision_id));
-    return {
-      nodes: shown,
-      edges: all.filter(
-        (r) => ids.has(r.from_revision_id) && ids.has(r.to_revision_id),
-      ),
-      total: nodes.length,
-    };
-  }, [center?.id, w.entities, w.relations, depth, confirmedOnly]);
-  const points = new Map(
-    graph.nodes.map((n, i) => [
-      n.entity_revision_id,
-      i === 0
-        ? { x: 450, y: 330 }
-        : {
-            x:
-              450 +
-              300 *
-                Math.cos(
-                  -Math.PI / 2 +
-                    ((i - 1) * 2 * Math.PI) /
-                      Math.max(graph.nodes.length - 1, 1),
-                ),
-            y:
-              330 +
-              225 *
-                Math.sin(
-                  -Math.PI / 2 +
-                    ((i - 1) * 2 * Math.PI) /
-                      Math.max(graph.nodes.length - 1, 1),
-                ),
-          },
-    ]),
+    [mapData, root?.entity_revision_id],
   );
-  const related = w.relations.filter(
+  const points = layout.points;
+  const mapScroller = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (mapData && mapScroller.current) {
+      mapScroller.current.scrollTop = Math.max(
+        0,
+        (points.get(root?.entity_revision_id || "")?.y || 0) - 300,
+      );
+      mapScroller.current.scrollLeft = 0;
+    }
+  }, [mapResult?.key]);
+  const related = graph.edges.filter(
     (r) =>
       center &&
       (r.from_revision_id === center.entity_revision_id ||
@@ -2009,10 +1422,10 @@ export function Graph() {
           <label className="checkbox-label">
             <input
               type="checkbox"
-              checked={confirmedOnly}
-              onChange={(e) => setConfirmedOnly(e.target.checked)}
+              checked={validOnly}
+              onChange={(e) => setValidOnly(e.target.checked)}
             />
-            仅已确认关系
+            仅有效关系
           </label>
           <Button
             onClick={() =>
@@ -2046,11 +1459,16 @@ export function Graph() {
                 entity={e}
                 onClick={() => {
                   setSelected(e.id);
+                  setRootId(e.id);
                   setQuery("");
                 }}
               />
             ))}
         </Panel>
+      )}
+      {mapError && <Notice tone="red">{mapError}</Notice>}
+      {!mapData && !mapError && (
+        <p role="status">正在读取最多 100 个同版可见图谱节点…</p>
       )}
       <div className="graph-layout">
         <div className="graph-canvas">
@@ -2059,100 +1477,132 @@ export function Graph() {
             {w.selected_analysis_set?.name}
             <Tag>局部视图</Tag>
           </div>
-          <div className="graph-inner" style={{ transform: `scale(${zoom})` }}>
-            <svg
-              className="graph-edges"
-              width="900"
-              height="660"
-              viewBox="0 0 900 660"
+          <div
+            className="v2-graph-scroll"
+            ref={mapScroller}
+            tabIndex={0}
+            aria-label="可滚动知识图谱"
+          >
+            <div
+              className="graph-inner"
+              style={{
+                transform: `scale(${zoom})`,
+                width: layout.width,
+                height: layout.height,
+              }}
             >
-              <defs>
-                <marker
-                  id="arrow"
-                  viewBox="0 0 10 10"
-                  refX="9"
-                  refY="5"
-                  markerWidth="6"
-                  markerHeight="6"
-                  orient="auto-start-reverse"
-                >
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#8ca3c7" />
-                </marker>
-                <marker
-                  id="arrow-pending"
-                  viewBox="0 0 10 10"
-                  refX="9"
-                  refY="5"
-                  markerWidth="6"
-                  markerHeight="6"
-                  orient="auto-start-reverse"
-                >
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#dc981f" />
-                </marker>
-              </defs>
-              {graph.edges.map((r) => {
-                const from = points.get(r.from_revision_id),
-                  to = points.get(r.to_revision_id);
-                if (!from || !to) return null;
-                const dx = to.x - from.x,
-                  dy = to.y - from.y,
-                  l = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-                const x1 = from.x + (dx / l) * 65,
-                  y1 = from.y + (dy / l) * 40,
-                  x2 = to.x - (dx / l) * 80,
-                  y2 = to.y - (dy / l) * 45;
-                return (
-                  <g
-                    key={r.id}
-                    className={r.review_status === "candidate" ? "pending" : ""}
+              <svg
+                className="graph-edges"
+                width={layout.width}
+                height={layout.height}
+                viewBox={`0 0 ${layout.width} ${layout.height}`}
+              >
+                <defs>
+                  <marker
+                    id="arrow"
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
                   >
-                    <line
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      markerEnd={
-                        r.review_status === "candidate"
-                          ? "url(#arrow-pending)"
-                          : "url(#arrow)"
-                      }
-                    />
-                    <rect
-                      x={(x1 + x2) / 2 - 33}
-                      y={(y1 + y2) / 2 - 11}
-                      width="66"
-                      height="22"
-                      rx="11"
-                    />
-                    <text
-                      x={(x1 + x2) / 2}
-                      y={(y1 + y2) / 2 + 4}
-                      textAnchor="middle"
-                    >
-                      {label(relationType(r))}
-                    </text>
-                  </g>
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#8ca3c7" />
+                  </marker>
+                  <marker
+                    id="arrow-pending"
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#dc981f" />
+                  </marker>
+                </defs>
+                {graph.edges.map((r) => {
+                  const verifiedRuntime =
+                    r.causal_basis === "correlated_runtime" &&
+                    !r.excluded &&
+                    r.validity_status === "valid" &&
+                    w.selected_analysis_set?.runtime_alignment === "matched";
+                  const from = points.get(r.from_revision_id),
+                    to = points.get(r.to_revision_id);
+                  if (!from || !to) return null;
+                  const dx = to.x - from.x,
+                    dy = to.y - from.y,
+                    l = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+                  const x1 = from.x + (dx / l) * 65,
+                    y1 = from.y + (dy / l) * 40,
+                    x2 = to.x - (dx / l) * 80,
+                    y2 = to.y - (dy / l) * 45;
+                  return (
+                    <g key={r.id} className={!r.excluded ? "pending" : ""}>
+                      <line
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        strokeDasharray={
+                          verifiedRuntime
+                            ? undefined
+                            : r.causal_basis === "static_potential"
+                              ? "6 4"
+                              : "2 5"
+                        }
+                        style={{
+                          stroke:
+                            r.validity_status !== "valid" || r.excluded
+                              ? "#c65d67"
+                              : verifiedRuntime
+                                ? "#138a72"
+                                : r.causal_basis === "static_potential"
+                                  ? "#6293d5"
+                                  : "#8c6cbb",
+                        }}
+                        markerEnd={
+                          !r.excluded ? "url(#arrow-pending)" : "url(#arrow)"
+                        }
+                      />
+                      <rect
+                        x={(x1 + x2) / 2 - 33}
+                        y={(y1 + y2) / 2 - 11}
+                        width="66"
+                        height="22"
+                        rx="11"
+                      />
+                      <text
+                        x={(x1 + x2) / 2}
+                        y={(y1 + y2) / 2 + 4}
+                        textAnchor="middle"
+                      >
+                        {label(relationType(r))}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+              {graph.nodes.map((e) => {
+                const pos = points.get(e.entity_revision_id)!;
+                return (
+                  <button
+                    className={`graph-node ${e.entity_revision_id === center.entity_revision_id ? "central" : ""} ${e.type}`}
+                    key={e.id}
+                    aria-pressed={e.id === center.id}
+                    style={{ left: pos.x, top: pos.y }}
+                    onClick={() => setSelected(e.id)}
+                  >
+                    <span className="graph-node-type">
+                      {entityIcon(e.type, 15)}
+                      {label(e.type)}
+                    </span>
+                    <strong>{e.name}</strong>
+                    <small>{e.stable_key}</small>
+                  </button>
                 );
               })}
-            </svg>
-            {graph.nodes.map((e, i) => {
-              const pos = points.get(e.entity_revision_id)!;
-              return (
-                <button
-                  className={`graph-node ${i === 0 ? "central" : ""} ${e.type}`}
-                  key={e.id}
-                  style={{ left: pos.x, top: pos.y }}
-                  onClick={() => setSelected(e.id)}
-                >
-                  <span className="graph-node-type">
-                    {entityIcon(e.type, 15)}
-                    {label(e.type)}
-                  </span>
-                  <strong>{e.name}</strong>
-                  <small>{e.stable_key}</small>
-                </button>
-              );
-            })}
+            </div>
           </div>
           <div className="graph-controls">
             <button
@@ -2175,8 +1625,8 @@ export function Graph() {
           <div className="graph-count">
             显示 {graph.nodes.length} / {graph.total} 个局部节点 ·{" "}
             {graph.edges.length} 条关系
-            {graph.total > graph.nodes.length &&
-              ` · ${graph.total - graph.nodes.length} 个可见节点因显示上限收起，可通过搜索定位`}
+            {graph.truncated &&
+              " · 已达到 100 节点上限，结果已截断，可通过搜索重新定位"}
           </div>
         </div>
         <div>
@@ -2185,6 +1635,15 @@ export function Graph() {
             title="当前对象"
             action={<Tag>{label(center.type)}</Tag>}
           >
+            <Button
+              disabled={center.id === root?.id}
+              onClick={() => setRootId(center.id)}
+            >
+              以此节点展开
+            </Button>
+            <ReadScope>
+              <BusinessReferences entityId={center.id} />
+            </ReadScope>
             <h2>{center.name}</h2>
             <code className="logical-key">{center.stable_key}</code>
             {center.content && (
@@ -2219,7 +1678,7 @@ export function Graph() {
                           center.type,
                         )
                       ? "documents"
-                      : "reviews",
+                      : "relations",
                   center,
                 )
               }
@@ -2233,15 +1692,17 @@ export function Graph() {
               <div>
                 <span className="legend-line" />
                 <section>
-                  <strong>已确认关系</strong>
-                  <small>审核轴为 confirmed，仍需查看有效性</small>
+                  <strong>已核对运行关联</strong>
+                  <small>关联有效且运行版本匹配；不表示完整执行链</small>
                 </section>
               </div>
               <div>
                 <span className="legend-line dashed" />
                 <section>
-                  <strong>待审核候选</strong>
-                  <small>需人工检查业务含义和证据</small>
+                  <strong>静态候选 / 未知关联</strong>
+                  <small>
+                    虚线为静态潜在关联，点线为未建立运行依据；有效性和因果依据分别显示
+                  </small>
                 </section>
               </div>
               <div>
@@ -2254,466 +1715,6 @@ export function Graph() {
             </div>
           </Panel>
         </div>
-      </div>
-    </>
-  );
-}
-
-export function Versions() {
-  const canPropose = usePermission("links:propose"),
-    canPublish = usePermission("release:publish"),
-    canExport = usePermission("knowledge:export"),
-    canManage = usePermission("project:manage");
-  const { w, run, busy, navigate } = useWorkspace();
-  const [from, setFrom] = useState(w.releases[0]?.id || ""),
-    [to, setTo] = useState(w.selected_analysis_set?.id || ""),
-    [diff, setDiff] = useState<Dict | null>(null),
-    [candidate, setCandidate] = useState<ReleaseCandidate | null>(null),
-    [note, setNote] = useState(""),
-    [checked, setChecked] = useState(false);
-  useEffect(() => {
-    setTo((previous) =>
-      w.analysis_sets.some((a) => a.id === previous)
-        ? previous
-        : w.selected_analysis_set?.id || "",
-    );
-    setFrom((previous) =>
-      w.releases.some((r) => r.id === previous)
-        ? previous
-        : w.releases[0]?.id || "",
-    );
-  }, [w.project.id, w.selected_analysis_set?.id, w.analysis_sets, w.releases]);
-  async function precheck() {
-    if (!w.selected_analysis_set) return;
-    const r = await run(() =>
-      api<ReleaseCandidate>(
-        `/projects/${w.project.id}/release-candidates`,
-        mutation("POST", { analysis_set_id: w.selected_analysis_set!.id }),
-      ),
-    );
-    if (r) {
-      setCandidate(r);
-      setChecked(false);
-      setNote("");
-    }
-  }
-  async function publish() {
-    if (!candidate) return;
-    const id = String(candidate.candidate_id || candidate.id);
-    const result = await run(async () => {
-      const confirmation = await api<{
-        human_confirmation_ref: string;
-        expected_manifest_sha256: string;
-      }>(`/release-candidates/${id}/confirm`, mutation("POST", {}));
-      return api(
-        `/release-candidates/${id}/publish`,
-        mutation("POST", {
-          expected_manifest_sha256: confirmation.expected_manifest_sha256,
-          human_confirmation_ref: confirmation.human_confirmation_ref,
-          change_note: note,
-        }),
-      );
-    }, "知识版本已发布，来源与审核记录已冻结");
-    if (result) setCandidate(null);
-  }
-  const currentDiff =
-    diff?.from_release_id === from && diff?.to_analysis_set_id === to
-      ? diff
-      : null;
-  const changes = (currentDiff?.changes || []) as Dict[];
-  return (
-    <>
-      <div className="version-summary">
-        <NewDraftButton />
-        <div className="version-compare">
-          <label>
-            <span>已发布版本</span>
-            <select value={from} onChange={(e) => setFrom(e.target.value)}>
-              <option value="">选择发布版本</option>
-              {w.releases.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name || r.release_no}
-                </option>
-              ))}
-            </select>
-          </label>
-          <ArrowRight size={23} />
-          <label>
-            <span>目标分析基线</span>
-            <select value={to} onChange={(e) => setTo(e.target.value)}>
-              <option value="">选择基线</option>
-              {w.analysis_sets.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <Button
-            disabled={!from || !to || busy}
-            onClick={() => {
-              const requestedFrom = from,
-                requestedTo = to;
-              void run(() =>
-                api<Dict>(
-                  `/projects/${w.project.id}/releases/${requestedFrom}/diff?to_analysis_set_id=${requestedTo}`,
-                ),
-              ).then((r) => {
-                if (r)
-                  setDiff({
-                    ...r,
-                    from_release_id: requestedFrom,
-                    to_analysis_set_id: requestedTo,
-                  });
-              });
-            }}
-          >
-            <GitCompareArrows size={15} />
-            比较版本
-          </Button>
-        </div>
-        <Button
-          kind="primary"
-          onClick={() => {
-            void precheck();
-          }}
-          disabled={
-            busy ||
-            !canPropose ||
-            !w.selected_analysis_set ||
-            w.selected_analysis_set.state === "frozen"
-          }
-        >
-          <Send size={16} />
-          提交发布预检
-        </Button>
-      </div>
-      <div className="source-version-grid">
-        {w.sources.map((s, i) => (
-          <div key={s.id || s.source_id || i}>
-            <span className="entity-icon">
-              <Layers3 size={20} />
-            </span>
-            <section>
-              <strong>{s.name || s.source_id || s.role}</strong>
-              <p>
-                {s.provider} ·{" "}
-                {s.provider_revision &&
-                /^[a-f0-9]{64}$/.test(s.provider_revision)
-                  ? s.provider_revision.slice(0, 12)
-                  : s.provider_revision || "内容快照"}
-              </p>
-            </section>
-            <code>{s.content_sha256?.slice(0, 10)}</code>
-          </div>
-        ))}
-      </div>
-      <Notice>
-        <strong>来源版本组合已固定</strong>
-        <span className="notice-detail">
-          发布将冻结当前实体修订、关系审核与来源清单；后续修改需要新的草稿。
-        </span>
-      </Notice>
-      <ChangeProposals />
-      <div className="versions-layout">
-        <Panel
-          title="知识版本"
-          action={<Tag>{w.releases.length} 个已发布</Tag>}
-        >
-          {w.releases.length ? (
-            <div className="release-list">
-              {w.releases.map((r, i) => (
-                <div key={r.id}>
-                  <div className="release-icon">
-                    <GitBranch size={20} />
-                  </div>
-                  <section>
-                    <div className="row">
-                      <h3>{r.name || `知识版本 v${r.release_no}`}</h3>
-                      <Tag value="published" />
-                      {i === 0 && <Tag>最近发布</Tag>}
-                    </div>
-                    <p>{date(r.published_at)}</p>
-                    <code>
-                      {(r.manifest_sha256 || r.manifest_hash || "").slice(
-                        0,
-                        24,
-                      )}
-                      …
-                    </code>
-                  </section>
-                  <div className="release-row-actions">
-                    <button
-                      className="text-button"
-                      disabled={busy || !canExport}
-                      onClick={() => {
-                        void run(
-                          () =>
-                            api<Job>(
-                              `/projects/${w.project.id}/exports`,
-                              mutation("POST", {
-                                release_id: r.id,
-                                format: "markdown_bundle",
-                                include_source: false,
-                              }),
-                            ),
-                          "知识导出任务已提交",
-                        ).then((job) => {
-                          if (job) navigate("imports");
-                        });
-                      }}
-                    >
-                      <ArrowDownToLine size={14} />
-                      导出知识包
-                    </button>
-                    <button
-                      className="text-button"
-                      disabled={busy || !canManage}
-                      onClick={() => {
-                        void run(
-                          () =>
-                            api(
-                              `/projects/${w.project.id}`,
-                              mutation(
-                                "PATCH",
-                                { current_release_id: r.id },
-                                w.project.row_version || 1,
-                              ),
-                            ),
-                          "默认浏览基线已切换，其他版本仍保留",
-                        );
-                      }}
-                    >
-                      设为默认
-                      <ArrowRight size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <Empty
-              title="还没有发布的知识版本"
-              description="完成候选审核后，提交发布预检，并由人员明确确认。原始资料与证据会随版本冻结。"
-              action={
-                <Button onClick={() => navigate("reviews")}>
-                  前往关联审核
-                  <ArrowRight size={15} />
-                </Button>
-              }
-            />
-          )}
-        </Panel>
-        <Panel title="发布检查">
-          <div className="release-check-list">
-            <div>
-              <CheckCircle2 size={19} />
-              <span>
-                <strong>来源快照</strong>
-                <small>{w.sources.length} 份固定来源</small>
-              </span>
-              <Tag value={w.sources.length ? "valid" : "candidate"}>
-                {w.sources.length ? "已建立" : "待导入"}
-              </Tag>
-            </div>
-            <div>
-              <Clock3 size={19} />
-              <span>
-                <strong>关联审核</strong>
-                <small>所有待发布关系需经人工审核</small>
-              </span>
-              <Tag
-                value={
-                  w.relations.some((r) => r.review_status === "candidate")
-                    ? "candidate"
-                    : "valid"
-                }
-              >
-                {
-                  w.relations.filter((r) => r.review_status === "candidate")
-                    .length
-                }{" "}
-                项待审核
-              </Tag>
-            </div>
-            <div>
-              <ShieldCheck size={19} />
-              <span>
-                <strong>证据有效性</strong>
-                <small>过期或断链关系需要复核</small>
-              </span>
-              <Tag
-                value={
-                  w.relations.some((r) => r.validity_status !== "valid")
-                    ? "stale"
-                    : "valid"
-                }
-              >
-                {
-                  w.relations.filter((r) => r.validity_status !== "valid")
-                    .length
-                }{" "}
-                项待复核
-              </Tag>
-            </div>
-            <div>
-              <LockKeyhole size={19} />
-              <span>
-                <strong>人员确认</strong>
-                <small>绑定发布清单摘要与当前身份</small>
-              </span>
-              <Tag>发布时确认</Tag>
-            </div>
-          </div>
-          <Button
-            kind="primary full"
-            disabled={
-              busy ||
-              !canPropose ||
-              !w.selected_analysis_set ||
-              w.selected_analysis_set.state === "frozen"
-            }
-            onClick={() => {
-              void precheck();
-            }}
-          >
-            <ShieldCheck size={15} />
-            执行完整预检
-          </Button>
-        </Panel>
-      </div>
-      {currentDiff && (
-        <Panel title="版本差异" action={<Tag>{changes.length} 个对象变更</Tag>}>
-          <div aria-label="本次版本对比" role="status">
-            对比：
-            {w.releases.find((r) => r.id === currentDiff.from_release_id)
-              ?.release_no || String(currentDiff.from_release_id)}
-            {" → "}
-            {w.analysis_sets.find(
-              (a) => a.id === currentDiff.to_analysis_set_id,
-            )?.name || String(currentDiff.to_analysis_set_id)}
-          </div>
-          {changes.length ? (
-            <div className="diff-changes">
-              {changes.map((c, i) => {
-                const e = w.entities.find((e) => e.id === c.entity_id);
-                return (
-                  <div key={String(c.entity_id || i)}>
-                    <span className="entity-icon">{entityIcon(e?.type)}</span>
-                    <div>
-                      <strong>{e?.name || String(c.entity_id)}</strong>
-                      <code>
-                        {String(c.old_revision_id || "—").slice(0, 16)} →{" "}
-                        {String(c.new_revision_id || "—").slice(0, 16)}
-                      </code>
-                    </div>
-                    <Tag value={String(c.change_kind)}>
-                      {(
-                        {
-                          added: "新增",
-                          removed: "删除",
-                          modified: "内容变化",
-                          moved: "位置变化",
-                        } as Record<string, string>
-                      )[String(c.change_kind)] || String(c.change_kind)}
-                    </Tag>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="quiet-state">
-              <CheckCircle2 size={25} />
-              <strong>未发现实体修订差异</strong>
-              <p>比较使用所选发布清单与目标分析基线。</p>
-            </div>
-          )}
-        </Panel>
-      )}
-      {candidate && (
-        <Modal title="审核并发布知识版本" onClose={() => setCandidate(null)}>
-          <Notice
-            tone={
-              candidate.blockers?.length || candidate.issues?.length
-                ? "amber"
-                : "blue"
-            }
-          >
-            {canPublish
-              ? "发布预检已生成。请核对当前基线与发布清单摘要，再确认发布。"
-              : "发布预检已生成。当前账户无发布权限，请由审核者检查并确认。"}
-          </Notice>
-          <div className="publish-facts">
-            <div>
-              <span>知识基线</span>
-              <strong>{w.selected_analysis_set?.name}</strong>
-            </div>
-            <div>
-              <span>清单摘要</span>
-              <code>
-                {candidate.manifest_sha256 ||
-                  candidate.expected_manifest_sha256 ||
-                  candidate.preflight_sha256}
-              </code>
-            </div>
-            <div>
-              <span>已确认关系</span>
-              <strong>
-                {
-                  w.relations.filter((r) => r.review_status === "confirmed")
-                    .length
-                }
-              </strong>
-            </div>
-          </div>
-          {(candidate.blockers || candidate.issues || []).map((b, i) => (
-            <Notice key={i} tone="red">
-              {typeof b === "string" ? b : JSON.stringify(b)}
-            </Notice>
-          ))}
-          <label>
-            发布说明
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={3}
-              placeholder="说明此版本的来源与完成的审核…"
-            />
-          </label>
-          <label className="checkbox-label publish-confirm">
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={(e) => setChecked(e.target.checked)}
-            />
-            我已检查当前材料、证据与审核结果，确认发布此固定版本。
-          </label>
-          <div className="modal-actions">
-            <Button onClick={() => setCandidate(null)}>返回检查</Button>
-            <Button
-              kind="primary"
-              disabled={
-                busy ||
-                !canPublish ||
-                !checked ||
-                !note.trim() ||
-                !!candidate.blockers?.length ||
-                candidate.can_publish === false
-              }
-              onClick={() => {
-                void publish();
-              }}
-            >
-              <Send size={15} />
-              确认发布知识版本
-            </Button>
-          </div>
-        </Modal>
-      )}
-      <div className="capability-strip">
-        <Info size={18} />
-        <p>版本差异表示材料与修订发生变化，不能据此直接断定业务规则已改变。</p>
-        <ArrowLink onClick={() => navigate("reviews")}>复核关联</ArrowLink>
       </div>
     </>
   );
@@ -2790,7 +1791,7 @@ export function Settings() {
     markdown: "Markdown 章节解析",
     openapi_index: "OpenAPI 接口索引",
     safe_explanation: "安全原型讲解",
-    human_review: "人工关联审核",
+    direct_knowledge_save: "直接保存知识",
     immutable_releases: "不可变知识发布",
     scoped_tokens: "按项目授权的令牌",
     mcp_stdio: "MCP stdio 接入",
@@ -2798,7 +1799,6 @@ export function Settings() {
     direct_import: "独立文档与原型导入",
     java_ast: "Java AST 保守静态解析",
     java_static_analysis: "Java AST 保守静态解析",
-    document_workflow: "文档修订审核",
     version_proposals: "变更提案与有效性复核",
     oauth: "登记公钥的 MCP OAuth",
     controlled_runner: "受控浏览器录制",
@@ -2806,7 +1806,7 @@ export function Settings() {
     mcp_http_oauth: "MCP HTTP OAuth",
     java_spring_mybatis_ast: "Java / Spring / MyBatis 保守 AST 解析",
     immutable_scenarios: "不可变录制与讲解场景",
-    controlled_browser_runner: "按环境审批的浏览器录制",
+    controlled_browser_runner: "按环境配置的浏览器录制",
     source_snapshots: "正规化不可变来源快照",
     client_readonly_collectors: "目录 / Git / SVN 客户端只读采集",
     optional_model_gateway: "按预算开放的可选模型辅助",
@@ -2846,7 +1846,9 @@ export function Settings() {
       ) : activeTab === "团队与账户" ? (
         <TeamSettings />
       ) : activeTab === "项目资料" ? (
-        <ProjectProfile />
+        <>
+          <ProjectProfile />
+        </>
       ) : activeTab === "项目模块" ? (
         <ModuleTree />
       ) : activeTab === "来源连接" ? (
@@ -2885,8 +1887,8 @@ export function Settings() {
                 <LockKeyhole size={24} />
               </span>
               <section>
-                <span>审核与发布</span>
-                <strong>由人员完成</strong>
+                <span>知识保存</span>
+                <strong>修改直接生效，版本一键保存</strong>
               </section>
             </div>
           </div>
@@ -3055,7 +2057,7 @@ export function Settings() {
                 </div>
                 <div className="permission-rule">
                   <LockKeyhole size={16} />
-                  人工审核与发布不向令牌开放
+                  人工知识保存不向令牌开放
                 </div>
               </Panel>
               <Panel title="运行环境">
@@ -3075,7 +2077,7 @@ export function Settings() {
                     }
                   >
                     {w.runtime_status?.runner_enabled
-                      ? "可用 · 需环境审批"
+                      ? "可用 · 按环境配置执行"
                       : "未启用"}
                   </Tag>
                 </div>
@@ -3104,7 +2106,7 @@ export function Settings() {
                   </Tag>
                 </div>
                 <Notice>
-                  无模型时，仍可导入、精确检索、人工审核与读取已发布知识。
+                  无模型时，仍可导入、精确检索、编辑知识与读取固定版本。
                 </Notice>
               </Panel>
             </div>
@@ -3114,7 +2116,7 @@ export function Settings() {
         <Panel title="MCP 工具目录" action={<Tag>{tools.length} 个工具</Tag>}>
           <Notice>
             工具 annotations
-            是客户端提示；服务端仍逐次检查权限。目录不包含批准或发布工具。
+            是客户端提示；服务端仍逐次检查权限。工具与网页共用知识读写服务。
           </Notice>
           <div className="tool-catalog">
             {tools.map((t) => (
@@ -3170,7 +2172,7 @@ export function Settings() {
                           : "待配置启用"
                         : c === "controlled_browser_runner"
                           ? w.runtime_status?.runner_enabled
-                            ? "可用 · 需审批"
+                            ? "可用 · 可直接执行"
                             : "待启用"
                           : "已接入"}
                   </Tag>
@@ -3276,7 +2278,7 @@ export function Settings() {
                   {
                     s: "links:propose",
                     t: "提交关联提案",
-                    d: "生成候选，仍需人员审核",
+                    d: "生成并保存关联知识",
                   },
                   {
                     s: "knowledge:export",
@@ -3306,7 +2308,7 @@ export function Settings() {
                 ))}
               </div>
               <Notice>
-                令牌有效期 30 天。审核、发布和管理员权限不会授予 AI 客户端。
+                令牌有效期 30 天。AI 客户端仅使用所选择的项目权限。
               </Notice>
               <div className="modal-actions">
                 <Button onClick={() => setModal(false)}>取消</Button>
@@ -3328,3 +2330,6 @@ export function Settings() {
     </>
   );
 }
+
+export { Relations } from "./Relations";
+export { Versions } from "./Versions";

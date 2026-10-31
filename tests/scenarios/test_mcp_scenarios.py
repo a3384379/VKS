@@ -60,8 +60,9 @@ async def test_official_sdk_validates_compatible_role_and_expected_results_exten
                 "project_id": p["id"],
                 "scenario_revision_id": scenario["scenario_revision_id"],
                 "environment_ref": "mock",
+                "analysis_set_id": a["id"],
                 "idempotency_key": "needs-human-approval",
             },
         )
-        assert not capture.isError and capture.structuredContent["data"]["decision"] == "approval_required"
+        assert capture.isError and capture.structuredContent["error"]["code"] == "VKS_STATE_CONFLICT"
     service.engine.dispose()

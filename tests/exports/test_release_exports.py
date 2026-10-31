@@ -18,23 +18,14 @@ def publish(service, owner, project):
     service.process_job(job["id"])
     work = service.workspace(owner, project["id"])
     for relation in work["relations"]:
-        service.review_relation(
-            owner,
-            relation["id"],
-            {"decision": "confirm", "reason": "核对固定材料", "evidence_ids": relation["evidence_ids"]},
-            relation["row_version"],
+        service.set_relation_state(
+            owner, relation["id"], {"excluded": ("confirm" == "reject")}, relation["row_version"]
         )
-    candidate = service.request_release(
+    candidate = service.save_snapshot(
         owner, project["id"], {"analysis_set_id": work["selected_analysis_set"]["id"]}, "precheck"
     )
-    confirmation = service.confirm_release(owner, candidate["candidate_id"])
-    release = service.publish(
-        owner,
-        candidate["candidate_id"],
-        {k: confirmation[k] for k in ("expected_manifest_sha256", "human_confirmation_ref")}
-        | {"change_note": "导出验证"},
-        "publish",
-    )
+    confirmation = None
+    release = candidate
     return work, release
 
 
@@ -85,7 +76,7 @@ def test_bundle_reimports_with_original_bytes_permissions_and_new_candidate_revi
         value = service._commit_bundle(s, project["id"], owner.id, bundle)
     restored = service.workspace(owner, project["id"], value["analysis_set_id"])
     assert restored["relations"]
-    assert all(r["review_status"] == "candidate" for r in restored["relations"])
+    assert all((r["excluded"] is False) for r in restored["relations"])
     assert all(r["causal_basis"] != "correlated_runtime" for r in restored["relations"])
 
 
@@ -102,7 +93,7 @@ def test_pdf_is_chinese_readable_paginated_and_release_pinned(context, tmp_path)
     output.write_bytes(raw)
 
 
-def test_export_filters_derived_permission_flags_and_redacts_sensitive_text(context):
+def test_export_filters_permissions_and_preserves_authorized_original_text(context):
     service, owner, project, work, _ = context
     document = work["documents"][0]
     with service.db() as s:
@@ -123,8 +114,8 @@ def test_export_filters_derived_permission_flags_and_redacts_sensitive_text(cont
     (raw, _), _ = exported(context, "markdown_bundle", include_source=True)
     with zipfile.ZipFile(BytesIO(raw)) as z:
         text = "\n".join(z.read(x).decode() for x in z.namelist())
-        assert "13800138000" not in text and "fake_secret_12345" not in text and "/Users/private" not in text
-        assert "[REDACTED]" in text
+        assert "13800138000" in text and "fake_secret_12345" in text and "/Users/private" in text
+        assert "[REDACTED]" not in text
 
 
 def test_bundle_cannot_launder_source_or_trace_requirements_and_download_rechecks(context):
@@ -222,21 +213,12 @@ def test_authored_hotspots_and_scenario_definitions_export_as_explicit_derivativ
         "scenario",
     )
     for relation in service.workspace(owner, p["id"])["relations"]:
-        service.review_relation(
-            owner,
-            relation["id"],
-            {"decision": "confirm", "reason": "人工审核注释", "evidence_ids": relation["evidence_ids"]},
-            relation["row_version"],
+        service.set_relation_state(
+            owner, relation["id"], {"excluded": ("confirm" == "reject")}, relation["row_version"]
         )
-    candidate = service.request_release(owner, p["id"], {"analysis_set_id": analysis["id"]}, "precheck")
-    confirmation = service.confirm_release(owner, candidate["candidate_id"])
-    release = service.publish(
-        owner,
-        candidate["candidate_id"],
-        {k: confirmation[k] for k in ("human_confirmation_ref", "expected_manifest_sha256")}
-        | {"change_note": "发布被动热点"},
-        "publish",
-    )
+    candidate = service.save_snapshot(owner, p["id"], {"analysis_set_id": analysis["id"]}, "precheck")
+    confirmation = None
+    release = candidate
     job = service.export(
         owner, p["id"], {"release_id": release["id"], "format": "vksbundle", "include_source": False}, "bundle"
     )
@@ -246,12 +228,20 @@ def test_authored_hotspots_and_scenario_definitions_export_as_explicit_derivativ
     parsed = parse_bundle(exported, p["key"])
     assert any(e["stable_key"] == "manual.exported" and e["type"] == "action" for e in parsed.entities)
     assert any(a["content"] == raw for a in parsed.artifacts)
-    assert parsed.relations and all(e["kind"] == "manual" for e in parsed.evidence)
+    evidence = {item["stable_key"]: item for item in parsed.evidence}
+    manual_relations = [row for row in parsed.relations if row["to_key"] == "manual.exported"]
+    assert manual_relations and all(
+        evidence[eid]["kind"] == "manual" for row in manual_relations for eid in row["evidence_keys"]
+    )
+    # The new unique-ID discovery stays static across a page metadata annotation
+    # and export; a person's separate hotspot must not relabel that provenance.
+    assert any(item["kind"] == "static" for item in parsed.evidence)
+    assert all(row["causal_basis"] != "correlated_runtime" for row in parsed.relations)
     definition = next(
         json.loads(a["content"])
         for a in parsed.artifacts
         if a["path"] == "export/scenarios/" + scenario["scenario_id"] + ".json"
     )
-    assert definition["review_required"] is True and definition["approval_transferred"] is False
+    assert "review_required" not in definition and "approval_transferred" not in definition
     assert definition["definition"]["scenario_key"] == "scenario.exported"
     service.engine.dispose()

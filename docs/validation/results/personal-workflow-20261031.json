@@ -1,0 +1,340 @@
+{
+  "date": "2026-10-31",
+  "base_commit": "f947cc5f3f463bbae81c6b670f0d48a5ba52467e",
+  "branch": "codex/vks-2-upgrade",
+  "working_tree_changes": true,
+  "source_aggregate_sha256": "af3e53865d844c1a82592bf2b63c6c20f1eceb6ec2f4220b01b59d0cbe0f3e4b",
+  "source_file_count": 391,
+  "scope": [
+    "Remove approval workflow, inbox, project toggle, document/journey/relation decisions, capture tickets and plan confirmation from API, MCP, UI and storage",
+    "Direct immutable knowledge snapshots shared by Web and authorized MCP editor",
+    "Preserve validity, evidence, causal basis, immutable revisions, source scope and independent user exclusions",
+    "Remove content-pattern filtering and screenshot/HTML masking from supported capture, import, export and model inputs",
+    "Migrate existing SQLite preview and PostgreSQL legacy storage without rewriting frozen materials"
+  ],
+  "make_check": {
+    "command": "make check",
+    "exit_code": 0,
+    "seconds": 491.293,
+    "isolated_data": true,
+    "real_sources": [
+      "RuoYi",
+      "FlowTest"
+    ],
+    "source_file_count": 391,
+    "source_aggregate_sha256": "af3e53865d844c1a82592bf2b63c6c20f1eceb6ec2f4220b01b59d0cbe0f3e4b",
+    "source_unchanged": true,
+    "after_source_aggregate_sha256": "af3e53865d844c1a82592bf2b63c6c20f1eceb6ec2f4220b01b59d0cbe0f3e4b",
+    "python": {
+      "tests": 765,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 14,
+      "seconds": 465.39,
+      "passed": 751,
+      "skips": [
+        {
+          "test": "tests.backend.test_postgres.test_postgres_import_review_publish_and_immutable_read",
+          "reason": "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database"
+        },
+        {
+          "test": "tests.backend.test_postgres.test_postgres_concurrent_review_returns_one_version_conflict",
+          "reason": "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database"
+        },
+        {
+          "test": "tests.backend.test_postgres.test_postgres_duplicate_dispatch_claims_one_attempt",
+          "reason": "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database"
+        },
+        {
+          "test": "tests.backend.test_postgres.test_postgres_same_import_idempotency_key_returns_same_job",
+          "reason": "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database"
+        },
+        {
+          "test": "tests.backend.test_postgres.test_postgres_model_budget_reservations_are_atomic_across_workers",
+          "reason": "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database"
+        },
+        {
+          "test": "tests.backend.test_postgres.test_postgres_readonly_graph_search_snapshot_and_current_permissions",
+          "reason": "Set VKS_TEST_POSTGRES_URL to an isolated migrated PostgreSQL database"
+        },
+        {
+          "test": "tests.collector.test_svn_container.test_real_svn_pinned_read_preserves_bytes_filters_private_and_does_not_follow_links",
+          "reason": "未启用真实 SVN 容器验收"
+        },
+        {
+          "test": "tests.collector.test_windows_agent.test_native_windows_reader_preserves_unicode_bytes_and_excludes_junctions_and_secrets",
+          "reason": "Requires actual Windows Win32 handles and Tcl/Tk"
+        },
+        {
+          "test": "tests.collector.test_windows_agent.test_windows_swap_to_junction_between_stat_and_open_fails_closed",
+          "reason": "Requires actual Windows Win32 handles and Tcl/Tk"
+        },
+        {
+          "test": "tests.collector.test_windows_agent.test_native_tk_window_starts_without_scheduling_and_scope_edits_revoke_consent",
+          "reason": "Requires actual Windows Win32 handles and Tcl/Tk"
+        },
+        {
+          "test": "tests.deployment.test_compose.test_real_compose_reserved_passwords_durable_job_publish_and_exports",
+          "reason": "未启用隔离 Compose 部署验收"
+        },
+        {
+          "test": "tests.jobs.test_rabbitmq.test_actual_celery_worker_reconnects_and_commits_duplicate_delivery_once",
+          "reason": "未配置隔离 RabbitMQ 验收地址"
+        },
+        {
+          "test": "tests.recovery.test_postgres_backup.test_real_postgres_snapshot_dump_restore_permissions_and_objects",
+          "reason": "未配置隔离 PostgreSQL 恢复演练数据库"
+        },
+        {
+          "test": "tests.v2.test_postgres_v2.test_postgres_v2_concurrent_cas_candidate_review_publish_checkpoint_restore",
+          "reason": "未配置独立 V2 PostgreSQL 验证与恢复数据库"
+        }
+      ]
+    },
+    "frontend_passed": 59,
+    "frontend_failed": 0,
+    "build": "passed",
+    "build_seconds": 18.36
+  },
+  "postgres": {
+    "legacy_upgrade": "passed",
+    "status": "passed",
+    "elapsed_seconds": 16.41,
+    "tests": {
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 9.882,
+      "passed": 8,
+      "skips": []
+    },
+    "image": "postgres:17-alpine",
+    "isolated": true,
+    "source_inputs_match_final_manifest": true,
+    "legacy_upgrade_from": "i81cbb118908",
+    "new_revision": "j93dca582910",
+    "coverage": [
+      "legacy candidate/confirmed/rejected to exclusion mapping with exact preservation of other relation values",
+      "concurrent edits and idempotency",
+      "model budget and durable job dispatch",
+      "V2 checkpoints and actual dump/restore including objects and credential revocation"
+    ],
+    "container_removed": true
+  },
+  "static_checks": [
+    "Prettier",
+    "Ruff E9,F63,F7,F82,F811",
+    "git diff --check"
+  ],
+  "design_integrity": {
+    "task_start_design_files": 48,
+    "task_start_bytes_unchanged": true,
+    "original_packaged_design_files": 44,
+    "package_sizes_and_hashes_match": true
+  },
+  "existing_warnings": [
+    "Starlette test-client httpx deprecation",
+    "large Vite chunks; original warning threshold retained"
+  ],
+  "sdk_and_contracts": {
+    "included_in_make_check": true,
+    "schemas_match_runtime": true,
+    "official_python_mcp_sdk": true,
+    "transports": [
+      "memory",
+      "stdio",
+      "Streamable HTTP"
+    ],
+    "catalog_tools": 23
+  },
+  "browser": {
+    "included_in_make_check": true,
+    "isolated": true,
+    "manual_preview_projects": [
+      "RuoYi",
+      "FlowTest"
+    ],
+    "preview_checks": [
+      "direct save-knowledge-version control",
+      "relation correction, exclusion and restoration controls",
+      "relation list and detail geometry after final layout fix"
+    ],
+    "regression_widths": [
+      1440,
+      1024,
+      768,
+      375
+    ],
+    "external_model_calls": 0
+  },
+  "preview_migration": {
+    "api_url": "http://127.0.0.1:8001",
+    "web_url": "http://127.0.0.1:5174",
+    "relations_preserved": 3370,
+    "immutable_tables_preserved": 8,
+    "object_count": 222,
+    "foreign_key_violations": 0,
+    "projects": [
+      {
+        "project_id": "f1fe38ea-b2e7-45b4-af56-56d518cd6750",
+        "relations": 1245,
+        "active_valid_relations": 1245,
+        "actions": 25
+      },
+      {
+        "project_id": "4abdce99-a5e7-4d86-9655-7c2396331149",
+        "relations": 443,
+        "active_valid_relations": 443,
+        "actions": 30
+      }
+    ],
+    "removed_approval_routes": true,
+    "backup_sha256": "818cb26bb65b2461fbd79d9bcba306a3d3fe86bdbcf5519c2b0252b97fc4f4a2",
+    "retired_tables_removed": 6,
+    "final_reload": {
+      "api_pid": 10141,
+      "ready": true,
+      "web_http_200": true,
+      "knowledge_tables_unchanged": 9,
+      "obsolete_document_review_field_absent": true,
+      "approval_routes_absent": true,
+      "source_aggregate_sha256": "af3e53865d844c1a82592bf2b63c6c20f1eceb6ec2f4220b01b59d0cbe0f3e4b"
+    },
+    "knowledge_bytes_preserved": true,
+    "immutable_manifests_rewritten": false,
+    "validated_backup_restore": true
+  },
+  "retired_approval_tests": [
+    {
+      "path": "tests/v2/test_review_inbox.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/v2/test_review_policy.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/ui/test_change_proposal_permission_design_alignment.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/ui/test_change_proposal_read_scope.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/ui/test_round2_product_review_identity.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/ui/test_round2_review_intent_boundaries.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/ui/test_round2_inbox_filters.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/ui/test_round2_proposal_corrections.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/versions/test_proposal_corrections.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/versions/test_direct_correction_response_guard.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/versions/test_round2_proposal_max_policy.py",
+      "reason": "Dedicated removed approval workflow; replacement is no-approval routes/storage/snapshot/capture/migration acceptance."
+    },
+    {
+      "path": "tests/ui/test_product_navigation_design_alignment.py",
+      "function": "test_review_inbox_open_preserves_exact_relation_target",
+      "reason": "Behavior is exclusively a deleted approval/content-masking gate."
+    },
+    {
+      "path": "tests/runner/test_network.py",
+      "function": "test_dom_redaction_removes_secret_inputs_scripts_and_pii_before_storage",
+      "reason": "Behavior is exclusively a deleted approval/content-masking gate."
+    },
+    {
+      "path": "tests/backend/test_application.py",
+      "function": "test_publish_requires_review_bound_human_ticket_and_freezes_history",
+      "reason": "Behavior is exclusively a deleted approval/content-masking gate."
+    },
+    {
+      "path": "tests/backend/test_application.py",
+      "function": "test_preflight_hash_invalidated_by_new_review",
+      "reason": "Behavior is exclusively a deleted approval/content-masking gate."
+    },
+    {
+      "path": "tests/review/test_relationship_operations.py",
+      "function": "test_batch_atomic_versions_type_and_independent_review_records",
+      "reason": "Behavior is exclusively a deleted approval/content-masking gate."
+    },
+    {
+      "path": "tests/documents/test_documents.py",
+      "function": "test_document_review_is_revision_anchored_and_independent_from_save",
+      "reason": "Behavior is exclusively a deleted approval/content-masking gate."
+    },
+    {
+      "path": "tests/models/test_plan_confirmation.py",
+      "reason": "Dedicated removed plan-approval workflow; direct execution and permission tests replace it."
+    },
+    {
+      "path": "tests/ui/test_v2_review_and_onboarding.py",
+      "function": "test_project_review_setting_defaults_to_auto_and_manual_toggle_processes_backlog",
+      "reason": "Dedicated removed project-policy or document/mixed approval UI; onboarding regression is retained."
+    },
+    {
+      "path": "tests/ui/test_v2_review_and_onboarding.py",
+      "function": "test_real_browser_submits_documents_then_atomically_reviews_mixed_types",
+      "reason": "Dedicated removed project-policy or document/mixed approval UI; onboarding regression is retained."
+    }
+  ],
+  "stage_failures": [
+    {
+      "stage": "test migration",
+      "cause": "Mechanical pruning removed executor.submit calls and fixture imports; original concurrency bodies were restored from the task-start source ZIP and fixture registration made explicit."
+    },
+    {
+      "stage": "standalone bootstrap",
+      "cause": "Unused-import cleanup removed model-registration side effects; complete table registration was restored and a fresh-process boot/import/snapshot regression added."
+    },
+    {
+      "stage": "real MCP SDK contract",
+      "cause": "Removing approval result kinds invalidated the contract builder enum marker; stable result kinds now drive extension and official SDK response validation passes."
+    },
+    {
+      "stage": "actual relation preview",
+      "cause": "Legacy review layout styles overlapped long identifiers and relation details; dedicated responsive layout and a four-width geometry regression now pass."
+    },
+    {
+      "stage": "final residual audit",
+      "cause": "A document-diff response field and old approval wording/styles remained; removed them, froze schemas and reran the complete check on unchanged inputs."
+    },
+    {
+      "stage": "frozen demo fixture",
+      "cause": "Wording cleanup changed generated historical fixture bytes. The exact original material wording was restored, with no runtime approval behavior restored. Targeted red: 1 failed/4 passed; green: 5 passed. The known-failing full run was interrupted and its original log and source manifest retained before the final full rerun."
+    }
+  ],
+  "compatibility": {
+    "historical_materials_keep_original_bytes": true,
+    "old_excluded_links_stay_excluded_on_repeated_source_updates": true,
+    "rollback": "consistent pre-removal database/object backup plus matching old binary",
+    "old_masked_pixels": "require recapture"
+  },
+  "boundaries": {
+    "commit_or_push": false,
+    "remote_ci": false,
+    "production_release": false,
+    "external_model_provider_calls": false,
+    "full_live_business_write_chain_acceptance": false,
+    "windows_svn_rabbitmq_compose_remeasured": false,
+    "skipped_tests_not_counted_as_passed": true,
+    "preexisting_unrelated_edits_preserved": true
+  }
+}

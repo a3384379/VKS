@@ -32,6 +32,7 @@ def prepare(service, job_id):
         )
         selected_version = analysis.selection_version
         latest = {}
+        vectors = {source["source_snapshot_id"]: source for source in analysis.sources}
         for source in analysis.sources:
             latest[source.get("source_id", source["source_snapshot_id"])] = source["source_snapshot_id"]
         artifacts = []
@@ -46,16 +47,23 @@ def prepare(service, job_id):
             )
             if not rows:
                 continue
-            sources.append(
-                {
-                    "source_id": snapshot.source_key,
-                    "provider": snapshot.provider,
-                    "revision": snapshot.provider_revision,
-                    "content_sha256": snapshot.content_sha256,
-                    "role": snapshot.role,
-                    "service_key": snapshot.service_key,
-                }
-            )
+            source = {
+                "source_id": snapshot.source_key,
+                "provider": snapshot.provider,
+                "revision": snapshot.provider_revision,
+                "content_sha256": snapshot.content_sha256,
+                "role": snapshot.role,
+                "service_key": snapshot.service_key,
+            }
+            vector = vectors.get(snapshot.id, {})
+            scope = vector.get("source_scope")
+            if isinstance(scope, dict) and isinstance(scope.get("root"), str):
+                source["root"] = scope["root"]
+                if scope.get("connector_ref") is not None:
+                    source["connector_ref"] = scope["connector_ref"]
+            if vector.get("version_labels"):
+                source["version_labels"] = dict(vector["version_labels"])
+            sources.append(source)
             for a in rows:
                 if a.relative_path in paths:
                     raise DomainError("VKS_INVALID_INPUT", "固定来源存在同路径歧义；请加仓库目录前缀")
@@ -108,7 +116,7 @@ def prepare(service, job_id):
             {
                 "code": "VKS_FRONTEND_EXPLICIT_ANCHORS_ONLY",
                 "severity": "info",
-                "message": "前端仅支持显式构建/热点源码锚点；没有推测动态React/Vue调用。已有显式绑定和人工审核保持不变。",
+                "message": "前端仅支持显式构建/热点源码锚点；没有推测动态React/Vue调用。已有显式绑定和用户编辑保持不变。",
             }
         )
     return bundle, selected_version

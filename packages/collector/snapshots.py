@@ -107,6 +107,10 @@ def _run(args, *, input=None, timeout=60):
 
 
 def collect_directory(root: Path) -> Snapshot:
+    if os.name == "nt":
+        from .windows_files import collect_windows
+
+        return collect_windows(root)
     root = Path(root).resolve(strict=True)
     if not root.is_dir():
         raise CollectionError("VKS_INVALID_INPUT", "来源必须是目录")
@@ -126,7 +130,7 @@ def collect_directory(root: Path) -> Snapshot:
                     issues.append({"relative_path": relative, "reason_code": "POLICY_EXCLUDED"})
                 continue
             if stat.S_ISDIR(info.st_mode):
-                if name in IGNORED or name.startswith(".env") or name in SECRET_NAMES:
+                if name.casefold() in IGNORED or name.casefold().startswith(".env") or name.casefold() in SECRET_NAMES:
                     continue
                 try:
                     child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)

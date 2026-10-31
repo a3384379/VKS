@@ -4,15 +4,11 @@ from __future__ import annotations
 from hashlib import sha256
 import json
 from pathlib import Path
-import re
 from urllib.parse import unquote, urlsplit
 from jsonschema import Draft202012Validator, FormatChecker
 
 SCHEMA = json.loads((Path(__file__).resolve().parents[1] / "contracts/scenario.schema.json").read_text())
 VALIDATOR = Draft202012Validator(SCHEMA, format_checker=FormatChecker())
-SENSITIVE = re.compile(
-    r"(?i)(authorization|bearer\s|(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]|-----BEGIN|(?<![A-Za-z0-9-])(?:\d[ -]?){13,19}(?![A-Za-z0-9-])|(?<![A-Za-z0-9-])1[3-9]\d{9}(?![A-Za-z0-9-]))"
-)
 
 
 class ScenarioError(ValueError):
@@ -28,24 +24,18 @@ def digest(value):
 def validate_dsl(
     dsl, *, project_key=None, baseline_key=None, action_keys=None, action_ids=None, capture_validator=None
 ):
+    from copy import deepcopy
+
+    dsl = deepcopy(dsl)
+    dsl.pop("approval_ref", None)  # compatibility for immutable pre-personal snapshots
+    for step in dsl.get("steps", []):
+        step.pop("redact", None)  # legacy immutable definitions
     errors = sorted(VALIDATOR.iter_errors(dsl), key=lambda x: str(list(x.path)))
     if errors:
         raise ScenarioError(
             "VKS_SCENARIO_INVALID", "场景字段不符合正式 DSL 契约：" + ".".join(map(str, errors[0].absolute_path))
         )
 
-    def strings(value):
-        if isinstance(value, str):
-            yield value
-        elif isinstance(value, dict):
-            for child in value.values():
-                yield from strings(child)
-        elif isinstance(value, list):
-            for child in value:
-                yield from strings(child)
-
-    if any(SENSITIVE.search(value) for value in strings(dsl)):
-        raise ScenarioError("VKS_SENSITIVE_CONTENT", "场景元数据不能包含秘密或个人信息明文")
     keys = [s["step_key"] for s in dsl["steps"]]
     if len(keys) != len(set(keys)):
         raise ScenarioError("VKS_SCENARIO_INVALID", "步骤逻辑键必须唯一")
@@ -58,10 +48,6 @@ def validate_dsl(
                 raise ScenarioError("VKS_SCENARIO_INVALID", "跳转仅允许登记环境下的相对路径")
         if step.get("action_entity_id") and action_ids is not None and step["action_entity_id"] not in action_ids:
             raise ScenarioError("VKS_SCENARIO_INVALID", "步骤动作不属于当前版本")
-        for field in ("value", "expected"):
-            literal = step.get(field, {}).get("literal")
-            if literal and SENSITIVE.search(literal):
-                raise ScenarioError("VKS_SENSITIVE_CONTENT", "场景不能包含敏感输入明文，请使用合成 fixture 字段")
     graph = dsl.get("explanation_graph")
     if not graph:
         return dsl

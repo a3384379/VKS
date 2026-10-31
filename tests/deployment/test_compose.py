@@ -130,26 +130,59 @@ def test_real_compose_reserved_passwords_durable_job_publish_and_exports(tmp_pat
             assert value["attempt"] == 1
             w = client.get(f"/api/v1/projects/{pid}/workspace").json()["data"]
             assert len(w["actions"]) == 4
-            for r in w["relations"]:
-                response = client.post(
-                    f"/api/v1/relations/{r['id']}/review",
-                    json={
-                        "decision": "confirm",
-                        "reason": "独立容器核对合成 fixture",
-                        "evidence_ids": r["evidence_ids"],
-                    },
-                    headers={"If-Match": str(r["row_version"])},
-                )
-                assert response.status_code == 200
-            candidate = post(
-                f"/projects/{pid}/release-candidates", {"analysis_set_id": w["selected_analysis_set"]["id"]}
+            aid = w["selected_analysis_set"]["id"]
+            # The V2 deterministic template uses the model queue while the
+            # provider remains disabled. Its output still needs human review.
+            compose("stop", "worker-model")
+            response = client.post(
+                f"/api/v2/projects/{pid}/knowledge-tasks",
+                json={
+                    "analysis_set_id": aid,
+                    "task_kind": "business_flow",
+                    "action_ids": [row["entity_id"] for row in w["actions"][:3]],
+                },
+                headers={"Idempotency-Key": "compose-v2-task"},
             )
-            confirm = post(f"/release-candidates/{candidate['candidate_id']}/confirm")
-            release = post(
-                f"/release-candidates/{candidate['candidate_id']}/publish",
-                {k: confirm[k] for k in ("human_confirmation_ref", "expected_manifest_sha256")}
-                | {"change_note": "隔离部署验收"},
+            assert response.status_code == 202, response.text
+            task = response.json()["data"]
+            assert client.get(f"/api/v1/jobs/{task['id']}").json()["data"]["state"] == "queued"
+            response = client.post(
+                f"/api/v2/knowledge-tasks/{task['id']}/control",
+                json=dict(action="pause", expected_state="queued"),
+                headers={"Idempotency-Key": "compose-pause", "If-Match": "0"},
             )
+            assert response.status_code == 200, response.text
+            compose("start", "worker-model")
+            time.sleep(0.5)
+            assert client.get(f"/api/v2/knowledge-tasks/{task['id']}").json()["data"]["state"] == "paused"
+            response = client.post(
+                f"/api/v2/knowledge-tasks/{task['id']}/control",
+                json=dict(action="resume", expected_state="paused"),
+                headers={"Idempotency-Key": "compose-resume", "If-Match": "0"},
+            )
+            assert response.status_code == 200, response.text
+            assert finished(task["id"])["attempt"] == 1
+            task_result = client.get(f"/api/v2/knowledge-tasks/{task['id']}").json()["data"]
+            assert task_result["stage"] == "COMPLETE" and task_result["stage_artifacts"]
+            assert task_result["report"]["saved_directly"] and task_result["report"]["model_calls"] == 0
+            journeys = client.get(f"/api/v2/projects/{pid}/journeys", params={"analysis_set_id": aid}).json()["data"]
+            assert len(journeys) == 1 and len(journeys[0]["dsl"]["nodes"]) == 4
+            response = client.post(
+                f"/api/v2/projects/{pid}/snapshots",
+                json={"analysis_set_id": aid, "change_note": "隔离部署验收"},
+                headers={"Idempotency-Key": "compose-snapshot"},
+            )
+            assert response.status_code == 201, response.text
+            release = response.json()["data"]
+            frozen = client.get(f"/api/v2/projects/{pid}/journeys", params={"release_id": release["id"]}).json()["data"]
+            assert [(row["revision_id"], row["dsl"]) for row in frozen] == [
+                (row["revision_id"], row["dsl"]) for row in journeys
+            ]
+            explained = client.get(
+                f"/api/v2/actions/{w['actions'][0]['entity_id']}/explanation",
+                params={"project_id": pid, "release_id": release["id"]},
+            )
+            assert explained.status_code == 200 and explained.json()["data"]["release_id"] == release["id"]
             for format in ("pdf", "vksbundle"):
                 export = post(
                     f"/projects/{pid}/exports", {"release_id": release["id"], "format": format, "include_source": False}
@@ -166,6 +199,9 @@ def test_real_compose_reserved_passwords_durable_job_publish_and_exports(tmp_pat
                         manifest = json.loads(z.read("manifest.json"))
                         assert manifest["allow_platform_llm"] is False
                         assert not any(a["kind"] == "source" for a in manifest["artifacts"])
+                        exported_journey = json.loads(z.read("export/journeys/" + journeys[0]["journey_id"] + ".json"))
+                        assert exported_journey["definition"] == journeys[0]["dsl"]
+                        assert exported_journey["approval_transferred"] is False
             assert len(client.get(f"/api/v1/projects/{pid}/releases").json()["data"]) == 1
     finally:
         diagnostic = subprocess.run(

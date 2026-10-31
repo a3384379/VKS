@@ -1,4 +1,5 @@
 import subprocess
+import os
 import pytest
 from packages.collector.snapshots import collect_directory, collect_git, collect_svn, bundle_bytes, CollectionError
 from packages.analyzers.vks_ingest import parse_bundle
@@ -20,7 +21,13 @@ def test_directory_preserves_bytes_skips_private_symlinks_and_never_runs_scripts
     (tmp_path / "node_modules").mkdir()
     (tmp_path / "node_modules/ignored.js").write_text("bad")
     (tmp_path / "package.json").write_text('{"scripts":{"postinstall":"touch EXECUTED"}}')
-    (tmp_path / "linked.md").symlink_to("/etc/passwd")
+    try:
+        (tmp_path / "linked.md").symlink_to("/etc/passwd")
+    except OSError:
+        # Windows file symlinks can require a privilege. Native junction and
+        # replacement-race rejection are mandatory in test_windows_agent.py.
+        if os.name != "nt":
+            raise
     snapshot = collect_directory(tmp_path)
     assert snapshot.files["docs/rules.md"] == raw
     assert ".env" not in snapshot.files and "linked.md" not in snapshot.files
@@ -37,7 +44,8 @@ def test_git_pins_revision_without_touching_dirty_checkout_or_executing_hooks(tm
     git(tmp_path, "init")
     git(tmp_path, "config", "user.name", "Fixture")
     git(tmp_path, "config", "user.email", "fixture@example.invalid")
-    (tmp_path / "rules.md").write_text("# Original\nrule\n")
+    git(tmp_path, "config", "core.autocrlf", "false")
+    (tmp_path / "rules.md").write_bytes(b"# Original\nrule\n")
     git(tmp_path, "add", "rules.md")
     git(tmp_path, "commit", "-m", "v1")
     revision = git(tmp_path, "rev-parse", "HEAD")
