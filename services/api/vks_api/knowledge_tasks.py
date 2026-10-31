@@ -276,7 +276,7 @@ class KnowledgeTaskService:
             action_revisions & action_knowledge_revisions(w["entities"], w["relations"])
         )
         output["_outdated_relation_ids"] = [
-            row["id"] for row in w["relations"] if (row["excluded"] is False) or row["validity_status"] != "valid"
+            row["id"] for row in w["relations"] if not row["excluded"] and row["validity_status"] != "valid"
         ][:200]
         output["relations"] = [
             row

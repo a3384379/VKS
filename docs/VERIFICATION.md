@@ -1,5 +1,7 @@
 # VKS 1.0 候选版验证记录
 
+2026-10-31 PR 审查补充：已有版本及幂等重放现在校验准确 manifest 的当前资料权限；证据缺口任务只列出仍保留的过期/断链关联。新增 9 项回归先全部复现失败，修复后相关 26 项通过，隔离 PostgreSQL 另 8 项通过。此补修的完整检查以 PR #2 最终 head 的 Actions 为准；源码摘要、阶段结果见 [2.0 验证记录](upgrades/v2/VERIFICATION.md)。下列 751 项结果绑定补修前工程输入。
+
 2026-10-31 自用工作流补充：按用户要求移除审批和内容脱敏。冻结源码完整 `make check` 为 Python **751 passed / 14 skipped**、前端 **59 passed**、构建成功；隔离 PostgreSQL 另 **8 项通过**。两个本机项目已备份迁移并重载，3,370 条关系和 222 个对象保留。当前行为见[自用知识工作流](PERSONAL_WORKFLOW.md)，范围、原始失败和未验收边界见 [2.0 验证记录](upgrades/v2/VERIFICATION.md)。以下历史审批/脱敏记录不再代表当前功能。
 
 2026-10-30 第二轮方案对照补充：xhigh 修复与 max 独立闭环后，冻结 402 个工程输入执行完整 `make check`，Python **825 passed / 15 skipped**、前端 **59 passed**、构建通过；隔离 PostgreSQL 17.11 另 **73 项通过**。本机预览已重载、两项目待审均为 0，知识表摘要未变；原始失败、范围和兼容限制见 [2.0 验证记录](upgrades/v2/VERIFICATION.md)。

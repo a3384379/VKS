@@ -305,6 +305,8 @@ class Service:
         if row:
             if row.payload_hash != h:
                 raise DomainError("VKS_IDEMPOTENCY_CONFLICT", "相同幂等键对应不同内容", 409)
+            if operation == "snapshot.save":
+                self._check_snapshot_access(s, actor, pid, row.response_json["manifest"])
             if operation in {
                 "propose_links",
                 "journey.create",
@@ -1558,6 +1560,32 @@ class Service:
     def set_member(self, actor, pid, payload, version):
         return team_identity.set_member(self, actor, pid, payload, version)
 
+    def _check_snapshot_access(self, s, actor, pid, manifest):
+        """Authorize the exact immutable payload against current source policies."""
+        visible = len(self._visible_sources(s, actor, pid, manifest["sources"])) == len(manifest["sources"])
+        for selected in manifest["selections"]:
+            revision = s.get(Revision, selected["entity_revision_id"])
+            visible = visible and bool(
+                revision and revision.project_id == pid and self._visible_revision(s, actor, pid, revision)
+            )
+        for item in manifest["relations"]:
+            relation = s.get(Relation, item["id"])
+            visible = visible and bool(
+                relation and relation.project_id == pid and self._visible_relation(s, actor, pid, relation)
+            )
+            for key in ("from_revision_id", "to_revision_id"):
+                revision = s.get(Revision, item[key])
+                visible = visible and bool(
+                    revision and revision.project_id == pid and self._visible_revision(s, actor, pid, revision)
+                )
+            for eid in item["evidence_ids"]:
+                evidence = s.get(Evidence, eid)
+                visible = visible and bool(
+                    evidence and evidence.project_id == pid and self._visible_evidence(s, actor, pid, evidence)
+                )
+        if not visible:
+            raise DomainError("VKS_FORBIDDEN", "需要读取当前版本全部材料的权限", 403)
+
     def save_snapshot(self, actor, pid, payload, key):
         """Save the current knowledge selection as an immutable version."""
         with self.db() as s:
@@ -1569,18 +1597,13 @@ class Service:
             def save():
                 existing = s.scalar(select(Release).where(Release.analysis_set_id == analysis.id))
                 if existing:
+                    self._check_snapshot_access(s, actor, pid, existing.manifest_json)
                     return dict(self.release_dto(existing), manifest=existing.manifest_json)
                 rows = self._revisions(s, analysis.id)
                 if not rows:
                     raise DomainError("VKS_STATE_CONFLICT", "当前基线没有知识内容", 409)
-                if not all(self._visible_revision(s, actor, pid, row) for row in rows):
-                    raise DomainError("VKS_FORBIDDEN", "需要读取当前版本全部材料的权限", 403)
-                for relation in s.scalars(
-                    select(Relation).where(Relation.analysis_set_id == analysis.id, Relation.excluded == False)
-                ):
-                    if not self._visible_relation(s, actor, pid, relation):
-                        raise DomainError("VKS_FORBIDDEN", "需要读取当前版本关联来源的权限", 403)
                 manifest = self._manifest(s, analysis)
+                self._check_snapshot_access(s, actor, pid, manifest)
                 sequence = len(list(s.scalars(select(Release.id).where(Release.project_id == pid)))) + 1
                 result = Release(
                     id=uid(),
