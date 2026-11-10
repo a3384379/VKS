@@ -5,6 +5,10 @@
   align-items: start;
 }
 
+.prototype-v3-wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .prototype-v3-tools {
   display: flex;
   flex-wrap: wrap;
@@ -64,10 +68,33 @@
   margin-top: 1rem;
 }
 
-@media (max-width: 1100px) {
+@media (width < 1100px) {
   .prototype-v3 {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.prototype-v3-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 79;
+  background: rgb(24 52 90 / 24%);
+}
+
+.prototype-v3-drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 80;
+  width: min(26rem, 95vw);
+  padding: 1rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+  box-shadow: -8px 0 30px rgb(24 52 90 / 15%);
+}
+
+.prototype-v3-drawer-close {
+  margin-bottom: 0.75rem;
 }
 
 .prototype-v3-draw {
@@ -76,6 +103,13 @@
   cursor: crosshair;
   touch-action: none;
   outline: 2px solid #2563eb;
+}
+
+.prototype-v3-draw-preview {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid #1d4ed8;
+  background: rgb(37 99 235 / 16%);
 }
 
 .prototype-v3-editor {
@@ -91,6 +125,24 @@
   display: grid;
   gap: 0.5rem;
   min-width: 0;
+}
+
+.prototype-v3-editor .prototype-v3-form-fields {
+  display: contents;
+}
+
+.prototype-v3-editor .prototype-v3-selected-anchor {
+  border-color: #1d4ed8;
+}
+
+.prototype-v3-section-matches {
+  max-height: 14rem;
+  overflow: auto;
+}
+
+.document-main [data-vks-current-section] {
+  background: #e6f0ff;
+  border-radius: 0.25rem;
 }
 
 .prototype-v3-editor label {

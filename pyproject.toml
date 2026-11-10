@@ -1,6 +1,6 @@
 [project]
 name = "visual-knowledge-studio"
-version = "1.0.0rc1"
+version = "3.0.0rc1"
 description = "知境 VKS — evidence-backed interactive project knowledge"
 requires-python = ">=3.12,<3.14"
 dependencies = [

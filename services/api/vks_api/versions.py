@@ -19,8 +19,11 @@ from .models import (
     Relation,
     Release,
     Revision,
+    relation_payload,
     uid,
 )
+
+PROTOTYPE_RELATIONS = {"has_business_point", "supported_by_section"}
 
 
 def canonical(value):
@@ -41,6 +44,8 @@ class VersionService:
         old, new = s.get(Release, release_id), s.get(Analysis, analysis_id)
         if not old or not new or old.project_id != pid or new.project_id != pid:
             fail("VKS_NOT_FOUND", "未找到版本基线", 404)
+        if sha256(canonical(old.manifest_json).encode()).hexdigest() != old.manifest_sha256:
+            fail("VKS_INTEGRITY_ERROR", "版本对比的发布清单摘要不匹配", 409)
         return old, new
 
     def compare(self, s, pid, from_release_id, to_analysis_set_id):
@@ -110,6 +115,7 @@ class VersionService:
             changes.append(row)
         changed = {c["entity_id"] for c in changes}
         relations = list(s.scalars(select(Relation).where(Relation.analysis_set_id == new.id)))
+        binding_changes = self._binding_changes(s, old, relations, {row.id for row in after.values()})
         impacted = [
             self.service.relation_dto(r)
             for r in relations
@@ -168,6 +174,7 @@ class VersionService:
                 is_truncated=path_scope["is_truncated"] or len(all_journey_impacts) > 200,
             ),
             "_target_revision_ids": sorted(row.id for row in after.values()),
+            "_binding_changes": binding_changes,
             "_path_relations": [
                 dict(
                     id=row.id,
@@ -185,6 +192,61 @@ class VersionService:
             "impact_paths": paths,
             "unknowns": ["材料或定位变化不等于业务语义已改变；重新确认不产生运行因果证据"],
         }
+
+    def _binding_changes(self, s, release, relations, selected):
+        def by_endpoints(rows, scope):
+            result = {}
+            for row in rows:
+                kind = row["relation_type"]
+                if kind not in PROTOTYPE_RELATIONS and kind != "documents":
+                    continue
+                if row["from_revision_id"] not in scope or row["to_revision_id"] not in scope:
+                    continue
+                start = s.get(Revision, row["from_revision_id"])
+                end = s.get(Revision, row["to_revision_id"])
+                if not start or not end or (kind == "documents" and not start.metadata_json.get("prototype_action")):
+                    continue
+                result[kind, start.entity_id, end.entity_id] = row
+            return result
+
+        def signature(row):
+            scope = row.get("prototype_scope", {})
+            proofs = []
+            for eid in row["evidence_ids"]:
+                ev = s.get(Evidence, eid)
+                if ev:
+                    art = s.get(Artifact, ev.artifact_id)
+                    proofs.append(
+                        canonical([ev.evidence_kind, ev.content_sha256, ev.locator, art.sha256 if art else None])
+                    )
+            return row["excluded"], row["validity_status"], scope, sorted(set(proofs))
+
+        before = by_endpoints(
+            (relation_payload(row) for row in release.manifest_json["relations"]),
+            {row["entity_revision_id"] for row in release.manifest_json["selections"]},
+        )
+        after = by_endpoints((self.service.relation_dto(row) for row in relations), selected)
+        changes = []
+        for kind, source, target in sorted(before.keys() | after.keys()):
+            key = (kind, source, target)
+            prior, current = before.get(key), after.get(key)
+            if (not prior and current["excluded"]) or (prior and current and signature(prior) == signature(current)):
+                continue
+            changes.append(
+                {
+                    "relation_type": kind,
+                    "from_entity_id": source,
+                    "to_entity_id": target,
+                    "change_kind": "added"
+                    if not prior
+                    else "removed"
+                    if not current or current["excluded"]
+                    else "modified",
+                    "before": prior,
+                    "after": current,
+                }
+            )
+        return changes
 
     def impact_paths(self, s, seeds, relations, depth=3, max_nodes=200, *, with_scope=False, path_limit=2000):
         adjacency = {}
@@ -271,8 +333,6 @@ class VersionService:
         return output
 
     def detect_drift(self, s, pid, from_release_id, to_analysis_set_id, actor_id=None):
-        from .models import relation_payload
-
         old, new = self._baselines(s, pid, from_release_id, to_analysis_set_id)
         s.refresh(new, with_for_update=True)
         if new.state == "frozen":
@@ -380,13 +440,59 @@ class VersionService:
             },
         )
         old, new = self._baselines(s, pid, result["from_release_id"], result["to_analysis_set_id"])
-        selected_ids = {row["entity_revision_id"] for row in old.manifest_json["selections"]}
-        selected_ids.update(
-            result["_target_revision_ids"]
-            if "_target_revision_ids" in result
-            else [r.id for r in self.service._revisions(s, new.id)]
-        )
+        from .reading import ReadingService, chunks
+
+        reading = ReadingService(self.service)
+        old_scope = {row["entity_id"]: row["entity_revision_id"] for row in old.manifest_json["selections"]}
+        new_scope = {}
+        if "_target_revision_ids" in result:
+            for batch in chunks(result["_target_revision_ids"]):
+                new_scope.update(
+                    s.execute(
+                        select(Revision.entity_id, Revision.id).where(
+                            Revision.project_id == pid, Revision.id.in_(batch)
+                        )
+                    ).all()
+                )
+        else:
+            new_scope = {row.entity_id: row.id for row in self.service._revisions(s, new.id)}
+        visible_old = set(reading.visible_ids(s, actor, pid, old_scope).values())
+        visible_new = set(reading.visible_ids(s, actor, pid, new_scope).values())
+        visible_revisions = visible_old | visible_new
+
+        def endpoint_visible(row, ids):
+            return row["from_revision_id"] in ids and row["to_revision_id"] in ids
+
+        def entity_visible(eid):
+            prior, current = old_scope.get(eid), new_scope.get(eid)
+            return (
+                bool(prior or current)
+                and (prior is None or prior in visible_old)
+                and (current is None or current in visible_new)
+            )
+
+        report["changes"] = [row for row in report["changes"] if entity_visible(row["entity_id"])]
+        report["impacted_relations"] = [
+            row for row in report["impacted_relations"] if endpoint_visible(row, visible_new)
+        ]
         visible_relations = {row["id"] for row in report["impacted_relations"]}
+        report["binding_changes"] = []
+        for change in result.get("_binding_changes", []):
+            if not all(entity_visible(change[key]) for key in ("from_entity_id", "to_entity_id")):
+                continue
+            endpoints = {}
+            for side in ("before", "after"):
+                row = change[side]
+                if row is None:
+                    continue
+                if not endpoint_visible(row, visible_old if side == "before" else visible_new):
+                    break
+                visible = self.service._filter_diff(s, actor, pid, {"impacted_relations": [row]})["impacted_relations"]
+                if not visible or set(visible[0]["evidence_ids"]) != set(row["evidence_ids"]):
+                    break
+                endpoints[side] = visible[0]
+            else:
+                report["binding_changes"].append({**change, **endpoints})
         # Impact traversal can pass through unchanged relations too. Filter
         # every edge and both baseline revisions before returning a path.
         path_relations = result.get("_path_relations")
@@ -398,59 +504,27 @@ class VersionService:
         for relation in path_relations:
             if (
                 self.service._visible_relation(s, actor, pid, relation)
-                and all(
-                    (revision := s.get(Revision, rid)) and self.service._visible_revision(s, actor, pid, revision)
-                    for rid in (relation["from_revision_id"], relation["to_revision_id"])
-                )
+                and endpoint_visible(relation, visible_new)
                 and all(
                     (evidence := s.get(Evidence, eid)) and self.service._visible_evidence(s, actor, pid, evidence)
                     for eid in relation["evidence_ids"]
                 )
             ):
                 visible_relations.add(relation["id"])
-        visible = set()
-        for path in result.get("impact_paths", []):
-            revisions = list(
-                s.scalars(
-                    select(Revision).where(Revision.entity_id.in_(path["entity_ids"]), Revision.id.in_(selected_ids))
-                )
-            )
-            per_entity = {eid: [] for eid in path["entity_ids"]}
-            for revision in revisions:
-                per_entity[revision.entity_id].append(revision)
-            if all(
-                rows and all(self.service._visible_revision(s, actor, pid, r) for r in rows)
-                for rows in per_entity.values()
-            ) and all(rid in visible_relations for rid in path["relation_ids"]):
-                visible.add(canonical(path))
-        report["impact_paths"] = [p for p in result.get("impact_paths", []) if canonical(p) in visible]
-        report["journey_impacts"] = []
-        journey_entities = {
-            eid for item in result.get("journey_impacts", []) for eid in (item["journey_id"], item["binding_entity_id"])
-        }
-        baseline_revisions = {}
-        from .reading import chunks
-
-        for entities in chunks(journey_entities, 200):
-            for revisions in chunks(selected_ids):
-                for row in s.scalars(
-                    select(Revision).where(
-                        Revision.project_id == pid, Revision.entity_id.in_(entities), Revision.id.in_(revisions)
-                    )
-                ):
-                    baseline_revisions.setdefault(row.entity_id, []).append(row)
-        for item in result.get("journey_impacts", []):
-            journey = s.get(Revision, item["journey_revision_id"])
-            binding = s.get(Revision, item["binding_revision_id"])
-            if all(
-                row and row.id in selected_ids and self.service._visible_revision(s, actor, pid, row)
-                for row in (journey, binding)
-            ) and all(
-                baseline_revisions.get(eid)
-                and all(self.service._visible_revision(s, actor, pid, row) for row in baseline_revisions[eid])
-                for eid in (item["journey_id"], item["binding_entity_id"])
-            ):
-                report["journey_impacts"].append(item)
+        report["impact_paths"] = [
+            path
+            for path in result.get("impact_paths", [])
+            if all(entity_visible(eid) for eid in path["entity_ids"])
+            and all(rid in visible_relations for rid in path["relation_ids"])
+        ]
+        report["journey_impacts"] = [
+            item
+            for item in result.get("journey_impacts", [])
+            if item["journey_revision_id"] in visible_revisions
+            and item["binding_revision_id"] in visible_revisions
+            and entity_visible(item["journey_id"])
+            and entity_visible(item["binding_entity_id"])
+        ]
         if self.service._can(s, actor, pid, "source:read") and self.service._can(s, actor, pid, "trace:read"):
             report["scope_anomaly"] = result.get("scope_anomaly", False)
         if "source_vectors" in result:
@@ -507,6 +581,11 @@ class VersionService:
                 fail("VKS_NOT_FOUND", "未找到当前基线关系", 404)
             if not self.service._visible_relation(s, actor, relation.project_id, relation):
                 fail("VKS_NOT_FOUND", "未找到关系", 404)
+            if relation.relation_type in PROTOTYPE_RELATIONS:
+                from .relationships import RelationshipService
+
+                RelationshipService(self.service)._visible(s, actor, relation)
+                fail("VKS_INVALID_INPUT", "请在页面与动作维护中保存业务点及准确出处")
             analysis = s.get(Analysis, relation.analysis_set_id)
             s.refresh(analysis, with_for_update=True)
             if analysis.state == "frozen":

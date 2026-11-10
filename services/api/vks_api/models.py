@@ -39,6 +39,7 @@ class PrototypeSettings(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), primary_key=True)
     entry_page_key: Mapped[str | None] = mapped_column(String(96), nullable=True)
     menu_order: Mapped[list] = mapped_column(JSON, default=list)
+    menu_groups: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     row_version: Mapped[int] = mapped_column(Integer, default=1)
     __mapper_args__ = {"version_id_col": row_version}
 

@@ -30,6 +30,9 @@ function PrototypePreferencesForm() {
   const [order, setOrder] = useState(
     w.prototype_settings?.menu_order?.join("\n") || "",
   );
+  const [groups, setGroups] = useState(
+    () => new Map(Object.entries(w.prototype_settings?.menu_groups || {})),
+  );
   if (!allowed || !pages.length) return null;
   return (
     <Panel title="原型导览设置">
@@ -38,6 +41,12 @@ function PrototypePreferencesForm() {
         onSubmit={(event) => {
           event.preventDefault();
           const scope = prototypeScope(w);
+          const menuGroups = Object.fromEntries(
+            pages.flatMap((page) => {
+              const label = groups.get(page.stable_key)?.trim();
+              return label ? [[page.stable_key, label]] : [];
+            }),
+          );
           void run(
             () =>
               api(
@@ -51,6 +60,7 @@ function PrototypePreferencesForm() {
                       .split("\n")
                       .map((row) => row.trim())
                       .filter(Boolean),
+                    menu_groups: menuGroups,
                   },
                   w.prototype_settings?.row_version ?? 0,
                 ),
@@ -65,7 +75,7 @@ function PrototypePreferencesForm() {
             value={entry}
             onChange={(event) => setEntry(event.target.value)}
           >
-            <option value="">打开项目空间</option>
+            <option value="">自动选择首个有画面的页面</option>
             {pages
               .filter((page) =>
                 prototypeManifest(page)?.states.some(
@@ -89,6 +99,28 @@ function PrototypePreferencesForm() {
             onChange={(event) => setOrder(event.target.value)}
           />
         </label>
+        <details>
+          <summary>编辑快捷菜单分组</summary>
+          <fieldset style={{ maxHeight: "24rem", overflow: "auto" }}>
+            <legend>快捷菜单分组</legend>
+            {pages.map((page) => (
+              <label key={page.id}>
+                {page.name} · <code>{page.stable_key}</code>
+                <input
+                  placeholder="未分组"
+                  maxLength={80}
+                  value={groups.get(page.stable_key) || ""}
+                  onChange={(event) => {
+                    const label = event.target.value;
+                    setGroups((previous) =>
+                      new Map(previous).set(page.stable_key, label),
+                    );
+                  }}
+                />
+              </label>
+            ))}
+          </fieldset>
+        </details>
         <details>
           <summary>查看当前可用页面标识</summary>
           <ul>

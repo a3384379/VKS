@@ -1,5 +1,5 @@
 import type { Entity, Workspace } from "./types";
-import { prototypeManifest } from "./prototype";
+import { prototypeEntry, prototypeManifest } from "./prototype";
 
 export type ExplanationNavigation = {
   pageId: string;
@@ -40,18 +40,15 @@ export function resolveExplanation(
   if (intent.pageId && !w.pages.some((p) => p.id === intent.pageId))
     throw new Error("当前基线中没有此页面");
   const requestedPage = w.pages.find((p) => p.id === intent.pageId);
+  const currentPage = w.pages.find((p) => p.id === current.pageId);
   const actionPage =
     action && w.pages.find((p) => p.stable_key === pageKey(action));
   const rasterPage =
     requestedPage ||
-    (intent.actionId
-      ? actionPage
-      : w.pages.find((p) => p.id === current.pageId)) ||
+    (intent.actionId ? actionPage : currentPage) ||
     actionPage ||
     (!current.pageId &&
-      w.pages.find((p) =>
-        prototypeManifest(p)?.states.some((state) => state.surface),
-      ));
+      (prototypeEntry(w) || w.pages.find((p) => prototypeManifest(p))));
   const raster = rasterPage ? prototypeManifest(rasterPage) : undefined;
   if (rasterPage && raster && !intent.scenarioId) {
     if (intent.actionId && actionPage?.id !== rasterPage.id)
@@ -61,7 +58,7 @@ export function resolveExplanation(
     const state = raster.states.find(
       (row) =>
         row.stateKey ===
-        (intent.stateKey || previousState || raster.defaultStateKey),
+        ((intent.stateKey ?? previousState) || raster.defaultStateKey),
     );
     if (!state) throw new Error("当前原型页面没有此状态");
     if (intent.actionId === "" || actionPage?.id !== rasterPage.id)
@@ -77,15 +74,17 @@ export function resolveExplanation(
     const matching = raster.states.filter((row) =>
       row.anchors.some((anchor) => anchor.actionKey === action!.stable_key),
     );
+    const sameAction =
+      current.pageId === rasterPage.id && current.actionId === action.id;
     const triggerKey =
       intent.triggerStateKey ||
-      (current.actionId === action.id &&
-        !intent.followTarget &&
-        current.triggerStateKey);
+      (sameAction && intent.stateKey === undefined && !intent.followTarget
+        ? current.triggerStateKey
+        : "");
     const trigger = triggerKey
       ? matching.find((row) => row.stateKey === triggerKey)
       : matching.find((row) => row.stateKey === state.stateKey) ||
-        (!intent.stateKey && matching.length === 1 ? matching[0] : undefined);
+        (!intent.stateKey ? matching[0] : undefined);
     if (!trigger) throw new Error("当前原型没有此动作的准确触发状态");
     const anchor = trigger.anchors.find(
       (row) => row.actionKey === action!.stable_key,
@@ -93,33 +92,31 @@ export function resolveExplanation(
     const target = raster.states.find(
       (row) => row.stateKey === anchor.targetStateKey && row.surface,
     );
-    if (
-      !intent.followTarget &&
-      intent.stateKey &&
-      state.stateKey !== trigger.stateKey &&
-      state.stateKey !== target?.stateKey
-    )
+    const displaysAction =
+      state.stateKey === trigger.stateKey ||
+      state.stateKey === target?.stateKey;
+    if (!intent.followTarget && intent.stateKey && !displaysAction)
       throw new Error("动作与当前原型状态不匹配");
     return {
       ...location,
       stateKey: intent.followTarget
         ? (target || trigger).stateKey
-        : intent.stateKey
+        : intent.stateKey || (sameAction && displaysAction)
           ? state.stateKey
           : trigger.stateKey,
       actionId: action.id,
       triggerStateKey: trigger.stateKey,
     };
   }
+  if (prototypeManifest(currentPage)) {
+    next.stateKey = intent.stateKey || "";
+    next.scenarioId = intent.scenarioId || "";
+  }
   let scene = w.scenarios.find((s) => s.id === next.scenarioId);
   if (intent.scenarioId && !scene) throw new Error("当前基线中没有此场景");
   const initial = !scene;
   if (!scene) scene = w.scenarios[0];
   next.scenarioId = scene?.id || "";
-  if (prototypeManifest(w.pages.find((p) => p.id === current.pageId))) {
-    next.stateKey = intent.stateKey || "";
-    next.scenarioId = intent.scenarioId || "";
-  }
   const explicitState = intent.stateKey !== undefined && !!intent.stateKey;
   let targetFollowed = false;
   if (

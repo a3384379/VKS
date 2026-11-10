@@ -62,7 +62,7 @@ class RelationshipService:
         if (
             not self.service._visible_relation(s, actor, pid, relation)
             or not all(
-                self.service._visible_revision(s, actor, pid, s.get(Revision, x))
+                self.service._visible_revision(s, actor, pid, s.get(Revision, x), relation.analysis_set_id)
                 for x in (relation.from_revision_id, relation.to_revision_id)
             )
             or not all(
@@ -72,13 +72,18 @@ class RelationshipService:
         ):
             fail("VKS_NOT_FOUND", "未找到关系", 404)
 
+    def _lock_for_actor(self, s, actor, rid, scope):
+        relation = s.get(Relation, rid)
+        if not relation:
+            fail("VKS_NOT_FOUND", "未找到关系", 404)
+        self.service.require(s, actor, relation.project_id, scope)
+        s.refresh(relation, with_for_update=True)
+        self._visible(s, actor, relation)
+        return relation
+
     def set_state(self, actor, rid, payload, version):
         with self.service.db() as s:
-            relation = s.scalar(select(Relation).where(Relation.id == rid).with_for_update())
-            if not relation:
-                fail("VKS_NOT_FOUND", "未找到关联", 404)
-            self.service.require(s, actor, relation.project_id, "knowledge:edit")
-            self._visible(s, actor, relation)
+            relation = self._lock_for_actor(s, actor, rid, "knowledge:edit")
             analysis = s.get(Analysis, relation.analysis_set_id)
             if analysis.state == "frozen":
                 fail("VKS_STATE_CONFLICT", "固定版本不可修改，请创建草稿", 409)
@@ -100,11 +105,7 @@ class RelationshipService:
 
     def _correct(self, s, actor, rid, payload, version):
         """Share the caller's transaction, including proposal resolution and policy."""
-        r = s.scalar(select(Relation).where(Relation.id == rid).with_for_update())
-        if not r:
-            fail("VKS_NOT_FOUND", "未找到关系", 404)
-        self.service.require(s, actor, r.project_id)
-        self._visible(s, actor, r)
+        r = self._lock_for_actor(s, actor, rid, "knowledge:read")
         self.service._version(r.row_version, version)
         if r.analysis_set_id != payload["analysis_set_id"]:
             fail("VKS_INVALID_INPUT", "纠错必须固定相同基线")
@@ -114,7 +115,7 @@ class RelationshipService:
             revision = s.get(Revision, target_id)
             if (
                 not revision
-                or not self.service._visible_revision(s, actor, r.project_id, revision)
+                or not self.service._visible_revision(s, actor, r.project_id, revision, analysis.id)
                 or revision.id not in {x.id for x in self.service._revisions(s, analysis.id)}
             ):
                 fail("VKS_NOT_FOUND", "未找到当前基线目标", 404)
@@ -139,6 +140,8 @@ class RelationshipService:
         self.service.require(s, actor, r.project_id, "knowledge:edit")
         if analysis.state == "frozen":
             fail("VKS_STATE_CONFLICT", "发布版纠错请先创建草稿", 409)
+        if r.relation_type in ("has_business_point", "supported_by_section"):
+            fail("VKS_STATE_CONFLICT", "请在页面与动作维护中更新业务点或重新定位原文", 409)
         operation = payload["operation"]
         targets = payload.get("targets", [])
         if (operation in ("retarget", "merge") and len(targets) != 1) or (operation == "split" and len(targets) < 2):
@@ -179,7 +182,7 @@ class RelationshipService:
             provenance.update(generation_kind="model", model_provenance_artifact_ids=sorted(provenance_ids))
         for target in targets:
             revision = s.get(Revision, target["to_revision_id"])
-            if not revision or not self.service._visible_revision(s, actor, r.project_id, revision):
+            if not revision or not self.service._visible_revision(s, actor, r.project_id, revision, analysis.id):
                 fail("VKS_NOT_FOUND", "未找到目标", 404)
             candidate = Relation(
                 id=uid(),

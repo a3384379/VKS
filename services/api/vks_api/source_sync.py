@@ -187,7 +187,7 @@ class SourceSyncService:
 
             return service.idem(s, actor, pid, "source_sync.create", key, payload, save)
 
-    def persist(self, s, job, bundle):
+    def persist(self, s, job, bundle, actor=None):
         from .knowledge import persist_bundle
 
         scope = job.input_json["_source_sync"].get("source_scope")
@@ -206,6 +206,7 @@ class SourceSyncService:
             bundle,
             job.input_json.get("analysis_set_id"),
             complete_sources=scope,
+            actor=actor,
         )
 
     def finalize(self, s, job, actor, result):

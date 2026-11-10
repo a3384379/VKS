@@ -3,10 +3,7 @@
 from collections import defaultdict
 from copy import deepcopy
 
-from sqlalchemy import select
-
-from .models import Artifact
-from .reading import artifact_policy
+from .reading import artifact_policy, prototype_surface
 
 
 def add_prototypes(service, s, rows, capabilities, add_file, identity):
@@ -24,6 +21,7 @@ def add_prototypes(service, s, rows, capabilities, add_file, identity):
 
     groups = defaultdict(list)
     included = {}
+    originals = {}
     for entity, revision, origin in rows:
         manifest = revision.metadata_json.get("prototype_manifest")
         if not manifest or not origin or not allow_artifact(origin, capabilities, s):
@@ -37,7 +35,7 @@ def add_prototypes(service, s, rows, capabilities, add_file, identity):
         group = snapshot.source_key
         sensitivity = "confidential" if policy.get("requires_source_read") else "internal"
         permitted = {
-            key: (action, rev)
+            key: (action, rev, art)
             for key, (action, rev, art) in actions[entity.stable_key].items()
             if allow_artifact(art, capabilities, s) and not artifact_policy(s, art).get("requires_trace_read")
         }
@@ -48,23 +46,23 @@ def add_prototypes(service, s, rows, capabilities, add_file, identity):
             used.update(anchor["actionKey"] for anchor in state["anchors"])
             surface = state.get("surface")
             if surface:
-                art = s.scalar(
-                    select(Artifact).where(
-                        Artifact.id.in_(origin.metadata_json.get("prototype_surface_artifact_ids", [])),
-                        Artifact.project_id == origin.project_id,
-                        Artifact.relative_path == surface["artifactPath"],
-                        Artifact.sha256 == surface["sha256"],
-                        Artifact.kind == "screenshot",
-                        Artifact.media_type == "image/png",
-                    )
+                art = prototype_surface(s, origin.project_id, origin.id, state)
+                asset_policy = artifact_policy(s, art) if art else {}
+                raw = (
+                    read_original(service, art)
+                    if art and allow_artifact(art, capabilities, s) and not asset_policy.get("requires_trace_read")
+                    else None
                 )
-                raw = read_original(service, art) if art and allow_artifact(art, capabilities, s) else None
                 if raw is None:
                     state.pop("surface", None)
                     continue
                 path = f"export/surfaces/{group}/{art.sha256}.png"
-                add_file(path, raw, "screenshot", group, "image/png", sensitivity)
+                classification = "confidential" if asset_policy.get("requires_source_read") else art.sensitivity
+                add_file(path, raw, "screenshot", group, "image/png", classification)
+                originals[art.id, path] = art
                 surface["artifactPath"] = path
+        if any(artifact_policy(s, permitted[key][2]).get("requires_source_read") for key in used):
+            sensitivity = "confidential"
         groups[group].append(
             (
                 {
@@ -96,7 +94,7 @@ def add_prototypes(service, s, rows, capabilities, add_file, identity):
         )
         sidecars.append(ref)
         references.update({key: ref for key, source in included.items() if source == group})
-    return sidecars, references
+    return sidecars, references, originals
 
 
 def portable_points(s, rows, relations, section_keys, action_keys, capabilities):

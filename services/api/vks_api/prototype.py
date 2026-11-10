@@ -5,14 +5,13 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, Header, Query, Request
 from fastapi.responses import Response
-from pydantic import Field
-from sqlalchemy import select
+from pydantic import BaseModel, Field
 
-from .models import Artifact, Entity, Revision
-from .reading import ReadingService, artifact_policy
+from .models import Artifact, Entity
+from .reading import ReadingService, artifact_policy, prototype_surface
 from .service import Actor, DomainError, canonical, sha
 from .prototype_edit import AnchorEdit, BindingEdit, Input, PrototypeEditor, Ref, SettingsEdit, draft, version
-from .prototype_read import PrototypeReader
+from .prototype_read import PrototypeReader, find_selected, page_state
 from .prototype_contracts import (
     PrototypeAnchorsResult,
     PrototypeBindingResult,
@@ -21,8 +20,11 @@ from .prototype_contracts import (
     PrototypeMenu,
     PrototypePage,
     PrototypeReferences,
+    PrototypeSettingsResult,
 )
 from .knowledge import ImportService
+from .prototype_import import BatchConfirmation, BatchPreview, operations, preview_rows, queue_import, queue_preview
+from .v2_contracts import JobOutput
 
 
 class PreviewInput(Input):
@@ -32,6 +34,20 @@ class PreviewInput(Input):
 
 class ImportConfirmation(PreviewInput):
     preview_digest: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+
+
+class ImportPreviewResult(BaseModel):
+    valid: bool
+    preview_digest: str
+    selection_version: int
+    file_count: int
+    entity_count: int
+    operations: dict[str, int]
+    mappings: list[dict]
+    relation_count: int
+    size_bytes: int
+    issues: list[dict]
+    prototype_import: dict | None
 
 
 def preview_fingerprint(parsed, payload, selection_version):
@@ -48,50 +64,24 @@ def preview_fingerprint(parsed, payload, selection_version):
 
 
 def prototype_image(service, actor, pid, page_key, state_key, page_revision_id, analysis_set_id, release_id):
-    if bool(analysis_set_id) == bool(release_id):
-        raise DomainError("VKS_INVALID_INPUT", "请选择准确的草稿或快照", 422)
     unavailable = DomainError("VKS_NOT_FOUND", "当前版本未找到可读取的原型画面", 404)
-    reading = ReadingService(service)
+    reader = PrototypeReader(service)
+    reading = reader.reading
     with reading.db() as s:
-        analysis, release = reading.baseline(s, actor, pid, analysis_set_id, release_id)
-        choices, _ = reading.selections(s, analysis, release)
-        entity_id = s.scalar(
-            select(Entity.id).where(Entity.project_id == pid, Entity.type == "page", Entity.stable_key == page_key)
-        )
-        revision = s.get(Revision, choices[entity_id]) if entity_id in choices else None
-        if not revision or not service._visible_revision(s, actor, pid, revision):
-            raise unavailable
+        _, _, choices, _ = reader.scope(s, actor, pid, analysis_set_id, release_id, keys=[("page", page_key)])
+        _, revision = find_selected(s, service, actor, pid, choices, "page", page_key)
         if revision.id != page_revision_id:
             raise DomainError("VKS_VERSION_CONFLICT", "页面已变化，请重新加载原型", 409)
-        manifest = revision.metadata_json.get("prototype_manifest", {})
-        state = next((row for row in manifest.get("states", []) if row["stateKey"] == state_key), None)
-        surface = state.get("surface") if state else None
-        origin = s.get(Artifact, revision.artifact_id) if surface else None
-        if not origin or origin.project_id != pid:
-            raise unavailable
-        art = s.scalar(
-            select(Artifact).where(
-                Artifact.project_id == pid,
-                Artifact.snapshot_id == origin.snapshot_id,
-                Artifact.relative_path == surface["artifactPath"],
-                Artifact.sha256 == surface["sha256"],
-                Artifact.kind == "screenshot",
-                Artifact.media_type == "image/png",
-            )
-        )
-        if (
-            not art
-            or art.id not in origin.metadata_json.get("prototype_surface_artifact_ids", [])
-            or not reading.policy_visible(
-                art.kind, art.sensitivity, artifact_policy(s, art), *reading.permissions(s, actor, pid)
-            )
+        art = prototype_surface(s, pid, revision.artifact_id, page_state(revision, state_key))
+        if not art or not reading.policy_visible(
+            art.kind, art.sensitivity, artifact_policy(s, art), *reading.permissions(s, actor, pid)
         ):
             raise unavailable
         try:
             raw = (service.data_dir / "objects" / art.object_key).read_bytes()
         except OSError:
             raise unavailable from None
-        if len(raw) != art.size_bytes or sha256(raw).hexdigest() != surface["sha256"]:
+        if len(raw) != art.size_bytes or sha256(raw).hexdigest() != art.sha256:
             raise DomainError("VKS_INTEGRITY_ERROR", "原型画面摘要不匹配", 409)
         return raw
 
@@ -106,7 +96,7 @@ def install_prototype(app, service, actor, envelope):
     IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key")]
     Policy = Literal["valid", "outdated", "all"]
 
-    @app.put(prefix + "/settings")
+    @app.put(prefix + "/settings", response_model=PrototypeEnvelope[PrototypeSettingsResult])
     def settings(pid: str, payload: SettingsEdit, request: Request, a: ActorDep, if_match: IfMatch):
         return envelope(request, editor.save_settings(a, pid, payload, if_match))
 
@@ -141,7 +131,7 @@ def install_prototype(app, service, actor, envelope):
         request: Request,
         a: ActorDep,
         page_key: str,
-        trigger_state_key: str,
+        trigger_state_key: Annotated[str, Query(min_length=1, max_length=96, pattern=r"^[a-z][a-z0-9._-]*$")],
         analysis_set_id: str | None = None,
         release_id: str | None = None,
         policy: Policy = "valid",
@@ -193,34 +183,40 @@ def install_prototype(app, service, actor, envelope):
     ):
         return envelope(request, editor.save_binding(a, pid, action_key, payload, if_match, idempotency_key))
 
-    @app.post(prefix + "/import-previews")
-    def import_preview(pid: str, payload: PreviewInput, request: Request, a: ActorDep):
+    @app.post(
+        prefix + "/import-previews",
+        responses={
+            200: {"model": PrototypeEnvelope[ImportPreviewResult], "description": "Single material preview report"},
+            202: {"model": PrototypeEnvelope[JobOutput], "description": "Batch preview job accepted"},
+        },
+    )
+    def import_preview(
+        pid: str,
+        payload: PreviewInput | BatchPreview,
+        request: Request,
+        response: Response,
+        a: ActorDep,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ):
+        if isinstance(payload, BatchPreview):
+            with service.db() as s:
+                accepted = queue_preview(service, s, a, pid, payload, idempotency_key)
+            response.status_code = 202
+            return envelope(request, accepted)
         with service.db() as s:
             analysis, _ = draft(s, service, a, pid, payload.analysis_set_id, "source:import")
             selection = analysis.selection_version
-        body = {"kind": "prototype", "artifact_ids": [payload.artifact_id], "analysis_set_id": payload.analysis_set_id}
+        body = {
+            "kind": "prototype",
+            "artifact_ids": [payload.artifact_id],
+            "analysis_set_id": payload.analysis_set_id,
+            "_native_prototype": True,
+        }
         parsed = importer.prepare(actor=a, pid=pid, payload=body)
         with service.db() as s:
             analysis, choices = draft(s, service, a, pid, payload.analysis_set_id, "source:import")
             version(analysis.selection_version, selection)
-            reading = ReadingService(service)
-            visible = reading.visible_ids(s, a, pid, choices)
-            same = any(row.get("import_manifest_sha256") == sha(canonical(parsed.manifest)) for row in analysis.sources)
-            versions = {
-                (entity.type, entity.stable_key): (s.get(Artifact, row.artifact_id).sha256 if row.artifact_id else None)
-                for row in reading.revision_rows(s, visible.values())
-                if (entity := s.get(Entity, row.entity_id))
-            }
-            incoming = {row["path"]: row["sha256"] for row in parsed.artifacts}
-            operations = {"added": 0, "updated": 0, "reused": 0}
-            for row in parsed.entities:
-                key = (row["type"], row["stable_key"])
-                if key not in versions:
-                    operations["added"] += 1
-                elif same or versions[key] == incoming.get(row.get("artifact_path")):
-                    operations["reused"] += 1
-                else:
-                    operations["updated"] += 1
+            counts, mappings = operations(s, analysis, preview_rows(service, s, a, pid, choices), parsed)
         return envelope(
             request,
             {
@@ -229,7 +225,8 @@ def install_prototype(app, service, actor, envelope):
                 "selection_version": selection,
                 "file_count": len(parsed.artifacts),
                 "entity_count": len(parsed.entities),
-                "operations": operations,
+                "operations": counts,
+                "mappings": mappings,
                 "relation_count": len(parsed.relations),
                 "size_bytes": sum(row["size_bytes"] for row in parsed.artifacts),
                 "issues": parsed.issues,
@@ -237,30 +234,35 @@ def install_prototype(app, service, actor, envelope):
             },
         )
 
-    @app.post(prefix + "/imports", status_code=202)
+    @app.post(prefix + "/imports", status_code=202, responses={202: {"model": PrototypeEnvelope[JobOutput]}})
     def import_material(
         pid: str,
-        payload: ImportConfirmation,
+        payload: ImportConfirmation | BatchConfirmation,
         request: Request,
         a: ActorDep,
         if_match: IfMatch,
         idempotency_key: IdempotencyKey,
     ):
+        try:
+            selection = int(if_match.strip('"'))
+        except ValueError:
+            raise DomainError("VKS_INVALID_INPUT", "If-Match 必须是草稿版本", 422) from None
         with service.db() as s:
-            analysis, _ = draft(s, service, a, pid, payload.analysis_set_id, "source:import")
+            if isinstance(payload, BatchConfirmation):
+                return envelope(request, queue_import(service, s, a, pid, payload, selection, idempotency_key))
+            analysis, _ = draft(s, service, a, pid, payload.analysis_set_id, "source:import", allow_frozen=True)
             service._upload_data(s, a, pid, payload.artifact_id)
-            try:
-                selection = int(if_match.strip('"'))
-            except ValueError:
-                raise DomainError("VKS_INVALID_INPUT", "If-Match 必须是草稿版本", 422) from None
             body = {
                 "kind": "prototype",
                 "artifact_ids": [payload.artifact_id],
                 "analysis_set_id": payload.analysis_set_id,
+                "_native_prototype": True,
                 "_prototype_preview": {"digest": payload.preview_digest, "selection_version": selection},
             }
 
             def queue():
+                if analysis.state == "frozen":
+                    raise DomainError("VKS_STATE_CONFLICT", "快照已冻结，请先创建草稿", 409)
                 version(analysis.selection_version, selection)
                 return service.job_dto(service._new_job(s, a, pid, "import", body))
 

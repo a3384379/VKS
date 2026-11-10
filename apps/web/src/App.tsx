@@ -48,8 +48,8 @@ import {
   type ExplanationNavigation,
   type NavigationIntent,
 } from "./navigation";
-import { hasProjectPermission } from "./permissions";
-import { prototypeManifest } from "./prototype";
+import { hasProjectPermission, projectScopes } from "./permissions";
+import { prototypeEntry, prototypeManifest } from "./prototype";
 import { LoginForm } from "./LoginForm";
 import { RenderBoundary } from "./RenderBoundary";
 import { moduleWorkspace } from "./module-context";
@@ -150,10 +150,73 @@ nav.push(
       "按固定范围生成报告和候选，阶段可见、可取消，产物直接保存到当前知识版本。",
   },
 );
-const initial = routeParameters(
-  window.location.hash.slice(1) || window.location.search.slice(1),
-);
+const initialRoute =
+  window.location.hash.slice(1) || window.location.search.slice(1);
+const initial = routeParameters(initialRoute);
 const initialView = initial.get("view") || initial.get("page") || "overview";
+function implicitProjectRoute(route: string) {
+  return (
+    !route ||
+    (route.includes("=") &&
+      [...new URLSearchParams(route).keys()].every((key) => key === "project"))
+  );
+}
+function matchesBaseline(workspace: Workspace, baseline: string) {
+  if (baseline.startsWith("release:"))
+    return workspace.selected_release?.id === baseline.slice(8);
+  if (baseline.startsWith("draft:"))
+    return workspace.selected_analysis_set?.id === baseline.slice(6);
+  return true;
+}
+function workspaceGrant(session: Session | null, projectId: string) {
+  return JSON.stringify([
+    session?.actor_id,
+    [...projectScopes(session, projectId)].sort(),
+  ]);
+}
+function recentPrototypeKey(workspace: Workspace, session: Session) {
+  return `vks-prototype-recent:${session.actor_id}:${workspace.project.id}:${workspaceBaseline(workspace)}`;
+}
+function projectEntry(workspace: Workspace, session: Session) {
+  let recent: ExplanationNavigation | null = null;
+  try {
+    recent = JSON.parse(
+      sessionStorage.getItem(recentPrototypeKey(workspace, session)) || "null",
+    );
+  } catch {
+    // Storage is optional.
+  }
+  const recentPage =
+    recent &&
+    workspace.pages.find(
+      (page) => page.id === recent?.pageId && prototypeManifest(page),
+    );
+  const entry = prototypeEntry(workspace);
+  if (recent && recentPage) {
+    try {
+      return {
+        location: resolveExplanation(workspace, emptyNavigation, recent),
+      };
+    } catch {
+      return {
+        location: resolveExplanation(workspace, emptyNavigation, {
+          pageId: (entry || recentPage).id,
+          actionId: "",
+        }),
+        unavailable: true,
+      };
+    }
+  }
+  return {
+    location: entry
+      ? resolveExplanation(workspace, emptyNavigation, {
+          pageId: entry.id,
+          actionId: "",
+        })
+      : null,
+    unavailable: !!recent,
+  };
+}
 function workspaceHash(
   view: View,
   project: string,
@@ -162,6 +225,7 @@ function workspaceHash(
   explanation: ExplanationNavigation = emptyNavigation,
   journey: JourneyNavigation = emptyJourneyNavigation,
   moduleId = "",
+  search = false,
 ) {
   const query = new URLSearchParams({ view });
   if (project) query.set("project", project);
@@ -175,11 +239,16 @@ function workspaceHash(
     query.set("trigger", explanation.triggerStateKey);
   writeJourneyNavigation(query, journey);
   if (moduleId) query.set("module", moduleId);
+  if (search) query.set("search", "1");
   return `#${query}`;
 }
 export default function App() {
   const workspaceRequest = useRef(0);
-  const openingProject = useRef("");
+  const loadedGrant = useRef("");
+  const authenticatedActor = useRef<string | undefined>(undefined);
+  const openingProject = useRef<string | null>(
+    implicitProjectRoute(initialRoute) ? initial.get("project") || "" : null,
+  );
   const routeSync = useRef(new HashRouteSync(window.location.hash));
   const [routeEpoch, setRouteEpoch] = useState(0);
   const beginUserRoute = useCallback(
@@ -188,7 +257,7 @@ export default function App() {
   );
   const [session, setSession] = useState<Session | null>(null),
     [authError, setAuthError] = useState("");
-  const [projects, setProjects] = useState<Project[]>([]),
+  const [loadedProjects, setProjects] = useState<Project[]>([]),
     [projectId, setProjectId] = useState(initial.get("project") || ""),
     [baseline, setBaseline] = useState(initial.get("baseline") || "");
   const [view, setView] = useState<View>(
@@ -197,17 +266,36 @@ export default function App() {
         : "overview") as View,
     ),
     [selected, setSelectedId] = useState(initial.get("entity") || "");
-  const [w, setWorkspace] = useState<Workspace | null>(null),
+  const [loadedWorkspace, setWorkspace] = useState<Workspace | null>(null),
     [loading, setLoading] = useState(false),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const w =
+    loadedWorkspace?.project.id === projectId &&
+    matchesBaseline(loadedWorkspace, baseline) &&
+    loadedGrant.current === workspaceGrant(session, projectId)
+      ? loadedWorkspace
+      : null;
+  const projects = session?.project_permissions
+    ? loadedProjects.filter((p) =>
+        hasProjectPermission(session, p.id, "knowledge:read"),
+      )
+    : loadedProjects;
+  const requestScope = JSON.stringify([projectId, baseline]);
+  const requestScopeRef = useRef(requestScope);
+  requestScopeRef.current = requestScope;
   const [createOpen, setCreateOpen] = useState(false),
-    [searchOpen, setSearchOpen] = useState(false),
+    [searchOpen, setSearchOpen] = useState(initial.get("search") === "1"),
     [helpOpen, setHelpOpen] = useState(false),
     [toast, setToast] = useState<{ message: string; tone: string } | null>(
       null,
     ),
     [hasUnsavedChanges, setUnsavedFlag] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<{
+    actor?: string;
+    project: string;
+    tab: string;
+  }>();
   const [explanation, setExplanation] = useState<ExplanationNavigation>({
     pageId: initial.get("ui_page") || "",
     scenarioId: initial.get("scenario") || "",
@@ -235,7 +323,7 @@ export default function App() {
     baseline,
     w?.selected_analysis_set?.selection_version,
     w?.selected_release?.id,
-    session?.project_permissions?.[projectId] ?? session?.scopes ?? [],
+    workspaceGrant(session, projectId),
     w?.entities.map((entity) => entity.entity_revision_id).sort(),
   ]);
   const moduleScopeRef = useRef(moduleScope);
@@ -292,10 +380,10 @@ export default function App() {
   );
   const navigateExplanation = useCallback(
     (intent: NavigationIntent) => {
-      if (!workspaceRef.current) return;
+      if (!workspaceRef.current) return false;
       if (unsavedChanges.current) {
         notify("请先保存或还原当前草稿", "error");
-        return;
+        return false;
       }
       try {
         const scoped = explorationRef.current || workspaceRef.current;
@@ -312,7 +400,6 @@ export default function App() {
                 (page) => page.id === intent.pageId,
               ) &&
               !scoped.pages.some((page) => page.id === intent.pageId)));
-        if (outsideModule) setModuleId("");
         const targetWorkspace = outsideModule ? workspaceRef.current : scoped;
         const next = resolveExplanation(
           targetWorkspace,
@@ -322,6 +409,8 @@ export default function App() {
             : intent,
         );
         beginUserRoute();
+        openingProject.current = null;
+        if (outsideModule) setModuleId("");
         if (
           !next.scenarioId &&
           prototypeManifest(
@@ -332,8 +421,10 @@ export default function App() {
         explanationRef.current = next;
         setExplanation(next);
         setSelectedId(next.actionId);
+        return true;
       } catch (error) {
         notify((error as Error).message, "error");
+        return false;
       }
     },
     [notify, beginUserRoute, moduleId, moduleEntities],
@@ -356,16 +447,6 @@ export default function App() {
   );
   useEffect(() => {
     if (!w || w.project.id !== projectId) return;
-    if (
-      baseline.startsWith("draft:") &&
-      w.selected_analysis_set?.id !== baseline.slice(6)
-    )
-      return;
-    if (
-      baseline.startsWith("release:") &&
-      w.selected_release?.id !== baseline.slice(8)
-    )
-      return;
     if (moduleId && !moduleEntities) return;
     const scopeWorkspace = explorationWorkspace || w;
     try {
@@ -381,11 +462,46 @@ export default function App() {
         setExplanation(next);
       if (view === "workbench" && selected !== next.actionId)
         setSelectedId(next.actionId);
+      if (
+        view === "workbench" &&
+        !next.scenarioId &&
+        prototypeManifest(w.pages.find((page) => page.id === next.pageId))
+      ) {
+        const fixed = workspaceBaseline(w);
+        if (fixed !== baseline) setBaseline(fixed);
+        if (session?.actor_id) {
+          try {
+            sessionStorage.setItem(
+              recentPrototypeKey(w, session),
+              JSON.stringify(next),
+            );
+          } catch {
+            // Storage is optional.
+          }
+        }
+      }
     } catch (error) {
       notify((error as Error).message, "error");
-      const fallback = resolveExplanation(scopeWorkspace, emptyNavigation, {
-        followTarget: false,
-      });
+      let fallback: ExplanationNavigation;
+      const page = scopeWorkspace.pages.find(
+        (row) => row.id === explanation.pageId,
+      );
+      const manifest = prototypeManifest(page);
+      if (page && manifest) {
+        fallback = resolveExplanation(scopeWorkspace, emptyNavigation, {
+          pageId: page.id,
+          stateKey: manifest.states.some(
+            (row) => row.stateKey === explanation.stateKey,
+          )
+            ? explanation.stateKey
+            : "",
+          actionId: "",
+        });
+      } else {
+        fallback = resolveExplanation(scopeWorkspace, emptyNavigation, {
+          followTarget: false,
+        });
+      }
       setExplanation(fallback);
       if (view === "workbench") setSelectedId(fallback.actionId);
     }
@@ -400,6 +516,7 @@ export default function App() {
     moduleId,
     moduleEntities,
     explorationWorkspace,
+    session,
   ]);
   const [projectSearch, setProjectSearch] = useState("");
   const [projectCursor, setProjectCursor] = useState<string | null>(null);
@@ -408,6 +525,31 @@ export default function App() {
   const projectSelection = useRef(projectId);
   projectSelection.current = projectId;
   const lastProjectQuery = useRef<string | null>(null);
+  const acceptSession = useCallback(
+    (next: Session) => {
+      const actor = next.authenticated ? next.actor_id : undefined;
+      const changed = actor !== authenticatedActor.current;
+      if (changed) {
+        projectRequest.current++;
+        setProjects([]);
+        setProjectCursor(null);
+        setProjectLoading(false);
+        lastProjectQuery.current = null;
+        setWorkspace(null);
+        setUnsavedChanges(false);
+        if (authenticatedActor.current) {
+          setSearchOpen(false);
+          setCreateOpen(false);
+          setToast(null);
+        }
+        authenticatedActor.current = actor;
+      }
+      setCsrf(next.csrf_token);
+      setSession(next);
+      return changed;
+    },
+    [setUnsavedChanges],
+  );
   const loadProjects = useCallback(
     async (query = lastProjectQuery.current || "", cursor?: string) => {
       const sequence = ++projectRequest.current;
@@ -446,6 +588,7 @@ export default function App() {
         });
         setProjectCursor(response.meta.next_cursor || null);
         if (inaccessible && projectSelection.current === selectedId) {
+          openingProject.current = "";
           setWorkspace(null);
           setBaseline("");
           setSelectedId("");
@@ -475,42 +618,59 @@ export default function App() {
   useEffect(() => {
     api<Session>("/auth/session")
       .then((s) => {
-        setCsrf(s.csrf_token);
-        setSession(s);
+        acceptSession(s);
         if (s.authenticated)
           void loadProjects().catch((e) => setError(e.message));
       })
       .catch((e) => setAuthError(e.message));
-  }, [loadProjects]);
+  }, [acceptSession, loadProjects]);
   const refresh = useCallback(async () => {
-    if (!projectId) return;
+    if (!projectId || requestScopeRef.current !== requestScope) return;
     const sequence = ++workspaceRequest.current;
+    const current = () =>
+      sequence === workspaceRequest.current &&
+      requestScopeRef.current === requestScope;
     const query = new URLSearchParams();
     if (baseline.startsWith("release:"))
       query.set("release_id", baseline.slice(8));
     if (baseline.startsWith("draft:"))
       query.set("analysis_set_id", baseline.slice(6));
     const currentSession = await api<Session>("/auth/session");
-    if (sequence !== workspaceRequest.current) return;
-    setSession(currentSession);
-    setCsrf(currentSession.csrf_token);
+    if (!current()) return;
+    const identityChanged = acceptSession(currentSession);
     if (!currentSession.authenticated) {
       setWorkspace(null);
       return;
     }
+    if (identityChanged)
+      void loadProjects().catch((error) => {
+        if (current()) setError(error.message);
+      });
     let result: Workspace;
     let retainedBaseline = "";
+    let fallbackBaseline = false;
+    const endpoint = `/projects/${projectId}/workspace`;
     try {
-      result = await api<Workspace>(
-        `/projects/${projectId}/workspace?${query}`,
-      );
-      if (sequence !== workspaceRequest.current) return;
-      const current = workspaceRef.current;
-      const editingBaseline = current && workspaceBaseline(current);
+      try {
+        result = await api<Workspace>(`${endpoint}?${query}`);
+      } catch (error) {
+        if (!current()) return;
+        if (
+          !baseline ||
+          !(error instanceof ApiError) ||
+          ![403, 404].includes(error.status)
+        )
+          throw error;
+        result = await api<Workspace>(endpoint);
+        fallbackBaseline = true;
+      }
+      if (!current()) return;
+      const visible = workspaceRef.current;
+      const editingBaseline = visible && workspaceBaseline(visible);
       if (
         !baseline &&
         unsavedChanges.current &&
-        current?.project.id === projectId &&
+        visible?.project.id === projectId &&
         editingBaseline &&
         workspaceBaseline(result) !== editingBaseline
       ) {
@@ -521,62 +681,44 @@ export default function App() {
             ? { release_id: editingBaseline.slice(8) }
             : { analysis_set_id: editingBaseline.slice(6) },
         );
-        result = await api<Workspace>(
-          `/projects/${projectId}/workspace?${fixed}`,
-        );
+        result = await api<Workspace>(`${endpoint}?${fixed}`);
         retainedBaseline = editingBaseline;
       }
     } catch (error) {
-      if (sequence !== workspaceRequest.current) return;
+      if (!current()) return;
       if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
         setWorkspace(null);
         setUnsavedChanges(false);
         setSelected("");
         if (error.status === 401) {
-          setSession({ authenticated: false });
-          setCsrf(undefined);
+          acceptSession({ authenticated: false });
         } else {
           await loadProjects();
         }
       }
       throw error;
     }
-    if (sequence !== workspaceRequest.current) return;
-    if (openingProject.current === projectId) {
-      openingProject.current = "";
-      const entry = result.pages.find(
-        (page) => page.id === result.prototype_settings?.entry_page_id,
-      );
-      const recentKey = `vks-prototype-recent:${currentSession.actor_id}:${projectId}:${workspaceBaseline(result)}`;
-      let recent: ExplanationNavigation | null = null;
-      try {
-        recent = JSON.parse(sessionStorage.getItem(recentKey) || "null");
-      } catch {
-        /* Storage is optional. */
-      }
-      const restored =
-        recent &&
-        result.pages.find(
-          (page) => page.id === recent?.pageId && prototypeManifest(page),
-        );
-      if (entry || restored) {
-        let location: ExplanationNavigation;
-        try {
-          location = resolveExplanation(
-            result,
-            emptyNavigation,
-            restored && recent ? recent : { pageId: entry!.id, actionId: "" },
-          );
-        } catch {
-          location = resolveExplanation(result, emptyNavigation, {
-            pageId: (entry || restored)!.id,
-            actionId: "",
-          });
-        }
+    if (!current()) return;
+    if (fallbackBaseline) {
+      setUnsavedChanges(false);
+      setSelectedId("");
+      setExplanation(emptyNavigation);
+      setJourney(emptyJourneyNavigation);
+      setModuleId("");
+      setBaseline(workspaceBaseline(result));
+      notify("请求的知识版本已无法读取，已打开当前可见版本。", "info");
+    }
+    if (openingProject.current === projectId || openingProject.current === "") {
+      openingProject.current = null;
+      const { location, unavailable } = projectEntry(result, currentSession);
+      if (location) {
+        setBaseline(workspaceBaseline(result));
         setExplanation(location);
         setSelectedId(location.actionId);
         setView("workbench");
       }
+      if (unavailable)
+        notify("上次的原型位置已不可用，已恢复当前可见入口。", "info");
     }
     if (retainedBaseline) {
       setBaseline(retainedBaseline);
@@ -590,6 +732,7 @@ export default function App() {
         ? previous
         : [result.project, ...previous],
     );
+    loadedGrant.current = workspaceGrant(currentSession, projectId);
     setWorkspace({
       ...result,
       entities: result.entities || [],
@@ -609,7 +752,7 @@ export default function App() {
       capabilities: result.capabilities || {},
     });
     setError("");
-  }, [projectId, baseline, loadProjects, notify]);
+  }, [projectId, baseline, requestScope, acceptSession, loadProjects, notify]);
   useEffect(() => {
     if (!session?.authenticated || !projectId) return;
     let active = true;
@@ -617,7 +760,7 @@ export default function App() {
     const samePinnedBaseline =
       current?.project.id === projectId &&
       !!baseline &&
-      workspaceBaseline(current) === baseline;
+      matchesBaseline(current, baseline);
     if (!samePinnedBaseline) {
       setWorkspace(null);
       setLoading(true);
@@ -632,6 +775,19 @@ export default function App() {
     return () => {
       active = false;
       workspaceRequest.current++;
+    };
+  }, [session?.authenticated, projectId, refresh]);
+  useEffect(() => {
+    if (!session?.authenticated || !projectId) return;
+    function reauthorize() {
+      if (document.visibilityState === "visible")
+        void refresh().catch((error) => setError(error.message));
+    }
+    window.addEventListener("focus", reauthorize);
+    document.addEventListener("visibilitychange", reauthorize);
+    return () => {
+      window.removeEventListener("focus", reauthorize);
+      document.removeEventListener("visibilitychange", reauthorize);
     };
   }, [session?.authenticated, projectId, refresh]);
   useEffect(() => {
@@ -655,6 +811,7 @@ export default function App() {
       explanation,
       journey,
       moduleId,
+      searchOpen,
     );
     const mode = routeSync.current.commit(
       routeEpoch,
@@ -671,6 +828,7 @@ export default function App() {
     explanation,
     journey,
     moduleId,
+    searchOpen,
     session?.authenticated,
     routeEpoch,
   ]);
@@ -706,6 +864,7 @@ export default function App() {
           explanation,
           journey,
           moduleId,
+          searchOpen,
         );
         routeSync.current.restore(restored);
         history.replaceState(
@@ -719,6 +878,7 @@ export default function App() {
             explanation,
             journey,
             moduleId,
+            searchOpen,
           ),
         );
         notify("草稿尚未保存，请先保存或还原本地修改", "error");
@@ -726,14 +886,20 @@ export default function App() {
       }
       const epoch = routeSync.current.native(window.location.hash);
       if (epoch === null) return;
-      openingProject.current = "";
+      openingProject.current = implicitProjectRoute(
+        window.location.hash.slice(1),
+      )
+        ? nextProject
+        : null;
       setRouteEpoch(epoch);
       setView(nextView);
       setProjectId(nextProject);
+      if (nextBaseline !== baseline && !nextBaseline) setWorkspace(null);
       setBaseline(nextBaseline);
       setSelectedId(nextEntity);
       setJourney(readJourneyNavigation(query));
       setModuleId(query.get("module") || "");
+      setSearchOpen(query.get("search") === "1");
       setExplanation({
         pageId: query.get("ui_page") || "",
         scenarioId: query.get("scenario") || "",
@@ -756,6 +922,7 @@ export default function App() {
     explanation,
     journey,
     moduleId,
+    searchOpen,
     hasUnsavedChanges,
     notify,
   ]);
@@ -775,7 +942,10 @@ export default function App() {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
-        setSearchOpen(true);
+        if (!searchOpen) {
+          beginUserRoute();
+          setSearchOpen(true);
+        }
       }
       if (e.key === "Escape") {
         setSearchOpen(false);
@@ -785,7 +955,7 @@ export default function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [searchOpen, beginUserRoute]);
   async function run<T>(
     operation: () => Promise<T>,
     success?: string,
@@ -813,6 +983,7 @@ export default function App() {
       notify("草稿尚未保存，请先保存或还原本地修改", "error");
       return;
     }
+    openingProject.current = null;
     beginUserRoute();
     setView(next);
     if (next === "journeys" && entity?.type === "journey") {
@@ -831,7 +1002,8 @@ export default function App() {
     targetBaseline: string,
     stepKey = "",
   ) {
-    if (unsavedChanges.current || workspace.project.id !== projectId) return;
+    if (!w || unsavedChanges.current || workspace.project.id !== projectId)
+      return false;
     const available =
       entity.type === "relation"
         ? workspace.relations.some((relation) => relation.id === entity.id)
@@ -840,7 +1012,7 @@ export default function App() {
               row.entity_id === entity.entity_id &&
               row.entity_revision_id === entity.entity_revision_id,
           );
-    if (!available) return;
+    if (!available) return false;
     const scoped =
       moduleId && moduleEntities
         ? moduleWorkspace(workspace, moduleEntities)
@@ -852,7 +1024,24 @@ export default function App() {
         : entity.type === "page"
           ? !scoped.pages.some((page) => page.id === entity.id)
           : false);
+    let next: ExplanationNavigation | undefined;
+    if (entity.type === "action" || entity.type === "page") {
+      try {
+        next = resolveExplanation(
+          outsideModule ? workspace : scoped,
+          emptyNavigation,
+          entity.type === "action"
+            ? { actionId: entity.id, followTarget: false }
+            : { pageId: entity.id, actionId: "", followTarget: false },
+        );
+      } catch (error) {
+        notify((error as Error).message, "error");
+        return false;
+      }
+    }
+    openingProject.current = null;
     beginUserRoute();
+    loadedGrant.current = workspaceGrant(session, projectId);
     setWorkspace(workspace);
     setBaseline(targetBaseline);
     setSelectedId(entity.id);
@@ -865,14 +1054,7 @@ export default function App() {
         choices: {},
       });
       setView("journeys");
-    } else if (entity.type === "action" || entity.type === "page") {
-      const next = resolveExplanation(
-        outsideModule ? workspace : scoped,
-        emptyNavigation,
-        entity.type === "action"
-          ? { actionId: entity.id, followTarget: false }
-          : { pageId: entity.id, actionId: "", followTarget: false },
-      );
+    } else if (next) {
       explanationRef.current = next;
       setExplanation(next);
       setView("workbench");
@@ -884,6 +1066,61 @@ export default function App() {
             ? "documents"
             : "graph",
       );
+    return true;
+  }
+  function chooseBaseline(value: string) {
+    if (unsavedChanges.current) {
+      notify("请先保存或还原草稿修改", "error");
+      return;
+    }
+    openingProject.current = null;
+    beginUserRoute();
+    if (value !== baseline && !value) setWorkspace(null);
+    setBaseline(value);
+    setSelected("");
+  }
+  function openPrototype() {
+    if (
+      w &&
+      session &&
+      (explanation.scenarioId ||
+        !prototypeManifest(
+          w.pages.find((page) => page.id === explanation.pageId),
+        ))
+    ) {
+      const { location } = projectEntry(w, session);
+      const catalog = w.pages.find((page) => prototypeManifest(page));
+      if (
+        (location || catalog) &&
+        !navigateExplanation(
+          location || {
+            pageId: catalog!.id,
+            scenarioId: "",
+            stateKey: "",
+            actionId: "",
+          },
+        )
+      )
+        return;
+    }
+    navigate("workbench");
+  }
+  function openProject(id: string) {
+    if (unsavedChanges.current) {
+      notify("草稿尚未保存，请先保存或还原本地修改", "error");
+      return;
+    }
+    if (id === projectId) {
+      if (w?.pages.length) openPrototype();
+      else if (w?.documents.length) navigate("documents");
+      return;
+    }
+    openingProject.current = id;
+    setSearchOpen(false);
+    setProjectId(id);
+    setView("overview");
+    setBaseline("");
+    setSelected("");
   }
   async function signIn(
     mode: "password" | "bootstrap",
@@ -896,8 +1133,7 @@ export default function App() {
         mode === "bootstrap" ? "/auth/session" : "/auth/login",
         mutation("POST", values),
       );
-      setCsrf(s.csrf_token);
-      setSession(s);
+      acceptSession(s);
       await loadProjects();
     } catch (e) {
       setAuthError((e as Error).message);
@@ -905,7 +1141,20 @@ export default function App() {
       setBusy(false);
     }
   }
+  const hasPrototype = w?.pages.some((page) => prototypeManifest(page));
+  const prototypeNavigation: { id: View; title: string }[] = [
+    { id: "overview", title: "项目空间" },
+    { id: "workbench", title: "原型导览" },
+    { id: "journeys", title: "业务流程" },
+    { id: "documents", title: "文档" },
+    { id: "imports", title: "维护" },
+    { id: "versions", title: "变更与版本" },
+    { id: "settings", title: "项目设置" },
+  ];
   const active = nav.find((n) => n.id === view)!;
+  const activeTitle =
+    (hasPrototype && prototypeNavigation.find((n) => n.id === view)?.title) ||
+    active.title;
   if (session === null && !authError)
     return (
       <div className="auth-page" role="status" aria-label="正在验证本地会话">
@@ -992,17 +1241,7 @@ export default function App() {
           <select
             aria-label="当前项目"
             value={projectId}
-            onChange={(e) => {
-              if (hasUnsavedChanges) {
-                notify("草稿尚未保存，请先保存或还原本地修改", "error");
-                return;
-              }
-              openingProject.current = e.target.value;
-              setProjectId(e.target.value);
-              setView("overview");
-              setBaseline("");
-              setSelected("");
-            }}
+            onChange={(e) => openProject(e.target.value)}
           >
             {!projects.length && <option value="">选择项目</option>}
             {projects.map((p) => (
@@ -1034,30 +1273,22 @@ export default function App() {
         )}
         <div className="nav-label">工作空间</div>
         <nav aria-label="主导航">
-          {(w?.pages.some((page) => prototypeManifest(page))
-            ? [
-                { id: "overview" as View, title: "项目空间" },
-                { id: "workbench" as View, title: "原型导览" },
-                { id: "journeys" as View, title: "业务流程" },
-                { id: "documents" as View, title: "文档" },
-                { id: "imports" as View, title: "维护" },
-                { id: "versions" as View, title: "变更与版本" },
-                { id: "settings" as View, title: "项目设置" },
-              ]
-            : primaryNavigation
-          ).map((n) => (
+          {(hasPrototype ? prototypeNavigation : primaryNavigation).map((n) => (
             <button
               key={n.id}
               aria-label={n.title}
-              className={`nav-item ${view === n.id || (!w?.pages.some((page) => prototypeManifest(page)) && navigationGroup(view) === n.id) ? "active" : ""}`}
+              className={`nav-item ${view === n.id || (!hasPrototype && navigationGroup(view) === n.id) ? "active" : ""}`}
               aria-current={
                 view === n.id ||
-                (!w?.pages.some((page) => prototypeManifest(page)) &&
-                  navigationGroup(view) === n.id)
+                (!hasPrototype && navigationGroup(view) === n.id)
                   ? "page"
                   : undefined
               }
-              onClick={() => navigate(n.id)}
+              onClick={() =>
+                hasPrototype && n.id === "workbench"
+                  ? openPrototype()
+                  : navigate(n.id)
+              }
             >
               {(() => {
                 const Icon = nav.find((item) => item.id === n.id)!.icon;
@@ -1102,8 +1333,8 @@ export default function App() {
               onClick={() => {
                 void api("/auth/session", { method: "DELETE" })
                   .then(() => {
-                    setSession({ authenticated: false });
-                    setCsrf("");
+                    workspaceRequest.current++;
+                    acceptSession({ authenticated: false });
                   })
                   .catch((e) => notify(e.message, "error"));
               }}
@@ -1120,12 +1351,15 @@ export default function App() {
             <ChevronRight size={13} />
             <strong>{w?.project.name || "我的项目"}</strong>
             <ChevronRight size={13} />
-            <span>{active.title}</span>
+            <span>{activeTitle}</span>
           </div>
           <div className="topbar-actions">
             <button
               className="global-search"
-              onClick={() => setSearchOpen(true)}
+              onClick={() => {
+                if (!searchOpen) beginUserRoute();
+                setSearchOpen(true);
+              }}
             >
               <Search size={16} />
               <span>搜索业务、接口、文档…</span>
@@ -1136,14 +1370,7 @@ export default function App() {
               <select
                 aria-label="知识基线"
                 value={baseline}
-                onChange={(e) => {
-                  if (hasUnsavedChanges) {
-                    notify("草稿尚未保存，请先保存或还原本地修改", "error");
-                    return;
-                  }
-                  setBaseline(e.target.value);
-                  setSelected("");
-                }}
+                onChange={(e) => chooseBaseline(e.target.value)}
               >
                 <option value="">默认基线</option>
                 {w?.analysis_sets
@@ -1177,7 +1404,7 @@ export default function App() {
               <h1>
                 {view === "overview"
                   ? w?.project.name || "我的项目"
-                  : active.title}
+                  : activeTitle}
               </h1>
               <p>{active.description}</p>
             </div>
@@ -1201,12 +1428,17 @@ export default function App() {
                 {view === "overview" ? (
                   <>
                     <Button
-                      onClick={() => navigate("workbench")}
-                      disabled={!w?.actions.length}
+                      onClick={openPrototype}
+                      disabled={!hasPrototype && !w?.actions.length}
                     >
                       <Boxes size={16} />
-                      进入业务工作台
+                      {hasPrototype ? "进入原型导览" : "进入业务工作台"}
                     </Button>
+                    {!hasPrototype && !!w?.documents.length && (
+                      <Button onClick={() => navigate("documents")}>
+                        <BookOpen size={16} /> 打开文档
+                      </Button>
+                    )}
                     <Button
                       kind="primary"
                       onClick={() => navigate("imports")}
@@ -1226,9 +1458,15 @@ export default function App() {
                 ) : (
                   <div className="version-chip">
                     <span className="status-dot" />
-                    {w?.selected_analysis_set?.name || "尚未选择基线"}
+                    {w?.selected_release?.name ||
+                      w?.selected_analysis_set?.name ||
+                      "尚未选择基线"}
                     <span className="divider" />
-                    {label(w?.selected_analysis_set?.state || "draft")}
+                    {w?.selected_release
+                      ? "已保存快照"
+                      : w?.selected_analysis_set
+                        ? "当前草稿"
+                        : ""}
                   </div>
                 )}
               </RenderBoundary>
@@ -1284,14 +1522,7 @@ export default function App() {
                 run,
                 busy,
                 baseline,
-                setBaseline: (value) => {
-                  if (hasUnsavedChanges) {
-                    notify("请先保存或还原草稿修改", "error");
-                    return;
-                  }
-                  setBaseline(value);
-                  setSelected("");
-                },
+                setBaseline: chooseBaseline,
                 hasUnsavedChanges,
                 setUnsavedChanges,
               }}
@@ -1373,7 +1604,40 @@ export default function App() {
                   </div>
                 )}
               {view === "overview" ? (
-                <ProjectCockpit />
+                <>
+                  {projects.length > 1 && (
+                    <Panel title="项目目录">
+                      <div className="v2-domain-grid">
+                        {projects.map((project) => (
+                          <article className="v2-domain" key={project.id}>
+                            <h3>{project.name}</h3>
+                            {project.description && (
+                              <p>{project.description}</p>
+                            )}
+                            {project.id === w.project.id && (
+                              <small>
+                                {w.pages.find(
+                                  (page) => page.id === explanation.pageId,
+                                )?.name || "当前项目"}
+                              </small>
+                            )}
+                            {(project.id !== w.project.id ||
+                              w.pages.length > 0 ||
+                              w.documents.length > 0) && (
+                              <Button
+                                aria-label={`打开项目 ${project.name}`}
+                                onClick={() => openProject(project.id)}
+                              >
+                                打开项目
+                              </Button>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    </Panel>
+                  )}
+                  <ProjectCockpit />
+                </>
               ) : view === "imports" ? (
                 <OnboardingWizard key={`${w.project.id}:${baseline}`} />
               ) : view === "workbench" ? (
@@ -1393,7 +1657,26 @@ export default function App() {
               ) : view === "versions" ? (
                 <Versions />
               ) : (
-                <Settings />
+                <Settings
+                  key={JSON.stringify([
+                    session.actor_id,
+                    w.project.id,
+                    projectScopes(session, w.project.id),
+                  ])}
+                  tab={
+                    settingsTab?.actor === session.actor_id &&
+                    settingsTab?.project === w.project.id
+                      ? settingsTab.tab
+                      : undefined
+                  }
+                  onTabChange={(tab) =>
+                    setSettingsTab({
+                      actor: session.actor_id,
+                      project: w.project.id,
+                      tab,
+                    })
+                  }
+                />
               )}
             </WorkspaceContext.Provider>
           ) : null}
@@ -1420,7 +1703,9 @@ export default function App() {
           onClose={() => setCreateOpen(false)}
           onCreate={async (p) => {
             await loadProjects();
+            openingProject.current = null;
             beginUserRoute();
+            setSelected("");
             setProjectId(p.id);
             setBaseline("");
             setView("overview");
@@ -1428,23 +1713,23 @@ export default function App() {
           }}
         />
       )}
-      {searchOpen && (
-        <SearchDialog
-          w={w}
-          readScope={
-            w && session ? workspaceReadScope(w, session, baseline) : ""
+      <SearchDialog
+        key={JSON.stringify([session.actor_id, projectId])}
+        open={searchOpen}
+        w={w}
+        readScope={
+          searchOpen && w ? workspaceReadScope(w, session, baseline) : ""
+        }
+        onClose={() => setSearchOpen(false)}
+        onSelect={(e, workspace) => {
+          if (hasUnsavedChanges) {
+            notify("草稿尚未保存，请先保存或还原本地修改", "error");
+            return;
           }
-          onClose={() => setSearchOpen(false)}
-          onSelect={(e, workspace) => {
-            if (hasUnsavedChanges) {
-              notify("草稿尚未保存，请先保存或还原本地修改", "error");
-              return;
-            }
-            navigateReadEntity(workspace, e, workspaceBaseline(workspace));
+          if (navigateReadEntity(workspace, e, workspaceBaseline(workspace)))
             setSearchOpen(false);
-          }}
-        />
-      )}
+        }}
+      />
       {helpOpen && (
         <Modal title="从第一份资料开始" onClose={() => setHelpOpen(false)}>
           <div className="guide-list">
@@ -1559,7 +1844,9 @@ function CreateProject({
       const p = await api<Project>(
         "/projects",
         mutation("POST", {
-          key: f.get("key"),
+          key:
+            String(f.get("key") || "").trim() ||
+            `project-${crypto.randomUUID()}`,
           name: f.get("name"),
           description: f.get("description"),
         }),
@@ -1592,10 +1879,9 @@ function CreateProject({
           />
         </label>
         <label>
-          项目标识 <small>用于导入包中的 project_key</small>
+          项目标识 <small>可选，用于导入包中的 project_key</small>
           <input
             name="key"
-            required
             pattern="[a-z][a-z0-9._\-]*"
             maxLength={96}
             placeholder="例如：charge-demo"
@@ -1622,11 +1908,13 @@ function CreateProject({
   );
 }
 function SearchDialog({
+  open,
   w,
   readScope,
   onClose,
   onSelect,
 }: {
+  open: boolean;
   w: Workspace | null;
   readScope: string;
   onClose: () => void;
@@ -1651,19 +1939,33 @@ function SearchDialog({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const moduleNodes = moduleData?.scope === readScope ? moduleData.nodes : [];
-  const results = resultData?.scope === readScope ? resultData.rows : [];
   const visibleModuleId = flattenModules(moduleNodes).some(
     (row) => row.id === moduleId,
   )
     ? moduleId
     : "";
-  useEffect(() => {
-    setModuleId("");
-    setServiceKey("");
-    setKind("");
-  }, [w?.project.id, w?.selected_analysis_set?.id, w?.selected_release?.id]);
+  const resultScope = JSON.stringify([
+    readScope,
+    query,
+    visibleModuleId,
+    serviceKey,
+    kind,
+    descendants,
+  ]);
+  const results = resultData?.scope === resultScope ? resultData.rows : [];
+  const filterBaseline = useRef("");
   useEffect(() => {
     if (!w) return;
+    const current = workspaceBaseline(w);
+    if (filterBaseline.current && filterBaseline.current !== current) {
+      setModuleId("");
+      setServiceKey("");
+      setKind("");
+    }
+    filterBaseline.current = current;
+  }, [w?.project.id, w?.selected_analysis_set?.id, w?.selected_release?.id]);
+  useEffect(() => {
+    if (!open || !w) return;
     const controller = new AbortController();
     void api<ModuleNode[]>(
       "/projects/" +
@@ -1686,12 +1988,12 @@ function SearchDialog({
           setError(error.message);
       });
     return () => controller.abort();
-  }, [readScope]);
-  useEffect(() => () => targetRequest.current?.abort(), [readScope]);
+  }, [open, readScope]);
+  useEffect(() => () => targetRequest.current?.abort(), [open, resultScope]);
   useEffect(() => {
     setResultData(null);
     setBusy(false);
-    if (!w || !query.trim()) {
+    if (!open || !w || !query.trim()) {
       return;
     }
     const controller = new AbortController();
@@ -1724,19 +2026,24 @@ function SearchDialog({
                 (r as { results?: unknown[] }).results ||
                 []
           ) as Array<{
-            entity?: { entity_id?: string };
+            entity?: { entity_id?: string; entity_revision_id?: string };
             entity_id?: string;
+            entity_revision_id?: string;
             id?: string;
           }>;
           setResultData({
-            scope: readScope,
+            scope: resultScope,
             rows: hits
-              .map((hit) =>
-                w.entities.find(
+              .map((hit) => {
+                const revision =
+                  hit.entity?.entity_revision_id || hit.entity_revision_id;
+                return w.entities.find(
                   (e) =>
-                    e.id === (hit.entity?.entity_id || hit.entity_id || hit.id),
-                ),
-              )
+                    e.id ===
+                      (hit.entity?.entity_id || hit.entity_id || hit.id) &&
+                    (!revision || e.entity_revision_id === revision),
+                );
+              })
               .filter((e): e is Entity => !!e),
           });
         })
@@ -1753,7 +2060,7 @@ function SearchDialog({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query, readScope, visibleModuleId, serviceKey, kind, descendants]);
+  }, [open, query, readScope, visibleModuleId, serviceKey, kind, descendants]);
   async function openResult(entity: Entity) {
     if (!w) return;
     targetRequest.current?.abort();
@@ -1787,6 +2094,7 @@ function SearchDialog({
         setError((error as Error).message);
     }
   }
+  if (!open) return null;
   return (
     <Modal title="搜索项目知识" onClose={onClose} className="search-dialog">
       <div className="search-input">
@@ -1848,7 +2156,9 @@ function SearchDialog({
       <p className="search-context">
         {w?.project.name || "尚未选择项目"}
         <ChevronRight size={12} />
-        {w?.selected_analysis_set?.name || "当前基线"}
+        {w?.selected_release?.name ||
+          w?.selected_analysis_set?.name ||
+          "当前基线"}
         <Tag>权限范围内检索</Tag>
       </p>
       {error && <Notice tone="red">{error}</Notice>}

@@ -76,6 +76,50 @@ def test_backup_rejects_missing_objects_and_never_overwrites(tmp_path):
     service.engine.dispose()
 
 
+def test_backup_rejects_changed_release_manifest(tmp_path):
+    from vks_api.models import Release
+
+    root = tmp_path / "source"
+    service = Service(root)
+    try:
+        _, owner = service.login(service.bootstrap_token)
+        project = service.create_project(owner, {"key": "charge-demo", "name": "x"}, "project")
+        saved, _ = published(service, owner, project)
+        with service.db() as db:
+            release = db.get(Release, saved["id"])
+            release.manifest_json = {**release.manifest_json, "selection_version": 999}
+        destination = tmp_path / "corrupt-release.zip"
+        with pytest.raises(BackupError, match="发布清单摘要"):
+            backup(root, destination)
+        assert not destination.exists() and not (root / "backup-status.json").exists()
+    finally:
+        service.engine.dispose()
+
+
+def test_restore_checks_archive_release_list_against_database(tmp_path):
+    root = tmp_path / "source"
+    service = Service(root)
+    try:
+        _, owner = service.login(service.bootstrap_token)
+        project = service.create_project(owner, {"key": "charge-demo", "name": "x"}, "project")
+        published(service, owner, project)
+        report = backup(root, tmp_path / "valid.zip")
+    finally:
+        service.engine.dispose()
+    inconsistent = tmp_path / "inconsistent.zip"
+    with ZipFile(report["path"]) as original, ZipFile(inconsistent, "w", ZIP_DEFLATED) as changed:
+        for name in original.namelist():
+            raw = original.read(name)
+            if name == "manifest.json":
+                manifest = json.loads(raw)
+                raw = json.dumps({**manifest, "release_manifests": []}).encode()
+            changed.writestr(name, raw)
+    restored = tmp_path / "restored"
+    with pytest.raises(BackupError, match="发布记录不一致"):
+        restore(inconsistent, restored, expected_sha256=hashlib.sha256(inconsistent.read_bytes()).hexdigest())
+    assert not restored.exists()
+
+
 def test_restore_rejects_external_digest_mismatch_traversal_and_existing_destination(tmp_path):
     malicious = tmp_path / "bad.zip"
     with ZipFile(malicious, "w", ZIP_DEFLATED) as z:

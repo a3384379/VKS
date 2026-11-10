@@ -50,6 +50,7 @@ export interface Relation {
   row_version: number;
   manual_lock?: boolean;
   confidence_band?: string;
+  prototype_scope?: { states: string[]; priority: number };
 }
 export interface Evidence {
   id: string;
@@ -142,6 +143,7 @@ export interface Workspace {
   prototype_settings?: {
     entry_page_id?: string | null;
     menu_order: string[];
+    menu_groups?: Record<string, string>;
     row_version: number;
   };
   project: Project;

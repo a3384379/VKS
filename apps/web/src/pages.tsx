@@ -56,12 +56,7 @@ import {
   issueText,
   label,
 } from "./components";
-import {
-  ReadScope,
-  useWorkspace,
-  usePermission,
-  workspaceReadScope,
-} from "./context";
+import { ReadScope, useWorkspace, usePermission } from "./context";
 import { TeamSettings } from "./TeamSettings";
 import { SourceManagement } from "./SourceManagement";
 import { NewDraftButton } from "./DraftActions";
@@ -74,6 +69,7 @@ import {
 } from "./PrototypeProjectSettings";
 import { prototypeManifest } from "./prototype";
 import { workspaceBaseline } from "./workspace-baseline";
+import { projectScopes } from "./permissions";
 import { HotspotEditor, HotspotSurface } from "./HotspotEditor";
 import ScenarioStudio from "./ScenarioStudio";
 import { ObservedStateSurface } from "./CaptureResults";
@@ -119,7 +115,12 @@ export function Workbench() {
   if (page && manifest && !explanation.scenarioId)
     return (
       <PrototypeExplorer
-        key={workspaceReadScope(w, session, workspaceBaseline(w))}
+        key={JSON.stringify([
+          session.actor_id,
+          w.project.id,
+          workspaceBaseline(w),
+          projectScopes(session, w.project.id),
+        ])}
         page={page}
         manifest={manifest}
       />
@@ -921,6 +922,8 @@ export function Documents() {
     );
     target?.scrollIntoView({ block: "start", behavior: "auto" });
     heading?.focus({ preventScroll: true });
+    heading?.setAttribute("data-vks-current-section", "true");
+    return () => heading?.removeAttribute("data-vks-current-section");
   }, [section?.id, doc?.entity_revision_id, mode, scrollRequest, dirty]);
   function selectChapter(id: string) {
     if (dirty) {
@@ -1763,33 +1766,70 @@ interface ToolEntry {
   annotations?: { readOnlyHint?: boolean };
   [key: string]: unknown;
 }
-export function Settings() {
+export function Settings({
+  tab,
+  onTabChange,
+}: {
+  tab?: string;
+  onTabChange: (value: string) => void;
+}) {
   const { w, run, busy, notify, session } = useWorkspace();
   const canManage = usePermission("project:manage"),
     canAudit = usePermission("audit:read");
+  const hasPrototype = w.pages.some((row) => prototypeManifest(row));
   const [tokens, setTokens] = useState<Token[]>([]),
     [tools, setTools] = useState<ToolEntry[]>([]),
     [catalogError, setCatalogError] = useState(""),
     [modal, setModal] = useState(false),
     [tokenName, setTokenName] = useState(""),
     [scopes, setScopes] = useState(["knowledge:read"]),
-    [newToken, setNewToken] = useState(""),
-    [activeTab, setActiveTab] = useState(canManage ? "接入与权限" : "工具目录");
+    [newToken, setNewToken] = useState("");
+  const tabs = [
+    ...(hasPrototype ? ["项目资料"] : []),
+    ...(canManage
+      ? ["接入与权限", hasPrototype ? "来源与存储" : "来源连接", "模型与预算"]
+      : []),
+    ...(w.backup_status && hasPrototype ? ["备份与恢复"] : []),
+    ...(canManage || session.user?.instance_admin ? ["OAuth 授权"] : []),
+    "团队与账户",
+    ...(!hasPrototype ? ["项目资料"] : []),
+    "项目模块",
+    "工具目录",
+    ...(canAudit ? ["审计日志"] : []),
+    "项目能力",
+  ];
+  const activeTab =
+    tab && tabs.includes(tab)
+      ? tab
+      : hasPrototype
+        ? "项目资料"
+        : canManage
+          ? "接入与权限"
+          : "工具目录";
   useEffect(() => {
+    const controller = new AbortController();
     setCatalogError("");
     if (canManage)
-      void api<Token[]>(`/projects/${w.project.id}/tokens`)
-        .then(setTokens)
-        .catch((e) => setCatalogError(e.message));
-    else {
-      setTokens([]);
-      setActiveTab((previous) =>
-        previous === "接入与权限" ? "工具目录" : previous,
-      );
-    }
-    void api<{ tools: ToolEntry[] }>("/mcp/catalog")
-      .then((c) => setTools(c.tools || []))
-      .catch((e) => setCatalogError(e.message));
+      void api<Token[]>(`/projects/${w.project.id}/tokens`, {
+        signal: controller.signal,
+      })
+        .then((rows) => {
+          if (!controller.signal.aborted) setTokens(rows);
+        })
+        .catch((e) => {
+          if (!controller.signal.aborted) setCatalogError(e.message);
+        });
+    else setTokens([]);
+    void api<{ tools: ToolEntry[] }>("/mcp/catalog", {
+      signal: controller.signal,
+    })
+      .then((c) => {
+        if (!controller.signal.aborted) setTools(c.tools || []);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setCatalogError(e.message);
+      });
+    return () => controller.abort();
   }, [w.project.id, canManage]);
   async function create() {
     const t = await run(
@@ -1853,20 +1893,11 @@ export function Settings() {
   return (
     <>
       <div className="settings-tabs">
-        {[
-          ...(canManage ? ["接入与权限", "来源连接", "模型与预算"] : []),
-          ...(canManage || session.user?.instance_admin ? ["OAuth 授权"] : []),
-          "团队与账户",
-          "项目资料",
-          "项目模块",
-          "工具目录",
-          ...(canAudit ? ["审计日志"] : []),
-          "项目能力",
-        ].map((t) => (
+        {tabs.map((t) => (
           <button
             key={t}
             className={activeTab === t ? "active" : ""}
-            onClick={() => setActiveTab(t)}
+            onClick={() => onTabChange(t)}
           >
             {t}
           </button>
@@ -1883,7 +1914,26 @@ export function Settings() {
         <>
           <ProjectProfile />
           <PrototypeProjectSettings />
-          <InstanceBackupStatus />
+          {!hasPrototype && <InstanceBackupStatus />}
+        </>
+      ) : activeTab === "备份与恢复" ? (
+        <InstanceBackupStatus />
+      ) : activeTab === "来源与存储" ? (
+        <>
+          <Panel title="当前版本的资料来源">
+            {w.sources.length ? (
+              <ul>
+                {w.sources.map((source) => (
+                  <li key={source.source_snapshot_id || source.id}>
+                    {source.name || source.role}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>当前版本尚无可见来源。</p>
+            )}
+          </Panel>
+          <SourceManagement />
         </>
       ) : activeTab === "项目模块" ? (
         <ModuleTree />

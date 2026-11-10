@@ -32,7 +32,36 @@ PUBLIC_FIELDS = (
 )
 
 
-def filter_prototype_anchors(entities):
+def prototype_surface(s, pid, artifact_id, state):
+    """Resolve a declared PNG against the exact source artifact registry."""
+    surface = state.get("surface")
+    if not isinstance(surface, dict) or surface.get("kind") != "raster" or not artifact_id:
+        return None
+    path, digest = surface.get("artifactPath"), surface.get("sha256")
+    if not isinstance(path, str) or not isinstance(digest, str):
+        return None
+    cache = s.info.setdefault("vks_prototype_surfaces", {})
+    key = (pid, artifact_id)
+    if key not in cache:
+        origin = s.get(Artifact, artifact_id)
+        surfaces = {}
+        if origin and origin.project_id == pid:
+            for batch in chunks(origin.metadata_json.get("prototype_surface_artifact_ids") or []):
+                for row in s.scalars(
+                    select(Artifact).where(
+                        Artifact.id.in_(batch),
+                        Artifact.project_id == pid,
+                        Artifact.snapshot_id == origin.snapshot_id,
+                        Artifact.kind == "screenshot",
+                        Artifact.media_type == "image/png",
+                    )
+                ):
+                    surfaces[(row.relative_path, row.sha256)] = row
+        cache[key] = surfaces
+    return cache[key].get((path, digest))
+
+
+def project_prototype_metadata(s, pid, entities):
     actions = {
         (row["metadata"].get("page_key"), row["stable_key"])
         for row in entities
@@ -44,15 +73,17 @@ def filter_prototype_anchors(entities):
         manifest = row["metadata"].get("prototype_manifest")
         if row["type"] != "page" or not manifest:
             continue
-        states = [
-            {
+        states = []
+        for state in manifest["states"]:
+            projected = {
                 **state,
                 "anchors": [
                     anchor for anchor in state["anchors"] if (row["stable_key"], anchor["actionKey"]) in actions
                 ],
             }
-            for state in manifest["states"]
-        ]
+            if "surface" in state and not prototype_surface(s, pid, row["artifact_id"], state):
+                projected.pop("surface")
+            states.append(projected)
         row["metadata"] = {**row["metadata"], "prototype_manifest": {**manifest, "states": states}}
     return entities
 
@@ -184,6 +215,39 @@ def artifact_policy(s, artifact, _active=None):
         metadata.get("requires_source_read") or artifact.kind == "source" or artifact.sensitivity == "confidential"
     )
     base_trace = bool(metadata.get("requires_trace_read") or artifact.kind in ("trace", "capture"))
+    if artifact.kind == "fixture" and artifact.relative_path == "offline/original.html":
+        from packages.analyzers.vks_ingest import MAX_FILES, source_digest
+
+        from .knowledge import SourceSnapshot
+
+        snapshot = s.get(SourceSnapshot, artifact.snapshot_id)
+        if snapshot and snapshot.source_key in ("charge-offline-handbook", "charge-offline-prototype"):
+            members = list(
+                s.scalars(
+                    select(Artifact)
+                    .where(
+                        Artifact.project_id == artifact.project_id,
+                        Artifact.snapshot_id == artifact.snapshot_id,
+                        Artifact.id != artifact.id,
+                        (
+                            (Artifact.kind == "markdown") & Artifact.relative_path.startswith("handbook/")
+                            if snapshot.source_key == "charge-offline-handbook"
+                            else (Artifact.kind == "fixture") & (Artifact.relative_path == "offline/prototype.json")
+                        ),
+                    )
+                    .limit(MAX_FILES)
+                )
+            )
+            closure = [
+                {"path": row.relative_path, "sha256": row.sha256, "size_bytes": row.size_bytes}
+                for row in [artifact, *members]
+            ]
+            if not members or len(closure) > MAX_FILES or source_digest(closure) != snapshot.content_sha256:
+                return dict(metadata, requires_source_read=True, requires_trace_read=True, offline_archive_invalid=True)
+            for member in members:
+                current = artifact_policy(s, member, active)
+                base_source = base_source or current["requires_source_read"]
+                base_trace = base_trace or current["requires_trace_read"]
     if "input_revision_provenance" in metadata:
         input_source, input_trace = _revision_input_requirements(
             s, artifact.project_id, metadata["input_revision_provenance"], active
@@ -464,6 +528,70 @@ class ReadingService:
             ).all()
         ), None
 
+    def prototype_artifact_visible(self, s, actor, artifact, can_edit):
+        """A raw manifest needs a readable version containing every unfiltered anchor."""
+        pid = artifact.project_id
+        pages = defaultdict(set)
+        action_pages = {}
+        for revision, entity in s.execute(
+            select(Revision, Entity)
+            .join(Entity, Entity.id == Revision.entity_id)
+            .where(Revision.artifact_id == artifact.id, Revision.project_id == pid, Entity.type == "page")
+        ):
+            manifest = revision.metadata_json.get("prototype_manifest")
+            if not manifest:
+                continue
+            pages[entity.id].add(revision.id)
+            for state in manifest["states"]:
+                if "surface" in state and not prototype_surface(s, pid, artifact.id, state):
+                    return False
+                for anchor in state["anchors"]:
+                    action_pages[anchor["actionKey"]] = entity.stable_key
+        if not pages:
+            return "prototype_surface_artifact_ids" not in artifact.metadata_json
+        action_ids = {}
+        for batch in chunks(action_pages):
+            action_ids.update(
+                s.execute(
+                    select(Entity.stable_key, Entity.id).where(
+                        Entity.project_id == pid, Entity.type == "action", Entity.stable_key.in_(batch)
+                    )
+                ).all()
+            )
+        if action_ids.keys() != action_pages.keys():
+            return False
+
+        def action_visible(key, choices):
+            rid = choices.get(action_ids[key])
+            revision = s.get(Revision, rid) if rid else None
+            return (
+                revision
+                and revision.entity_id == action_ids[key]
+                and revision.metadata_json.get("prototype_action")
+                and revision.metadata_json.get("page_key") == action_pages[key]
+                and revision.metadata_json.get("status") != "removed"
+                and self.service._visible_revision(s, actor, pid, revision)
+            )
+
+        candidates = set()
+        for batch in chunks(next(iter(pages.values()))):
+            candidates.update(
+                s.scalars(select(Selection.analysis_set_id).where(Selection.entity_revision_id.in_(batch)))
+            )
+        for aid in candidates:
+            analysis = s.get(Analysis, aid)
+            if not analysis or analysis.project_id != pid:
+                continue
+            release = s.scalar(select(Release).where(Release.analysis_set_id == aid, Release.project_id == pid))
+            if not release and not can_edit:
+                continue
+            choices, _ = self.selections(s, analysis, release)
+            if all(choices.get(eid) in revisions for eid, revisions in pages.items()) and all(
+                action_visible(key, choices) for key in action_ids
+            ):
+                return True
+        return False
+
     def permissions(self, s, actor, pid):
         return (self.service._can(s, actor, pid, "source:read"), self.service._can(s, actor, pid, "trace:read"))
 
@@ -482,17 +610,19 @@ class ReadingService:
             )
         ) and (trace_allowed or not (kind in ("trace", "capture") or metadata.get("requires_trace_read")))
 
-    def visible_ids(self, s, actor, pid, selections):
+    def visible_ids(self, s, actor, pid, selections, *, scope=None):
         source, trace = self.permissions(s, actor, pid)
         if source and trace:
             return dict(selections)
         visible = {}
+        prototype_pages, prototype_actions = set(), {}
         for batch in chunks(selections.values()):
             rows = s.execute(
                 select(
                     Revision.id,
                     Revision.entity_id,
                     Entity.type,
+                    Entity.stable_key,
                     Artifact.kind,
                     Artifact.sensitivity,
                     Artifact.metadata_json,
@@ -504,10 +634,11 @@ class ReadingService:
                 .outerjoin(Artifact, Revision.artifact_id == Artifact.id)
                 .where(Revision.project_id == pid, Revision.id.in_(batch))
             )
-            for rid, eid, kind, art_kind, sensitivity, metadata, artifact_id, path, revision_metadata in rows:
+            for rid, eid, kind, key, art_kind, sensitivity, metadata, artifact_id, path, revision_metadata in rows:
                 if artifact_id and (
                     (path or "").startswith(("documents/generated-", "journeys/"))
                     or (metadata or {}).get("original_artifact_id")
+                    or "input_revision_provenance" in (metadata or {})
                     or (metadata or {}).get("prototype_surface_artifact_ids")
                     or (metadata or {}).get("prototype_input_artifact_ids")
                 ):
@@ -520,6 +651,26 @@ class ReadingService:
                     )
                 if self.policy_visible(art_kind, sensitivity, metadata, source, trace, kind):
                     visible[eid] = rid
+                    if kind == "page" and revision_metadata.get("prototype_manifest"):
+                        prototype_pages.add(key)
+                    if kind == "action" and revision_metadata.get("prototype_action"):
+                        prototype_actions[eid] = revision_metadata.get("page_key")
+        if scope is not None:
+            for batch in chunks({key for key in prototype_actions.values() if key} - prototype_pages):
+                pages = s.execute(
+                    select(Entity.id, Entity.stable_key).where(
+                        Entity.project_id == pid, Entity.type == "page", Entity.stable_key.in_(batch)
+                    )
+                )
+                for eid, key in pages:
+                    page = s.get(Revision, scope[eid]) if eid in scope else None
+                    if page and page.metadata_json.get("prototype_manifest") and self.service._visible_revision(
+                        s, actor, pid, page
+                    ):
+                        prototype_pages.add(key)
+        for eid, key in prototype_actions.items():
+            if key not in prototype_pages:
+                del visible[eid]
         return visible
 
     def visible_evidence(self, s, actor, pid, aid, ids=None):
@@ -554,6 +705,7 @@ class ReadingService:
                 if (
                     path.startswith("documents/generated-")
                     or metadata.get("original_artifact_id")
+                    or "input_revision_provenance" in metadata
                     or metadata.get("prototype_surface_artifact_ids")
                     or metadata.get("prototype_input_artifact_ids")
                 ):
@@ -580,7 +732,7 @@ class ReadingService:
         self.preload(s, rows)
         return rows
 
-    def edge_rows(self, s, aid, index, frontier=None, selected=None):
+    def edge_rows(self, s, aid, index, frontier=None, selected=None, *, outgoing=False):
         if index:
             output = []
             if selected is not None:
@@ -591,8 +743,9 @@ class ReadingService:
                         output.extend(targets[target])
             else:
                 seen = set()
+                directions = (index.outgoing,) if outgoing else (index.outgoing, index.incoming)
                 for node in frontier:
-                    for direction in (index.outgoing, index.incoming):
+                    for direction in directions:
                         for rows in direction.get(node, {}).values():
                             for row in rows:
                                 if row["id"] not in seen:
@@ -603,9 +756,19 @@ class ReadingService:
             return [dict(row, evidence_ids=list(row["evidence_ids"])) for row in output]
         query = select(Relation).where(Relation.analysis_set_id == aid)
         if selected is not None:
-            query = query.where(Relation.from_revision_id.in_(selected), Relation.to_revision_id.in_(selected))
+            if len(selected) <= 400:
+                query = query.where(Relation.from_revision_id.in_(selected), Relation.to_revision_id.in_(selected))
+            else:
+                # SQLite and PostgreSQL both bound bind parameters. A whole-workspace
+                # selection is already materialized and can filter the scoped relation scan.
+                return [
+                    self.service.relation_dto(row)
+                    for row in s.scalars(query)
+                    if row.from_revision_id in selected and row.to_revision_id in selected
+                ]
         elif frontier is not None:
-            query = query.where(or_(Relation.from_revision_id.in_(frontier), Relation.to_revision_id.in_(frontier)))
+            starts = Relation.from_revision_id.in_(frontier)
+            query = query.where(starts if outgoing else or_(starts, Relation.to_revision_id.in_(frontier)))
         return [self.service.relation_dto(row) for row in s.scalars(query)]
 
     def _graph(
@@ -675,7 +838,7 @@ class ReadingService:
             if not frontier:
                 break
         rows = self.revision_rows(s, selected)
-        nodes = filter_prototype_anchors([self.service.entity_dto(s, row, True) for row in rows])
+        nodes = project_prototype_metadata(s, pid, [self.service.entity_dto(s, row, True) for row in rows])
         nodes.sort(key=lambda row: row["entity_revision_id"])
         if not extended:
             nodes = [{key: node[key] for key in PUBLIC_FIELDS} for node in nodes]
@@ -802,7 +965,9 @@ class ReadingService:
             visible = self.visible_ids(s, actor, pid, choices)
             revisions = self.revision_rows(s, visible.values())
             return {
-                "entities": filter_prototype_anchors([self.service.entity_dto(s, row, True) for row in revisions]),
+                "entities": project_prototype_metadata(
+                    s, pid, [self.service.entity_dto(s, row, True) for row in revisions]
+                ),
                 "sources": self.service._visible_sources(s, actor, pid, analysis.sources) if analysis else [],
                 "selected_analysis_set": self.service.analysis_dto(analysis) if analysis else None,
                 "selected_release": self.service.release_dto(release) if release else None,
@@ -820,6 +985,7 @@ class ReadingService:
             analysis, release = self.baseline(s, actor, pid, payload.get("analysis_set_id"), payload.get("release_id"))
             choices, index = self.selections(s, analysis, release)
             visible = self.visible_ids(s, actor, pid, choices)
+            visible_endpoints = set(visible.values())
             if payload.get("module_id"):
                 module = s.get(BusinessModule, payload["module_id"])
                 if not module or module.project_id != pid:
@@ -1018,7 +1184,11 @@ class ReadingService:
             refs = defaultdict(set)
             if analysis:
                 for relation in self.edge_rows(s, analysis.id, index, frontier=ids):
-                    if not self.service._visible_relation(s, actor, pid, relation):
+                    if (
+                        relation["from_revision_id"] not in visible_endpoints
+                        or relation["to_revision_id"] not in visible_endpoints
+                        or not self.service._visible_relation(s, actor, pid, relation)
+                    ):
                         continue
                     for rid in (relation["from_revision_id"], relation["to_revision_id"]):
                         if rid in ids:
@@ -1031,6 +1201,24 @@ class ReadingService:
 
     def job_dto(self, s, actor, job):
         dto = self.service.job_dto(job)
+        if job.kind == "import_preview" or job.input_json.get("_prototype_batch"):
+            submitted = set(job.input_json.get("_authorization", {}).get("scopes", []))
+            required = {"source:import"} | (submitted & {"source:read", "trace:read"})
+            if actor.id == job.created_by and all(
+                self.service._can(s, actor, job.project_id, scope) for scope in required
+            ):
+                return dto
+            dto.pop("result", None)
+            dto.pop("issue_count", None)
+            dto["result_refs"] = []
+            dto["diagnostics_restricted"] = True
+            if "error" in dto:
+                dto["error"] = {
+                    "code": dto["error"]["code"],
+                    "message": "当前账号无法查看导入诊断",
+                    "retryable": False,
+                }
+            return dto
         if not self.service._can(s, actor, job.project_id, "source:read") or not self.service._can(
             s, actor, job.project_id, "trace:read"
         ):

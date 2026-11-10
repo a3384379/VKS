@@ -44,7 +44,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PrototypeSettingsResult_"
+                }
               }
             }
           },
@@ -294,6 +296,9 @@
             "required": true,
             "schema": {
               "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[a-z][a-z0-9._-]*$",
               "title": "Trigger State Key"
             }
           },
@@ -642,6 +647,22 @@
               "type": "string",
               "title": "Pid"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
         "requestBody": {
@@ -649,17 +670,37 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PreviewInput"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PreviewInput"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BatchPreview"
+                  }
+                ],
+                "title": "Payload"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Single material preview report",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_ImportPreviewResult_"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Batch preview job accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_JobOutput_"
+                }
               }
             }
           },
@@ -714,7 +755,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ImportConfirmation"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ImportConfirmation"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BatchConfirmation"
+                  }
+                ],
+                "title": "Payload"
               }
             }
           }
@@ -724,7 +773,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_JobOutput_"
+                }
               }
             }
           },
@@ -987,6 +1038,75 @@
         ],
         "title": "AnchorEdit"
       },
+      "BatchConfirmation": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "preview_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Preview Id"
+          },
+          "preview_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Preview Digest"
+          },
+          "selected_artifact_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Selected Artifact Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "preview_id",
+          "preview_digest",
+          "selected_artifact_ids"
+        ],
+        "title": "BatchConfirmation"
+      },
+      "BatchPreview": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "artifact_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Artifact Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "artifact_ids"
+        ],
+        "title": "BatchPreview"
+      },
       "BindingEdit": {
         "properties": {
           "analysis_set_id": {
@@ -1137,6 +1257,200 @@
           "preview_digest"
         ],
         "title": "ImportConfirmation"
+      },
+      "ImportPreviewResult": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "preview_digest": {
+            "type": "string",
+            "title": "Preview Digest"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          },
+          "file_count": {
+            "type": "integer",
+            "title": "File Count"
+          },
+          "entity_count": {
+            "type": "integer",
+            "title": "Entity Count"
+          },
+          "operations": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Operations"
+          },
+          "mappings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Mappings"
+          },
+          "relation_count": {
+            "type": "integer",
+            "title": "Relation Count"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "issues": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Issues"
+          },
+          "prototype_import": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prototype Import"
+          }
+        },
+        "type": "object",
+        "required": [
+          "valid",
+          "preview_digest",
+          "selection_version",
+          "file_count",
+          "entity_count",
+          "operations",
+          "mappings",
+          "relation_count",
+          "size_bytes",
+          "issues",
+          "prototype_import"
+        ],
+        "title": "ImportPreviewResult"
+      },
+      "JobOutput": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "completeness": {
+            "type": "string",
+            "title": "Completeness"
+          },
+          "progress": {
+            "type": "integer",
+            "title": "Progress"
+          },
+          "attempt": {
+            "type": "integer",
+            "title": "Attempt"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "created_by": {
+            "type": "string",
+            "title": "Created By"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "issue_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Count"
+          },
+          "result_refs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Result Refs"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "diagnostics_restricted": {
+            "type": "boolean",
+            "title": "Diagnostics Restricted",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "kind",
+          "state",
+          "stage",
+          "completeness",
+          "progress",
+          "attempt",
+          "created_at",
+          "created_by",
+          "updated_at",
+          "result_refs"
+        ],
+        "title": "JobOutput"
       },
       "PointText": {
         "properties": {
@@ -1412,6 +1726,42 @@
         ],
         "title": "PrototypeContext"
       },
+      "PrototypeEnvelope_ImportPreviewResult_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ImportPreviewResult"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[ImportPreviewResult]"
+      },
+      "PrototypeEnvelope_JobOutput_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/JobOutput"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[JobOutput]"
+      },
       "PrototypeEnvelope_PrototypeAnchorsResult_": {
         "properties": {
           "data": {
@@ -1519,6 +1869,24 @@
           "meta"
         ],
         "title": "PrototypeEnvelope[PrototypeReferences]"
+      },
+      "PrototypeEnvelope_PrototypeSettingsResult_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PrototypeSettingsResult"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PrototypeSettingsResult]"
       },
       "PrototypeMenu": {
         "properties": {
@@ -1658,6 +2026,17 @@
           "has_surface": {
             "type": "boolean",
             "title": "Has Surface"
+          },
+          "group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Name"
           }
         },
         "type": "object",
@@ -1859,6 +2238,47 @@
         ],
         "title": "PrototypeScope"
       },
+      "PrototypeSettingsResult": {
+        "properties": {
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          },
+          "entry_page_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Page Key"
+          },
+          "menu_order": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Menu Order"
+          },
+          "menu_groups": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Menu Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "row_version",
+          "entry_page_key",
+          "menu_order",
+          "menu_groups"
+        ],
+        "title": "PrototypeSettingsResult"
+      },
       "PrototypeSource": {
         "properties": {
           "section_key": {
@@ -1953,6 +2373,26 @@
             "type": "array",
             "maxItems": 512,
             "title": "Menu Order"
+          },
+          "menu_groups": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^[a-z][a-z0-9._-]{0,95}$": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "minLength": 1,
+                    "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+                  }
+                },
+                "type": "object",
+                "maxProperties": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Menu Groups"
           }
         },
         "additionalProperties": false,

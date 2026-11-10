@@ -819,6 +819,8 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                             "code": "VKS_PROTOTYPE_SURFACE_MISSING",
                             "severity": "info",
                             "artifact_path": path,
+                            "page_key": entity["stable_key"],
+                            "state_key": state["stateKey"],
                             "message": "声明状态没有原始画面；该动作仍可关联原文章节。",
                         }
                     )

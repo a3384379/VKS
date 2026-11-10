@@ -36,7 +36,7 @@ async def test_streamable_http_sdk_authenticated_handshake_and_revocation(tmp_pa
             ) as client:
                 async with streamable_http_client("http://localhost:8788/mcp", http_client=client) as (read, write, _):
                     async with ClientSession(read, write) as sdk:
-                        assert (await sdk.initialize()).serverInfo.version == "1.0.0-rc.1"
+                        assert (await sdk.initialize()).serverInfo.version == "3.0.0-rc.1"
                         result = await sdk.call_tool("list_projects", {})
                         assert not result.isError
                         assert result.structuredContent["data"][0]["id"] == project["id"]

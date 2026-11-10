@@ -304,36 +304,40 @@ export function JourneyCanvas() {
       return;
     }
     if (target.kind === "state") {
-      navigateExplanation({
-        scenarioId: target.reference.scenario_id,
-        stateKey: target.reference.state_key,
-        followTarget: false,
-      });
-      navigate("workbench");
+      if (
+        navigateExplanation({
+          scenarioId: target.reference.scenario_id,
+          stateKey: target.reference.state_key,
+          followTarget: false,
+        })
+      )
+        navigate("workbench");
       return;
     }
     const entity = target.entity;
     if (entity.type === "action" || entity.type === "page") {
-      navigateExplanation(
-        entity.type === "action"
-          ? {
-              actionId: entity.id,
-              followTarget: false,
-              ...(node.prototype_state_key
-                ? {
-                    stateKey: node.prototype_state_key,
-                    triggerStateKey: node.prototype_state_key,
-                  }
-                : {}),
-            }
-          : {
-              pageId: entity.id,
-              followTarget: false,
-              actionId: "",
-              stateKey: node.prototype_state_key || "",
-            },
-      );
-      navigate("workbench");
+      if (
+        navigateExplanation(
+          entity.type === "action"
+            ? {
+                actionId: entity.id,
+                followTarget: false,
+                ...(node.prototype_state_key
+                  ? {
+                      stateKey: node.prototype_state_key,
+                      triggerStateKey: node.prototype_state_key,
+                    }
+                  : {}),
+              }
+            : {
+                pageId: entity.id,
+                followTarget: false,
+                actionId: "",
+                stateKey: node.prototype_state_key || "",
+              },
+        )
+      )
+        navigate("workbench");
     } else
       navigate(
         entity.type === "document" || entity.type === "section"

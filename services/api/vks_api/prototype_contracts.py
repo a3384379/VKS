@@ -66,6 +66,7 @@ class PrototypePageEntry(BaseModel):
     page_revision_id: str
     routes: list[str]
     has_surface: bool
+    group_name: str | None = None
 
 
 class PrototypeMenu(BaseModel):
@@ -73,6 +74,13 @@ class PrototypeMenu(BaseModel):
     pages: list[PrototypePageEntry]
     total: int
     next_cursor: str | None
+
+
+class PrototypeSettingsResult(BaseModel):
+    row_version: int
+    entry_page_key: str | None
+    menu_order: list[str]
+    menu_groups: dict[str, str]
 
 
 class PrototypeAnchor(Anchor):

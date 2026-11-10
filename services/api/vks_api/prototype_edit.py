@@ -12,7 +12,7 @@ from packages.analyzers.vks_ingest import BundleError
 from .documents import DocumentService
 from .models import Analysis, Artifact, Entity, Evidence, Project, PrototypeSettings, Relation, Revision, Selection, uid
 from .prototype_read import find_selected, missing, page_state, selected_id
-from .reading import revision_policy
+from .reading import prototype_surface, revision_policy
 from .service import DomainError, canonical, sha
 
 Key = Annotated[str, Field(pattern=r"^[a-z][a-z0-9._-]{0,95}$")]
@@ -50,11 +50,15 @@ class AnchorEdit(Input):
     clear_surface: bool = False
 
 
+GroupLabel = Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[^\x00-\x1f\x7f]+$")]
+
+
 class SettingsEdit(Input):
     analysis_set_id: Ref | None = None
     release_id: Ref | None = None
     entry_page_key: Key | None = None
     menu_order: list[Key] = Field(default_factory=list, max_length=512)
+    menu_groups: dict[Key, GroupLabel] | None = Field(default=None, max_length=512)
 
 
 class PointText(Input):
@@ -79,14 +83,19 @@ class BindingEdit(Input):
     excluded: bool = False
 
 
-def draft(s, service, actor, pid, aid, capability="knowledge:edit"):
+def _require_mutable(analysis):
+    if analysis.state == "frozen":
+        raise DomainError("VKS_STATE_CONFLICT", "快照已冻结，请先创建草稿", 409)
+
+
+def draft(s, service, actor, pid, aid, capability="knowledge:edit", *, allow_frozen=False):
     service.require(s, actor, pid, capability)
     s.scalar(select(Project.id).where(Project.id == pid).with_for_update())
     analysis = s.scalar(select(Analysis).where(Analysis.project_id == pid, Analysis.id == aid).with_for_update())
     if not analysis:
         raise missing()
-    if analysis.state == "frozen":
-        raise DomainError("VKS_STATE_CONFLICT", "快照已冻结，请先创建草稿", 409)
+    if not allow_frozen:
+        _require_mutable(analysis)
     choices = dict(
         s.execute(
             select(Selection.entity_id, Selection.entity_revision_id).where(Selection.analysis_set_id == aid)
@@ -164,7 +173,7 @@ def _repoint(edges, previous, updated, *, stale):
             edge.from_revision_id = updated.id
         if edge.to_revision_id == previous.id:
             edge.to_revision_id = updated.id
-        if stale and not edge.excluded:
+        if stale:
             edge.validity_status = "stale"
             if edge.causal_basis == "correlated_runtime":
                 edge.causal_basis = "not_established"
@@ -235,6 +244,7 @@ def _write_relation(s, analysis, source, target, kind, evidence, current=None, *
         causal_basis="not_established",
     )
     edge.validity_status = "valid"
+    edge.excluded = False
     edge.manual_lock = True
     edge.evidence_ids = [evidence]
     edge.metadata_json = {**edge.metadata_json, **metadata} if edge.metadata_json else metadata
@@ -258,40 +268,82 @@ class PrototypeEditor:
             row = s.get(PrototypeSettings, pid)
             version(row.row_version if row else 0, expected, "项目导览设置已更新")
             keys = set(form.menu_order)
+            groups = {key: label.strip() for key, label in (form.menu_groups or {}).items()}
+            if not all(groups.values()):
+                raise DomainError("VKS_INVALID_INPUT", "菜单分组名称不能为空", 422)
             if len(keys) != len(form.menu_order):
                 raise DomainError("VKS_INVALID_INPUT", "快速菜单页面不可重复", 422)
-            for key in keys | ({form.entry_page_key} if form.entry_page_key else set()):
+            for key in keys | groups.keys() | ({form.entry_page_key} if form.entry_page_key else set()):
                 _, page = find_selected(s, self.service, actor, pid, choices, "page", key)
                 manifest = page.metadata_json.get("prototype_manifest")
-                if not manifest or (key == form.entry_page_key and not page_state(page).get("surface")):
+                if not manifest or (
+                    key == form.entry_page_key and not prototype_surface(s, pid, page.artifact_id, page_state(page))
+                ):
                     raise DomainError("VKS_INVALID_INPUT", "入口需要当前版本中的可读画面", 422)
             if not row:
                 row = PrototypeSettings(project_id=pid)
                 s.add(row)
-            row.entry_page_key = form.entry_page_key
-            row.menu_order = list(form.menu_order)
+
+            def readable(key):
+                try:
+                    _, page = find_selected(s, self.service, actor, pid, choices, "page", key)
+                except DomainError as exc:
+                    if exc.status == 404:
+                        return False
+                    raise
+                return bool(page.metadata_json.get("prototype_manifest"))
+
+            if form.entry_page_key or not row.entry_page_key or readable(row.entry_page_key):
+                row.entry_page_key = form.entry_page_key
+            pending = iter(form.menu_order)
+            order = [next(pending, None) if readable(key) else key for key in (row.menu_order or [])]
+            updated = [key for key in order if key] + list(pending)
+            if len(updated) > 512:
+                raise DomainError("VKS_STATE_CONFLICT", "当前菜单无法保存所选页面", 409)
+            row.menu_order = updated
+            if form.menu_groups is not None:
+                retained = {key: label for key, label in (row.menu_groups or {}).items() if not readable(key)}
+                if len(retained) + len(groups) > 512:
+                    raise DomainError("VKS_STATE_CONFLICT", "当前菜单无法保存所选分组", 409)
+                row.menu_groups = retained | groups
             s.flush()
             self.service.audit(s, actor, pid, "prototype.settings.save", pid)
-            return {"row_version": row.row_version, "entry_page_key": row.entry_page_key, "menu_order": row.menu_order}
+            return {
+                "row_version": row.row_version,
+                "entry_page_key": form.entry_page_key,
+                "menu_order": list(form.menu_order),
+                "menu_groups": {key: label for key, label in row.menu_groups.items() if readable(key)},
+            }
 
     def save_anchors(self, actor, pid, page_key, form, expected, key):
         service = self.service
         payload = form.model_dump(mode="json", exclude_none=True)
         with service.db() as s:
-            analysis, choices = draft(s, service, actor, pid, form.analysis_set_id)
+            analysis, choices = draft(s, service, actor, pid, form.analysis_set_id, allow_frozen=True)
             entity, page = find_selected(s, service, actor, pid, choices, "page", page_key)
             if not page.metadata_json.get("prototype_manifest"):
                 raise missing()
 
             def save():
+                _require_mutable(analysis)
                 version(analysis.selection_version, expected)
                 version(page.id, form.page_revision_id)
                 manifest = deepcopy(page.metadata_json["prototype_manifest"])
                 old = next((row for row in manifest["states"] if row["stateKey"] == form.state_key), None)
+                protected = []
+                for anchor in old["anchors"] if old else []:
+                    action = _identity(s, pid, "action", anchor["actionKey"])
+                    rid = choices.get(action.id) if action else None
+                    prior = s.get(Revision, rid) if rid else None
+                    if prior and not service._visible_revision(s, actor, pid, prior):
+                        protected.append(anchor)
                 known = {row["stateKey"] for row in manifest["states"]} | {form.state_key}
                 if len(known) > 32:
                     raise DomainError("VKS_INVALID_INPUT", "一个原型页最多支持 32 个状态", 422)
-                action_keys, anchor_keys = set(), set()
+                action_keys = {anchor["actionKey"] for anchor in protected}
+                anchor_keys = {anchor["anchorKey"] for anchor in protected}
+                if len(form.anchors) + len(protected) > 128:
+                    raise DomainError("VKS_STATE_CONFLICT", "当前状态无法保存所选热区", 409)
                 for i, anchor in enumerate(form.anchors):
                     x, y, w, h = anchor.rect
                     if (
@@ -303,6 +355,7 @@ class PrototypeEditor:
                         or x + w > 1 + 1e-9
                         or y + h > 1 + 1e-9
                         or any(_intersects(anchor.rect, other.rect) for other in form.anchors[:i])
+                        or any(_intersects(anchor.rect, other["rect"]) for other in protected)
                     ):
                         raise DomainError("VKS_LOCATOR_INVALID", "热区重叠、越界或引用无效", 422)
                     action_keys.add(anchor.actionKey)
@@ -317,7 +370,8 @@ class PrototypeEditor:
                     origin="declared",
                     anchors=[
                         anchor.model_dump(mode="json", exclude={"label"}, exclude_none=True) for anchor in form.anchors
-                    ],
+                    ]
+                    + protected,
                 )
                 if (form.viewport is None) != (form.upload_artifact_id is None) or (
                     form.clear_surface and form.viewport
@@ -384,6 +438,11 @@ class PrototypeEditor:
                     {
                         "original_artifact_id": base,
                         "prototype_surface_artifact_ids": sorted(surfaces[path].id for path in used),
+                        **(
+                            {"prototype_input_artifact_ids": origin.metadata_json["prototype_input_artifact_ids"]}
+                            if origin.metadata_json.get("prototype_input_artifact_ids")
+                            else {}
+                        ),
                     },
                 )
                 updated = self.documents._revision(
@@ -400,6 +459,8 @@ class PrototypeEditor:
                     },
                 )
                 _select(s, analysis, updated)
+                if page.id != updated.id:
+                    _repoint(_edges(s, analysis, page.id), page, updated, stale=False)
                 for anchor in form.anchors:
                     action = _identity(s, pid, "action", anchor.actionKey)
                     rid = choices.get(action.id) if action else None
@@ -456,7 +517,7 @@ class PrototypeEditor:
                         edges = [
                             edge
                             for edge in _edges(s, analysis, old_action.id)
-                            if edge.relation_type == "has_business_point" and not edge.excluded
+                            if edge.relation_type == "has_business_point"
                         ]
                         affected = [
                             edge
@@ -480,7 +541,10 @@ class PrototypeEditor:
                 {"page_key": page_key, "expected": expected, **payload},
                 save,
             )
-            if not service._visible_revision(s, actor, pid, s.get(Revision, result["page_revision_id"])):
+            if not all(
+                service._visible_revision(s, actor, pid, s.get(Revision, rid))
+                for rid in (form.page_revision_id, result["page_revision_id"])
+            ):
                 raise missing()
             return result
 
@@ -488,10 +552,14 @@ class PrototypeEditor:
         service = self.service
         payload = form.model_dump(mode="json", exclude_none=True)
         with service.db() as s:
-            analysis, choices = draft(s, service, actor, pid, form.analysis_set_id)
+            analysis, choices = draft(s, service, actor, pid, form.analysis_set_id, allow_frozen=True)
             _, action = find_selected(s, service, actor, pid, choices, "action", action_key)
             page_key = action.metadata_json.get("page_key")
-            if not page_key or action.metadata_json.get("status") == "removed":
+            if (
+                not page_key
+                or not action.metadata_json.get("prototype_action")
+                or action.metadata_json.get("status") == "removed"
+            ):
                 raise missing()
             _, page = find_selected(s, service, actor, pid, choices, "page", page_key)
             applied = {
@@ -501,6 +569,7 @@ class PrototypeEditor:
             }
 
             def save():
+                _require_mutable(analysis)
                 version(analysis.selection_version, expected)
                 version(page.id, form.page_revision_id)
                 version(action.id, form.action_revision_id)
@@ -514,10 +583,10 @@ class PrototypeEditor:
                 prior = s.get(Revision, choices[point.id]) if point and point.id in choices else None
                 if prior and not service._visible_revision(s, actor, pid, prior):
                     raise missing()
-                if point and not prior:
-                    raise DomainError("VKS_STATE_CONFLICT", "业务点键已占用，请选择当前草稿中的业务点", 409)
-                if prior or form.point_revision_id:
-                    version(prior.id if prior else "", form.point_revision_id)
+                if not prior and (point or form.point_revision_id):
+                    raise missing()
+                if prior:
+                    version(prior.id, form.point_revision_id)
                 if not prior and not form.point:
                     raise DomainError("VKS_INVALID_INPUT", "新建业务点需要标题和说明", 422)
                 if form.excluded and (not prior or form.point or form.section_revision_ids is not None):
@@ -536,10 +605,10 @@ class PrototypeEditor:
                     ),
                     None,
                 )
-                if binding or form.binding_version is not None:
-                    version(binding.row_version if binding else 0, form.binding_version)
                 if binding:
                     _require_edges(s, service, actor, pid, [binding])
+                if binding or form.binding_version is not None:
+                    version(binding.row_version if binding else 0, form.binding_version)
                 if form.excluded:
                     if not binding:
                         raise missing()
@@ -575,7 +644,6 @@ class PrototypeEditor:
                         binding,
                         prototype_scope={"states": sorted(form.state_keys), "priority": form.priority},
                     )
-                    binding.excluded = False
                 analysis.selection_version += 1
                 service.audit(s, actor, pid, "prototype.binding.save", binding.id)
                 s.flush()
@@ -596,8 +664,15 @@ class PrototypeEditor:
                 {"action_key": action_key, "expected": expected, **payload},
                 save,
             )
-            if not service._visible_revision(s, actor, pid, s.get(Revision, result["point_revision_id"])):
+            if not all(
+                service._visible_revision(s, actor, pid, s.get(Revision, rid))
+                for rid in (form.action_revision_id, form.page_revision_id, result["point_revision_id"])
+            ):
                 raise missing()
+            current = s.get(Relation, result["binding_id"])
+            if not current or current.analysis_set_id != analysis.id:
+                raise missing()
+            _require_edges(s, service, actor, pid, [current])
             return result
 
     def _point_revision(self, s, pid, action, entity, prior, form, refs):
@@ -661,5 +736,4 @@ class PrototypeEditor:
                 edge.excluded = True
         for section in refs:
             ev = _evidence(s, analysis, section, s.get(Artifact, section.artifact_id))
-            edge = _write_relation(s, analysis, point, section, "supported_by_section", ev, prior.get(section.id))
-            edge.excluded = False
+            _write_relation(s, analysis, point, section, "supported_by_section", ev, prior.get(section.id))
