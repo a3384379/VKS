@@ -29,7 +29,7 @@ def test_raster_canvas_keeps_pixels_actions_and_exact_source_return(site):
             page.get_by_role("button", name="原尺寸", exact=True).click()
             page.get_by_role("button", name="显示热区", exact=True).click()
             expect(image).to_be_visible()
-            assert image.evaluate("(img) => img.complete && img.naturalWidth") == WIDTH
+            assert image.evaluate("(img) => img.decode().then(() => img.naturalWidth)") == WIDTH
             assert image.bounding_box()["width"] == WIDTH and image.bounding_box()["height"] == HEIGHT
             with Image.open(BytesIO(image.screenshot())) as painted, Image.open(BytesIO(original(raw))) as source:
                 assert ImageChops.difference(painted.convert("RGB"), source.convert("RGB")).getbbox() is None

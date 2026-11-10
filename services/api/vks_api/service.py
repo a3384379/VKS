@@ -527,6 +527,11 @@ class Service:
             "evidence_ids": r.evidence_ids,
             "reason": r.reason,
             "row_version": r.row_version,
+            **(
+                {"prototype_scope": r.metadata_json["prototype_scope"]}
+                if (r.metadata_json or {}).get("prototype_scope")
+                else {}
+            ),
         }
 
     def evidence_dto(self, e, max_chars=8000):
@@ -663,7 +668,7 @@ class Service:
         )
 
     def workspace(self, actor, pid, analysis_set_id=None, release_id=None):
-        from .reading import ReadingService, relation_is_visible
+        from .reading import ReadingService, filter_prototype_anchors, relation_is_visible
         from sqlalchemy.orm import load_only
 
         reading = ReadingService(self)
@@ -697,7 +702,7 @@ class Service:
             choices, index = reading.selections(s, a, release)
             permitted = reading.visible_ids(s, actor, pid, choices)
             revs = reading.revision_rows(s, permitted.values())
-            entities = [self.entity_dto(s, r, True) for r in revs]
+            entities = filter_prototype_anchors([self.entity_dto(s, r, True) for r in revs])
             visible = {r.id for r in revs}
             rels = (
                 [
@@ -752,11 +757,28 @@ class Service:
             confirmed = {
                 r["from_revision_id"] for r in rels if (r["excluded"] is False) and r["validity_status"] == "valid"
             }
-            from .runtime import status
+            from .runtime import backup_status, status
 
             runtime = status(self, s, pid)
+            from .models import PrototypeSettings
+
+            settings = s.get(PrototypeSettings, pid)
+            pages = [e for e in entities if e["type"] == "page"]
+            page_by_key = {e["stable_key"]: e for e in pages if e["metadata"].get("prototype_manifest")}
+            order = [key for key in (settings.menu_order if settings else []) if key in page_by_key]
+            entry = page_by_key.get(settings.entry_page_key) if settings else None
+            if entry and not any(state.get("surface") for state in entry["metadata"]["prototype_manifest"]["states"]):
+                entry = None
+            sort_order = {key: index for index, key in enumerate(order)}
+            pages.sort(key=lambda page: sort_order.get(page["stable_key"], len(sort_order)))
             return {
+                "prototype_settings": {
+                    "entry_page_id": entry["id"] if entry else None,
+                    "menu_order": order,
+                    "row_version": settings.row_version if settings else 0,
+                },
                 "runtime_status": runtime,
+                **({"backup_status": backup_status(self)} if actor.human and actor.id == self.owner_id else {}),
                 "project": self.project_dto(p),
                 "analysis_sets": [self.analysis_public(s, actor, x) for x in analyses],
                 "selected_analysis_set": self.analysis_public(s, actor, a) if a else None,
@@ -766,7 +788,7 @@ class Service:
                 "relations": rels,
                 "evidence": [self.evidence_dto(e) for e in evs],
                 "documents": [e for e in entities if e["type"] == "document"],
-                "pages": [e for e in entities if e["type"] == "page"],
+                "pages": pages,
                 "actions": actions,
                 "scenarios": [e for e in entities if e["type"] == "scenario"],
                 "sources": self._visible_sources(s, actor, pid, a.sources) if a else [],
@@ -1121,6 +1143,8 @@ class Service:
         a, b = f.type, t.type
         legal = {
             "documents": a != "section" and b == "section",
+            "has_business_point": a == "action" and b == "business_point",
+            "supported_by_section": a == "business_point" and b == "section",
             "renders": a in ("page", "symbol") and b in ("action", "page"),
             "handler_of": a == "symbol" and b in ("action", "api"),
             "may_call": a in ("action", "symbol", "api") and b in ("api", "symbol"),

@@ -53,7 +53,7 @@ def site(tmp_path):
         app.state.service.engine.dispose()
 
 
-def import_project(service, owner, pid, raw, key):
+def import_project(service, owner, pid, raw, key, *, expect_missing=True):
     upload = service.create_upload(
         owner,
         pid,
@@ -68,7 +68,8 @@ def import_project(service, owner, pid, raw, key):
     payload = {"kind": "bundle", "artifact_ids": [upload["artifact_id"]]}
     preview = service.preflight(owner, pid, payload)
     assert preview["valid"]
-    assert any(row["code"] == "VKS_PROTOTYPE_SURFACE_MISSING" for row in preview["issues"])
+    if expect_missing:
+        assert any(row["code"] == "VKS_PROTOTYPE_SURFACE_MISSING" for row in preview["issues"])
     job = service.import_bundle(owner, pid, payload, key)
     service.process_job(job["id"])
     result = service.get_job(owner, job["id"])
@@ -104,8 +105,13 @@ def test_images_use_exact_selected_revision_and_current_source_permissions(site)
         export = service.export(owner, pid, {"release_id": released["id"], "format": "vksbundle"}, "v1-export")
         service.process_job(export["id"])
         export_status = service.get_job(owner, export["id"])
-        assert export_status["state"] == "failed"
-        assert export_status["error"]["code"] == "VKS_STATE_CONFLICT"
+        assert export_status["state"] == "succeeded", export_status
+        exported, _ = service.download_export(owner, pid, export["id"])
+        parsed = parse_bundle(exported, "prototype-demo")
+        assert any(row["stable_key"] == PAGE_KEY for row in parsed.entities)
+        assert {row["content"] for row in parsed.artifacts if row["kind"] == "screenshot"} == {
+            original(raw, state) for state in ("list", "create-drawer", "edit-drawer")
+        }
         query = {"release_id": released["id"], "page_revision_id": first["entity_revision_id"]}
         read = web.get(base + "/list/image", params=query, headers=headers)
         assert read.status_code == 200

@@ -1,5 +1,5 @@
 {
-  "schema_version": "2.0-dev",
+  "schema_version": "3.0-dev",
   "server_name": "visual-knowledge-studio",
   "description": "项目知识读写、采集、版本快照和导出；保存后直接可用。",
   "transports": [
@@ -463,7 +463,8 @@
                 "relation",
                 "sql",
                 "table",
-                "journey"
+                "journey",
+                "business_point"
               ]
             }
           },
@@ -568,7 +569,8 @@
                         "section",
                         "rule",
                         "service",
-                        "journey"
+                        "journey",
+                        "business_point"
                       ]
                     },
                     "name": {
@@ -790,7 +792,8 @@
                       "section",
                       "rule",
                       "service",
-                      "journey"
+                      "journey",
+                      "business_point"
                     ]
                   },
                   "name": {
@@ -935,7 +938,8 @@
                         "section",
                         "rule",
                         "service",
-                        "journey"
+                        "journey",
+                        "business_point"
                       ]
                     },
                     "name": {
@@ -1007,7 +1011,9 @@
                         "writes_table",
                         "documents",
                         "depends_on",
-                        "supersedes"
+                        "supersedes",
+                        "has_business_point",
+                        "supported_by_section"
                       ]
                     },
                     "validity_status": {
@@ -4671,7 +4677,9 @@
                 "reads_table",
                 "writes_table",
                 "documents",
-                "depends_on"
+                "depends_on",
+                "has_business_point",
+                "supported_by_section"
               ]
             }
           }
@@ -4780,7 +4788,8 @@
                         "section",
                         "rule",
                         "service",
-                        "journey"
+                        "journey",
+                        "business_point"
                       ]
                     },
                     "name": {
@@ -4852,7 +4861,9 @@
                         "writes_table",
                         "documents",
                         "depends_on",
-                        "supersedes"
+                        "supersedes",
+                        "has_business_point",
+                        "supported_by_section"
                       ]
                     },
                     "validity_status": {
@@ -6042,7 +6053,9 @@
                         "writes_table",
                         "documents",
                         "depends_on",
-                        "supersedes"
+                        "supersedes",
+                        "has_business_point",
+                        "supported_by_section"
                       ]
                     },
                     "validity_status": {
@@ -10179,6 +10192,1114 @@
             }
           }
         }
+      }
+    },
+    {
+      "name": "get_prototype_action_context",
+      "title": "读取原型动作与业务说明",
+      "description": "读取准确版本、页面及触发状态中的可见业务点和原文章节。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "action_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$"
+          },
+          "page_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$"
+          },
+          "trigger_state_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$"
+          },
+          "analysis_set_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "release_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "policy": {
+            "enum": [
+              "valid",
+              "outdated",
+              "all"
+            ]
+          }
+        },
+        "required": [
+          "project_id",
+          "action_key",
+          "page_key",
+          "trigger_state_key"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "analysis_set_id"
+            ]
+          },
+          {
+            "required": [
+              "release_id"
+            ]
+          }
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$defs": {
+          "PrototypeContext": {
+            "properties": {
+              "scope": {
+                "properties": {
+                  "analysis_set_id": {
+                    "title": "Analysis Set Id",
+                    "type": "string"
+                  },
+                  "release_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Release Id"
+                  }
+                },
+                "required": [
+                  "analysis_set_id"
+                ],
+                "title": "PrototypeScope",
+                "type": "object"
+              },
+              "page_key": {
+                "title": "Page Key",
+                "type": "string"
+              },
+              "page_revision_id": {
+                "title": "Page Revision Id",
+                "type": "string"
+              },
+              "action_key": {
+                "title": "Action Key",
+                "type": "string"
+              },
+              "action_id": {
+                "title": "Action Id",
+                "type": "string"
+              },
+              "action_revision_id": {
+                "title": "Action Revision Id",
+                "type": "string"
+              },
+              "trigger_state_key": {
+                "title": "Trigger State Key",
+                "type": "string"
+              },
+              "display_state_key": {
+                "title": "Display State Key",
+                "type": "string"
+              },
+              "missing_target_surface": {
+                "title": "Missing Target Surface",
+                "type": "boolean"
+              },
+              "points": {
+                "items": {
+                  "properties": {
+                    "point_key": {
+                      "title": "Point Key",
+                      "type": "string"
+                    },
+                    "point_revision_id": {
+                      "title": "Point Revision Id",
+                      "type": "string"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "summary": {
+                      "title": "Summary",
+                      "type": "string"
+                    },
+                    "applicability": {
+                      "title": "Applicability",
+                      "type": "string"
+                    },
+                    "outcome": {
+                      "title": "Outcome",
+                      "type": "string"
+                    },
+                    "exceptions": {
+                      "title": "Exceptions",
+                      "type": "string"
+                    },
+                    "sources": {
+                      "items": {
+                        "properties": {
+                          "section_key": {
+                            "title": "Section Key",
+                            "type": "string"
+                          },
+                          "section_id": {
+                            "title": "Section Id",
+                            "type": "string"
+                          },
+                          "section_revision_id": {
+                            "title": "Section Revision Id",
+                            "type": "string"
+                          },
+                          "title": {
+                            "title": "Title",
+                            "type": "string"
+                          },
+                          "excerpt": {
+                            "title": "Excerpt",
+                            "type": "string"
+                          },
+                          "evidence_ids": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "title": "Evidence Ids",
+                            "type": "array"
+                          },
+                          "validity": {
+                            "title": "Validity",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "section_key",
+                          "section_id",
+                          "section_revision_id",
+                          "title",
+                          "excerpt",
+                          "evidence_ids",
+                          "validity"
+                        ],
+                        "title": "PrototypeSource",
+                        "type": "object"
+                      },
+                      "title": "Sources",
+                      "type": "array"
+                    },
+                    "binding_id": {
+                      "title": "Binding Id",
+                      "type": "string"
+                    },
+                    "binding_version": {
+                      "title": "Binding Version",
+                      "type": "integer"
+                    },
+                    "state_keys": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "State Keys",
+                      "type": "array"
+                    },
+                    "priority": {
+                      "title": "Priority",
+                      "type": "integer"
+                    },
+                    "validity": {
+                      "title": "Validity",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "point_key",
+                    "point_revision_id",
+                    "title",
+                    "summary",
+                    "applicability",
+                    "outcome",
+                    "exceptions",
+                    "sources",
+                    "binding_id",
+                    "binding_version",
+                    "state_keys",
+                    "priority",
+                    "validity"
+                  ],
+                  "title": "PrototypePoint",
+                  "type": "object"
+                },
+                "title": "Points",
+                "type": "array"
+              },
+              "documents": {
+                "items": {
+                  "properties": {
+                    "section_key": {
+                      "title": "Section Key",
+                      "type": "string"
+                    },
+                    "section_id": {
+                      "title": "Section Id",
+                      "type": "string"
+                    },
+                    "section_revision_id": {
+                      "title": "Section Revision Id",
+                      "type": "string"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "excerpt": {
+                      "title": "Excerpt",
+                      "type": "string"
+                    },
+                    "evidence_ids": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "Evidence Ids",
+                      "type": "array"
+                    },
+                    "validity": {
+                      "title": "Validity",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "section_key",
+                    "section_id",
+                    "section_revision_id",
+                    "title",
+                    "excerpt",
+                    "evidence_ids",
+                    "validity"
+                  ],
+                  "title": "PrototypeSource",
+                  "type": "object"
+                },
+                "title": "Documents",
+                "type": "array"
+              },
+              "availability": {
+                "enum": [
+                  "available",
+                  "no_visible_explanation"
+                ],
+                "title": "Availability",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scope",
+              "page_key",
+              "page_revision_id",
+              "action_key",
+              "action_id",
+              "action_revision_id",
+              "trigger_state_key",
+              "display_state_key",
+              "missing_target_surface",
+              "points",
+              "documents",
+              "availability"
+            ],
+            "title": "PrototypeContext",
+            "type": "object"
+          },
+          "PrototypePoint": {
+            "properties": {
+              "point_key": {
+                "title": "Point Key",
+                "type": "string"
+              },
+              "point_revision_id": {
+                "title": "Point Revision Id",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              },
+              "summary": {
+                "title": "Summary",
+                "type": "string"
+              },
+              "applicability": {
+                "title": "Applicability",
+                "type": "string"
+              },
+              "outcome": {
+                "title": "Outcome",
+                "type": "string"
+              },
+              "exceptions": {
+                "title": "Exceptions",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "properties": {
+                    "section_key": {
+                      "title": "Section Key",
+                      "type": "string"
+                    },
+                    "section_id": {
+                      "title": "Section Id",
+                      "type": "string"
+                    },
+                    "section_revision_id": {
+                      "title": "Section Revision Id",
+                      "type": "string"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "excerpt": {
+                      "title": "Excerpt",
+                      "type": "string"
+                    },
+                    "evidence_ids": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "Evidence Ids",
+                      "type": "array"
+                    },
+                    "validity": {
+                      "title": "Validity",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "section_key",
+                    "section_id",
+                    "section_revision_id",
+                    "title",
+                    "excerpt",
+                    "evidence_ids",
+                    "validity"
+                  ],
+                  "title": "PrototypeSource",
+                  "type": "object"
+                },
+                "title": "Sources",
+                "type": "array"
+              },
+              "binding_id": {
+                "title": "Binding Id",
+                "type": "string"
+              },
+              "binding_version": {
+                "title": "Binding Version",
+                "type": "integer"
+              },
+              "state_keys": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "State Keys",
+                "type": "array"
+              },
+              "priority": {
+                "title": "Priority",
+                "type": "integer"
+              },
+              "validity": {
+                "title": "Validity",
+                "type": "string"
+              }
+            },
+            "required": [
+              "point_key",
+              "point_revision_id",
+              "title",
+              "summary",
+              "applicability",
+              "outcome",
+              "exceptions",
+              "sources",
+              "binding_id",
+              "binding_version",
+              "state_keys",
+              "priority",
+              "validity"
+            ],
+            "title": "PrototypePoint",
+            "type": "object"
+          },
+          "PrototypeScope": {
+            "properties": {
+              "analysis_set_id": {
+                "title": "Analysis Set Id",
+                "type": "string"
+              },
+              "release_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Release Id"
+              }
+            },
+            "required": [
+              "analysis_set_id"
+            ],
+            "title": "PrototypeScope",
+            "type": "object"
+          },
+          "PrototypeSource": {
+            "properties": {
+              "section_key": {
+                "title": "Section Key",
+                "type": "string"
+              },
+              "section_id": {
+                "title": "Section Id",
+                "type": "string"
+              },
+              "section_revision_id": {
+                "title": "Section Revision Id",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              },
+              "excerpt": {
+                "title": "Excerpt",
+                "type": "string"
+              },
+              "evidence_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence Ids",
+                "type": "array"
+              },
+              "validity": {
+                "title": "Validity",
+                "type": "string"
+              }
+            },
+            "required": [
+              "section_key",
+              "section_id",
+              "section_revision_id",
+              "title",
+              "excerpt",
+              "evidence_ids",
+              "validity"
+            ],
+            "title": "PrototypeSource",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "data": {
+            "properties": {
+              "scope": {
+                "properties": {
+                  "analysis_set_id": {
+                    "title": "Analysis Set Id",
+                    "type": "string"
+                  },
+                  "release_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Release Id"
+                  }
+                },
+                "required": [
+                  "analysis_set_id"
+                ],
+                "title": "PrototypeScope",
+                "type": "object"
+              },
+              "page_key": {
+                "title": "Page Key",
+                "type": "string"
+              },
+              "page_revision_id": {
+                "title": "Page Revision Id",
+                "type": "string"
+              },
+              "action_key": {
+                "title": "Action Key",
+                "type": "string"
+              },
+              "action_id": {
+                "title": "Action Id",
+                "type": "string"
+              },
+              "action_revision_id": {
+                "title": "Action Revision Id",
+                "type": "string"
+              },
+              "trigger_state_key": {
+                "title": "Trigger State Key",
+                "type": "string"
+              },
+              "display_state_key": {
+                "title": "Display State Key",
+                "type": "string"
+              },
+              "missing_target_surface": {
+                "title": "Missing Target Surface",
+                "type": "boolean"
+              },
+              "points": {
+                "items": {
+                  "properties": {
+                    "point_key": {
+                      "title": "Point Key",
+                      "type": "string"
+                    },
+                    "point_revision_id": {
+                      "title": "Point Revision Id",
+                      "type": "string"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "summary": {
+                      "title": "Summary",
+                      "type": "string"
+                    },
+                    "applicability": {
+                      "title": "Applicability",
+                      "type": "string"
+                    },
+                    "outcome": {
+                      "title": "Outcome",
+                      "type": "string"
+                    },
+                    "exceptions": {
+                      "title": "Exceptions",
+                      "type": "string"
+                    },
+                    "sources": {
+                      "items": {
+                        "properties": {
+                          "section_key": {
+                            "title": "Section Key",
+                            "type": "string"
+                          },
+                          "section_id": {
+                            "title": "Section Id",
+                            "type": "string"
+                          },
+                          "section_revision_id": {
+                            "title": "Section Revision Id",
+                            "type": "string"
+                          },
+                          "title": {
+                            "title": "Title",
+                            "type": "string"
+                          },
+                          "excerpt": {
+                            "title": "Excerpt",
+                            "type": "string"
+                          },
+                          "evidence_ids": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "title": "Evidence Ids",
+                            "type": "array"
+                          },
+                          "validity": {
+                            "title": "Validity",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "section_key",
+                          "section_id",
+                          "section_revision_id",
+                          "title",
+                          "excerpt",
+                          "evidence_ids",
+                          "validity"
+                        ],
+                        "title": "PrototypeSource",
+                        "type": "object"
+                      },
+                      "title": "Sources",
+                      "type": "array"
+                    },
+                    "binding_id": {
+                      "title": "Binding Id",
+                      "type": "string"
+                    },
+                    "binding_version": {
+                      "title": "Binding Version",
+                      "type": "integer"
+                    },
+                    "state_keys": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "State Keys",
+                      "type": "array"
+                    },
+                    "priority": {
+                      "title": "Priority",
+                      "type": "integer"
+                    },
+                    "validity": {
+                      "title": "Validity",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "point_key",
+                    "point_revision_id",
+                    "title",
+                    "summary",
+                    "applicability",
+                    "outcome",
+                    "exceptions",
+                    "sources",
+                    "binding_id",
+                    "binding_version",
+                    "state_keys",
+                    "priority",
+                    "validity"
+                  ],
+                  "title": "PrototypePoint",
+                  "type": "object"
+                },
+                "title": "Points",
+                "type": "array"
+              },
+              "documents": {
+                "items": {
+                  "properties": {
+                    "section_key": {
+                      "title": "Section Key",
+                      "type": "string"
+                    },
+                    "section_id": {
+                      "title": "Section Id",
+                      "type": "string"
+                    },
+                    "section_revision_id": {
+                      "title": "Section Revision Id",
+                      "type": "string"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "excerpt": {
+                      "title": "Excerpt",
+                      "type": "string"
+                    },
+                    "evidence_ids": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "Evidence Ids",
+                      "type": "array"
+                    },
+                    "validity": {
+                      "title": "Validity",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "section_key",
+                    "section_id",
+                    "section_revision_id",
+                    "title",
+                    "excerpt",
+                    "evidence_ids",
+                    "validity"
+                  ],
+                  "title": "PrototypeSource",
+                  "type": "object"
+                },
+                "title": "Documents",
+                "type": "array"
+              },
+              "availability": {
+                "enum": [
+                  "available",
+                  "no_visible_explanation"
+                ],
+                "title": "Availability",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scope",
+              "page_key",
+              "page_revision_id",
+              "action_key",
+              "action_id",
+              "action_revision_id",
+              "trigger_state_key",
+              "display_state_key",
+              "missing_target_surface",
+              "points",
+              "documents",
+              "availability"
+            ],
+            "title": "PrototypeContext",
+            "type": "object"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PrototypeContext]",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "save_business_point_binding",
+      "title": "保存业务点与动作关联",
+      "description": "按草稿版本直接保存业务点、适用状态和准确章节证据。相同幂等键可重试。",
+      "inputSchema": {
+        "$defs": {
+          "PointText": {
+            "additionalProperties": false,
+            "properties": {
+              "title": {
+                "maxLength": 160,
+                "minLength": 1,
+                "pattern": "\\S",
+                "title": "Title",
+                "type": "string"
+              },
+              "summary": {
+                "maxLength": 8000,
+                "minLength": 1,
+                "pattern": "\\S",
+                "title": "Summary",
+                "type": "string"
+              },
+              "applicability": {
+                "default": "",
+                "maxLength": 2000,
+                "title": "Applicability",
+                "type": "string"
+              },
+              "outcome": {
+                "default": "",
+                "maxLength": 2000,
+                "title": "Outcome",
+                "type": "string"
+              },
+              "exceptions": {
+                "default": "",
+                "maxLength": 2000,
+                "title": "Exceptions",
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "summary"
+            ],
+            "title": "PointText",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "analysis_set_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id",
+            "type": "string"
+          },
+          "action_revision_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Action Revision Id",
+            "type": "string"
+          },
+          "page_revision_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Page Revision Id",
+            "type": "string"
+          },
+          "point_key": {
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$",
+            "title": "Point Key",
+            "type": "string"
+          },
+          "point_revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Point Revision Id"
+          },
+          "point": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "maxLength": 160,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "title": "Title",
+                    "type": "string"
+                  },
+                  "summary": {
+                    "maxLength": 8000,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "title": "Summary",
+                    "type": "string"
+                  },
+                  "applicability": {
+                    "default": "",
+                    "maxLength": 2000,
+                    "title": "Applicability",
+                    "type": "string"
+                  },
+                  "outcome": {
+                    "default": "",
+                    "maxLength": 2000,
+                    "title": "Outcome",
+                    "type": "string"
+                  },
+                  "exceptions": {
+                    "default": "",
+                    "maxLength": 2000,
+                    "title": "Exceptions",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "summary"
+                ],
+                "title": "PointText",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "section_revision_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 96,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Section Revision Ids"
+          },
+          "state_keys": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9._-]{0,95}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "State Keys",
+            "type": "array"
+          },
+          "priority": {
+            "default": 0,
+            "maximum": 1000,
+            "minimum": 0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "binding_version": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Binding Version"
+          },
+          "excluded": {
+            "default": false,
+            "title": "Excluded",
+            "type": "boolean"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "action_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$"
+          },
+          "selection_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "analysis_set_id",
+          "action_revision_id",
+          "page_revision_id",
+          "point_key",
+          "project_id",
+          "action_key",
+          "selection_version",
+          "idempotency_key"
+        ],
+        "title": "BindingEdit",
+        "type": "object"
+      },
+      "outputSchema": {
+        "$defs": {
+          "PrototypeBindingResult": {
+            "properties": {
+              "point_key": {
+                "title": "Point Key",
+                "type": "string"
+              },
+              "point_revision_id": {
+                "title": "Point Revision Id",
+                "type": "string"
+              },
+              "binding_id": {
+                "title": "Binding Id",
+                "type": "string"
+              },
+              "binding_version": {
+                "title": "Binding Version",
+                "type": "integer"
+              },
+              "selection_version": {
+                "title": "Selection Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "point_key",
+              "point_revision_id",
+              "binding_id",
+              "binding_version",
+              "selection_version"
+            ],
+            "title": "PrototypeBindingResult",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "data": {
+            "properties": {
+              "point_key": {
+                "title": "Point Key",
+                "type": "string"
+              },
+              "point_revision_id": {
+                "title": "Point Revision Id",
+                "type": "string"
+              },
+              "binding_id": {
+                "title": "Binding Id",
+                "type": "string"
+              },
+              "binding_version": {
+                "title": "Binding Version",
+                "type": "integer"
+              },
+              "selection_version": {
+                "title": "Selection Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "point_key",
+              "point_revision_id",
+              "binding_id",
+              "binding_version",
+              "selection_version"
+            ],
+            "title": "PrototypeBindingResult",
+            "type": "object"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PrototypeBindingResult]",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     }
   ],

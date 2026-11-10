@@ -34,6 +34,15 @@ class Project(Identified, Base):
     __mapper_args__ = {"version_id_col": row_version}
 
 
+class PrototypeSettings(Base):
+    __tablename__ = "prototype_settings"
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), primary_key=True)
+    entry_page_key: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    menu_order: Mapped[list] = mapped_column(JSON, default=list)
+    row_version: Mapped[int] = mapped_column(Integer, default=1)
+    __mapper_args__ = {"version_id_col": row_version}
+
+
 class Member(Base):
     __tablename__ = "project_member"
     project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), primary_key=True)

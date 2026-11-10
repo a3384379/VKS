@@ -13,7 +13,7 @@
     "pages": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 1,
+      "maxItems": 512,
       "items": {"$ref": "#/$defs/page"}
     }
   },
@@ -52,11 +52,12 @@
     "state": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["stateKey", "name", "origin", "viewport", "anchors"],
+      "required": ["stateKey", "name", "origin", "anchors"],
+      "dependentRequired": {"surface": ["viewport"]},
       "properties": {
         "stateKey": {"$ref": "#/$defs/key"},
         "name": {"$ref": "#/$defs/label"},
-        "origin": {"const": "prototype_export"},
+        "origin": {"enum": ["prototype_export", "declared"]},
         "viewport": {
           "type": "object",
           "additionalProperties": false,

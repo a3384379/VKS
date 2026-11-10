@@ -99,6 +99,14 @@ class VersionService:
                             semantic_boundary="whole_file_java_tokens_equal_comments_or_formatting_only",
                         )
             row["entity_type"] = s.get(Entity, eid).type
+            if any(rev and rev.metadata_json.get("prototype_manifest") for rev in (a, b)):
+                row["change_scope"] = "prototype_layout"
+            elif any(rev and rev.metadata_json.get("prototype_action") for rev in (a, b)):
+                row["change_scope"] = "prototype_action"
+            elif row["entity_type"] in ("document", "section"):
+                row["change_scope"] = "document_content"
+            elif row["entity_type"] == "business_point":
+                row["change_scope"] = "business_point"
             changes.append(row)
         changed = {c["entity_id"] for c in changes}
         relations = list(s.scalars(select(Relation).where(Relation.analysis_set_id == new.id)))

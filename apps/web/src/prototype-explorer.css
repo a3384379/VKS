@@ -69,3 +69,40 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.prototype-v3-draw {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+  outline: 2px solid #2563eb;
+}
+
+.prototype-v3-editor {
+  display: grid;
+  gap: 0.75rem;
+  margin-block: 1rem;
+  padding: 1rem;
+  border: 1px solid #c8d5e7;
+  border-radius: 0.5rem;
+}
+
+.prototype-v3-editor fieldset {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.prototype-v3-editor label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.prototype-v3-editor input:not([type="checkbox"]),
+.prototype-v3-editor textarea,
+.prototype-v3-editor select {
+  max-width: 100%;
+  min-width: 0;
+}

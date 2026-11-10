@@ -32,6 +32,31 @@ PUBLIC_FIELDS = (
 )
 
 
+def filter_prototype_anchors(entities):
+    actions = {
+        (row["metadata"].get("page_key"), row["stable_key"])
+        for row in entities
+        if row["type"] == "action"
+        and row["metadata"].get("prototype_action")
+        and row["metadata"].get("status") != "removed"
+    }
+    for row in entities:
+        manifest = row["metadata"].get("prototype_manifest")
+        if row["type"] != "page" or not manifest:
+            continue
+        states = [
+            {
+                **state,
+                "anchors": [
+                    anchor for anchor in state["anchors"] if (row["stable_key"], anchor["actionKey"]) in actions
+                ],
+            }
+            for state in manifest["states"]
+        ]
+        row["metadata"] = {**row["metadata"], "prototype_manifest": {**manifest, "states": states}}
+    return entities
+
+
 def relation_is_visible(row, revision_ids, evidence_ids, *, s=None, source_allowed=False, trace_allowed=False):
     visible = (
         row["from_revision_id"] in revision_ids
@@ -248,6 +273,18 @@ def artifact_policy(s, artifact, _active=None):
             artifact_policy(s, target, active)
             if target and target.project_id == artifact.project_id and target.snapshot_id == artifact.snapshot_id
             else {"requires_source_read": True, "requires_trace_read": True}
+        )
+        source = source or current["requires_source_read"]
+        trace = trace or current["requires_trace_read"]
+    for aid in metadata.get("prototype_input_artifact_ids", []):
+        target = s.get(Artifact, aid)
+        current = (
+            artifact_policy(s, target, active)
+            if target and target.project_id == artifact.project_id
+            else {
+                "requires_source_read": True,
+                "requires_trace_read": True,
+            }
         )
         source = source or current["requires_source_read"]
         trace = trace or current["requires_trace_read"]
@@ -472,6 +509,7 @@ class ReadingService:
                     (path or "").startswith(("documents/generated-", "journeys/"))
                     or (metadata or {}).get("original_artifact_id")
                     or (metadata or {}).get("prototype_surface_artifact_ids")
+                    or (metadata or {}).get("prototype_input_artifact_ids")
                 ):
                     metadata = artifact_policy(s, s.get(Artifact, artifact_id))
                 if kind == "scenario" and scenario_trace_required(revision_metadata):
@@ -513,7 +551,12 @@ class ReadingService:
             if batch is not None:
                 query = query.where(Evidence.id.in_(batch))
             for eid, kind, sensitivity, metadata, artifact_id, path in s.execute(query):
-                if path.startswith("documents/generated-") or metadata.get("original_artifact_id"):
+                if (
+                    path.startswith("documents/generated-")
+                    or metadata.get("original_artifact_id")
+                    or metadata.get("prototype_surface_artifact_ids")
+                    or metadata.get("prototype_input_artifact_ids")
+                ):
                     metadata = artifact_policy(s, s.get(Artifact, artifact_id))
                 if self.policy_visible(kind, sensitivity, metadata, source, trace):
                     visible.add(eid)
@@ -632,7 +675,7 @@ class ReadingService:
             if not frontier:
                 break
         rows = self.revision_rows(s, selected)
-        nodes = [self.service.entity_dto(s, row, True) for row in rows]
+        nodes = filter_prototype_anchors([self.service.entity_dto(s, row, True) for row in rows])
         nodes.sort(key=lambda row: row["entity_revision_id"])
         if not extended:
             nodes = [{key: node[key] for key in PUBLIC_FIELDS} for node in nodes]
@@ -759,7 +802,7 @@ class ReadingService:
             visible = self.visible_ids(s, actor, pid, choices)
             revisions = self.revision_rows(s, visible.values())
             return {
-                "entities": [self.service.entity_dto(s, row, True) for row in revisions],
+                "entities": filter_prototype_anchors([self.service.entity_dto(s, row, True) for row in revisions]),
                 "sources": self.service._visible_sources(s, actor, pid, analysis.sources) if analysis else [],
                 "selected_analysis_set": self.service.analysis_dto(analysis) if analysis else None,
                 "selected_release": self.service.release_dto(release) if release else None,
@@ -924,10 +967,23 @@ class ReadingService:
                         continue
                     direct = (name, stable_key, path)
                     exact = any(query in value.casefold() for value in direct)
+                    searchable = metadata
+                    if prototype := metadata.get("prototype_manifest"):
+                        # Anchor positions and action keys are only discoverable
+                        # through their own authorized action projection.
+                        searchable = {
+                            **metadata,
+                            "prototype_manifest": {
+                                "routeAliases": prototype["routeAliases"],
+                                "states": [
+                                    {key: state[key] for key in ("stateKey", "name")} for state in prototype["states"]
+                                ],
+                            },
+                        }
                     if (
                         not exact
                         and query not in content.casefold()
-                        and query not in canonical(metadata).casefold()
+                        and query not in canonical(searchable).casefold()
                         and query not in canonical(locator).casefold()
                     ):
                         continue

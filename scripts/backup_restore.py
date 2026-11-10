@@ -217,9 +217,30 @@ def backup(data_dir, destination, *, database_url=None, pg_tools_container=None)
             os.link(staging, target)
         except FileExistsError:
             raise BackupError("备份目标在执行期间已被创建，未覆盖") from None
+    archive_hash = digest(target.read_bytes())
+    recorded = False
+    try:
+        with tempfile.TemporaryDirectory(prefix=".backup-status-", dir=root) as directory:
+            status = Path(directory) / "status.json"
+            status.write_bytes(
+                canonical(
+                    {
+                        "created_at": manifest["created_at"],
+                        "database_kind": kind,
+                        "archive_sha256": archive_hash,
+                    }
+                )
+            )
+            status.chmod(0o600)
+            os.replace(status, root / "backup-status.json")
+            recorded = True
+    except OSError:
+        # The archive is still usable when the source is mounted read-only.
+        pass
     return {
         "path": str(target),
-        "sha256": digest(target.read_bytes()),
+        "sha256": archive_hash,
+        "status_recorded": recorded,
         "object_count": len(keys),
         "release_count": len(manifest["release_manifests"]),
     }

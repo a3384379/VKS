@@ -48,7 +48,12 @@ def build() -> dict:
         tool["outputSchema"] = resolve_schema(tool["outputSchema"], catalog)
     extension = json.loads((CONTRACTS / "mcp_tools.v2.json").read_text())
     catalog["tools"].extend(extension["tools"])
-    catalog["schema_version"] = "2.0-dev"
+    extension_v3 = json.loads((CONTRACTS / "mcp_tools.v3.json").read_text())
+    for tool in extension_v3["tools"]:
+        for key in ("inputSchema", "outputSchema"):
+            tool[key] = resolve_schema(tool[key], tool[key])
+    catalog["tools"].extend(extension_v3["tools"])
+    catalog["schema_version"] = "3.0-dev"
 
     def extend_job_enums(value):
         if isinstance(value, dict):
@@ -58,7 +63,9 @@ def build() -> dict:
             if all(state in enum for state in ("queued", "running", "succeeded", "failed")) and "paused" not in enum:
                 enum.append("paused")
             if "page" in enum and "action" in enum and "scenario" in enum and "journey" not in enum:
-                enum.append("journey")
+                enum.extend(["journey", "business_point"])
+            if {"contains", "documents", "handler_of"} <= set(enum):
+                enum.extend(item for item in ("has_business_point", "supported_by_section") if item not in enum)
             if {"artifact", "analysis_set", "scenario", "relation", "release", "export"} <= set(enum):
                 enum[:] = [item for item in enum if item not in ("review_batch", "release_candidate")]
                 enum.extend(

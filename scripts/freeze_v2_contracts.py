@@ -11,18 +11,47 @@ sys.path.insert(0, str(ROOT / "services/api"))
 sys.path.insert(0, str(ROOT))
 
 
-def document():
+def _reachable(paths, schemas):
+    def visit(node):
+        if isinstance(node, dict):
+            ref = node.get("$ref", "")
+            if ref.startswith("#/components/schemas/"):
+                key = ref.rsplit("/", 1)[-1]
+                if key not in found:
+                    found.add(key)
+                    visit(schemas[key])
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    found = set()
+    visit(paths)
+    return found
+
+
+def document(version=2):
     from vks_api.app import create_app
 
     with tempfile.TemporaryDirectory(prefix="vks-contract-") as directory:
         app = create_app(directory, database_url="sqlite:///:memory:", enable_worker=False)
         try:
             spec = app.openapi()
+            paths = {key: value for key, value in spec["paths"].items() if key.startswith(f"/api/v{version}/")}
+            schemas = spec["components"]["schemas"]
+            v3 = {key: value for key, value in spec["paths"].items() if key.startswith("/api/v3/")}
+            old = {key: value for key, value in spec["paths"].items() if key not in v3}
+            v3_refs = _reachable(v3, schemas)
+            selected = v3_refs if version == 3 else set(schemas) - (v3_refs - _reachable(old, schemas))
             return dict(
                 openapi=spec["openapi"],
-                info={"title": "VKS additive V2 API", "version": "2.0-dev"},
-                paths={key: value for key, value in spec["paths"].items() if key.startswith("/api/v2/")},
-                components=spec["components"],
+                info={"title": f"VKS additive V{version} API", "version": f"{version}.0-dev"},
+                paths=paths,
+                components={
+                    **spec["components"],
+                    "schemas": {key: value for key, value in schemas.items() if key in selected},
+                },
             )
         finally:
             app.state.service.engine.dispose()

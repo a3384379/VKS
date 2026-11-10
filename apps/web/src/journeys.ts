@@ -14,6 +14,7 @@ export type JourneyNode = {
   x: number;
   y: number;
   binding?: { entity_id: string; revision_id: string };
+  prototype_state_key?: string;
   state_ref?: {
     scenario_id: string;
     scenario_revision_id: string;

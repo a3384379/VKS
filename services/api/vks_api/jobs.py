@@ -480,6 +480,15 @@ def execute_job(service, jid):
                     return
                 service.require(s, current_actor(service, owner, pid, s, job=job), pid, JOB_SCOPES[kind])
                 if kind == "import":
+                    if receipt := payload.get("_prototype_preview"):
+                        from .prototype import preview_fingerprint
+                        from .prototype_edit import draft, version
+
+                        principal = current_actor(service, owner, pid, s, job=job)
+                        analysis, _ = draft(s, service, principal, pid, payload["analysis_set_id"], "source:import")
+                        version(analysis.selection_version, receipt["selection_version"])
+                        if preview_fingerprint(parsed, payload, analysis.selection_version) != receipt["digest"]:
+                            raise DomainError("VKS_VERSION_CONFLICT", "导入资料与预检摘要不一致，请重新预检", 409)
                     if payload.get("_source_sync"):
                         from .source_sync import SourceSyncService
 

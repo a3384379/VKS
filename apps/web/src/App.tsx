@@ -179,6 +179,7 @@ function workspaceHash(
 }
 export default function App() {
   const workspaceRequest = useRef(0);
+  const openingProject = useRef("");
   const routeSync = useRef(new HashRouteSync(window.location.hash));
   const [routeEpoch, setRouteEpoch] = useState(0);
   const beginUserRoute = useCallback(
@@ -541,6 +542,42 @@ export default function App() {
       throw error;
     }
     if (sequence !== workspaceRequest.current) return;
+    if (openingProject.current === projectId) {
+      openingProject.current = "";
+      const entry = result.pages.find(
+        (page) => page.id === result.prototype_settings?.entry_page_id,
+      );
+      const recentKey = `vks-prototype-recent:${currentSession.actor_id}:${projectId}:${workspaceBaseline(result)}`;
+      let recent: ExplanationNavigation | null = null;
+      try {
+        recent = JSON.parse(sessionStorage.getItem(recentKey) || "null");
+      } catch {
+        /* Storage is optional. */
+      }
+      const restored =
+        recent &&
+        result.pages.find(
+          (page) => page.id === recent?.pageId && prototypeManifest(page),
+        );
+      if (entry || restored) {
+        let location: ExplanationNavigation;
+        try {
+          location = resolveExplanation(
+            result,
+            emptyNavigation,
+            restored && recent ? recent : { pageId: entry!.id, actionId: "" },
+          );
+        } catch {
+          location = resolveExplanation(result, emptyNavigation, {
+            pageId: (entry || restored)!.id,
+            actionId: "",
+          });
+        }
+        setExplanation(location);
+        setSelectedId(location.actionId);
+        setView("workbench");
+      }
+    }
     if (retainedBaseline) {
       setBaseline(retainedBaseline);
       notify(
@@ -689,6 +726,7 @@ export default function App() {
       }
       const epoch = routeSync.current.native(window.location.hash);
       if (epoch === null) return;
+      openingProject.current = "";
       setRouteEpoch(epoch);
       setView(nextView);
       setProjectId(nextProject);
@@ -959,7 +997,9 @@ export default function App() {
                 notify("草稿尚未保存，请先保存或还原本地修改", "error");
                 return;
               }
+              openingProject.current = e.target.value;
               setProjectId(e.target.value);
+              setView("overview");
               setBaseline("");
               setSelected("");
             }}
@@ -994,12 +1034,29 @@ export default function App() {
         )}
         <div className="nav-label">工作空间</div>
         <nav aria-label="主导航">
-          {primaryNavigation.map((n) => (
+          {(w?.pages.some((page) => prototypeManifest(page))
+            ? [
+                { id: "overview" as View, title: "项目空间" },
+                { id: "workbench" as View, title: "原型导览" },
+                { id: "journeys" as View, title: "业务流程" },
+                { id: "documents" as View, title: "文档" },
+                { id: "imports" as View, title: "维护" },
+                { id: "versions" as View, title: "变更与版本" },
+                { id: "settings" as View, title: "项目设置" },
+              ]
+            : primaryNavigation
+          ).map((n) => (
             <button
               key={n.id}
               aria-label={n.title}
-              className={`nav-item ${navigationGroup(view) === n.id ? "active" : ""}`}
-              aria-current={navigationGroup(view) === n.id ? "page" : undefined}
+              className={`nav-item ${view === n.id || (!w?.pages.some((page) => prototypeManifest(page)) && navigationGroup(view) === n.id) ? "active" : ""}`}
+              aria-current={
+                view === n.id ||
+                (!w?.pages.some((page) => prototypeManifest(page)) &&
+                  navigationGroup(view) === n.id)
+                  ? "page"
+                  : undefined
+              }
               onClick={() => navigate(n.id)}
             >
               {(() => {
@@ -1018,7 +1075,7 @@ export default function App() {
         )}
         <div className="sidebar-bottom">
           <div className="local-mode">
-            <span className="status-dot" /> 本地工作空间 <Tag>2.0 开发</Tag>
+            <span className="status-dot" /> 本地工作空间 <Tag>3.0</Tag>
           </div>
           <button className="help-button" onClick={() => setHelpOpen(true)}>
             <CircleHelp size={17} />
@@ -1345,7 +1402,7 @@ export default function App() {
               <ShieldCheck size={12} />
               所有知识均在所选版本中查询
             </span>
-            <span>知境 VKS · 2.0 开发预览</span>
+            <span>知境 VKS · 3.0</span>
           </footer>
         </main>
       </div>

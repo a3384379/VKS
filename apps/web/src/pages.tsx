@@ -67,6 +67,11 @@ import { SourceManagement } from "./SourceManagement";
 import { NewDraftButton } from "./DraftActions";
 import { ArtifactImage } from "./ArtifactImage";
 import { PrototypeExplorer } from "./PrototypeExplorer";
+import { PrototypeReferences } from "./PrototypeReferences";
+import {
+  InstanceBackupStatus,
+  PrototypeProjectSettings,
+} from "./PrototypeProjectSettings";
 import { prototypeManifest } from "./prototype";
 import { workspaceBaseline } from "./workspace-baseline";
 import { HotspotEditor, HotspotSurface } from "./HotspotEditor";
@@ -1262,6 +1267,12 @@ export function Documents() {
         action={<Link2 size={18} />}
       >
         <ReadScope>
+          {section && (
+            <PrototypeReferences
+              key={section.entity_revision_id}
+              section={section}
+            />
+          )}
           <BusinessReferences entityId={current.entity_id || current.id} />
         </ReadScope>
         <div className="current-chapter">
@@ -1871,6 +1882,8 @@ export function Settings() {
       ) : activeTab === "项目资料" ? (
         <>
           <ProjectProfile />
+          <PrototypeProjectSettings />
+          <InstanceBackupStatus />
         </>
       ) : activeTab === "项目模块" ? (
         <ModuleTree />

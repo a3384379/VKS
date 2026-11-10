@@ -11,6 +11,8 @@ build:
 	npm run build
 check: test build
 contracts:
+	uv run python scripts/freeze_v2_contracts.py
+	uv run python scripts/freeze_v3_contracts.py
 	uv run python scripts/build_contracts.py
 demo:
 	uv run python scripts/build_demo.py

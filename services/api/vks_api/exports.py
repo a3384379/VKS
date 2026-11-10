@@ -190,12 +190,7 @@ def export_locator(evidence):
 def reimport_bundle(service, s, release, capabilities, rows, relations, evidence):
     from .knowledge import SourceSnapshot, document_origin
     from .reading import artifact_policy
-    from .service import DomainError
-
-    if any(
-        rev.metadata_json.get("prototype_manifest") or rev.metadata_json.get("prototype_action") for _, rev, _ in rows
-    ):
-        raise DomainError("VKS_STATE_CONFLICT", "原型画面暂不支持可回导知识包，请使用原始资料包或实例备份", 409)
+    from .prototype_export import add_prototypes, portable_points
 
     # Destination identities cannot reproduce all model input permissions.
     # Omit derived wording rather than mislabel its input scope as evidence.
@@ -214,7 +209,17 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
     project = s.get(Project, release.project_id)
     baseline = "export-" + release.id.replace("-", "")
     files, records, art_rows, paths = {}, [], {}, {}
-    candidate_artifacts = {art.id: art for _, _, art in rows if art}
+    reconstructed = {
+        art.id
+        for entity, rev, art in rows
+        if art
+        and (
+            rev.metadata_json.get("prototype_manifest")
+            or rev.metadata_json.get("prototype_action")
+            or entity.type == "business_point"
+        )
+    }
+    candidate_artifacts = {art.id: art for _, _, art in rows if art and art.id not in reconstructed}
     selected_artifacts = set(candidate_artifacts)
     document_sources = {
         art.id: document_origin(s, rev) for entity, rev, art in rows if entity.type == "document" and art
@@ -226,7 +231,8 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             if original and _document_key(original.relative_path) == entity.stable_key:
                 document_paths[art.id] = original.relative_path
     for ev in evidence.values():
-        candidate_artifacts[ev.artifact_id] = s.get(Artifact, ev.artifact_id)
+        if ev.artifact_id not in reconstructed:
+            candidate_artifacts[ev.artifact_id] = s.get(Artifact, ev.artifact_id)
     for art in candidate_artifacts.values():
         policy = artifact_policy(s, art)
         if not allow_artifact(art, capabilities, s) or policy.get("requires_trace_read"):
@@ -262,10 +268,36 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
         }
         records.append(record)
         art_rows[art.id] = art
+
+    def add_file(path, raw, kind, source, media, sensitivity):
+        if path in files:
+            if files[path] != raw:
+                raise ValueError("Exported prototype object conflicts")
+            # Deduplicated material preserves its most restrictive classification.
+            if sensitivity == "confidential":
+                next(row for row in records if row["path"] == path)["sensitivity"] = sensitivity
+        else:
+            files[path] = raw
+            records.append(
+                {
+                    "source_id": source,
+                    "kind": kind,
+                    "path": path,
+                    "sha256": digest(raw),
+                    "size_bytes": len(raw),
+                    "media_type": media,
+                    "sensitivity": sensitivity,
+                }
+            )
+        return {"path": path, "sha256": digest(raw)}
+
+    identity = {"schemaVersion": "1.0", "projectKey": project.key, "baselineKey": baseline}
+    prototypes, raster_refs = add_prototypes(service, s, rows, capabilities, add_file, identity)
     page_refs = {}
     for entity, revision, artifact in rows:
         if (
             entity.type != "page"
+            or revision.metadata_json.get("prototype_manifest")
             or not artifact
             or not allow_artifact(artifact, capabilities)
             or artifact.metadata_json.get("requires_trace_read")
@@ -335,6 +367,20 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
     selected_entities = []
     source_by_path = {row["path"]: row["source_id"] for row in records}
     for entity, rev, art in rows:
+        if rev.metadata_json.get("prototype_manifest") or rev.metadata_json.get("prototype_action"):
+            ref = raster_refs.get(entity.stable_key)
+            if ref:
+                key_by_revision[rev.id] = entity.stable_key
+                selected_entities.append(
+                    {
+                        "artifactPath": ref["path"],
+                        "sha256": ref["sha256"],
+                        "logicalKey": entity.stable_key,
+                        "entityType": entity.type,
+                        "sourceId": source_by_path[ref["path"]],
+                    }
+                )
+            continue
         if entity.type == "action":
             if rev.metadata_json.get("status") == "removed":
                 continue
@@ -410,6 +456,42 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             }
         )
         return {"path": path, "sha256": digest(raw)}
+
+    point_rows, point_bindings, point_policy, selected_points = portable_points(
+        s,
+        rows,
+        relations,
+        {
+            rev.id: key_by_revision[rev.id]
+            for entity, rev, _ in rows
+            if entity.type == "section" and rev.id in key_by_revision
+        },
+        {
+            rev.id: key_by_revision[rev.id]
+            for entity, rev, _ in rows
+            if entity.type == "action" and rev.metadata_json.get("prototype_action") and rev.id in key_by_revision
+        },
+        capabilities,
+    )
+    point_ref = None
+    if point_rows:
+        point_ref = add_sidecar(
+            "export/business-points.json",
+            "fixture",
+            {**identity, "points": point_rows, "bindings": point_bindings},
+            sensitivity=point_policy,
+        )
+        for rid, (entity, _, _) in selected_points.items():
+            key_by_revision[rid] = entity.stable_key
+            selected_entities.append(
+                {
+                    "artifactPath": point_ref["path"],
+                    "sha256": point_ref["sha256"],
+                    "logicalKey": entity.stable_key,
+                    "entityType": "business_point",
+                    "sourceId": "export-metadata",
+                }
+            )
 
     for entity, revision, _ in rows:
         if entity.type == "journey":
@@ -517,7 +599,9 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             old = source_metadata.get(source_id, {})
             source = {
                 "source_id": source_id,
-                "role": old.get("role", "documentation"),
+                "role": "prototype"
+                if any(ref["path"] == f"export/prototypes/{source_id}.json" for ref in prototypes)
+                else old.get("role", "documentation"),
                 "provider": "local",
                 "root": ".",
                 "content_sha256": source_digest([r for r in records if r["source_id"] == source_id]),
@@ -534,6 +618,8 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             "artifacts": records,
             "uiManifest": ui_ref,
             "selectionManifest": selection_ref,
+            **({"prototypeManifests": prototypes} if prototypes else {}),
+            **({"businessPointsManifest": point_ref} if point_ref else {}),
             "analysis_origin": "manual",
             # A default-deny artifact can never become an opt-in on export.
             "allow_platform_llm": bool(art_rows)

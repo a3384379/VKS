@@ -33,8 +33,8 @@ def test_mcp_contracts_are_self_contained_and_do_not_approve():
     original = json.loads((ROOT / "packages/contracts/mcp_tools.json").read_text())
     assert len(original["tools"]) == 18
     assert {t["name"] for t in original["tools"]} <= {t["name"] for t in catalog["tools"]}
-    assert len(catalog["tools"]) == 23
-    assert len({t["name"] for t in catalog["tools"]}) == 23
+    assert len(catalog["tools"]) == 25
+    assert len({t["name"] for t in catalog["tools"]}) == 25
     for tool in catalog["tools"]:
         Draft202012Validator.check_schema(tool["inputSchema"])
         Draft202012Validator.check_schema(tool["outputSchema"])
@@ -54,3 +54,14 @@ def test_v2_openapi_snapshot_and_journey_contract_match_runtime():
     assert all(path.startswith('/api/v2/') for path in frozen['paths'])
     from vks_api.task_planning import PLAN_SCHEMA
     assert json.loads((root / 'knowledge_plan.schema.json').read_text()) == PLAN_SCHEMA
+
+
+
+def test_v3_http_and_mcp_contracts_match_runtime():
+    from scripts.freeze_v3_contracts import document, mcp_document
+
+    root = ROOT / "packages/contracts"
+    frozen = json.loads((root / "openapi_3.0.json").read_text())
+    assert frozen == document(3)
+    validate(frozen)
+    assert json.loads((root / "mcp_tools.v3.json").read_text()) == mcp_document()

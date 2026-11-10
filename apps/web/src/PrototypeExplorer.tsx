@@ -1,10 +1,24 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
+import { api } from "./api";
+import {
+  PrototypeBindingEditor,
+  PrototypeStateEditor,
+} from "./PrototypeMaintenance";
 import { Button, Notice, Panel } from "./components";
-import { useWorkspace } from "./context";
-import type {
-  PrototypeAnchor,
-  PrototypeManifest,
-  PrototypeState,
+import { usePermission, useWorkspace } from "./context";
+import {
+  prototypeApi,
+  prototypeScope,
+  type PrototypeAnchor,
+  type PrototypeContext,
+  type PrototypeManifest,
+  type PrototypeState,
 } from "./prototype";
 import type { Entity } from "./types";
 import "./prototype-explorer.css";
@@ -30,6 +44,7 @@ function PrototypeSurface({
   actions,
   selected,
   onSelect,
+  onDraw,
 }: {
   state: PrototypeState;
   url: string;
@@ -37,12 +52,22 @@ function PrototypeSurface({
   actions: Map<string, Entity>;
   selected?: string;
   onSelect: (anchor: PrototypeAnchor) => void;
+  onDraw?: (rect: PrototypeAnchor["rect"]) => void;
 }) {
   const [view, setView] = useState(() => savedView(viewKey));
   const [image, setImage] = useState<"loading" | "loaded" | "failed">(
     "loading",
   );
   const scroll = useRef<HTMLDivElement>(null);
+  const start = useRef<[number, number] | null>(null);
+  function position(event: PointerEvent<HTMLDivElement>): [number, number] {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const clamp = (value: number) => Math.max(0, Math.min(1, value));
+    return [
+      clamp((event.clientX - bounds.left) / bounds.width),
+      clamp((event.clientY - bounds.top) / bounds.height),
+    ];
+  }
   useLayoutEffect(() => {
     if (scroll.current && image === "loaded") {
       const saved = savedView(viewKey);
@@ -66,6 +91,7 @@ function PrototypeSurface({
     setView(value);
     save(value);
   }
+  const viewport = state.viewport;
   const anchors = state.anchors.filter((anchor) =>
     actions.has(anchor.actionKey),
   );
@@ -90,7 +116,7 @@ function PrototypeSurface({
           </Button>
         </div>
       )}
-      {!url ? (
+      {!url || !viewport ? (
         <Notice>该状态画面待补充</Notice>
       ) : image === "failed" ? (
         <Notice tone="red">
@@ -114,9 +140,9 @@ function PrototypeSurface({
           <div
             className="prototype-v3-frame"
             style={{
-              width: state.viewport.width,
+              width: viewport.width,
               maxWidth: view.fit ? "100%" : undefined,
-              aspectRatio: state.viewport.width + " / " + state.viewport.height,
+              aspectRatio: viewport.width + " / " + viewport.height,
             }}
           >
             <img
@@ -125,7 +151,34 @@ function PrototypeSurface({
               onLoad={() => setImage("loaded")}
               onError={() => setImage("failed")}
             />
+            {image === "loaded" && onDraw && (
+              <div
+                className="prototype-v3-draw"
+                aria-label="拖拽绘制热区"
+                onPointerDown={(event) => {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  start.current = position(event);
+                }}
+                onPointerCancel={() => {
+                  start.current = null;
+                }}
+                onPointerUp={(event) => {
+                  if (!start.current) return;
+                  const [x, y] = start.current;
+                  start.current = null;
+                  const [left, top] = position(event);
+                  if (Math.abs(left - x) > 0.003 && Math.abs(top - y) > 0.003)
+                    onDraw([
+                      Math.min(left, x),
+                      Math.min(top, y),
+                      Math.abs(left - x),
+                      Math.abs(top - y),
+                    ]);
+                }}
+              />
+            )}
             {image === "loaded" &&
+              !onDraw &&
               view.hotspots &&
               anchors.map((anchor) => {
                 const [x, y, width, height] = anchor.rect.map(
@@ -178,6 +231,23 @@ export function PrototypeExplorer({
 }) {
   const { w, session, explanation, navigateExplanation, navigate } =
     useWorkspace();
+  const canEdit =
+    usePermission("knowledge:edit") &&
+    !w.selected_release &&
+    w.selected_analysis_set?.state === "draft";
+  const [editor, setEditor] = useState(false);
+  const [drawing, setDrawing] = useState(false);
+  const [drawn, setDrawn] = useState<{
+    surface: string;
+    rect: PrototypeAnchor["rect"];
+  } | null>(null);
+  const [pageSearch, setPageSearch] = useState("");
+  const [showOutdated, setShowOutdated] = useState(false);
+  const [response, setResponse] = useState<{
+    key: string;
+    data?: PrototypeContext;
+    error?: string;
+  } | null>(null);
   const focusState = useRef<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const state =
@@ -209,44 +279,59 @@ export function PrototypeExplorer({
     anchor && (state === trigger || (state === target && target?.surface))
       ? selectedAction
       : undefined;
-  const selectedRevision = selected?.entity_revision_id;
-  const sections = new Map(
-    w.entities
-      .filter((row) => row.type === "section")
-      .map((row) => [row.entity_revision_id, row]),
-  );
-  const explanations = selectedRevision
-    ? w.relations.flatMap((relation) => {
-        if (
-          relation.from_revision_id !== selectedRevision ||
-          (relation.relation_type || relation.type) !== "documents" ||
-          relation.excluded ||
-          relation.validity_status !== "valid" ||
-          !relation.evidence_ids.length
-        )
-          return [];
-        const section = sections.get(relation.to_revision_id);
-        return section ? [{ section, relation }] : [];
-      })
-    : [];
   const releaseId = w.selected_release?.id;
   const analysisId = w.selected_analysis_set?.id;
-  const query = new URLSearchParams({
-    page_revision_id: page.entity_revision_id,
-  });
-  if (releaseId) query.set("release_id", releaseId);
-  else if (analysisId) query.set("analysis_set_id", analysisId);
+  const root = prototypeApi(w.project.id);
+  const contextQuery = prototypeScope(w);
+  contextQuery.set("page_key", page.stable_key);
+  contextQuery.set("trigger_state_key", trigger?.stateKey || "");
+  contextQuery.set("policy", "all");
+  const contextUrl =
+    selected && trigger && (releaseId || analysisId)
+      ? `${root}/actions/${encodeURIComponent(selected.stable_key)}/context?${contextQuery}`
+      : "";
+  const contextKey = `${contextUrl}:${w.selected_analysis_set?.selection_version}:${selected?.entity_revision_id}`;
+  const context = response?.key === contextKey ? response : null;
+  const points =
+    context?.data?.points.filter(
+      (point) => showOutdated || point.validity === "valid",
+    ) || [];
+  const documents =
+    context?.data?.documents.filter(
+      (source) => showOutdated || source.validity === "valid",
+    ) || [];
+  const hasOutdated =
+    context?.data?.points.some(
+      (point) =>
+        point.validity !== "valid" ||
+        point.sources.some((source) => source.validity !== "valid"),
+    ) || context?.data?.documents.some((source) => source.validity !== "valid");
+  useEffect(() => {
+    if (!contextUrl) return;
+    const request = new AbortController();
+    api<PrototypeContext>(contextUrl, { signal: request.signal }).then(
+      (data) => {
+        if (!request.signal.aborted) setResponse({ key: contextKey, data });
+      },
+      (error: Error) => {
+        if (!request.signal.aborted)
+          setResponse({ key: contextKey, error: error.message });
+      },
+    );
+    return () => request.abort();
+  }, [contextKey, contextUrl]);
+  const imageQuery = prototypeScope(w);
+  imageQuery.set("page_revision_id", page.entity_revision_id);
   const url =
     state.surface && (releaseId || analysisId)
-      ? "/api/v3/projects/" +
-        encodeURIComponent(w.project.id) +
-        "/prototype/pages/" +
-        encodeURIComponent(page.stable_key) +
-        "/states/" +
-        encodeURIComponent(state.stateKey) +
-        "/image?" +
-        query
+      ? `${root}/pages/${encodeURIComponent(page.stable_key)}/states/${encodeURIComponent(state.stateKey)}/image?${imageQuery}`
       : "";
+  const showSource = (id: string, revisionId: string) => {
+    const row = w.entities.find(
+      (row) => row.id === id && row.entity_revision_id === revisionId,
+    );
+    if (row) navigate("documents", row);
+  };
   const viewKey =
     "vks-prototype-view:" +
     JSON.stringify([
@@ -256,6 +341,10 @@ export function PrototypeExplorer({
       page.entity_revision_id,
       state.stateKey,
     ]);
+  useLayoutEffect(() => {
+    setDrawn(null);
+    setDrawing(false);
+  }, [viewKey]);
   useLayoutEffect(() => {
     if (focusState.current === state.stateKey) {
       focusState.current = null;
@@ -286,6 +375,15 @@ export function PrototypeExplorer({
     <div className="prototype-v3">
       <div>
         <div className="prototype-v3-tools">
+          {w.pages.length > 10 && (
+            <label>
+              筛选页面
+              <input
+                value={pageSearch}
+                onChange={(event) => setPageSearch(event.target.value)}
+              />
+            </label>
+          )}
           <label>
             原型页面{" "}
             <select
@@ -299,11 +397,19 @@ export function PrototypeExplorer({
                 })
               }
             >
-              {w.pages.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
+              {w.pages
+                .filter(
+                  (row) =>
+                    row.id === page.id ||
+                    `${row.name} ${row.stable_key} ${JSON.stringify(row.metadata.prototype_manifest)}`
+                      .toLowerCase()
+                      .includes(pageSearch.toLowerCase()),
+                )
+                .map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.name}
+                  </option>
+                ))}
             </select>
           </label>
           <label>
@@ -326,9 +432,22 @@ export function PrototypeExplorer({
               ))}
             </select>
           </label>
+          {canEdit && (
+            <Button
+              aria-pressed={editor}
+              onClick={() => {
+                setEditor(!editor);
+                setDrawing(false);
+                setDrawn(null);
+              }}
+            >
+              {editor ? "退出维护" : "维护页面与动作"}
+            </Button>
+          )}
           <small>
-            原型导出 · {state.viewport.width} × {state.viewport.height} · DPR{" "}
-            {state.viewport.devicePixelRatio}
+            {state.viewport
+              ? `${state.viewport.width} × ${state.viewport.height} · DPR ${state.viewport.devicePixelRatio}`
+              : "已登记原型目录"}
           </small>
         </div>
         <h2 ref={heading} tabIndex={-1}>
@@ -339,27 +458,98 @@ export function PrototypeExplorer({
           {...{ state, url, viewKey, actions }}
           selected={selected?.stable_key}
           onSelect={activate}
+          onDraw={
+            editor && drawing
+              ? (rect) => setDrawn({ surface: viewKey, rect })
+              : undefined
+          }
         />
+        {canEdit && editor && (
+          <PrototypeStateEditor
+            key={"editor:" + viewKey}
+            {...{ page, state, manifest, actions, drawing, setDrawing }}
+            drawn={drawn?.surface === viewKey ? drawn.rect : null}
+          />
+        )}
       </div>
       <Panel className="prototype-v3-context" title="业务说明">
         <h3>{selected?.name || page.name}</h3>
         {selected && target && !target.surface && (
           <Notice>该动作的目标状态画面待补充，继续显示当前状态。</Notice>
         )}
+        {hasOutdated && (
+          <Button
+            aria-pressed={showOutdated}
+            onClick={() => setShowOutdated(!showOutdated)}
+          >
+            {showOutdated ? "隐藏待核对关联" : "查看待核对关联"}
+          </Button>
+        )}
         {!selected ? (
           <p>选择画布中的控件或下方的动作查看业务说明。</p>
-        ) : !explanations.length ? (
+        ) : context?.error ? (
+          <Notice tone="red">{context.error}</Notice>
+        ) : !context?.data ? (
+          <p role="status">正在加载业务说明…</p>
+        ) : !points.length && !documents.length ? (
           <p>当前可见范围内暂无关联说明。</p>
         ) : (
-          explanations.map(({ section, relation }) => (
-            <section key={relation.id}>
-              <h4>{section.name}</h4>
-              <p>{section.content?.slice(0, 400)}</p>
-              <Button onClick={() => navigate("documents", section)}>
-                查看原文 · {section.name}
-              </Button>
-            </section>
-          ))
+          <>
+            {points.map((point) => (
+              <section key={point.binding_id}>
+                <h4>{point.title}</h4>
+                {point.validity !== "valid" && (
+                  <Notice>这条关联需要重新定位。</Notice>
+                )}
+                <p>{point.summary}</p>
+                {point.applicability && <p>适用条件　{point.applicability}</p>}
+                {point.outcome && <p>结果与影响　{point.outcome}</p>}
+                {point.exceptions && <p>例外　{point.exceptions}</p>}
+                {!point.sources.length && <small>维护说明 · 暂无原文</small>}
+                {point.sources
+                  .filter(
+                    (source) => showOutdated || source.validity === "valid",
+                  )
+                  .map((source) => (
+                    <Button
+                      key={source.section_revision_id}
+                      onClick={() =>
+                        showSource(
+                          source.section_id,
+                          source.section_revision_id,
+                        )
+                      }
+                    >
+                      {source.validity === "valid" ? "查看原文" : "出处待核对"}{" "}
+                      · {source.title}
+                    </Button>
+                  ))}
+              </section>
+            ))}
+            {documents.map((source) => (
+              <section key={source.section_revision_id}>
+                <h4>{source.title}</h4>
+                <p>{source.excerpt}</p>
+                <Button
+                  onClick={() =>
+                    showSource(source.section_id, source.section_revision_id)
+                  }
+                >
+                  {source.validity === "valid" ? "查看原文" : "出处待核对"} ·{" "}
+                  {source.title}
+                </Button>
+              </section>
+            ))}
+          </>
+        )}
+        {canEdit && editor && selected && trigger && (
+          <PrototypeBindingEditor
+            key={selected.entity_revision_id + trigger.stateKey}
+            page={page}
+            action={selected}
+            state={trigger}
+            points={context?.data?.points || []}
+          />
         )}
       </Panel>
     </div>

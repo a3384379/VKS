@@ -4,10 +4,10 @@
 
 V2 HTTP 使用 `v2_contracts.py` 模型；通过 `VKS_DATA_DIR=<隔离目录> uv run python scripts/freeze_v2_contracts.py` 冻结到 `openapi_2.0.json`。当前完整 HTTP 定义可从运行实例 `/openapi.json` 获取。
 
-MCP 构建器合并 18 个基础工具与 5 个 V2 工具，执行 `uv run python scripts/build_contracts.py` 生成自包含 `mcp_tools.resolved.json`。`save_knowledge_snapshot` 直接保存固定版本；`request_capture` 直接使用分析版本、场景修订和环境引用；关系策略为 `valid` / `outdated` / `all`。Web/MCP 共用服务与权限，输入、输出和引用继续严格校验。
+MCP 构建器合并 18 个基础工具、5 个 V2 工具与 2 个 V3 工具。执行 `make contracts` 冻结 HTTP 定义并生成自包含的 `mcp_tools.resolved.json`。项目知识的读取和直接保存沿用现有权限。`get_prototype_action_context` 和 `save_business_point_binding` 使用 V3 HTTP 端点，分别读取精确版本的动作说明与保存带草稿版本的关联。
 
 `scenario.schema.json` 定义有限声明式浏览器步骤和讲解图，保留 role、expected_results、disabled 断言及 wait_until。导入材料仅作为数据；原始字节、逻辑身份、不可变修订、证据和来源范围分别保存，不执行来源脚本。历史不可变定义中的审批注记仅在读取时兼容，不产生新审批状态。
 
-3.0 M1 资料包可通过根清单的 `prototypeManifest` 引用 `fixture` 类型的 JSON 侧车。结构由 `prototype_manifest.schema.json` 定义。原始 PNG 使用同来源的 `screenshot` 制品记录，现有 `bindings` 可将声明的动作直接关联到准确章节。
+3.0 资料包可通过 `prototypeManifest` 或 `prototypeManifests` 引用 `prototype_manifest.schema.json` 描述的侧车。侧车中的 PNG 必须属于同来源，且原字节、像素尺寸、视口和状态引用均可校验。可回导包可包含 `businessPointsManifest`，以同包的原文、动作和状态重建证据。
 
-`GET /api/v3/projects/{pid}/prototype/pages/{page_key}/states/{state_key}/image` 需要准确的 `page_revision_id` 和互斥的 `analysis_set_id` 或 `release_id`。成功返回 `image/png` 的原始字节。修订变动返回 409，当前范围无可读取的画面返回 404。HTTP 定义见运行实例的 `/openapi.json`。MCP 继续使用既有工具契约。
+V3 HTTP 定义见 `openapi_3.0.json`。读取选择准确 `analysis_set_id` 或 `release_id`。图像接口还需要 `page_revision_id`。导入确认、热区及业务点保存使用 `If-Match` 和 `Idempotency-Key`，以当前草稿的 `selection_version` 作为并发条件。

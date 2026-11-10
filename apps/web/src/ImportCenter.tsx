@@ -49,6 +49,7 @@ export function ImportCenter() {
       ? w.selected_analysis_set?.id || ""
       : "",
   );
+  const receiptKey = useRef("");
   const input = useRef<HTMLInputElement>(null),
     generation = useRef(0);
   const drafts = w.analysis_sets.filter(
@@ -132,14 +133,19 @@ export function ImportCenter() {
       }
       const details = importDetails(incoming[0].name, kind)!;
       const report = await api<Preflight>(
-        `/projects/${w.project.id}/imports/preflight`,
+        kind === "prototype"
+          ? `/api/v3/projects/${w.project.id}/prototype/import-previews`
+          : `/projects/${w.project.id}/imports/preflight`,
         mutation(
           "POST",
-          importPayload(kind, ids, analysisId, details.prototype_mode),
+          kind === "prototype"
+            ? { analysis_set_id: analysisId, artifact_id: ids[0] }
+            : importPayload(kind, ids, analysisId, details.prototype_mode),
         ),
       );
       if (sequence !== generation.current) return;
       setHandles(ids);
+      receiptKey.current = crypto.randomUUID();
       setPreflight(report);
     } catch (e) {
       if (sequence === generation.current) setError((e as Error).message);
@@ -153,11 +159,26 @@ export function ImportCenter() {
     const job = await run(
       () =>
         api<Job>(
-          `/projects/${w.project.id}/imports`,
-          mutation(
-            "POST",
-            importPayload(kind, handles, analysisId, detail.prototype_mode),
-          ),
+          kind === "prototype"
+            ? `/api/v3/projects/${w.project.id}/prototype/imports`
+            : `/projects/${w.project.id}/imports`,
+          kind === "prototype"
+            ? {
+                method: "POST",
+                body: JSON.stringify({
+                  analysis_set_id: analysisId,
+                  artifact_id: handles[0],
+                  preview_digest: preflight?.preview_digest,
+                }),
+                headers: {
+                  "If-Match": String(preflight?.selection_version),
+                  "Idempotency-Key": receiptKey.current,
+                },
+              }
+            : mutation(
+                "POST",
+                importPayload(kind, handles, analysisId, detail.prototype_mode),
+              ),
         ),
       "导入任务已提交，结果和问题清单在任务中心保留",
     );
@@ -192,7 +213,8 @@ export function ImportCenter() {
             action={<Tag value="static">只读采集与导入</Tag>}
           >
             <p className="section-description">
-              上传资料包，或直接导入文档、接口规范和原型。保留原始字节，不运行来源项目脚本。
+              上传资料包，或直接导入文档、接口规范、原型和云收费离线
+              HTML。系统保留原始文件。
             </p>
             <div className="source-tabs import-kind-tabs">
               {types.map((t) => (
@@ -351,7 +373,24 @@ export function ImportCenter() {
                     <span>能力与问题提示</span>
                   </div>
                 </div>
-                {preflight.issues?.map((issue, i) => (
+                {preflight.operations &&
+                typeof preflight.operations === "object" ? (
+                  <p>
+                    新增{" "}
+                    {String(
+                      (preflight.operations as Record<string, number>).added,
+                    )}{" "}
+                    · 更新{" "}
+                    {String(
+                      (preflight.operations as Record<string, number>).updated,
+                    )}{" "}
+                    · 复用{" "}
+                    {String(
+                      (preflight.operations as Record<string, number>).reused,
+                    )}
+                  </p>
+                ) : null}
+                {preflight.issues?.slice(0, 20).map((issue, i) => (
                   <Notice key={i} tone="amber">
                     {issueText(issue)}
                   </Notice>

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vks:contracts:business-points-manifest:1.0",
+  "title": "VKS portable business points",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectKey", "baselineKey", "points", "bindings"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "projectKey": {"$ref": "#/$defs/key"},
+    "baselineKey": {"$ref": "#/$defs/key"},
+    "points": {"type": "array", "maxItems": 5000, "items": {"$ref": "#/$defs/point"}},
+    "bindings": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/binding"}}
+  },
+  "$defs": {
+    "key": {"type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[a-z][a-z0-9._-]*$"},
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "title", "summary", "sections"],
+      "properties": {
+        "key": {"$ref": "#/$defs/key"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 160, "pattern": "\\S"},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"},
+        "applicability": {"type": "string", "maxLength": 2000},
+        "outcome": {"type": "string", "maxLength": 2000},
+        "exceptions": {"type": "string", "maxLength": 2000},
+        "sections": {
+          "type": "array", "maxItems": 20, "uniqueItems": true,
+          "items": {"$ref": "#/$defs/key"}
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["point", "action", "states", "priority"],
+      "properties": {
+        "point": {"$ref": "#/$defs/key"},
+        "action": {"$ref": "#/$defs/key"},
+        "states": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/key"}},
+        "priority": {"type": "integer", "minimum": 0, "maximum": 1000}
+      }
+    }
+  }
+}

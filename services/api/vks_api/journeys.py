@@ -75,6 +75,32 @@ class JourneyService:
             if kind not in allowed[node["kind"]]:
                 raise DomainError("VKS_INVALID_INPUT", "流程节点与引用类型不一致")
             references.append(row)
+            if state_key := node.get("prototype_state_key"):
+                from .prototype_read import page_state
+
+                if kind == "page":
+                    page = row
+                else:
+                    key = row.metadata_json.get("page_key")
+                    entity = s.scalar(
+                        select(Entity).where(
+                            Entity.project_id == analysis.project_id, Entity.type == "page", Entity.stable_key == key
+                        )
+                    )
+                    page = revisions.get(entity.id) if entity else None
+                if (
+                    not page
+                    or actor is not None
+                    and not self.service._visible_revision(s, actor, analysis.project_id, page)
+                ):
+                    raise DomainError("VKS_NOT_FOUND", "流程原型页不在当前可见版本", 404)
+                state = page_state(page, state_key)
+                if kind == "action" and not any(
+                    anchor["actionKey"] == s.get(Entity, row.entity_id).stable_key for anchor in state["anchors"]
+                ):
+                    raise DomainError("VKS_INVALID_INPUT", "流程动作不属于该原型状态")
+                if page.id != row.id:
+                    references.append(page)
         from .journey_replay import replay_references
 
         replay_revisions, _ = replay_references(self.service, s, actor, analysis, dsl)

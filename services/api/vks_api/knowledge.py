@@ -113,6 +113,22 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None, *, complete
         error("VKS_STATE_CONFLICT", "基线已存在且内容不同，请使用新的 baseline_key", 409)
     if a and a.state == "frozen":
         error("VKS_STATE_CONFLICT", "发布版不可写入，请先克隆为草稿", 409)
+    if (
+        a
+        and analysis_id
+        and (
+            manifest.get("prototypeManifest")
+            or any(source["source_id"] == "charge-offline-handbook" for source in bundle.sources)
+        )
+        and any(row.get("import_manifest_sha256") == fingerprint for row in a.sources)
+    ):
+        return {
+            "result_refs": [{"kind": "analysis_set", "id": a.id}],
+            "analysis_set_id": a.id,
+            "accepted_count": len(bundle.artifacts),
+            "reused": True,
+            "issues": bundle.issues,
+        }
     if not a:
         a = Analysis(
             id=uid(),
@@ -425,12 +441,19 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None, *, complete
                     for flag, required in inherited_policies[item["path"]].items()
                 },
             }
-    prototype = manifest.get("prototypeManifest")
-    if prototype:
+    prototype_refs = (
+        [manifest["prototypeManifest"]] if manifest.get("prototypeManifest") else manifest.get("prototypeManifests", [])
+    )
+    for prototype in prototype_refs:
         sidecar = artifacts[prototype["path"]]
         surfaces = {}
-        for item in bundle.entities:
-            for state in item["metadata"].get("prototype_manifest", {}).get("states", []):
+        pages = [
+            item
+            for item in bundle.entities
+            if item.get("artifact_path") == prototype["path"] and item["metadata"].get("prototype_manifest")
+        ]
+        for item in pages:
+            for state in item["metadata"]["prototype_manifest"]["states"]:
                 surface = state.get("surface")
                 if not surface:
                     continue
@@ -442,8 +465,24 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None, *, complete
             error("VKS_STATE_CONFLICT", "固定制品的类型与原型清单冲突", 409)
         # The manifest and its action/page names depend on every surface in the
         # page. Re-evaluate those same artifacts after later policy tightening.
-        if any(item["metadata"].get("prototype_manifest") for item in bundle.entities):
-            sidecar.metadata_json = dict(sidecar.metadata_json, prototype_surface_artifact_ids=sorted(surfaces))
+        if pages:
+            sidecar.metadata_json = dict(
+                sidecar.metadata_json,
+                prototype_surface_artifact_ids=sorted(
+                    set(surfaces) | set(sidecar.metadata_json.get("prototype_surface_artifact_ids", []))
+                ),
+            )
+    if point_ref := manifest.get("businessPointsManifest"):
+        point_art = artifacts[point_ref["path"]]
+        ids = {
+            artifacts[path].id for item in bundle.entities for path in item["metadata"].pop("prototype_input_paths", [])
+        }
+        point_art.metadata_json = dict(
+            point_art.metadata_json,
+            prototype_input_artifact_ids=sorted(
+                ids | set(point_art.metadata_json.get("prototype_input_artifact_ids", []))
+            ),
+        )
     entity_map = {}
     replaced = {}
     # Sections are immutable first; a document's full hash then includes their
@@ -630,6 +669,7 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None, *, complete
             evidence_ids=[evidence_map[k].id for k in item["evidence_keys"]],
             reason=item.get("reason", ""),
             row_version=1,
+            metadata_json={"prototype_scope": item["prototype_scope"]} if "prototype_scope" in item else {},
         )
         s.add(rel)
     a.selection_version += 1
@@ -677,7 +717,8 @@ class ImportService:
 
     def prepare(self, job_id=None, *, actor=None, pid=None, payload=None):
         from types import SimpleNamespace
-        from packages.analyzers.vks_ingest import _read_zip
+        from packages.analyzers.offline_prototype import offline_bundle
+        from packages.analyzers.vks_ingest import BundleError, _read_zip
         from packages.collector.snapshots import Snapshot, bundle_bytes
 
         service = self.service
@@ -727,6 +768,16 @@ class ImportService:
             suffix = PurePosixPath(name).suffix.lower()
             if name in files:
                 error("VKS_INVALID_INPUT", "上传文件名重复")
+            if import_kind == "prototype" and suffix in (".html", ".htm"):
+                try:
+                    offline = offline_bundle(raw, project_key, baseline_key)
+                except BundleError as exc:
+                    error("VKS_INVALID_INPUT", exc.message, 422, {"reason_code": exc.code, **exc.details})
+                if offline:
+                    packed, report = offline
+                    parsed = service._parse(packed, project_key)
+                    parsed.analysis_metrics["prototype_import"] = report
+                    return parsed
             if import_kind == "documents" and suffix not in (".md", ".markdown", ".json", ".yaml", ".yml"):
                 error("VKS_INVALID_INPUT", "文档支持 Markdown/OpenAPI")
             if import_kind == "prototype" and suffix == ".zip":
@@ -793,6 +844,11 @@ class ImportService:
             "issues": parsed.issues,
             "allow_platform_llm": False,
             "baseline_key": parsed.manifest["baseline_key"],
+            **(
+                {"prototype_import": parsed.analysis_metrics["prototype_import"]}
+                if "prototype_import" in parsed.analysis_metrics
+                else {}
+            ),
         }
 
 

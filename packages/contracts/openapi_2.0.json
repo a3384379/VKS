@@ -4184,6 +4184,18 @@
               }
             ]
           },
+          "prototype_state_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,95}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prototype State Key"
+          },
           "state_ref": {
             "anyOf": [
               {

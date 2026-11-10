@@ -486,7 +486,17 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         _fail("VKS_PROJECT_MISMATCH", "导入包不属于当前项目")
     result = ParsedBundle(manifest=manifest)
     partial_allowed = (
-        not any(manifest.get(field) for field in ("uiManifest", "prototypeManifest", "bindings", "selectionManifest"))
+        not any(
+            manifest.get(field)
+            for field in (
+                "uiManifest",
+                "prototypeManifest",
+                "prototypeManifests",
+                "businessPointsManifest",
+                "bindings",
+                "selectionManifest",
+            )
+        )
         and len(manifest["artifacts"]) > 1
     )
     failed_paths = set()
@@ -599,6 +609,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         ("uiManifest", "import_manifest.schema.json", "ui_manifest"),
         ("bindings", "binding_manifest.schema.json", "binding_manifest"),
         ("prototypeManifest", "prototype_manifest.schema.json", "fixture"),
+        ("businessPointsManifest", "business_points_manifest.schema.json", "fixture"),
         ("selectionManifest", "import_manifest.schema.json", "fixture"),
     ]:
         reference = manifest.get(field)
@@ -614,6 +625,21 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         if sidecar["projectKey"] != expected_project_key or sidecar["baselineKey"] != manifest["baseline_key"]:
             _fail("VKS_BASELINE_MISMATCH", "侧车清单与项目或基线不一致")
         sidecars[field] = sidecar
+    prototype_sidecars = []
+    if "prototypeManifest" in sidecars:
+        prototype_sidecars.append((manifest["prototypeManifest"]["path"], sidecars["prototypeManifest"]))
+    for reference in manifest.get("prototypeManifests", []):
+        path = safe_path(reference["path"])
+        artifact = artifacts.get(path)
+        if not artifact or artifact["kind"] != "fixture" or artifact["sha256"] != reference["sha256"]:
+            _fail("VKS_REFERENCE_INVALID", "原型侧车引用无效")
+        data = _json(artifact["content"])
+        _schema(data, "prototype_manifest.schema.json")
+        if data["projectKey"] != expected_project_key or data["baselineKey"] != manifest["baseline_key"]:
+            _fail("VKS_BASELINE_MISMATCH", "原型侧车与项目或基线不一致")
+        prototype_sidecars.append((path, data))
+    if len({data["sourceKey"] for _, data in prototype_sidecars}) != len(prototype_sidecars):
+        _fail("VKS_DUPLICATE_KEY", "原型来源在清单中重复")
     selection_artifacts = []
     for path, artifact in artifacts.items():
         if artifact["kind"] != "fixture":
@@ -780,11 +806,11 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 },
             )
         )
-    if "prototypeManifest" in sidecars:
+    if prototype_sidecars:
         from .prototype_manifest import entities as prototype_entities
 
-        path = manifest["prototypeManifest"]["path"]
-        for entity in prototype_entities(sidecars["prototypeManifest"], path, artifacts, sources):
+    for path, prototype in prototype_sidecars:
+        for entity in prototype_entities(prototype, path, artifacts, sources):
             add(entity)
             for state in entity["metadata"].get("prototype_manifest", {}).get("states", []):
                 if "surface" not in state:
@@ -796,8 +822,19 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                             "message": "声明状态没有原始画面；该动作仍可关联原文章节。",
                         }
                     )
+    if "businessPointsManifest" in sidecars:
+        from .business_points import add_points
+
+        add_points(
+            sidecars["businessPointsManifest"],
+            manifest["businessPointsManifest"]["path"],
+            artifacts,
+            entity_map,
+            add,
+            result,
+        )
     binding = sidecars.get("bindings", {"evidence": [], "bindings": []})
-    evidence_map = {}
+    evidence_map = {row["stable_key"]: row for row in result.evidence}
     for record in binding["evidence"]:
         checkpoint()
         if record["evidenceKey"] in evidence_map:

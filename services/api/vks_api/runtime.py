@@ -26,3 +26,34 @@ def status(service, session=None, project_id=None):
         "task_mode": os.getenv("VKS_TASK_MODE", "local"),
         "source_collection": "client-readonly",
     }
+
+
+def backup_status(service):
+    """Read only the local status fields needed by the instance settings view."""
+    from datetime import datetime
+    import json
+    import re
+
+    result = {}
+    for name, key, time_key, hash_key in (
+        ("backup-status.json", "backup", "created_at", "archive_sha256"),
+        ("restore-report.json", "restore", "restored_at", "source_sha256"),
+    ):
+        path = service.data_dir / name
+        if path.is_symlink():
+            continue
+        try:
+            with path.open("rb") as report:
+                payload = json.loads(report.read(1024 * 1024))
+            timestamp = payload[time_key]
+            digest = payload[hash_key]
+            database = payload["database_kind"]
+            if (
+                datetime.fromisoformat(timestamp).tzinfo
+                and re.fullmatch(r"[a-f0-9]{64}", digest)
+                and database in ("sqlite", "postgres")
+            ):
+                result[key] = {"timestamp": timestamp, "database_kind": database, "sha256": digest}
+        except (OSError, ValueError, TypeError, KeyError, RecursionError):
+            continue
+    return result
