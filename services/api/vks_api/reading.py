@@ -242,6 +242,15 @@ def artifact_policy(s, artifact, _active=None):
             .limit(1)
         ):
             source, trace = True, True
+    for aid in metadata.get("prototype_surface_artifact_ids", []):
+        target = s.get(Artifact, aid)
+        current = (
+            artifact_policy(s, target, active)
+            if target and target.project_id == artifact.project_id and target.snapshot_id == artifact.snapshot_id
+            else {"requires_source_read": True, "requires_trace_read": True}
+        )
+        source = source or current["requires_source_read"]
+        trace = trace or current["requires_trace_read"]
     original = metadata.get("original_artifact_id")
     if original:
         target = s.get(Artifact, original)
@@ -462,6 +471,7 @@ class ReadingService:
                 if artifact_id and (
                     (path or "").startswith(("documents/generated-", "journeys/"))
                     or (metadata or {}).get("original_artifact_id")
+                    or (metadata or {}).get("prototype_surface_artifact_ids")
                 ):
                     metadata = artifact_policy(s, s.get(Artifact, artifact_id))
                 if kind == "scenario" and scenario_trace_required(revision_metadata):

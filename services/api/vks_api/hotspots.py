@@ -150,6 +150,8 @@ class HotspotService:
         revision = s.get(Revision, choice.entity_revision_id) if choice else None
         if not revision or not self.service._visible_revision(s, actor, pid, revision):
             fail("VKS_NOT_FOUND", "未找到可访问页面", 404)
+        if revision.metadata_json.get("prototype_manifest"):
+            fail("VKS_STATE_CONFLICT", "请通过原型清单维护该页面的状态与热区", 409)
         if revision.id != payload["base_page_revision_id"]:
             fail("VKS_VERSION_CONFLICT", "页面修订已变化，请重新定位", 412)
         self.service._version(revision.metadata_json.get("row_version", 1), version)

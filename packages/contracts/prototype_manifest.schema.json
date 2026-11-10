@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vks:contracts:prototype-manifest:1.0",
+  "title": "VKS 3.0 raster prototype manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectKey", "baselineKey", "sourceKey", "pages"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "projectKey": {"$ref": "#/$defs/key"},
+    "baselineKey": {"$ref": "#/$defs/key"},
+    "sourceKey": {"$ref": "#/$defs/key"},
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {"$ref": "#/$defs/page"}
+    }
+  },
+  "$defs": {
+    "key": {"type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[a-z][a-z0-9._-]*$"},
+    "label": {"type": "string", "minLength": 1, "maxLength": 160, "pattern": "\\S"},
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pageKey", "name", "defaultStateKey", "states", "actions"],
+      "properties": {
+        "pageKey": {"$ref": "#/$defs/key"},
+        "name": {"$ref": "#/$defs/label"},
+        "routeAliases": {
+          "type": "array", "maxItems": 16, "uniqueItems": true,
+          "items": {"type": "string", "maxLength": 256, "pattern": "^/[^/\\s][^\\s]*$"}
+        },
+        "defaultStateKey": {"$ref": "#/$defs/key"},
+        "states": {
+          "type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/state"}
+        },
+        "actions": {
+          "type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/action"}
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actionKey", "label"],
+      "properties": {
+        "actionKey": {"$ref": "#/$defs/key"},
+        "label": {"$ref": "#/$defs/label"}
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stateKey", "name", "origin", "viewport", "anchors"],
+      "properties": {
+        "stateKey": {"$ref": "#/$defs/key"},
+        "name": {"$ref": "#/$defs/label"},
+        "origin": {"const": "prototype_export"},
+        "viewport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height", "devicePixelRatio"],
+          "properties": {
+            "width": {"type": "integer", "minimum": 1, "maximum": 7680},
+            "height": {"type": "integer", "minimum": 1, "maximum": 7680},
+            "devicePixelRatio": {"type": "number", "minimum": 0.5, "maximum": 4}
+          }
+        },
+        "surface": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "artifactPath", "sha256"],
+          "properties": {
+            "kind": {"const": "raster"},
+            "artifactPath": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+          }
+        },
+        "anchors": {
+          "type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/anchor"}
+        }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchorKey", "actionKey", "rect"],
+      "properties": {
+        "anchorKey": {"$ref": "#/$defs/key"},
+        "actionKey": {"$ref": "#/$defs/key"},
+        "targetStateKey": {"$ref": "#/$defs/key"},
+        "rect": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {"type": "number", "minimum": 0, "maximum": 1}
+        }
+      }
+    }
+  }
+}

@@ -540,6 +540,9 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     from .hotspots import install_hotspots
 
     install_hotspots(app, service, actor, envelope, API)
+    from .prototype import install_prototype
+
+    install_prototype(app, service, actor)
     from .project_profile import install_project_profile
 
     install_project_profile(app, service, actor, envelope, API)

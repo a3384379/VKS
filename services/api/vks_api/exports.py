@@ -190,6 +190,12 @@ def export_locator(evidence):
 def reimport_bundle(service, s, release, capabilities, rows, relations, evidence):
     from .knowledge import SourceSnapshot, document_origin
     from .reading import artifact_policy
+    from .service import DomainError
+
+    if any(
+        rev.metadata_json.get("prototype_manifest") or rev.metadata_json.get("prototype_action") for _, rev, _ in rows
+    ):
+        raise DomainError("VKS_STATE_CONFLICT", "原型画面暂不支持可回导知识包，请使用原始资料包或实例备份", 409)
 
     # Destination identities cannot reproduce all model input permissions.
     # Omit derived wording rather than mislabel its input scope as evidence.

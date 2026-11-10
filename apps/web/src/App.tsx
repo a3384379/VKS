@@ -49,6 +49,7 @@ import {
   type NavigationIntent,
 } from "./navigation";
 import { hasProjectPermission } from "./permissions";
+import { prototypeManifest } from "./prototype";
 import { LoginForm } from "./LoginForm";
 import { RenderBoundary } from "./RenderBoundary";
 import { moduleWorkspace } from "./module-context";
@@ -170,6 +171,8 @@ function workspaceHash(
   if (explanation.scenarioId) query.set("scenario", explanation.scenarioId);
   if (explanation.stateKey) query.set("state", explanation.stateKey);
   if (explanation.actionId) query.set("action", explanation.actionId);
+  if (explanation.triggerStateKey)
+    query.set("trigger", explanation.triggerStateKey);
   writeJourneyNavigation(query, journey);
   if (moduleId) query.set("module", moduleId);
   return `#${query}`;
@@ -209,6 +212,7 @@ export default function App() {
     scenarioId: initial.get("scenario") || "",
     stateKey: initial.get("state") || "",
     actionId: initial.get("action") || "",
+    triggerStateKey: initial.get("trigger") || undefined,
   });
   const [journey, setJourney] = useState(() => readJourneyNavigation(initial));
   const [moduleId, setModuleId] = useState(initial.get("module") || "");
@@ -317,6 +321,13 @@ export default function App() {
             : intent,
         );
         beginUserRoute();
+        if (
+          !next.scenarioId &&
+          prototypeManifest(
+            targetWorkspace.pages.find((page) => page.id === next.pageId),
+          )
+        )
+          setBaseline(workspaceBaseline(targetWorkspace));
         explanationRef.current = next;
         setExplanation(next);
         setSelectedId(next.actionId);
@@ -645,6 +656,7 @@ export default function App() {
         (query.get("ui_page") || "") !== explanation.pageId ||
         (query.get("scenario") || "") !== explanation.scenarioId ||
         (query.get("state") || "") !== explanation.stateKey ||
+        (query.get("trigger") || "") !== (explanation.triggerStateKey || "") ||
         JSON.stringify(readJourneyNavigation(query)) !==
           JSON.stringify(journey) ||
         (query.get("module") || "") !== moduleId;
@@ -689,6 +701,7 @@ export default function App() {
         scenarioId: query.get("scenario") || "",
         stateKey: query.get("state") || "",
         actionId: query.get("action") || "",
+        triggerStateKey: query.get("trigger") || undefined,
       });
     }
     window.addEventListener("hashchange", applyLocation);
@@ -1289,7 +1302,9 @@ export default function App() {
                   <div className="v2-return-context">
                     <Button
                       onClick={() => {
-                        setSelected(explanation.actionId);
+                        if (explanation.triggerStateKey)
+                          setSelectedId(explanation.actionId);
+                        else setSelected(explanation.actionId);
                         navigate("workbench");
                       }}
                     >

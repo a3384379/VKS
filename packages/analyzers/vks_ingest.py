@@ -486,7 +486,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         _fail("VKS_PROJECT_MISMATCH", "导入包不属于当前项目")
     result = ParsedBundle(manifest=manifest)
     partial_allowed = (
-        not any(manifest.get(field) for field in ("uiManifest", "bindings", "selectionManifest"))
+        not any(manifest.get(field) for field in ("uiManifest", "prototypeManifest", "bindings", "selectionManifest"))
         and len(manifest["artifacts"]) > 1
     )
     failed_paths = set()
@@ -598,6 +598,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
     for field, schema_name, expected_kind in [
         ("uiManifest", "import_manifest.schema.json", "ui_manifest"),
         ("bindings", "binding_manifest.schema.json", "binding_manifest"),
+        ("prototypeManifest", "prototype_manifest.schema.json", "fixture"),
         ("selectionManifest", "import_manifest.schema.json", "fixture"),
     ]:
         reference = manifest.get(field)
@@ -779,6 +780,22 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 },
             )
         )
+    if "prototypeManifest" in sidecars:
+        from .prototype_manifest import entities as prototype_entities
+
+        path = manifest["prototypeManifest"]["path"]
+        for entity in prototype_entities(sidecars["prototypeManifest"], path, artifacts, sources):
+            add(entity)
+            for state in entity["metadata"].get("prototype_manifest", {}).get("states", []):
+                if "surface" not in state:
+                    result.issues.append(
+                        {
+                            "code": "VKS_PROTOTYPE_SURFACE_MISSING",
+                            "severity": "info",
+                            "artifact_path": path,
+                            "message": "声明状态没有原始画面；该动作仍可关联原文章节。",
+                        }
+                    )
     binding = sidecars.get("bindings", {"evidence": [], "bindings": []})
     evidence_map = {}
     for record in binding["evidence"]:
@@ -810,6 +827,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 not page
                 or not action
                 or action["type"] != "action"
+                or action["metadata"].get("prototype_action")
                 or action["metadata"]["page_key"] != locator["pageKey"]
                 or page["artifact_path"] != record["artifactPath"]
             ):

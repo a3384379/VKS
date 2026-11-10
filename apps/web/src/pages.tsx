@@ -56,11 +56,19 @@ import {
   issueText,
   label,
 } from "./components";
-import { ReadScope, useWorkspace, usePermission } from "./context";
+import {
+  ReadScope,
+  useWorkspace,
+  usePermission,
+  workspaceReadScope,
+} from "./context";
 import { TeamSettings } from "./TeamSettings";
 import { SourceManagement } from "./SourceManagement";
 import { NewDraftButton } from "./DraftActions";
 import { ArtifactImage } from "./ArtifactImage";
+import { PrototypeExplorer } from "./PrototypeExplorer";
+import { prototypeManifest } from "./prototype";
+import { workspaceBaseline } from "./workspace-baseline";
 import { HotspotEditor, HotspotSurface } from "./HotspotEditor";
 import ScenarioStudio from "./ScenarioStudio";
 import { ObservedStateSurface } from "./CaptureResults";
@@ -100,6 +108,21 @@ function downloadable(
 export { ImportCenter as Imports } from "./ImportCenter";
 
 export function Workbench() {
+  const { w, session, explanation } = useWorkspace();
+  const page = w.pages.find((row) => row.id === explanation.pageId);
+  const manifest = prototypeManifest(page);
+  if (page && manifest && !explanation.scenarioId)
+    return (
+      <PrototypeExplorer
+        key={workspaceReadScope(w, session, workspaceBaseline(w))}
+        page={page}
+        manifest={manifest}
+      />
+    );
+  return <LegacyWorkbench />;
+}
+
+function LegacyWorkbench() {
   const {
     w,
     moduleId,

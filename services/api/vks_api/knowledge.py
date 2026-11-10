@@ -425,6 +425,25 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None, *, complete
                     for flag, required in inherited_policies[item["path"]].items()
                 },
             }
+    prototype = manifest.get("prototypeManifest")
+    if prototype:
+        sidecar = artifacts[prototype["path"]]
+        surfaces = {}
+        for item in bundle.entities:
+            for state in item["metadata"].get("prototype_manifest", {}).get("states", []):
+                surface = state.get("surface")
+                if not surface:
+                    continue
+                art = artifacts[surface["artifactPath"]]
+                if art.kind != "screenshot" or art.media_type != "image/png" or art.snapshot_id != sidecar.snapshot_id:
+                    error("VKS_STATE_CONFLICT", "固定制品的类型与声明的原型画面冲突", 409)
+                surfaces[art.id] = art
+        if sidecar.kind != "fixture":
+            error("VKS_STATE_CONFLICT", "固定制品的类型与原型清单冲突", 409)
+        # The manifest and its action/page names depend on every surface in the
+        # page. Re-evaluate those same artifacts after later policy tightening.
+        if any(item["metadata"].get("prototype_manifest") for item in bundle.entities):
+            sidecar.metadata_json = dict(sidecar.metadata_json, prototype_surface_artifact_ids=sorted(surfaces))
     entity_map = {}
     replaced = {}
     # Sections are immutable first; a document's full hash then includes their
@@ -435,13 +454,30 @@ def persist_bundle(service, s, pid, owner, bundle, analysis_id=None, *, complete
                 Entity.project_id == pid, Entity.type == item["type"], Entity.stable_key == item["stable_key"]
             )
         )
+        art = artifacts.get(item.get("artifact_path"))
+        content = item.get("content", "")
+        metadata = dict(item.get("metadata", {}))
+        if entity and item["type"] in ("page", "action"):
+            prototype_entity = bool(metadata.get("prototype_manifest") or metadata.get("prototype_action"))
+            previous = s.scalar(
+                select(Revision)
+                .where(Revision.entity_id == entity.id)
+                .order_by(Revision.created_at.desc(), Revision.id.desc())
+                .limit(1)
+            )
+            if previous:
+                prior = previous.metadata_json
+                was_prototype = bool(prior.get("prototype_manifest") or prior.get("prototype_action"))
+                if (prototype_entity or was_prototype) and (
+                    prototype_entity != was_prototype
+                    or prior.get("source_scope", {}).get("source_id") != material_sources.get(item.get("artifact_path"))
+                    or prior.get("page_key") != metadata.get("page_key")
+                ):
+                    error("VKS_STATE_CONFLICT", "原型逻辑键已属于其他页面或来源", 409)
         if not entity:
             entity = Entity(id=uid(), project_id=pid, type=item["type"], stable_key=item["stable_key"])
             s.add(entity)
             s.flush()
-        art = artifacts.get(item.get("artifact_path"))
-        content = item.get("content", "")
-        metadata = dict(item.get("metadata", {}))
         if art:
             source_key = material_sources[item["artifact_path"]]
             if source_key in incoming_scopes:
