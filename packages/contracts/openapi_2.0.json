@@ -2181,6 +2181,103 @@
         ],
         "title": "Comparison"
       },
+      "ConnectionForm": {
+        "properties": {
+          "connection_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Id"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "openai",
+              "deepseek",
+              "qwen",
+              "custom"
+            ],
+            "title": "Provider",
+            "default": "openai"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Name",
+            "default": ""
+          },
+          "endpoint": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Endpoint"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "responses",
+              "chat_completions"
+            ],
+            "title": "Protocol",
+            "default": "responses"
+          },
+          "model_id": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Model Id",
+            "default": ""
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "max_output_tokens": {
+            "type": "integer",
+            "maximum": 16000.0,
+            "minimum": 100.0,
+            "title": "Max Output Tokens",
+            "default": 2500
+          },
+          "daily_token_limit": {
+            "type": "integer",
+            "maximum": 100000000.0,
+            "minimum": 1000.0,
+            "title": "Daily Token Limit",
+            "default": 100000
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "allow_external": {
+            "type": "boolean",
+            "title": "Allow External",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "endpoint"
+        ],
+        "title": "ConnectionForm"
+      },
       "ConnectorInput": {
         "properties": {
           "key": {
@@ -4459,6 +4556,18 @@
       },
       "PolicyInput": {
         "properties": {
+          "connection_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Id"
+          },
           "enabled": {
             "type": "boolean",
             "title": "Enabled",
@@ -4486,7 +4595,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "pattern": "^model-default$"
+                "pattern": "^(model-default|model-connection-[0-9a-f-]{36})$"
               },
               {
                 "type": "null"

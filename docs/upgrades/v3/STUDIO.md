@@ -54,10 +54,19 @@ D2 的完整 3.0 仍按 P1–P5 推进：完整文档渲染共用、段落与文
 
 旧 Web 和截图导览保留已有版本能力，历史结果见实施及验证记录的 D1 部分。此交付验证原 HTML 与知识关联的可体验闭环，尚未宣称完整 3.0 或真实收费业务验收完成。
 
-## 在项目页面配置已有 API Key
+## 手册式 AI 连接设置
 
-Studio 顶部的“AI 设置”可填写已有的 API Key、接口地址、协议和模型名称。保存 Key 前，页面显示本机实例数据目录中的 `model-credentials.json`，用户勾选确认位置后才提交。只有当前实例管理员可以保存密钥；接口及审计返回配置状态，不返回密钥值。文件原子写入且权限为 0600，服务启动重新加载，损坏的可选凭据不阻止普通知识工作台启动。
+Studio 顶部“AI 设置”按原手册的交互重做：选择服务商和回答模型、查询当前 Key 可见模型、选择回答长度、测试所选模型，最后统一“保存并使用”。
 
-Key 保存后填写可用模型 ID，设置是否启用模型及是否允许必要内容发送至模型服务，再保存项目策略。开发启动脚本默认登记 OpenAI 官方出站来源，并支持加载 `.env.local`；现有 `VKS_MODEL_API_KEY` 环境配置继续兼容。密钥已配置不代表真实调用已验证。服务端管理密钥的依据见 [OpenAI API 身份验证文档](https://developers.openai.com/api/reference/overview#authentication)。
+- 服务商预设包含 OpenAI、DeepSeek、阿里云百炼和自定义兼容接口。预设自动填写地址、协议与模型；具体账户权限以服务返回和测试结果为准。
+- 模型使用可搜索的下拉框。可获取账户模型、保留当前选择，或手动填写服务提供的精确模型 ID。百炼的工作区域名使用其原生目录接口；其他兼容服务使用 `/models`。
+- “我的连接”保存多个连接与模型选择。切换连接恢复原配置；不同连接按准确端点保存独立凭据。原有 OpenAI Key 继续保留，不向其他服务商自动转发。
+- 回答长度提供 1,500、2,500、4,000、8,000 token 预设。更多设置内维护每日预算及内容发送范围。
+- “测试连接”只发送固定的测试消息，会产生少量模型用量，不发送项目文档。它校验基础文本生成，结构化输出等能力仍需功能任务验证。
+- 地址、协议、连接名称和预算按需展开。Key 在本机后端保存，返回值和审计不含密钥。保存新连接时，本机管理员可在页面登记 HTTPS 服务地址，仍沿用固定 IP、重定向及保留地址限制。
 
-本次配置入口只补齐模型接入；控件的 AI 自动关联、AI 功能讲解、右键菜单及对应快捷键尚未在此版本中实现，继续作为当前开发任务推进。
+连接的非秘密设置存入新增的 `model_connection` 表；当前项目模型策略引用所选连接。凭据在实例的 `model-credentials.json` 中以不可变引用保存，文件为 0600。SQLite 自动新增表；PostgreSQL 使用 Alembic 迁移 `m26fdb805243`。
+
+实现参考用户手册中的模型下拉、账户模型查询和模型测试，并核对 [OpenAI 模型目录](https://developers.openai.com/api/docs/models)、[OpenAI 模型查询](https://developers.openai.com/api/reference/resources/models/methods/list)、[DeepSeek 接口](https://api-docs.deepseek.com/api/list-models/) 及 [百炼兼容接口](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)、[百炼模型目录](https://help.aliyun.com/zh/model-studio/list-models)。预设不表示已对每一家服务完成真实验收。
+
+模型接入已完成；控件的 AI 自动关联、AI 功能讲解、右键菜单及对应快捷键继续作为当前开发任务推进。

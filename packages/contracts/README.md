@@ -15,3 +15,5 @@ V3 HTTP 定义见 `openapi_3.0.json`。读取选择准确 `analysis_set_id` 或 
 混合导入预检传 `artifact_ids`，返回 `202` 和任务 ID。预检任务结果包含 `preview_digest`、`selection_version` 及按资料划分的映射、问题和可选范围。确认传 `preview_id`、`preview_digest`、`analysis_set_id`、`selected_artifact_ids`。原单件预检及确认仍接受 `artifact_id`。项目菜单设置可提交 `menu_groups`，菜单分页返回当前可见页面的 `group_name`。
 
 D2 P0 的 Studio HTTP 增量使用 `/api/v3/projects/{pid}/interactive`，请求与响应由 `interactive.py` 的 Pydantic 模型冻结。新入口复用当前业务点及章节保存服务；原始包按准确版本及完整资料权限读取。当前 MCP 工具目录保持既有工具，新 Studio 增量工具随 D2 后续批次交付。
+
+模型连接配置通过 `/api/v1/projects/{pid}/model-connections` 统一保存与切换，`/models` 查询当前输入或已保存连接的模型目录，`/test` 发起固定消息的预算内测试。连接输入由 `ConnectionForm` 校验，模型策略增加所选连接 ID 和隔离凭据引用；旧 `model-default` 继续兼容，密钥不进入连接 DTO、数据库策略或审计响应。

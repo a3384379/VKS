@@ -26,6 +26,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from services.browser_runner.network import NetworkDenied, NetworkPolicy, origin
 
 from .models import Analysis, Artifact, Base, Entity, Identified, Job, Project, uid
+from .model_connections import ModelConnection  # noqa: F401 - register mapped table
 from .service import DomainError
 
 
@@ -101,11 +102,12 @@ class Input(BaseModel):
 
 
 class PolicyInput(Input):
+    connection_id: str | None = Field(default=None, max_length=96)
     enabled: bool = False
     protocol: str = Field(default="responses", pattern=r"^(responses|chat_completions)$")
     endpoint: str = Field(default="", max_length=2048)
     model_id: str = Field(default="", max_length=160)
-    secret_ref: str | None = Field(default=None, pattern=r"^model-default$")
+    secret_ref: str | None = Field(default=None, pattern=r"^(model-default|model-connection-[0-9a-f-]{36})$")
     allow_external: bool = False
     allow_source: bool = False
     max_input_tokens: int = Field(default=12000, ge=1000, le=128000)
@@ -189,7 +191,9 @@ def request_model(config, body):
             p, ip, port = policy.resolve(url)
         except (NetworkDenied, ValueError):
             failure("VKS_INVALID_INPUT", "模型端点解析或出站策略拒绝请求")
-        key = os.getenv("VKS_MODEL_API_KEY", "") if config.get("secret_ref") == "model-default" else ""
+        from .model_credentials import key_for_ref
+
+        key = key_for_ref(config.get("secret_ref"), config["endpoint"])
         if config.get("secret_ref") and not key:
             failure("VKS_DEPENDENCY_UNAVAILABLE", "模型凭证引用未配置", 503)
     # From connection construction onward any unclassified error is uncertain.
@@ -238,13 +242,20 @@ class AiService:
             pass
 
     def get_policy(self, actor, pid):
+        from .model_credentials import key_for_ref
+
         with self.service.db() as s:
             self.service.require(s, actor, pid, "project:manage")
             p = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
             return {
                 "row_version": p.row_version if p else 1,
                 **(p.settings if p else PolicyInput().model_dump()),
-                "configured_secret": bool(os.getenv("VKS_MODEL_API_KEY")),
+                "configured_secret": bool(
+                    key_for_ref(
+                        (p.settings if p else {}).get("secret_ref", "model-default"),
+                        (p.settings if p else {}).get("endpoint", ""),
+                    )
+                ),
             }
 
     def set_policy(self, actor, pid, settings, version):
@@ -826,4 +837,7 @@ def install_ai(app, service, actor, envelope, API="/api/v1"):
     def usage(pid: str, request: Request, a=Depends(actor)):
         return envelope(request, ai.usage(a, pid))
 
+    from .model_connections import install_connections
+
+    install_connections(app, service, actor, envelope)
     return ai

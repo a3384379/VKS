@@ -1,6 +1,7 @@
 """Public capability flags are implementation/configuration facts, not acceptance claims."""
 
 import os
+
 from sqlalchemy import select
 
 
@@ -8,15 +9,19 @@ def status(service, session=None, project_id=None):
     if session is None:
         with service.db() as s:
             return status(service, s, project_id)
-    from .oauth import OAuthIssuer
     from .ai_gateway import ModelPolicy, endpoint_policy
+    from .oauth import OAuthIssuer
 
     policy = session.scalar(select(ModelPolicy).where(ModelPolicy.project_id == project_id)) if project_id else None
     model_enabled = False
     if policy and policy.settings.get("enabled"):
         try:
             endpoint_policy(policy.settings)
-            model_enabled = not policy.settings.get("secret_ref") or bool(os.getenv("VKS_MODEL_API_KEY"))
+            from .model_credentials import key_for_ref
+
+            model_enabled = not policy.settings.get("secret_ref") or bool(
+                key_for_ref(policy.settings.get("secret_ref"), policy.settings["endpoint"])
+            )
         except Exception:
             model_enabled = False
     return {
@@ -30,9 +35,9 @@ def status(service, session=None, project_id=None):
 
 def backup_status(service):
     """Read only the local status fields needed by the instance settings view."""
-    from datetime import datetime
     import json
     import re
+    from datetime import datetime
 
     result = {}
     for name, key, time_key, hash_key in (
