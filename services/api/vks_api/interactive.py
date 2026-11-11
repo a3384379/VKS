@@ -121,6 +121,9 @@ class InteractiveBindingOutput(Input):
     package_id: str
     target: DOMTarget
     sections: list[InteractiveCitation]
+    scope: str = "control"
+    origin: str = "manual"
+    model_id: str = ""
 
 
 class InteractiveSaved(Input):
@@ -294,11 +297,14 @@ class InteractiveKnowledgeService:
                         "package_id": meta["package_id"],
                         "target": meta["target"],
                         "sections": citations,
+                        "scope": "module" if meta["target"].get("selector") == "body" else "control",
+                        "origin": point.metadata_json.get("origin", "manual"),
+                        "model_id": point.metadata_json.get("model_id", ""),
                     }
                 )
             return out
 
-    def save(self, actor, pid, form, expected, key):
+    def save(self, actor, pid, form, expected, key, *, generation=None, validate=None):
         service = self.service
         with service.db() as s:
             analysis, choices = draft(s, service, actor, pid, form.analysis_set_id, allow_frozen=True)
@@ -319,6 +325,8 @@ class InteractiveKnowledgeService:
                 if analysis.state == "frozen":
                     raise DomainError("VKS_STATE_CONFLICT", "快照已冻结，请先创建草稿", 409)
                 version(analysis.selection_version, expected)
+                if validate:
+                    validate(s, analysis, choices)
                 if binding:
                     _require_edges(s, service, actor, pid, [binding])
                     version(binding.id, form.binding_id)
@@ -358,13 +366,27 @@ class InteractiveKnowledgeService:
                 )
                 edges = _edges(s, analysis, prior.id) if prior else []
                 _require_edges(s, service, actor, pid, edges)
-                point = self.editor._point_revision(s, pid, action, point_entity, prior, form, refs)
+                inputs = (
+                    [
+                        selected_id(s, service, actor, pid, choices, rid, "section")[1]
+                        for rid in generation["input_revision_ids"]
+                    ]
+                    if generation
+                    else []
+                )
+                point = self.editor._point_revision(
+                    s, pid, action, point_entity, prior, form, refs, input_revisions=inputs, generation=generation
+                )
                 _select(s, analysis, point)
                 if prior and prior.id != point.id:
                     _repoint(edges, prior, point, stale=False)
                 self.editor._citations(s, analysis, point, edges, refs)
                 ev = _evidence(s, analysis, point, s.get(Artifact, point.artifact_id))
                 saved = _write_relation(s, analysis, action, point, "has_business_point", ev, binding)
+                if generation:
+                    saved.manual_lock = False
+                    s.get(Evidence, ev).evidence_kind = "inferred"
+                    s.get(Evidence, ev).claim = "模型根据原文章节推断的控件知识关联"
                 analysis.selection_version += 1
                 s.flush()
                 service.audit(s, actor, pid, "interactive.binding.save", saved.id)
@@ -399,6 +421,9 @@ class InteractiveKnowledgeService:
 
 
 def install_interactive(app, service, actor, envelope):
+    from .interactive_ai import install_interactive_ai
+
+    install_interactive_ai(app, service, actor, envelope)
     shared = InteractiveKnowledgeService(service)
     prefix = "/api/v3/projects/{pid}/interactive"
     ActorDep = Annotated[Actor, Depends(actor)]

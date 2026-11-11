@@ -135,8 +135,30 @@ export function OriginalRuntime({
         if (
           data.type !== "command.result" ||
           data.request_id === navigationRequest
-        )
+        ) {
+          if (data.type === "context.menu" && iframe.current) {
+            const rect = iframe.current.getBoundingClientRect();
+            const p = data.payload;
+            if (
+              !Number.isFinite(p?.x) ||
+              !Number.isFinite(p?.y) ||
+              p.x < 0 ||
+              p.x > 1 ||
+              p.y < 0 ||
+              p.y > 1
+            )
+              return;
+            data = {
+              ...data,
+              payload: {
+                ...p,
+                x: rect.left + p.x * rect.width,
+                y: rect.top + p.y * rect.height,
+              },
+            };
+          }
           eventRef.current(data);
+        }
       };
       port.start();
       handle.current = { send };

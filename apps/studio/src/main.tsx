@@ -16,6 +16,8 @@ import {
   Minus,
   Plus,
   LogOut,
+  Sparkles,
+  LoaderCircle,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -55,6 +57,30 @@ type Binding = {
   sections: Citation[];
   excluded: boolean;
   validity_status: string;
+  scope?: "module" | "control";
+  origin?: string;
+  model_id?: string;
+};
+type Control = {
+  target: Target;
+  context: {
+    scope?: "module" | "control";
+    page_title: string;
+    section_title: string;
+    nearby_labels: string[];
+  };
+};
+type Assistance = {
+  title: string;
+  explanation: string;
+  unknowns: string[];
+  confidence: number;
+  model_id: string;
+  cached: boolean;
+  saved: boolean;
+  binding_id: string | null;
+  sections: Citation[];
+  selection_version: number;
 };
 type Catalog = {
   analysis_set_id: string;
@@ -159,7 +185,27 @@ function App() {
     pendingReveal = useRef<Target | null>(null),
     docEpoch = useRef(0),
     editEpoch = useRef(0),
-    loadEpoch = useRef(0);
+    loadEpoch = useRef(0),
+    selectedBinding = useRef("");
+  const [assistant, setAssistant] = useState<Assistance | null>(null),
+    [assisting, setAssisting] = useState(false),
+    [assistantMode, setAssistantMode] = useState<"documents" | "explain">(
+      "explain",
+    ),
+    [assistantError, setAssistantError] = useState(""),
+    [automatic, setAutomatic] = useState(true),
+    [moduleTitle, setModuleTitle] = useState(""),
+    [menu, setMenu] = useState<(Control & { x: number; y: number }) | null>(
+      null,
+    );
+  const moduleControl = useRef<Control | null>(null),
+    control = useRef<Control | null>(null),
+    assistEpoch = useRef(0),
+    assistAbort = useRef<AbortController | null>(null),
+    automaticTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+      undefined,
+    ),
+    menuRef = useRef<HTMLDivElement>(null);
   const prefix = `/api/v3/projects/${route.project}/interactive`,
     scope = route.release
       ? `release_id=${encodeURIComponent(route.release)}`
@@ -224,6 +270,16 @@ function App() {
   }, [auth, route.project, route.analysis, route.release, navigate]);
   useEffect(() => {
     if (!auth || !route.project || (!route.analysis && !route.release)) return;
+    assistEpoch.current++;
+    assistAbort.current?.abort();
+    clearTimeout(automaticTimer.current);
+    control.current = null;
+    moduleControl.current = null;
+    setModuleTitle("");
+    setAssistant(null);
+    setAssisting(false);
+    setAssistantError("");
+    setMenu(null);
     setCatalog(null);
     setBindings([]);
     setActive(null);
@@ -239,11 +295,30 @@ function App() {
     };
   }, [auth, route.project, route.analysis, route.release, reload]);
   useEffect(() => {
-    if (!route.binding) return;
+    if (!route.binding) {
+      selectedBinding.current = "";
+      return;
+    }
+    const changed = selectedBinding.current !== route.binding;
+    selectedBinding.current = route.binding;
     const b = bindings.find((b) => b.id === route.binding);
-    if (b) {
+    if (
+      b &&
+      (changed ||
+        !control.current ||
+        sameTarget(control.current.target, b.target))
+    ) {
       setActive(b);
       setTarget(b.target);
+      control.current = {
+        target: b.target,
+        context: {
+          scope: b.target.selector === "body" ? "module" : "control",
+          page_title: b.title,
+          section_title: "",
+          nearby_labels: [],
+        },
+      };
       setKnowledge(true);
     }
   }, [route.binding, bindings]);
@@ -307,6 +382,126 @@ function App() {
     window.addEventListener("resize", clamp);
     return () => window.removeEventListener("resize", clamp);
   }, []);
+  useEffect(() => {
+    if (!menu) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const dismiss = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenu(null);
+    };
+    window.addEventListener("pointerdown", dismiss);
+    const resize = () => setMenu(null);
+    window.addEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("resize", resize);
+    };
+  }, [menu]);
+  useEffect(() => {
+    const keys = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenu(null);
+        return;
+      }
+      if (
+        route.view !== "prototype" ||
+        !e.altKey ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.repeat ||
+        e.isComposing ||
+        (e.target as HTMLElement)?.closest(
+          "input,textarea,select,[contenteditable=true]",
+        )
+      )
+        return;
+      if (e.code === "KeyD" || e.code === "KeyA") {
+        e.preventDefault();
+        prototype.current?.send("knowledge.request", {
+          mode: e.code === "KeyD" ? "documents" : "explain",
+        });
+      }
+    };
+    window.addEventListener("keydown", keys);
+    return () => window.removeEventListener("keydown", keys);
+  }, [route.view]);
+  function chooseControl(c: Control) {
+    assistEpoch.current++;
+    assistAbort.current?.abort();
+    clearTimeout(automaticTimer.current);
+    control.current = c;
+    setAssistantMode("explain");
+    setTarget(c.target);
+    setActive(
+      bindings.find(
+        (b) =>
+          b.package_id === p?.id &&
+          sameTarget(b.target, c.target) &&
+          !b.excluded,
+      ) || null,
+    );
+    setAssistant(null);
+    setAssistantError("");
+    setAssisting(false);
+  }
+  async function assist(
+    c: Control,
+    mode: "documents" | "explain",
+    refresh = false,
+  ) {
+    if (editing || !p) {
+      setNotice("请先保存或取消当前编辑");
+      return;
+    }
+    chooseControl(c);
+    setAssistantMode(mode);
+    setMenu(null);
+    setKnowledge(true);
+    setFolded(false);
+    const existing = bindings.find(
+      (b) => b.package_id === p.id && sameTarget(b.target, c.target),
+    );
+    if (existing?.excluded) {
+      setAssistantError(
+        "此关联已被移除，自动关联不会恢复它；可在关联管理中恢复。",
+      );
+      return;
+    }
+    if (mode === "documents" && existing && !refresh) return;
+    const epoch = assistEpoch.current;
+    const controller = new AbortController();
+    assistAbort.current = controller;
+    setAssisting(true);
+    try {
+      const result = await api<Assistance>(`${prefix}/assist`, {
+        ...mutation("POST", {
+          ...(route.release
+            ? { release_id: route.release }
+            : { analysis_set_id: route.analysis }),
+          package_id: p.id,
+          target: c.target,
+          context: c.context,
+          mode,
+          refresh,
+        }),
+        signal: controller.signal,
+      });
+      if (epoch !== assistEpoch.current) return;
+      setAssistant(result);
+      setAssisting(false);
+      const updated = await reload();
+      if (epoch !== assistEpoch.current) return;
+      setActive(
+        updated?.b.find((b) => b.id === result.binding_id && !b.excluded) ||
+          existing ||
+          null,
+      );
+    } catch (e) {
+      if (epoch === assistEpoch.current && !controller.signal.aborted)
+        setAssistantError(text(e));
+    } finally {
+      if (epoch === assistEpoch.current) setAssisting(false);
+    }
+  }
   async function login(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -323,6 +518,102 @@ function App() {
     }
   }
   function onRuntime(event: RuntimeEvent) {
+    if (event.type === "context.dismiss") {
+      setMenu(null);
+      return;
+    }
+    if (
+      ["knowledge.request", "context.menu", "control.activated"].includes(
+        event.type,
+      )
+    ) {
+      const c = event.payload as Control & {
+        mode?: string;
+        x?: number;
+        y?: number;
+      };
+      if (
+        !c ||
+        !isTarget(c.target) ||
+        !c.context ||
+        typeof c.context.page_title !== "string" ||
+        typeof c.context.section_title !== "string" ||
+        !Array.isArray(c.context.nearby_labels)
+      )
+        return;
+      if (editing) {
+        if (event.type !== "control.activated")
+          setNotice("请先保存或取消当前编辑");
+        return;
+      }
+      if (event.type === "context.menu") {
+        chooseControl(c);
+        setMenu({
+          ...c,
+          x: Math.max(8, Math.min(c.x || 8, innerWidth - 292)),
+          y: Math.max(8, Math.min(c.y || 8, innerHeight - 230)),
+        });
+      } else if (event.type === "knowledge.request")
+        void assist(c, c.mode === "documents" ? "documents" : "explain");
+      else if (!pinned) {
+        chooseControl(c);
+        if (automatic && !bindings.some((b) => sameTarget(b.target, c.target)))
+          automaticTimer.current = setTimeout(
+            () => void assist(c, "documents"),
+            650,
+          );
+      }
+      return;
+    }
+    if (event.type === "context.changed") {
+      assistEpoch.current++;
+      assistAbort.current?.abort();
+      clearTimeout(automaticTimer.current);
+      setAssisting(false);
+      const c = event.payload as {
+        route?: string;
+        frame_path?: string[];
+        module?: Control;
+      };
+      const moduleChanged = !!(
+        c.module &&
+        moduleControl.current &&
+        !sameTarget(c.module.target, moduleControl.current.target)
+      );
+      if (c.module && isTarget(c.module.target)) {
+        moduleControl.current = c.module;
+        setModuleTitle(c.module.target.label);
+      }
+      if (moduleChanged && route.binding) navigate({ binding: "" }, true);
+      if (
+        !pinned &&
+        target &&
+        c.route !== target.route &&
+        JSON.stringify(c.frame_path) === JSON.stringify(target.frame_path)
+      ) {
+        setAssistant(null);
+        setAssistantError("");
+        control.current = null;
+        setActive(null);
+        setTarget(null);
+      }
+      setMenu(null);
+      if (
+        c.module &&
+        isTarget(c.module.target) &&
+        !pinned &&
+        !editing &&
+        (!route.binding || moduleChanged) &&
+        !pendingReveal.current
+      ) {
+        chooseControl(c.module);
+        if (automatic)
+          automaticTimer.current = setTimeout(
+            () => void assist(c.module!, "documents"),
+            650,
+          );
+      }
+    }
     if (event.type === "context.changed" && pendingReveal.current) {
       prototype.current?.send("target.reveal", {
         target: pendingReveal.current,
@@ -337,8 +628,15 @@ function App() {
     if (event.type !== "target.selected" && event.type !== "action.activated")
       return;
     const t = event.payload;
+    setMenu(null);
     if (!isTarget(t)) return;
     if (event.type === "target.selected") {
+      assistEpoch.current++;
+      assistAbort.current?.abort();
+      clearTimeout(automaticTimer.current);
+      setAssistant(null);
+      setAssistantError("");
+      setAssisting(false);
       setPicking(false);
       setTarget(t);
       const b = bindings.find((b) => sameTarget(b.target, t));
@@ -352,6 +650,15 @@ function App() {
       setFolded(false);
       setNotice("已选中控件，请选择文档章节并保存说明");
     } else if (!pinned && !editing) {
+      if (!target || !sameTarget(target, t)) {
+        assistEpoch.current++;
+        assistAbort.current?.abort();
+        clearTimeout(automaticTimer.current);
+        setAssistant(null);
+        setAssistantError("");
+        setAssisting(false);
+        control.current = null;
+      }
       setTarget(t);
       setActive(
         bindings.find((b) => sameTarget(b.target, t) && !b.excluded) || null,
@@ -363,18 +670,22 @@ function App() {
       setNotice("请先保存或取消当前编辑");
       return;
     }
+    assistEpoch.current++;
+    assistAbort.current?.abort();
+    clearTimeout(automaticTimer.current);
+    setAssisting(false);
     setPicking(true);
     prototype.current?.send("picker.start");
     navigate({ view: "prototype" });
     setNotice("请点击需要关联的原型控件；按 Esc 或点击取消结束");
   }
-  function openDoc(c: Citation, b: Binding) {
+  function openDoc(c: Citation, b?: Binding) {
     setOriginalBook(false);
     navigate({
       view: "documents",
       doc: c.document_revision_id,
       section: c.revision_id,
-      binding: b.id,
+      binding: b?.id || "",
     });
     setKnowledge(false);
   }
@@ -389,6 +700,11 @@ function App() {
     else pendingReveal.current = b.target;
   }
   function editBinding(b: Binding) {
+    assistEpoch.current++;
+    assistAbort.current?.abort();
+    setAssistant(null);
+    setAssistantError("");
+    setAssisting(false);
     setActive(b);
     setTarget(b.target);
     setTitle(b.title);
@@ -712,14 +1028,46 @@ function App() {
           hidden={currentView !== "prototype"}
         >
           {p ? (
-            <OriginalRuntime
-              key={p.id + scope}
-              url={`${prefix}/packages/${p.id}/content?${scope}`}
-              digest={p.sha256}
-              kind="prototype"
-              handle={prototype}
-              onEvent={onRuntime}
-            />
+            <>
+              <div className="assistant-toolbar">
+                <span>
+                  <Sparkles size={14} /> 当前模块或指向控件：<kbd>Alt D</kbd>{" "}
+                  文档 · <kbd>Alt A</kbd> AI 讲解 · 右键更多
+                </span>
+                <button
+                  disabled={!moduleTitle}
+                  title={moduleTitle || "等待模块加载"}
+                  onClick={() =>
+                    prototype.current?.send("knowledge.request", {
+                      scope: "module",
+                      mode: "documents",
+                    })
+                  }
+                >
+                  <BookOpen size={14} />
+                  模块知识
+                </button>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={automatic}
+                    onChange={(e) => {
+                      setAutomatic(e.target.checked);
+                      clearTimeout(automaticTimer.current);
+                    }}
+                  />
+                  自动关联模块与控件
+                </label>
+              </div>
+              <OriginalRuntime
+                key={p.id + scope}
+                url={`${prefix}/packages/${p.id}/content?${scope}`}
+                digest={p.sha256}
+                kind="prototype"
+                handle={prototype}
+                onEvent={onRuntime}
+              />
+            </>
           ) : (
             <div className="empty">
               <BookOpen />
@@ -953,6 +1301,82 @@ function App() {
           </section>
         )}
       </main>
+      {menu && (
+        <div
+          ref={menuRef}
+          className="control-menu"
+          role="menu"
+          aria-label="控件知识菜单"
+          style={{ left: menu.x, top: menu.y }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setMenu(null);
+              return;
+            }
+            const buttons = Array.from(
+              e.currentTarget.querySelectorAll("button"),
+            );
+            const i = buttons.indexOf(
+              document.activeElement as HTMLButtonElement,
+            );
+            if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+              e.preventDefault();
+              buttons[
+                e.key === "Home"
+                  ? 0
+                  : e.key === "End"
+                    ? buttons.length - 1
+                    : (i + (e.key === "ArrowDown" ? 1 : buttons.length - 1)) %
+                      buttons.length
+              ]?.focus();
+            }
+          }}
+        >
+          <div className="control-menu-title">
+            <MousePointer2 size={14} />
+            {menu.target.label}
+          </div>
+          <button
+            role="menuitem"
+            onClick={() => void assist(menu, "documents")}
+          >
+            <BookOpen size={16} />
+            查看关联文档<kbd>Alt D</kbd>
+          </button>
+          <button role="menuitem" onClick={() => void assist(menu, "explain")}>
+            <Sparkles size={16} />
+            AI 讲解此功能<kbd>Alt A</kbd>
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => void assist(menu, "explain", true)}
+          >
+            <Link2 size={16} />
+            重新检索与讲解
+          </button>
+          <hr />
+          <button
+            role="menuitem"
+            disabled={!catalog?.editable}
+            onClick={() => {
+              const b = bindings.find((b) => sameTarget(b.target, menu.target));
+              setMenu(null);
+              if (b) editBinding(b);
+              else {
+                setTitle(menu.target.label);
+                setSummary("");
+                setEditDocId("");
+                setSectionId("");
+                setEditing(true);
+                setKnowledge(true);
+                setFolded(false);
+              }
+            }}
+          >
+            手动补充关联
+          </button>
+        </div>
+      )}
       {knowledge && currentView !== "ai" && (
         <aside
           ref={windowRef}
@@ -1030,10 +1454,141 @@ function App() {
                 <MousePointer2 size={14} />
                 <span>{target?.label || "请选择一个原型操作"}</span>
                 <span className="pill">
-                  {editing ? "维护关联" : "当前上下文"}
+                  {editing
+                    ? "维护关联"
+                    : target?.selector === "body"
+                      ? "模块知识"
+                      : "控件知识"}
                 </span>
               </div>
+              {!editing && target && (
+                <div
+                  className="knowledge-tabs"
+                  role="tablist"
+                  aria-label="知识内容"
+                >
+                  <button
+                    role="tab"
+                    aria-selected={assistantMode === "documents"}
+                    disabled={assisting}
+                    onClick={() =>
+                      control.current &&
+                      void assist(control.current, "documents")
+                    }
+                  >
+                    相关文档
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={assistantMode === "explain"}
+                    disabled={assisting}
+                    onClick={() =>
+                      control.current && void assist(control.current, "explain")
+                    }
+                  >
+                    AI 讲解
+                  </button>
+                </div>
+              )}
               <div className="knowledge-body">
+                {!editing && assisting && (
+                  <div className="assistant-loading" role="status">
+                    <LoaderCircle size={21} className="spinning" />
+                    <b>正在检索章节并生成讲解…</b>
+                    <p>根据当前控件、页面和弹窗匹配文档</p>
+                  </div>
+                )}
+                {!editing && assistantError && (
+                  <div className="assistant-error" role="alert">
+                    <b>暂未完成关联</b>
+                    <p>{assistantError}</p>
+                    <button
+                      onClick={() =>
+                        control.current &&
+                        void assist(control.current, "explain", true)
+                      }
+                    >
+                      重试
+                    </button>
+                    <button onClick={() => navigate({ view: "ai" })}>
+                      AI 设置
+                    </button>
+                  </div>
+                )}
+                {!editing && assistant && (
+                  <section
+                    className="assistant-answer"
+                    aria-label="AI 功能讲解"
+                  >
+                    <span className="eyebrow">
+                      <Sparkles size={13} /> AI 讲解 ·{" "}
+                      {assistant.model_id || "章节检索"}
+                      {assistant.cached ? " · 已缓存" : ""}
+                    </span>
+                    <h2>{assistant.title}</h2>
+                    {assistantMode === "explain" && (
+                      <Markdown>{assistant.explanation}</Markdown>
+                    )}
+                    {assistant.unknowns.length > 0 && (
+                      <details open>
+                        <summary>尚需确认</summary>
+                        <ul>
+                          {assistant.unknowns.map((u, i) => (
+                            <li key={i}>{u}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                    <p className="assistant-provenance">
+                      {assistant.saved
+                        ? "关联已保存，可从文档跳回此控件"
+                        : assistant.confidence < 0.7
+                          ? "匹配依据不足，未自动保存关联"
+                          : "当前版本只读，讲解未写入"}
+                    </p>
+                    <h4>
+                      相关原文 <span>{assistant.sections.length}</span>
+                    </h4>
+                    {assistant.sections.map((c) => (
+                      <button
+                        key={c.revision_id}
+                        className="citation"
+                        onClick={() => openDoc(c, active || undefined)}
+                      >
+                        <FileText size={18} />
+                        <span>
+                          {c.document_name}
+                          <small>{c.name}</small>
+                        </span>
+                        <ArrowUpRight size={15} />
+                      </button>
+                    ))}
+                    {assistant.sections.length > 0 && (
+                      <details
+                        className="inline-preview"
+                        open={assistantMode === "documents"}
+                      >
+                        <summary>在小窗查看原文</summary>
+                        {assistant.sections.map((c) => (
+                          <div key={c.revision_id}>
+                            <h4>{c.name}</h4>
+                            <Markdown
+                              documentId={
+                                catalog?.documents.find(
+                                  (d) =>
+                                    d.revision_id === c.document_revision_id,
+                                )?.id
+                              }
+                              revisionId={c.document_revision_id}
+                            >
+                              {c.content}
+                            </Markdown>
+                          </div>
+                        ))}
+                      </details>
+                    )}
+                  </section>
+                )}
                 {editing ? (
                   <>
                     <label>
@@ -1116,13 +1671,20 @@ function App() {
                       </div>
                     )}
                   </>
-                ) : active && !active.excluded ? (
+                ) : assistant || assisting ? null : active &&
+                  !active.excluded ? (
                   <>
                     <div className="knowledge-title">
-                      <span className="eyebrow">业务知识</span>
+                      <span className="eyebrow">
+                        {active.origin === "model"
+                          ? "AI 自动关联 · " + active.model_id
+                          : "业务知识"}
+                      </span>
                       <h2>{active.title}</h2>
                     </div>
-                    <Markdown>{active.summary}</Markdown>
+                    {assistantMode === "explain" && (
+                      <Markdown>{active.summary}</Markdown>
+                    )}
                     <h4 className="source-label">
                       原文引用 <span>{active.sections.length}</span>
                     </h4>
@@ -1140,7 +1702,10 @@ function App() {
                         <ArrowUpRight size={15} />
                       </button>
                     ))}
-                    <details className="inline-preview">
+                    <details
+                      className="inline-preview"
+                      open={assistantMode === "documents"}
+                    >
                       <summary>在小窗查看原文</summary>
                       {active.sections.map((c) => (
                         <Markdown
@@ -1163,16 +1728,34 @@ function App() {
                       <Link2 size={27} />
                     </div>
                     <h3>
-                      {target ? "这个操作还没有关联知识" : "边操作，边查看知识"}
+                      {target?.selector === "body"
+                        ? "这个模块还没有关联知识"
+                        : target
+                          ? "这个操作还没有关联知识"
+                          : "边操作，边查看知识"}
                     </h3>
                     <p>
                       {target
-                        ? "点击“关联知识”，选择控件和文档章节，保存你的业务说明。"
-                        : "点击原页面中的按钮，已有的业务说明与引用会显示在这里。"}
+                        ? target.selector === "body"
+                          ? "AI 会检索模块职责、主要业务流程及相关文档；也可以右键页面空白处呼出。"
+                          : "右键此控件，或按 Alt + A，让 AI 检索文档并讲解功能。"
+                        : "鼠标指向按钮后，按 Alt + D 查看文档，按 Alt + A 呼出 AI 讲解，也可以右键选择。"}
                     </p>
+                    {target && (
+                      <button
+                        className="primary"
+                        onClick={() =>
+                          control.current &&
+                          void assist(control.current, "explain")
+                        }
+                      >
+                        <Sparkles size={15} />
+                        AI 自动关联并讲解
+                      </button>
+                    )}
                     <button disabled={!catalog?.editable} onClick={startPicker}>
                       <Plus size={15} />
-                      建立知识关联
+                      手动补充关联
                     </button>
                   </div>
                 )}
@@ -1200,6 +1783,17 @@ function App() {
                       <i className="status-dot" />
                       {active ? "关联已保存" : "跟随原型操作"}
                     </span>
+                    {target && (
+                      <button
+                        disabled={assisting}
+                        onClick={() =>
+                          control.current &&
+                          void assist(control.current, "explain")
+                        }
+                      >
+                        <Sparkles size={14} /> AI 讲解
+                      </button>
+                    )}
                     {active && (
                       <button
                         disabled={!catalog?.editable}
@@ -1223,4 +1817,6 @@ function App() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+const root = createRoot(document.getElementById("root")!);
+root.render(<App />);
+if (import.meta.hot) import.meta.hot.dispose(() => root.unmount());

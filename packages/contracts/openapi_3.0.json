@@ -891,6 +891,55 @@
         }
       }
     },
+    "/api/v3/projects/{pid}/interactive/assist": {
+      "post": {
+        "summary": "Assist",
+        "operationId": "assist_api_v3_projects__pid__interactive_assist_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistanceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_AssistanceOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/projects/{pid}/interactive/catalog": {
       "get": {
         "summary": "Catalog",
@@ -1467,6 +1516,146 @@
         ],
         "title": "AnchorEdit"
       },
+      "AssistanceInput": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "package_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Package Id"
+          },
+          "target": {
+            "$ref": "#/components/schemas/DOMTarget"
+          },
+          "context": {
+            "$ref": "#/components/schemas/ControlContext"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "documents",
+              "explain"
+            ],
+            "title": "Mode",
+            "default": "explain"
+          },
+          "refresh": {
+            "type": "boolean",
+            "title": "Refresh",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "target"
+        ],
+        "title": "AssistanceInput"
+      },
+      "AssistanceOutput": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "unknowns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unknowns"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "cached": {
+            "type": "boolean",
+            "title": "Cached"
+          },
+          "binding_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Id"
+          },
+          "saved": {
+            "type": "boolean",
+            "title": "Saved"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveCitation"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          },
+          "retrieval": {
+            "type": "string",
+            "title": "Retrieval",
+            "default": "章节关键词检索 + 模型关联"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "explanation",
+          "unknowns",
+          "confidence",
+          "model_id",
+          "cached",
+          "binding_id",
+          "saved",
+          "sections",
+          "selection_version"
+        ],
+        "title": "AssistanceOutput"
+      },
       "BatchConfirmation": {
         "properties": {
           "analysis_set_id": {
@@ -1644,6 +1833,43 @@
           "point_key"
         ],
         "title": "BindingEdit"
+      },
+      "ControlContext": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "control",
+              "module"
+            ],
+            "title": "Scope",
+            "default": "control"
+          },
+          "page_title": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Page Title",
+            "default": ""
+          },
+          "section_title": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Section Title",
+            "default": ""
+          },
+          "nearby_labels": {
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Nearby Labels"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ControlContext"
       },
       "DOMTarget": {
         "properties": {
@@ -1978,6 +2204,21 @@
             },
             "type": "array",
             "title": "Sections"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "default": "control"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin",
+            "default": "manual"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -2590,6 +2831,24 @@
           "availability"
         ],
         "title": "PrototypeContext"
+      },
+      "PrototypeEnvelope_AssistanceOutput_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AssistanceOutput"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[AssistanceOutput]"
       },
       "PrototypeEnvelope_ImportPreviewResult_": {
         "properties": {

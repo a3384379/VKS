@@ -103,11 +103,98 @@
       el.style.outlineOffset = offset;
     }, 2200);
   }
+  const actionable =
+    'button,a,input,select,textarea,[role="button"],[role="menuitem"],[role="tab"],[onclick],[tabindex]:not([tabindex="-1"]),label,.el-switch,.el-checkbox,.el-radio,.el-menu-item,.el-submenu__title';
+  let pointed = null,
+    currentModule = null;
+  const editable = (el) =>
+    el?.matches?.('input,textarea,select,[contenteditable="true"]') ||
+    el?.isContentEditable;
+  function context(el, doc) {
+    const container =
+      el.closest('[role="dialog"],.el-dialog,.el-drawer,.modal,.drawer') ||
+      doc.body;
+    const heading = Array.from(
+      container.querySelectorAll(
+        '.el-dialog__title,[role="heading"],h1,h2,h3,.page-title,.title',
+      ),
+    ).find(visible);
+    return {
+      page_title: (doc.title || "").trim().slice(0, 200),
+      section_title: (heading?.textContent || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, 200),
+      nearby_labels: [
+        ...new Set(
+          Array.from(container.querySelectorAll('button,[role="button"]'))
+            .filter(visible)
+            .map(label),
+        ),
+      ]
+        .slice(0, 8)
+        .map((s) => s.slice(0, 80)),
+    };
+  }
+  function selected(el, win, path, route) {
+    const current = win.__prototypePackPage?.path
+      ? "/" + win.__prototypePackPage.path.replace(/^\//, "")
+      : route;
+    return {
+      target: target(el, win, path, current),
+      context: context(el, win.document),
+    };
+  }
+  function moduleContext(win, path, route) {
+    const doc = win.document;
+    const t = target(doc.body, win, path, route);
+    t.selector = "body";
+    t.label = (
+      doc.title ||
+      doc.querySelector("h1,h2,.page-title")?.textContent ||
+      route
+        .split("/")
+        .pop()
+        ?.replace(/\.html?$/i, "") ||
+      "当前模块"
+    )
+      .trim()
+      .replace(/\s+/g, " ")
+      .slice(0, 160);
+    t.state = "";
+    t.open_steps = [];
+    return {
+      target: t,
+      context: { ...context(doc.body, doc), scope: "module" },
+    };
+  }
+  function coordinates(win, x, y) {
+    for (let depth = 0; win !== window && depth < 10; depth++) {
+      const el = win.frameElement;
+      if (!el) break;
+      const rect = el.getBoundingClientRect();
+      x =
+        rect.left +
+        el.clientLeft +
+        x * (rect.width / (el.offsetWidth || rect.width));
+      y =
+        rect.top +
+        el.clientTop +
+        y * (rect.height / (el.offsetHeight || rect.height));
+      win = win.parent;
+    }
+    return { x: x / innerWidth, y: y / innerHeight };
+  }
   function install(win, path, route) {
     let doc;
     try {
       doc = win.document;
-      if (!doc?.body || doc.readyState === "loading") return;
+      if (
+        !doc?.body ||
+        !doc.body.childElementCount ||
+        doc.readyState === "loading"
+      )
+        return;
     } catch {
       return;
     }
@@ -116,18 +203,66 @@
     windows.set(path.join("/"), { win, route, path });
     if (registered.get(doc) !== doc.documentElement) {
       registered.set(doc, doc.documentElement);
+      doc.addEventListener("load", scan, true);
+      doc.addEventListener(
+        "pointerdown",
+        (event) => {
+          if (event.button !== 2) send("context.dismiss");
+        },
+        true,
+      );
+      doc.addEventListener(
+        "focusin",
+        (event) => {
+          const el = event.target?.closest?.(actionable);
+          if (el && visible(el)) pointed = { el, win, path, route };
+        },
+        true,
+      );
+      doc.addEventListener(
+        "pointerover",
+        (event) => {
+          const el = event.target?.closest?.(actionable);
+          pointed = el && visible(el) ? { el, win, path, route } : null;
+        },
+        true,
+      );
+      doc.addEventListener(
+        "contextmenu",
+        (event) => {
+          if (event.shiftKey || picking) return;
+          const el = event.target?.closest?.(actionable);
+          if (el && !visible(el)) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          pointed = el ? { el, win, path, route } : null;
+          send("context.menu", {
+            ...(el
+              ? selected(el, win, path, route)
+              : currentModule || moduleContext(win, path, route)),
+            ...coordinates(win, event.clientX, event.clientY),
+          });
+        },
+        true,
+      );
+      doc.addEventListener("scroll", () => send("context.dismiss"), true);
       doc.addEventListener(
         "click",
         (event) => {
           const el =
             event.target?.closest?.(
-              'button,a,input,select,textarea,[role="button"],label,.el-switch,.el-checkbox,.el-radio',
+              'button,a,input,select,textarea,[role="button"],[role="menuitem"],[role="tab"],[onclick],[tabindex]:not([tabindex="-1"]),label,.el-switch,.el-checkbox,.el-radio,.el-menu-item,.el-submenu__title',
             ) || (picking ? event.target : null);
           if (!el || !visible(el)) return;
           const currentRoute = win.__prototypePackPage?.path
             ? "/" + win.__prototypePackPage.path.replace(/^\//, "")
             : route;
           const selected = target(el, win, path, currentRoute);
+          const selectedControl = {
+            target: selected,
+            context: context(el, doc),
+          };
+          pointed = { el, win, path, route };
           if (picking) {
             event.preventDefault();
             event.stopImmediatePropagation();
@@ -136,7 +271,17 @@
             send("target.selected", selected);
             return;
           }
+          if (event.altKey && !event.ctrlKey && !event.metaKey) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            send("knowledge.request", {
+              ...selectedControl,
+              mode: "documents",
+            });
+            return;
+          }
           send("action.activated", selected);
+          if (!editable(el)) send("control.activated", selectedControl);
           const old = stateOf(doc);
           setTimeout(() => {
             if (win.document !== doc) return;
@@ -154,6 +299,39 @@
       doc.addEventListener(
         "keydown",
         (event) => {
+          if (event.key === "Escape") send("context.dismiss");
+          if (
+            event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.repeat &&
+            !event.isComposing &&
+            ["KeyD", "KeyA"].includes(event.code) &&
+            !editable(doc.activeElement)
+          ) {
+            const focus = doc.activeElement?.closest?.(actionable);
+            const candidate =
+              pointed && visible(pointed.el)
+                ? pointed
+                : focus && visible(focus)
+                  ? { el: focus, win, path, route }
+                  : null;
+            if (candidate || currentModule) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              send("knowledge.request", {
+                ...(candidate
+                  ? selected(
+                      candidate.el,
+                      candidate.win,
+                      candidate.path,
+                      candidate.route,
+                    )
+                  : currentModule),
+                mode: event.code === "KeyD" ? "documents" : "explain",
+              });
+            }
+          }
           if (event.key === "Escape" && picking) {
             picking = false;
             event.preventDefault();
@@ -163,8 +341,16 @@
         },
         true,
       );
-      if (path.includes("actualPage") || path.length === 0)
-        send("context.changed", { route, frame_path: path });
+      if (path.includes("actualPage") || path.length === 0) {
+        const module =
+          (!win.__prototypePack &&
+            !doc.getElementById("prototypePackPayload")) ||
+          own?.path
+            ? moduleContext(win, path, route)
+            : null;
+        if (module) currentModule = module;
+        send("context.changed", { route, frame_path: path, module });
+      }
     }
     for (const child of doc.querySelectorAll("iframe")) {
       if (child.contentWindow)
@@ -208,7 +394,13 @@
       const find = () =>
         Array.from(current.win.document.querySelectorAll(t.selector))
           .filter(visible)
-          .filter((n) => label(n) === t.label);
+          .filter(
+            (n) =>
+              (t.selector === "body"
+                ? moduleContext(current.win, current.path, current.route).target
+                    .label
+                : label(n)) === t.label,
+          );
       for (const step of t.open_steps || []) {
         if (generation !== navigation) return;
         if (find().length) break;
@@ -219,8 +411,18 @@
         candidates[0].click();
         await new Promise((r) => setTimeout(r, 280));
       }
-      const matches = find();
-      if (matches.length === 1) el = matches[0];
+      // The host may still be committing the switch from documents to the
+      // preserved iframe. Wait for layout before declaring a locator missing.
+      for (let attempt = 0; attempt < 25; attempt++) {
+        if (generation !== navigation) return;
+        const matches = find();
+        if (matches.length === 1) {
+          el = matches[0];
+          break;
+        }
+        if (matches.length > 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
     } catch {}
     if (el) {
       glow(el);
@@ -273,6 +475,18 @@
         document.querySelector("#status").hidden = true;
         loaded = true;
         send("material.loaded");
+      } else if (data.type === "knowledge.request") {
+        const c =
+          data.payload?.scope === "module"
+            ? currentModule
+            : pointed && visible(pointed.el)
+              ? selected(pointed.el, pointed.win, pointed.path, pointed.route)
+              : currentModule;
+        if (c)
+          send("knowledge.request", {
+            ...c,
+            mode: data.payload?.mode === "documents" ? "documents" : "explain",
+          });
       } else if (data.type === "picker.start") {
         picking = true;
         send("picker.started");
@@ -285,6 +499,7 @@
     port.start();
     send("runtime.ready");
   });
+  frame.addEventListener("load", scan);
   setInterval(scan, 200);
   parent.postMessage({ type: "vks.runtime.ready", instance }, host);
 })();

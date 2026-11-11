@@ -30,7 +30,7 @@ def interactive(workspace):
     raw = (
         b'<script id="prototypePackPayload" type="application/octet-stream">'
         + b64encode(compress(payload))
-        + b"""</script><button id="add" onclick="document.querySelector('#dialog').hidden=false">Add</button><div id="dialog" role="dialog" hidden><input aria-label="Code" placeholder="Code"><button onclick="document.querySelector('#dialog').hidden=true">Close</button></div>"""
+        + b"""</script><title>&#25910;&#36153;&#39033;&#31649;&#29702;</title><script>window.__prototypePackPage={path:"page.html"};</script><button id="add" onclick="document.querySelector('#dialog').hidden=false">Add</button><div id="dialog" role="dialog" hidden><input aria-label="Code" placeholder="Code"><button onclick="document.querySelector('#dialog').hidden=true">Close</button></div>"""
     )
     payload = {
         "kind": "prototype",

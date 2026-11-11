@@ -1,5 +1,6 @@
 """A complete Studio task against synthetic HTML, an isolated API and runtime site."""
 
+import json
 import os
 import socket
 import subprocess
@@ -73,9 +74,23 @@ def test_original_interaction_links_refresh_and_runtime_isolation(interactive, w
                         source = page.frame_locator('iframe[title="原 HTML 原型"]').frame_locator("#material")
                         add = source.get_by_role("button", name="Add", exact=True)
                         expect(add).to_be_visible(timeout=30000)
+                        page.get_by_label("自动关联模块与控件").uncheck()
+                        add.click(button="right")
+                        menu = page.get_by_role("menu", name="控件知识菜单")
+                        expect(menu).to_be_visible()
+                        expect(menu.get_by_role("menuitem", name="AI 讲解此功能")).to_be_visible()
+                        page.keyboard.press("Escape")
+                        expect(menu).not_to_be_visible()
+                        add.hover()
+                        add.press("Alt+a")
+                        expect(
+                            page.get_by_text("请在 AI 设置中保存并启用模型，允许使用本项目获授权的相关内容", exact=True)
+                        ).to_be_visible()
                         add.click()
                         field = source.get_by_label("Code", exact=True)
                         expect(field).to_be_visible()
+                        field.press("Alt+a")
+                        expect(page.locator(".assistant-loading")).not_to_be_visible()
                         field.fill("Keep this value")
                         page.get_by_role("button", name="关闭知识小窗", exact=True).click()
                         expect(field).to_have_value("Keep this value")
@@ -98,6 +113,9 @@ def test_original_interaction_links_refresh_and_runtime_isolation(interactive, w
                         page.reload()
                         expect(page.locator(".knowledge-title h2")).to_have_text("Add")
                         expect(add).to_be_visible()
+                        add.hover()
+                        add.press("Alt+d")
+                        expect(page.locator(".inline-preview")).to_have_attribute("open", "")
                         add.click()
                         expect(field).to_be_visible()
                         expect(
@@ -119,6 +137,53 @@ def test_original_interaction_links_refresh_and_runtime_isolation(interactive, w
                         page.locator(".ai-provider-pills").get_by_role("button", name="DeepSeek", exact=True).click()
                         expect(page.get_by_role("button", name="保存并使用", exact=True)).to_be_disabled()
                         expect(key_field).to_have_value("")
+                        # A real application transaction, with only the external model
+                        # substituted: module links coexist with the authored Add link.
+                        from vks_api import ai_gateway
+
+                        def model(config, body):
+                            data = json.loads(body["input"][1]["content"])
+                            rows = data["chapters"]
+                            answer = {
+                                "title": "收费项模块知识"
+                                if data["context"]["scope"] == "module"
+                                else "控件：" + data["control"]["label"],
+                                "explanation": "自动生成的模块说明",
+                                "section_revision_ids": [rows[0]["revision_id"]],
+                                "confidence": 0.95,
+                                "unknowns": [],
+                            }
+                            return {
+                                "status": "completed",
+                                "usage": {"input_tokens": 100, "output_tokens": 50},
+                                "output": [
+                                    {
+                                        "type": "message",
+                                        "content": [{"type": "output_text", "text": json.dumps(answer)}],
+                                    }
+                                ],
+                            }
+
+                        monkeypatch.setattr(ai_gateway, "request_model", model)
+                        page.get_by_role("button", name="原型", exact=True).click()
+                        expect(page.get_by_role("button", name="模块知识", exact=True)).to_be_enabled()
+                        page.get_by_role("button", name="模块知识", exact=True).click()
+                        expect(page.get_by_role("region", name="AI 功能讲解")).to_contain_text("收费项模块知识")
+                        page.get_by_role("tab", name="AI 讲解", exact=True).click()
+                        expect(page.get_by_role("region", name="AI 功能讲解")).to_contain_text("自动生成的模块说明")
+                        page.locator(".knowledge-window .citation").first.click()
+                        expect(page.locator(".chapter-selected")).to_be_in_viewport()
+                        page.get_by_role("button", name="打开原型 · 收费项管理", exact=True).click()
+                        expect(page.get_by_text("已定位到 收费项管理", exact=True)).to_be_visible()
+                        page.reload()
+                        expect(page.locator(".knowledge-title h2")).to_have_text("收费项模块知识")
+                        page.get_by_label("自动关联模块与控件").check()
+                        add.click()
+                        expect(field).to_be_visible()
+                        source.get_by_role("button", name="Close", exact=True).click()
+                        expect(field).not_to_be_visible()
+                        expect(page.get_by_role("region", name="AI 功能讲解")).to_contain_text("控件：Close")
+                        expect(page.locator(".assistant-provenance")).to_contain_text("关联已保存")
                     finally:
                         browser.close()
             finally:

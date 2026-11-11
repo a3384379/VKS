@@ -675,13 +675,13 @@ class PrototypeEditor:
             _require_edges(s, service, actor, pid, [current])
             return result
 
-    def _point_revision(self, s, pid, action, entity, prior, form, refs):
+    def _point_revision(self, s, pid, action, entity, prior, form, refs, *, input_revisions=(), generation=None):
         old = s.get(Artifact, prior.artifact_id) if prior else None
         original = s.get(Artifact, action.artifact_id)
         provenance = {
             row["revision_id"]: row for row in (old.metadata_json.get("input_revision_provenance", []) if old else [])
         }
-        for row in refs:
+        for row in [*refs, *input_revisions]:
             provenance[row.id] = {
                 "revision_id": row.id,
                 "entity_id": row.entity_id,
@@ -705,6 +705,7 @@ class PrototypeEditor:
         meta = {
             "original_artifact_id": (old.metadata_json.get("original_artifact_id") or old.id) if old else original.id,
             "input_revision_provenance": [provenance[key] for key in sorted(provenance)],
+            **({"interactive_generation": generation} if generation else {}),
         }
         art = _artifact(
             s,
@@ -724,7 +725,10 @@ class PrototypeEditor:
             wording["title"],
             wording["summary"],
             {"kind": "file", "relative_path": art.relative_path},
-            {key: wording[key] for key in ("applicability", "outcome", "exceptions")},
+            {
+                **{key: wording[key] for key in ("applicability", "outcome", "exceptions")},
+                **({k: generation[k] for k in ("origin", "model_id", "confidence")} if generation else {}),
+            },
         )
 
     @staticmethod
