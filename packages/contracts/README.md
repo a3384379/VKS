@@ -13,3 +13,5 @@ MCP 构建器合并 18 个基础工具、5 个 V2 工具与 2 个 V3 工具。�
 V3 HTTP 定义见 `openapi_3.0.json`。读取选择准确 `analysis_set_id` 或 `release_id`。图像接口还需要 `page_revision_id`。导入确认、热区及业务点保存使用 `If-Match` 和 `Idempotency-Key`，以当前草稿的 `selection_version` 作为并发条件。
 
 混合导入预检传 `artifact_ids`，返回 `202` 和任务 ID。预检任务结果包含 `preview_digest`、`selection_version` 及按资料划分的映射、问题和可选范围。确认传 `preview_id`、`preview_digest`、`analysis_set_id`、`selected_artifact_ids`。原单件预检及确认仍接受 `artifact_id`。项目菜单设置可提交 `menu_groups`，菜单分页返回当前可见页面的 `group_name`。
+
+D2 P0 的 Studio HTTP 增量使用 `/api/v3/projects/{pid}/interactive`，请求与响应由 `interactive.py` 的 Pydantic 模型冻结。新入口复用当前业务点及章节保存服务；原始包按准确版本及完整资料权限读取。当前 MCP 工具目录保持既有工具，新 Studio 增量工具随 D2 后续批次交付。

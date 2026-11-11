@@ -543,6 +543,9 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     from .prototype import install_prototype
 
     install_prototype(app, service, actor, envelope)
+    from .interactive import install_interactive
+
+    install_interactive(app, service, actor, envelope)
     from .project_profile import install_project_profile
 
     install_project_profile(app, service, actor, envelope, API)
