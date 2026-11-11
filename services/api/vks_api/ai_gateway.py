@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import Depends, Header, Request
 from jsonschema import Draft202012Validator
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy import JSON, ForeignKey, Integer, String, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -116,6 +116,11 @@ class PolicyInput(Input):
     input_rate_micro_per_million: int = Field(default=0, ge=0, le=100000000000)
     output_rate_micro_per_million: int = Field(default=0, ge=0, le=100000000000)
     timezone: str = Field(default="Asia/Shanghai", max_length=80)
+
+
+class CredentialInput(Input):
+    api_key: SecretStr
+    confirm_local_storage: bool = False
 
 
 class ModelNotSent(DomainError):
@@ -224,6 +229,13 @@ def request_model(config, body):
 class AiService:
     def __init__(self, service):
         self.service = service
+        from .model_credentials import load_credential
+
+        try:
+            load_credential(service)
+        except DomainError:
+            # Optional model credentials must not prevent opening the workspace.
+            pass
 
     def get_policy(self, actor, pid):
         with self.service.db() as s:
@@ -660,11 +672,12 @@ class AiService:
         return result
 
     def finalize_document(self, s, job, result):
-        from .knowledge import persist_bundle
-        from .jobs import current_actor
-        from .models import Entity, Relation
-        from packages.collector.snapshots import Snapshot, bundle_bytes
         from packages.analyzers.vks_ingest import parse_bundle
+        from packages.collector.snapshots import Snapshot, bundle_bytes
+
+        from .jobs import current_actor
+        from .knowledge import persist_bundle
+        from .models import Entity, Relation
 
         actor = current_actor(self.service, job.created_by, job.project_id, s, job=job)
         self.service.require(s, actor, job.project_id, "knowledge:edit")
@@ -788,6 +801,18 @@ class AiService:
 
 def install_ai(app, service, actor, envelope, API="/api/v1"):
     ai = AiService(service)
+
+    @app.get(API + "/projects/{pid}/model-credential")
+    def credential(pid: str, request: Request, a=Depends(actor)):
+        from .model_credentials import credential_status
+
+        return envelope(request, credential_status(service, a, pid))
+
+    @app.post(API + "/projects/{pid}/model-credential")
+    def update_credential(pid: str, payload: CredentialInput, request: Request, a=Depends(actor)):
+        from .model_credentials import save_credential
+
+        return envelope(request, save_credential(service, a, pid, payload.api_key, payload.confirm_local_storage))
 
     @app.get(API + "/projects/{pid}/model-policy")
     def policy(pid: str, request: Request, a=Depends(actor)):

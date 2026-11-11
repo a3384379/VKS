@@ -27,6 +27,7 @@ import { api, mutation, setCsrf } from "../../web/src/api";
 import { OriginalRuntime, isTarget } from "./runtime";
 import type { Target, RuntimeEvent, RuntimeHandle } from "./runtime";
 import "./style.css";
+import { AISettings } from "./AISettings";
 
 type DocRef = { id: string; revision_id: string; name: string; path: string };
 type Chapter = {
@@ -578,6 +579,7 @@ function App() {
             ["prototype", "原型"],
             ["documents", "文档"],
             ["links", "关联管理"],
+            ["ai", "AI 设置"],
           ].map(([v, l]) => (
             <button
               key={v}
@@ -632,7 +634,9 @@ function App() {
               ? "原始交互"
               : currentView === "documents"
                 ? "知识文档"
-                : "关联管理"}
+                : currentView === "ai"
+                  ? "AI 设置"
+                  : "关联管理"}
           </span>
           <ChevronRight size={13} />
           <span>
@@ -640,7 +644,9 @@ function App() {
               ? target?.label || "在原页面操作，即可查看相关知识"
               : currentView === "documents"
                 ? viewDoc?.name || "独立阅读与章节关联"
-                : `${bindings.filter((b) => !b.excluded).length} 条有效关联`}
+                : currentView === "ai"
+                  ? "配置本项目的模型连接"
+                  : `${bindings.filter((b) => !b.excluded).length} 条有效关联`}
           </span>
         </div>
         <div>
@@ -695,7 +701,12 @@ function App() {
           </button>
         </div>
       )}
-      <main className={"workspace " + (knowledge && docked ? "with-dock" : "")}>
+      <main
+        className={
+          "workspace " +
+          (knowledge && docked && currentView !== "ai" ? "with-dock" : "")
+        }
+      >
         <section
           className="prototype-space"
           hidden={currentView !== "prototype"}
@@ -878,6 +889,9 @@ function App() {
             />
           </section>
         )}
+        {currentView === "ai" && (
+          <AISettings key={route.project} project={route.project} />
+        )}
         {currentView === "links" && (
           <section className="links-space">
             <span className="eyebrow">知识与业务操作</span>
@@ -939,7 +953,7 @@ function App() {
           </section>
         )}
       </main>
-      {knowledge && (
+      {knowledge && currentView !== "ai" && (
         <aside
           ref={windowRef}
           aria-label="知识小窗"

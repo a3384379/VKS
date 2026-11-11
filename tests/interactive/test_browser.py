@@ -20,7 +20,8 @@ interactive = test_knowledge.interactive
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_original_interaction_links_refresh_and_runtime_isolation(interactive, workspace, tmp_path):
+def test_original_interaction_links_refresh_and_runtime_isolation(interactive, workspace, tmp_path, monkeypatch):
+    monkeypatch.delenv("VKS_MODEL_API_KEY", raising=False)
     _, _, _, pid, aid, _, _, _, _ = interactive
     app = workspace[0]
     runtime = ThreadingHTTPServer(("127.0.0.1", 0), RuntimeHandler)
@@ -102,6 +103,19 @@ def test_original_interaction_links_refresh_and_runtime_isolation(interactive, w
                         expect(
                             page.get_by_text("Persistent knowledge entered through Studio", exact=True)
                         ).to_be_visible()
+                        # Only synthetic values enter this temporary API instance.
+                        page.get_by_role("button", name="AI 设置", exact=True).click()
+                        key_field = page.get_by_label("OpenAI API Key", exact=True)
+                        expect(key_field).to_be_visible()
+                        key_field.fill("synthetic-browser-credential-not-a-real-key")
+                        page.get_by_text("确认将密钥保存到上述本机文件，供本实例的 AI 功能使用", exact=True).check()
+                        page.get_by_role("button", name="保存本机 Key", exact=True).click()
+                        expect(page.get_by_text("本机已配置密钥", exact=True)).to_be_visible()
+                        expect(key_field).to_have_value("")
+                        assert "synthetic-browser-credential" not in page.locator("body").inner_text()
+                        page.get_by_label("模型名称", exact=True).fill("synthetic-model")
+                        page.get_by_role("button", name="保存 AI 设置", exact=True).click()
+                        expect(page.get_by_text("AI 设置已保存。", exact=True)).to_be_visible()
                     finally:
                         browser.close()
             finally:
