@@ -136,6 +136,14 @@ def test_project_packages_stage_replace_disable_and_exact_snapshot(materials):
     p, d = install(service, owner, manager, pid, aid)
     original = selected(service, owner, pid, aid)
     assert len(original["packages"]) == 2 and len(original["documents"]) == 1
+    with service.db() as s:
+        from sqlalchemy import select
+        from vks_api.knowledge import SourceSnapshot
+
+        assert all(
+            row.source_key.startswith("material.")
+            for row in s.scalars(select(SourceSnapshot).where(SourceSnapshot.project_id == pid))
+        )
     bind(service, owner, pid, aid, p)
     snapshot = manager.checkpoint(owner, pid, aid, "原始完整版本", uid())
     with service.db() as s:

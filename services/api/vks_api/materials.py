@@ -468,7 +468,7 @@ class MaterialService:
         snapshot = s.scalar(
             select(SourceSnapshot).where(
                 SourceSnapshot.project_id == pid,
-                SourceSnapshot.source_key == package.id,
+                SourceSnapshot.source_key == "material." + package.id,
                 SourceSnapshot.provider_revision == fingerprint,
             )
         )
@@ -476,7 +476,7 @@ class MaterialService:
             snapshot = SourceSnapshot(
                 id=uid(),
                 project_id=pid,
-                source_key=package.id,
+                source_key="material." + package.id,
                 provider="local",
                 provider_revision=fingerprint,
                 content_sha256=fingerprint,
@@ -581,7 +581,7 @@ class MaterialService:
                     "section_count": len(chapters),
                     "material_package_id": package.id,
                     "material_path": path,
-                    "logical_source_key": package.id,
+                    "logical_source_key": "material." + package.id,
                 },
             )
             members.extend([document.id, *[c.id for c in chapters]])
