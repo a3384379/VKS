@@ -271,15 +271,6 @@
             send("target.selected", selected);
             return;
           }
-          if (event.altKey && !event.ctrlKey && !event.metaKey) {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            send("knowledge.request", {
-              ...selectedControl,
-              mode: "documents",
-            });
-            return;
-          }
           send("action.activated", selected);
           if (!editable(el)) send("control.activated", selectedControl);
           const old = stateOf(doc);
@@ -300,38 +291,6 @@
         "keydown",
         (event) => {
           if (event.key === "Escape") send("context.dismiss");
-          if (
-            event.altKey &&
-            !event.ctrlKey &&
-            !event.metaKey &&
-            !event.repeat &&
-            !event.isComposing &&
-            ["KeyD", "KeyA"].includes(event.code) &&
-            !editable(doc.activeElement)
-          ) {
-            const focus = doc.activeElement?.closest?.(actionable);
-            const candidate =
-              pointed && visible(pointed.el)
-                ? pointed
-                : focus && visible(focus)
-                  ? { el: focus, win, path, route }
-                  : null;
-            if (candidate || currentModule) {
-              event.preventDefault();
-              event.stopImmediatePropagation();
-              send("knowledge.request", {
-                ...(candidate
-                  ? selected(
-                      candidate.el,
-                      candidate.win,
-                      candidate.path,
-                      candidate.route,
-                    )
-                  : currentModule),
-                mode: event.code === "KeyD" ? "documents" : "explain",
-              });
-            }
-          }
           if (event.key === "Escape" && picking) {
             picking = false;
             event.preventDefault();

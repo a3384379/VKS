@@ -13,11 +13,10 @@ import {
   Check,
   ArrowUpRight,
   GripHorizontal,
-  Minus,
-  Plus,
   LogOut,
   Sparkles,
   LoaderCircle,
+  Settings2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -174,13 +173,13 @@ function App() {
   const [bookMounted, setBookMounted] = useState(false);
   const [target, setTarget] = useState<Target | null>(null),
     [active, setActive] = useState<Binding | null>(null),
-    [knowledge, setKnowledge] = useState(true),
+    [knowledge, setKnowledge] = useState(false),
     [editing, setEditing] = useState(false),
     [picking, setPicking] = useState(false),
     [saving, setSaving] = useState(false),
     [pinned, setPinned] = useState(false),
     [docked, setDocked] = useState(false),
-    [folded, setFolded] = useState(false);
+    [assistantOptions, setAssistantOptions] = useState(false);
   const [title, setTitle] = useState(""),
     [summary, setSummary] = useState(""),
     [editDoc, setEditDoc] = useState<Document | null>(null),
@@ -198,7 +197,8 @@ function App() {
     docEpoch = useRef(0),
     editEpoch = useRef(0),
     loadEpoch = useRef(0),
-    selectedBinding = useRef("");
+    selectedBinding = useRef(route.binding),
+    assistantTrigger = useRef<HTMLButtonElement>(null);
   const [related, setRelated] = useState<Related | null>(null),
     [retrieving, setRetrieving] = useState(false);
   const [assistant, setAssistant] = useState<Assistance | null>(null),
@@ -207,7 +207,9 @@ function App() {
       "explain",
     ),
     [assistantError, setAssistantError] = useState(""),
-    [automatic, setAutomatic] = useState(true),
+    [automatic, setAutomatic] = useState(
+      () => localStorage.getItem("vks.studio.auto-associate") !== "off",
+    ),
     [moduleTitle, setModuleTitle] = useState(""),
     [menu, setMenu] = useState<(Control & { x: number; y: number }) | null>(
       null,
@@ -287,7 +289,7 @@ function App() {
     if (!auth || !route.project || (!route.analysis && !route.release)) return;
     assistEpoch.current++;
     assistAbort.current?.abort();
-    clearTimeout(automaticTimer.current);
+    cancelAutomatic();
     control.current = null;
     moduleControl.current = null;
     setModuleTitle("");
@@ -297,6 +299,8 @@ function App() {
     setAssisting(false);
     setAssistantError("");
     setMenu(null);
+    setKnowledge(false);
+    setAssistantOptions(false);
     setCatalog(null);
     setBindings([]);
     setActive(null);
@@ -336,7 +340,7 @@ function App() {
           nearby_labels: [],
         },
       };
-      setKnowledge(true);
+      if (changed) setKnowledge(true);
     }
   }, [route.binding, bindings]);
   useEffect(() => {
@@ -415,36 +419,48 @@ function App() {
   }, [menu]);
   useEffect(() => {
     const keys = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setMenu(null);
-        return;
-      }
-      if (
-        route.view !== "prototype" ||
-        !e.altKey ||
-        e.ctrlKey ||
-        e.metaKey ||
-        e.repeat ||
-        e.isComposing ||
-        (e.target as HTMLElement)?.closest(
-          "input,textarea,select,[contenteditable=true]",
-        )
-      )
-        return;
-      if (e.code === "KeyD" || e.code === "KeyA") {
-        e.preventDefault();
-        prototype.current?.send("knowledge.request", {
-          mode: e.code === "KeyD" ? "documents" : "explain",
-        });
-      }
+      if (e.key === "Escape") setMenu(null);
     };
     window.addEventListener("keydown", keys);
     return () => window.removeEventListener("keydown", keys);
-  }, [route.view]);
+  }, []);
+  function cancelAutomatic() {
+    clearTimeout(automaticTimer.current);
+    automaticTimer.current = undefined;
+  }
+  function automaticPreference(enabled: boolean) {
+    setAutomatic(enabled);
+    localStorage.setItem("vks.studio.auto-associate", enabled ? "on" : "off");
+    if (automaticTimer.current !== undefined) {
+      cancelAutomatic();
+      setAssisting(false);
+    }
+  }
+  function collapseAssistant() {
+    if (editing) {
+      setNotice("请先保存或取消当前编辑");
+      return;
+    }
+    setKnowledge(false);
+    setAssistantOptions(false);
+    requestAnimationFrame(() =>
+      assistantTrigger.current?.focus({ preventScroll: true }),
+    );
+  }
+  function toggleAssistant() {
+    if (knowledge) {
+      collapseAssistant();
+      return;
+    }
+    setKnowledge(true);
+    setAssistantOptions(false);
+    if (!target && moduleControl.current)
+      void assist(moduleControl.current, "documents", false, false);
+  }
   function chooseControl(c: Control) {
     assistEpoch.current++;
     assistAbort.current?.abort();
-    clearTimeout(automaticTimer.current);
+    cancelAutomatic();
     control.current = c;
     setAssistantMode("explain");
     setTarget(c.target);
@@ -477,6 +493,7 @@ function App() {
     c: Control,
     mode: "documents" | "explain",
     refresh = false,
+    revealPanel = true,
   ) {
     if (editing || !p) {
       setNotice("请先保存或取消当前编辑");
@@ -485,8 +502,10 @@ function App() {
     chooseControl(c);
     setAssistantMode(mode);
     setMenu(null);
-    setKnowledge(true);
-    setFolded(false);
+    if (revealPanel) {
+      setKnowledge(true);
+      setAssistantOptions(false);
+    }
     const existing = bindings.find(
       (b) => b.package_id === p.id && sameTarget(b.target, c.target),
     );
@@ -608,7 +627,10 @@ function App() {
     };
     if (mode === "documents") {
       setAssisting(true);
-      automaticTimer.current = setTimeout(() => void runModel(), 350);
+      automaticTimer.current = setTimeout(() => {
+        automaticTimer.current = undefined;
+        void runModel();
+      }, 350);
     } else await runModel();
   }
   async function login(e: React.FormEvent) {
@@ -671,14 +693,14 @@ function App() {
           (route.view || "prototype") === "prototype" &&
           !bindings.some((b) => sameTarget(b.target, c.target))
         )
-          void assist(c, "documents");
+          void assist(c, "documents", false, false);
       }
       return;
     }
     if (event.type === "context.changed") {
       assistEpoch.current++;
       assistAbort.current?.abort();
-      clearTimeout(automaticTimer.current);
+      cancelAutomatic();
       setAssisting(false);
       const c = event.payload as {
         route?: string;
@@ -720,7 +742,7 @@ function App() {
       ) {
         chooseControl(c.module);
         if (automatic && (route.view || "prototype") === "prototype")
-          void assist(c.module, "documents");
+          void assist(c.module, "documents", false, false);
       }
     }
     if (event.type === "context.changed" && pendingReveal.current) {
@@ -742,7 +764,7 @@ function App() {
     if (event.type === "target.selected") {
       assistEpoch.current++;
       assistAbort.current?.abort();
-      clearTimeout(automaticTimer.current);
+      cancelAutomatic();
       setAssistant(null);
       setRelated(null);
       setRetrieving(false);
@@ -758,13 +780,13 @@ function App() {
       setSectionId(b?.sections[0]?.revision_id || "");
       setEditing(true);
       setKnowledge(true);
-      setFolded(false);
+      setAssistantOptions(false);
       setNotice("已选中控件，请选择文档章节并保存说明");
     } else if (!pinned && !editing) {
       if (!target || !sameTarget(target, t)) {
         assistEpoch.current++;
         assistAbort.current?.abort();
-        clearTimeout(automaticTimer.current);
+        cancelAutomatic();
         setAssistant(null);
         setRelated(null);
         setRetrieving(false);
@@ -785,9 +807,12 @@ function App() {
     }
     assistEpoch.current++;
     assistAbort.current?.abort();
-    clearTimeout(automaticTimer.current);
+    cancelAutomatic();
     setAssisting(false);
+    setRetrieving(false);
     setPicking(true);
+    setAssistantOptions(false);
+    setKnowledge(false);
     prototype.current?.send("picker.start");
     navigate({ view: "prototype" });
     setNotice("请点击需要关联的原型控件；按 Esc 或点击取消结束");
@@ -803,10 +828,19 @@ function App() {
     setKnowledge(false);
   }
   function reveal(b: Binding) {
+    chooseControl({
+      target: b.target,
+      context: {
+        scope: b.target.selector === "body" ? "module" : "control",
+        page_title: b.title,
+        section_title: "",
+        nearby_labels: [],
+      },
+    });
     setEditing(false);
     setKnowledge(true);
+    setAssistantOptions(false);
     setActive(b);
-    setTarget(b.target);
     navigate({ view: "prototype", binding: b.id });
     if (prototype.current)
       prototype.current.send("target.reveal", { target: b.target });
@@ -828,7 +862,7 @@ function App() {
     setSectionId(b.sections[0]?.revision_id || "");
     setEditing(true);
     setKnowledge(true);
-    setFolded(false);
+    setAssistantOptions(false);
   }
   async function save() {
     if (!target || !catalog || !sectionId || !summary.trim() || !title.trim())
@@ -1035,16 +1069,6 @@ function App() {
             {route.release ? "知识快照" : "当前草稿"}
           </span>
           <button
-            className="quiet"
-            onClick={() => {
-              setKnowledge(!knowledge);
-              setFolded(false);
-            }}
-          >
-            <BookOpen size={16} />
-            知识小窗
-          </button>
-          <button
             aria-label="退出登录"
             className="icon"
             onClick={() =>
@@ -1081,24 +1105,18 @@ function App() {
           </span>
         </div>
         <div>
-          {currentView === "prototype" &&
-            (picking ? (
-              <button
-                className="picker-active"
-                onClick={() => {
-                  prototype.current?.send("picker.cancel");
-                  setPicking(false);
-                }}
-              >
-                <X size={14} />
-                取消选择
-              </button>
-            ) : (
-              <button disabled={!catalog?.editable || !p} onClick={startPicker}>
-                <MousePointer2 size={14} />
-                关联知识
-              </button>
-            ))}
+          {currentView === "prototype" && picking && (
+            <button
+              className="picker-active"
+              onClick={() => {
+                prototype.current?.send("picker.cancel");
+                setPicking(false);
+              }}
+            >
+              <X size={14} />
+              取消选择
+            </button>
+          )}
           {currentView === "documents" && (
             <button
               onClick={() => {
@@ -1144,36 +1162,6 @@ function App() {
         >
           {p ? (
             <>
-              <div className="assistant-toolbar">
-                <span>
-                  <Sparkles size={14} /> 当前模块或指向控件：<kbd>Alt D</kbd>{" "}
-                  文档 · <kbd>Alt A</kbd> AI 讲解 · 右键更多
-                </span>
-                <button
-                  disabled={!moduleTitle}
-                  title={moduleTitle || "等待模块加载"}
-                  onClick={() =>
-                    prototype.current?.send("knowledge.request", {
-                      scope: "module",
-                      mode: "documents",
-                    })
-                  }
-                >
-                  <BookOpen size={14} />
-                  模块知识
-                </button>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={automatic}
-                    onChange={(e) => {
-                      setAutomatic(e.target.checked);
-                      clearTimeout(automaticTimer.current);
-                    }}
-                  />
-                  自动关联模块与控件
-                </label>
-              </div>
               <OriginalRuntime
                 key={p.id + scope}
                 url={`${prefix}/packages/${p.id}/content?${scope}`}
@@ -1461,11 +1449,11 @@ function App() {
             onClick={() => void assist(menu, "documents")}
           >
             <BookOpen size={16} />
-            查看关联文档<kbd>Alt D</kbd>
+            查看关联文档
           </button>
           <button role="menuitem" onClick={() => void assist(menu, "explain")}>
             <Sparkles size={16} />
-            AI 讲解此功能<kbd>Alt A</kbd>
+            AI 讲解此功能
           </button>
           <button
             role="menuitem"
@@ -1489,7 +1477,7 @@ function App() {
                 setSectionId("");
                 setEditing(true);
                 setKnowledge(true);
-                setFolded(false);
+                setAssistantOptions(false);
               }
             }}
           >
@@ -1497,15 +1485,46 @@ function App() {
           </button>
         </div>
       )}
+      {currentView !== "ai" && !(knowledge && docked) && (
+        <button
+          ref={assistantTrigger}
+          className={"assistant-launcher" + (knowledge ? " expanded" : "")}
+          aria-label={knowledge ? "收起知识助手" : "打开知识助手"}
+          aria-expanded={knowledge}
+          aria-controls="knowledge-assistant"
+          onClick={toggleAssistant}
+          title={retrieving || assisting ? "正在整理相关知识" : "知识助手"}
+        >
+          {knowledge ? <X size={23} /> : <Sparkles size={24} />}
+          {!knowledge &&
+            (related?.sections.length ||
+              active?.sections.length ||
+              assistant?.sections.length ||
+              0) > 0 && (
+              <span className="assistant-badge">
+                {Math.min(
+                  9,
+                  related?.sections.length ||
+                    active?.sections.length ||
+                    assistant?.sections.length ||
+                    0,
+                )}
+              </span>
+            )}
+          {!knowledge && (retrieving || assisting) && (
+            <span className="assistant-activity" aria-label="正在整理知识" />
+          )}
+          <span className="assistant-launcher-label">
+            {knowledge ? "收起助手" : "知识助手"}
+          </span>
+        </button>
+      )}
       {knowledge && currentView !== "ai" && (
         <aside
           ref={windowRef}
-          aria-label="知识小窗"
-          className={
-            "knowledge-window " +
-            (docked ? "docked" : "") +
-            (folded ? " folded" : "")
-          }
+          id="knowledge-assistant"
+          aria-label="知识助手"
+          className={"knowledge-window " + (docked ? "docked" : "")}
           style={
             !docked && position
               ? {
@@ -1518,57 +1537,159 @@ function App() {
           }
           onKeyDown={(e) => {
             if (e.key === "Escape" && !editing) {
-              setKnowledge(false);
+              e.stopPropagation();
+              if (assistantOptions) setAssistantOptions(false);
+              else collapseAssistant();
             }
           }}
         >
           <div className="knowledge-header" onPointerDown={drag}>
             <div>
-              <BookOpen size={17} />
-              <b>{editing ? "关联知识" : "知识小窗"}</b>
+              <Sparkles size={17} />
+              <b>{editing ? "补充关联" : "知识助手"}</b>
               <GripHorizontal size={14} />
             </div>
             <div>
               <button
-                className={"icon " + (pinned ? "enabled" : "")}
-                aria-label="固定当前知识"
-                onClick={() => setPinned(!pinned)}
+                className={"icon " + (assistantOptions ? "enabled" : "")}
+                aria-label="助手选项"
+                aria-pressed={assistantOptions}
+                disabled={editing}
+                onClick={() => setAssistantOptions(!assistantOptions)}
               >
-                <Pin size={14} />
+                <Settings2 size={16} />
               </button>
               <button
                 className="icon"
-                aria-label={docked ? "浮动小窗" : "固定到侧边"}
-                onClick={() => {
-                  setDocked(!docked);
-                  setPosition(null);
-                }}
+                aria-label="收起助手面板"
+                onClick={collapseAssistant}
               >
-                <PanelRight size={15} />
-              </button>
-              <button
-                className="icon"
-                aria-label="收起小窗"
-                onClick={() => setFolded(!folded)}
-              >
-                {folded ? <Plus size={15} /> : <Minus size={15} />}
-              </button>
-              <button
-                className="icon"
-                aria-label="关闭知识小窗"
-                onClick={() => {
-                  if (editing) {
-                    setNotice("请先保存或取消当前编辑");
-                    return;
-                  }
-                  setKnowledge(false);
-                }}
-              >
-                <X size={15} />
+                <X size={16} />
               </button>
             </div>
           </div>
-          {!folded && (
+          {assistantOptions && (
+            <section className="assistant-options" aria-label="助手选项">
+              <div className="assistant-options-heading">
+                <span className="eyebrow">偏好与工具</span>
+                <h3>让助手按你的方式工作</h3>
+              </div>
+              <button
+                className="assistant-option-link"
+                aria-label="模块知识"
+                disabled={!moduleTitle}
+                onClick={() =>
+                  prototype.current?.send("knowledge.request", {
+                    scope: "module",
+                    mode: "documents",
+                  })
+                }
+              >
+                <BookOpen size={18} />
+                <span>
+                  <b>模块知识</b>
+                  <small>
+                    {moduleTitle
+                      ? moduleTitle.split(" · ")[0]
+                      : "等待当前模块加载"}
+                  </small>
+                </span>
+                <ChevronRight size={16} />
+              </button>
+              <label className="assistant-option-toggle">
+                <span>
+                  <b>自动关联模块与控件</b>
+                  <small>在后台整理，收起时以图标提示</small>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="自动关联模块与控件"
+                  checked={automatic}
+                  onChange={(e) => automaticPreference(e.target.checked)}
+                />
+              </label>
+              <label className="assistant-option-toggle">
+                <span>
+                  <b>
+                    <Pin size={13} /> 固定当前知识
+                  </b>
+                  <small>保留当前内容，暂停跟随页面操作</small>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="固定当前知识"
+                  checked={pinned}
+                  onChange={(e) => setPinned(e.target.checked)}
+                />
+              </label>
+              <div className="assistant-layout">
+                <span>展开方式</span>
+                <div>
+                  <button
+                    aria-pressed={!docked}
+                    onClick={() => {
+                      setDocked(false);
+                      setPosition(null);
+                    }}
+                  >
+                    浮动小窗
+                  </button>
+                  <button
+                    aria-pressed={docked}
+                    onClick={() => {
+                      setDocked(true);
+                      setPosition(null);
+                    }}
+                  >
+                    <PanelRight size={14} />
+                    侧边展开
+                  </button>
+                </div>
+              </div>
+              <div className="assistant-option-tools">
+                <button
+                  onClick={() => {
+                    navigate({ view: "ai" });
+                    collapseAssistant();
+                  }}
+                >
+                  <Settings2 size={16} />
+                  模型与知识库设置
+                  <ChevronRight size={15} />
+                </button>
+                <button
+                  onClick={() => {
+                    navigate({ view: "links" });
+                    collapseAssistant();
+                  }}
+                >
+                  <Link2 size={16} />
+                  关联管理
+                  <ChevronRight size={15} />
+                </button>
+                <button
+                  disabled={!catalog?.editable || !p}
+                  onClick={startPicker}
+                >
+                  <MousePointer2 size={16} />
+                  手动补充关联
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+              <p className="assistant-option-help">
+                操作原型时，助手会跟随当前模块和按钮。右键页面或控件，可直接查看文档或呼出
+                AI 讲解。
+              </p>
+              <button
+                className="assistant-options-back"
+                onClick={() => setAssistantOptions(false)}
+              >
+                返回知识内容
+                <ChevronRight size={14} />
+              </button>
+            </section>
+          )}
+          {!assistantOptions && (
             <>
               <div className="knowledge-context">
                 <MousePointer2 size={14} />
@@ -1939,8 +2060,8 @@ function App() {
                       {target
                         ? target.selector === "body"
                           ? "AI 会检索模块职责、主要业务流程及相关文档；也可以右键页面空白处呼出。"
-                          : "右键此控件，或按 Alt + A，让 AI 检索文档并讲解功能。"
-                        : "鼠标指向按钮后，按 Alt + D 查看文档，按 Alt + A 呼出 AI 讲解，也可以右键选择。"}
+                          : "右键这个控件，或点击 AI 讲解，查看相关文档与功能说明。"
+                        : "在原型中打开模块或点击按钮，助手会自动整理相关知识。也可以右键选择查看文档或 AI 讲解。"}
                     </p>
                     {target && (
                       <button
@@ -1954,10 +2075,6 @@ function App() {
                         AI 自动关联并讲解
                       </button>
                     )}
-                    <button disabled={!catalog?.editable} onClick={startPicker}>
-                      <Plus size={15} />
-                      手动补充关联
-                    </button>
                   </div>
                 )}
               </div>
@@ -2003,10 +2120,6 @@ function App() {
                         编辑知识
                       </button>
                     )}
-                    <button disabled={!catalog?.editable} onClick={startPicker}>
-                      <Link2 size={14} />
-                      关联知识
-                    </button>
                   </>
                 )}
               </footer>
