@@ -1757,7 +1757,7 @@ class Service:
             r = s.get(Release, payload["release_id"])
             if not r or r.project_id != pid:
                 raise DomainError("VKS_NOT_FOUND", "未找到发布版", 404)
-            if payload["format"] not in ("markdown_bundle", "pdf", "vksbundle"):
+            if payload["format"] not in ("markdown_bundle", "pdf", "vksbundle", "readonly_html"):
                 raise DomainError("VKS_INVALID_INPUT", "不支持的导出格式")
             if payload.get("include_source"):
                 self.require(s, actor, pid, "source:read")
@@ -1784,13 +1784,17 @@ class Service:
                 ),
             )
 
-    def _perform_export(self, s, j):
+    def _perform_export(self, s, j, prepared=None):
+        if j.input_json["format"] == "readonly_html":
+            from .readonly_export import finalize
+
+            return finalize(self, s, j, prepared)
         from .exports import perform_export
 
         return perform_export(self, s, j)
 
     def download_export(self, actor, pid, jid):
-        from .exports import visible_export_sources
+        from .exports import allow_artifact, visible_export_sources
 
         with self.db() as s:
             self.require(s, actor, pid, "knowledge:export")
@@ -1813,6 +1817,11 @@ class Service:
                 }
             if snapshots != visible_export_sources(s, pid, snapshots, j.input_json):
                 raise DomainError("VKS_FORBIDDEN", "导出内容的当前来源权限已变化，请重新导出", 403)
+            if any(
+                not (art := s.get(Artifact, aid)) or art.project_id != pid or not allow_artifact(art, j.input_json, s)
+                for aid in j.input_json.get("_export_artifact_ids", [])
+            ):
+                raise DomainError("VKS_FORBIDDEN", "导出原型或出处的当前权限已变化，请重新导出", 403)
             if "_export_revision_ids" in j.input_json:
                 if (
                     any(
@@ -1832,7 +1841,10 @@ class Service:
             elif not self._can(s, actor, pid, "source:read") or not self._can(s, actor, pid, "trace:read"):
                 raise DomainError("VKS_FORBIDDEN", "旧导出缺少准确输入范围，请重新导出", 403)
             self.audit(s, actor, pid, "export.download", jid)
-            return (self.data_dir / "objects" / j.result_json["object_key"]).read_bytes(), j.result_json["filename"]
+            raw = (self.data_dir / "objects" / j.result_json["object_key"]).read_bytes()
+            if sha(raw) != j.result_json["object_key"]:
+                raise DomainError("VKS_INTEGRITY_ERROR", "导出文件完整性校验失败", 409)
+            return raw, j.result_json["filename"]
 
     def artifact_bytes(self, actor, pid, aid):
         from .reading import ReadingService, artifact_policy

@@ -7175,7 +7175,8 @@
             "enum": [
               "markdown_bundle",
               "pdf",
-              "vksbundle"
+              "vksbundle",
+              "readonly_html"
             ]
           },
           "include_source": {

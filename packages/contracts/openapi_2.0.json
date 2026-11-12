@@ -3247,7 +3247,8 @@
             "enum": [
               "markdown_bundle",
               "pdf",
-              "vksbundle"
+              "vksbundle",
+              "readonly_html"
             ],
             "title": "Format",
             "default": "markdown_bundle"

@@ -10,6 +10,7 @@ import {
   Layers,
   X,
   LoaderCircle,
+  Download,
 } from "lucide-react";
 import { api, mutation, sha256, date } from "../../web/src/api";
 
@@ -92,6 +93,43 @@ export function Materials({
   const [busy, setBusy] = useState(""),
     [snapshotName, setSnapshotName] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
+  const [exportJob, setExportJob] = useState<{
+    id: string;
+    state: string;
+    progress?: number;
+    error?: { message: string };
+    result?: { download_url?: string; filename?: string };
+  } | null>(null);
+  useEffect(() => {
+    if (
+      !exportJob ||
+      !["queued", "running", "retry_wait"].includes(exportJob.state)
+    )
+      return;
+    let live = true;
+    const timer = setInterval(() => {
+      void api<typeof exportJob>(`/jobs/${exportJob.id}?project_id=${project}`)
+        .then((next) => {
+          if (live) {
+            setExportJob(next);
+            if (next?.state === "succeeded")
+              setNotice("成品库已生成，可下载只读 HTML。文件不携带 API Key。");
+            else if (next && ["failed", "cancelled"].includes(next.state))
+              setNotice("");
+          }
+        })
+        .catch((e) => {
+          if (live) setError(e.message);
+        });
+    }, 1800);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [exportJob, project]);
+  useEffect(() => {
+    setExportJob(null);
+  }, [project]);
   const load = useCallback(async () => {
     const next = await api<Library>(`${prefix}?analysis_set_id=${analysis}`);
     setData(next);
@@ -243,6 +281,44 @@ export function Materials({
       );
     });
   }
+  async function exportVersion(releaseId?: string) {
+    await work("正在准备只读成品库…", async () => {
+      const session = await api<{
+        human: boolean;
+        scopes: string[];
+        project_permissions: Record<string, string[]>;
+      }>("/auth/session");
+      const canReadSource =
+        session.scopes.includes("source:read") &&
+        (!session.human ||
+          (session.project_permissions[project] || []).includes("source:read"));
+      const fixed =
+        releaseId ||
+        (
+          await api<{ id: string }>(
+            `${prefix}/versions`,
+            mutation("POST", {
+              analysis_set_id: analysis,
+              name: `成品库导出 · ${new Date().toLocaleString("zh-CN")}`,
+            }),
+          )
+        ).id;
+      setExportJob(
+        await api(
+          `/projects/${project}/exports`,
+          mutation("POST", {
+            release_id: fixed,
+            format: "readonly_html",
+            include_source: canReadSource,
+          }),
+        ),
+      );
+      await load();
+      setNotice(
+        "正在固定资料并补齐向量索引。完成后可下载单文件 HTML，文件不携带 API Key。",
+      );
+    });
+  }
   async function restore(id: string) {
     await work("正在恢复版本…", async () => {
       const current = await load();
@@ -271,6 +347,45 @@ export function Materials({
           {data ? `${active.length} 个已启用资料包` : "正在读取项目资料…"}
         </span>
       </div>
+      <section className="management-panel" aria-label="只读成品库导出">
+        <div className="management-panel-title">
+          <Download size={19} />
+          <h2>导出成品库</h2>
+        </div>
+        <p className="management-description">
+          将当前原型、文档、知识关联与向量索引打包为一个只读
+          HTML。离线可阅读、检索和跳转；联网问答由使用者自行填写 API Key。请先在
+          AI 设置中启用嵌入模型。
+        </p>
+        <button
+          disabled={
+            !!busy ||
+            !data?.editable ||
+            (!!exportJob &&
+              ["queued", "running", "retry_wait"].includes(exportJob.state))
+          }
+          onClick={() => void exportVersion()}
+        >
+          <Download size={16} /> 导出当前成品库
+        </button>
+        {exportJob && (
+          <div role="status" className="management-description">
+            {["queued", "running", "retry_wait"].includes(exportJob.state) ? (
+              `正在准备与建库… ${exportJob.progress || 0}%`
+            ) : exportJob.state === "succeeded" &&
+              exportJob.result?.download_url ? (
+              <a
+                href={exportJob.result.download_url}
+                download={exportJob.result.filename}
+              >
+                下载只读 HTML
+              </a>
+            ) : (
+              exportJob.error?.message || "导出未完成，请重试"
+            )}
+          </div>
+        )}
+      </section>
       {error && (
         <p className="banner error" role="alert">
           {error}
@@ -611,6 +726,18 @@ export function Materials({
                       {v.version} · {date(v.created_at)}
                     </small>
                   </div>
+                  <button
+                    disabled={
+                      !!busy ||
+                      (!!exportJob &&
+                        ["queued", "running", "retry_wait"].includes(
+                          exportJob.state,
+                        ))
+                    }
+                    onClick={() => void exportVersion(v.id)}
+                  >
+                    导出 HTML
+                  </button>
                   <button
                     disabled={!!busy || !data.editable}
                     onClick={() => void restore(v.id)}

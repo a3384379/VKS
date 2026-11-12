@@ -45,56 +45,34 @@ export function RAGSettings({
     if (!payload.current) return;
     const n = epoch.current;
     const s = await api<Status>(
-      base + "/status",
+      base + "/documents/status",
       mutation("POST", payload.current),
     );
     if (n === epoch.current) setStatus(s);
   };
   useEffect(() => {
     const n = ++epoch.current;
-    payload.current = null;
+    payload.current = release
+      ? { release_id: release }
+      : analysis
+        ? { analysis_set_id: analysis }
+        : null;
     setForm(null);
     setStatus(null);
     setError("");
+    setNotice("");
+    setBusy(false);
     void Promise.all([
       api<Settings>(base + "/settings"),
       api<{ connections: { id: string; name: string; provider: string }[] }>(
         `/projects/${project}/model-connections`,
       ),
-      api<{ packages: { id: string; kind: string }[] }>(
-        root +
-          "/catalog?" +
-          (release ? `release_id=${release}` : `analysis_set_id=${analysis}`),
-      ),
     ])
-      .then(async ([settings, catalog, c]) => {
+      .then(async ([settings, catalog]) => {
         if (n !== epoch.current) return;
         setForm(settings);
         setConnections(catalog.connections);
-        const p = c.packages.find((x) => x.kind === "prototype");
-        if (p) {
-          payload.current = {
-            ...(release
-              ? { release_id: release }
-              : { analysis_set_id: analysis }),
-            package_id: p.id,
-            target: {
-              route: "/",
-              frame_path: [],
-              selector: "body",
-              label: "项目知识索引",
-              state: "",
-              open_steps: [],
-            },
-            context: {
-              scope: "module",
-              page_title: "项目知识索引",
-              section_title: "",
-              nearby_labels: [],
-            },
-          };
-          await refresh();
-        }
+        await refresh();
       })
       .catch((e) => {
         if (n === epoch.current) setError(e.message);
@@ -113,17 +91,25 @@ export function RAGSettings({
   }, [status?.state, project, analysis, release]);
   async function save(build = false) {
     if (!form) return;
+    const n = epoch.current;
     setBusy(true);
     setError("");
     try {
       await api(base + "/settings", mutation("POST", form));
-      if (build && payload.current)
-        await api(base + "/build", mutation("POST", payload.current));
+      if (n !== epoch.current) return;
+      if (build && payload.current) {
+        await api(base + "/documents/build", mutation("POST", payload.current));
+        if (n !== epoch.current) return;
+        setNotice(
+          "文档索引任务已提交，可在此查看进度；普通 Markdown 无需导入原型即可建库。",
+        );
+      }
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (n === epoch.current)
+        setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (n === epoch.current) setBusy(false);
     }
   }
   const building = status?.state === "building",
@@ -298,7 +284,13 @@ export function RAGSettings({
             </button>
             <button
               className="primary"
-              disabled={busy || building || !form.enabled || !payload.current}
+              disabled={
+                busy ||
+                building ||
+                !form.enabled ||
+                !payload.current ||
+                !!release
+              }
               onClick={() => void save(true)}
             >
               <Database size={15} />
@@ -317,6 +309,8 @@ export function RAGSettings({
             </button>
           </div>
           <small>
+            {release &&
+              "当前为只读快照，可查看该版本索引状态；请回到项目当前草稿更新索引。 "}
             建库会把获授权的文档片段发送到所选嵌入服务，并产生模型用量。向量保存在本机，修改文档后可增量更新；失败后重试会保留已完成的片段。嵌入预算与回答模型分开统计。
           </small>
         </>

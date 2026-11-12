@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="frame-src data: blob: about:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>VKS 成品知识库</title>
+    <style>
+      /* VKS_READER_CSS */
+    </style>
+  </head>
+  <body>
+    <div id="vks-root">
+      <div class="boot">
+        <strong>正在打开知识库</strong
+        ><span>原型、文档与检索索引正在本地加载…</span>
+      </div>
+    </div>
+    <script
+      id="vks-payload"
+      type="application/octet-stream"
+      data-encoding="gzip-base64"
+    >
+      VKS_READER_PAYLOAD
+    </script>
+    <script>
+      /* VKS_READER_JS */
+    </script>
+  </body>
+</html>

@@ -446,7 +446,11 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         raw, name = service.download_export(a, pid, jid)
         return Response(
             raw,
-            media_type="application/pdf" if name.endswith(".pdf") else "application/zip",
+            media_type="text/html"
+            if name.endswith(".html")
+            else "application/pdf"
+            if name.endswith(".pdf")
+            else "application/zip",
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"},
         )
 

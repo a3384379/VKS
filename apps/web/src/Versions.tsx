@@ -141,33 +141,37 @@ export function Versions() {
                 </Button>
               )}
               {canExport &&
-                ["markdown_bundle", "pdf", "vksbundle"].map((format) => (
-                  <Button
-                    key={format}
-                    kind="small"
-                    onClick={() =>
-                      void run(
-                        () =>
-                          api(
-                            `/projects/${w.project.id}/exports`,
-                            mutation("POST", {
-                              release_id: row.id,
-                              format,
-                              include_source: true,
-                            }),
-                          ),
-                        "导出任务已创建",
-                      )
-                    }
-                  >
-                    导出{" "}
-                    {format === "markdown_bundle"
-                      ? "Markdown"
-                      : format === "pdf"
-                        ? "PDF"
-                        : "可回导包"}
-                  </Button>
-                ))}
+                ["markdown_bundle", "pdf", "vksbundle", "readonly_html"].map(
+                  (format) => (
+                    <Button
+                      key={format}
+                      kind="small"
+                      onClick={() =>
+                        void run(
+                          () =>
+                            api(
+                              `/projects/${w.project.id}/exports`,
+                              mutation("POST", {
+                                release_id: row.id,
+                                format,
+                                include_source: true,
+                              }),
+                            ),
+                          "导出任务已创建",
+                        )
+                      }
+                    >
+                      导出{" "}
+                      {format === "markdown_bundle"
+                        ? "Markdown"
+                        : format === "pdf"
+                          ? "PDF"
+                          : format === "readonly_html"
+                            ? "只读 HTML"
+                            : "可回导包"}
+                    </Button>
+                  ),
+                )}
             </div>
           </article>
         ))}

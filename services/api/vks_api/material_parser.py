@@ -122,6 +122,10 @@ def parse(kind, files, entry=""):
         fail("资料总大小超过 80 MiB")
     expanded = []
     for name, raw in files:
+        try:
+            name = safe_path(name)
+        except BundleError:
+            fail("资料文件名或路径不合法")
         expanded.extend(zip_files(raw) if name.lower().endswith(".zip") else [(name, raw)])
     names = [name.casefold() for name, _ in expanded]
     if len(names) != len(set(names)):

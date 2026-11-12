@@ -71,7 +71,7 @@ class QuestionInput(Input):
 
 class ExportInput(Input):
     release_id: str
-    format: Literal["markdown_bundle", "pdf", "vksbundle"] = "markdown_bundle"
+    format: Literal["markdown_bundle", "pdf", "vksbundle", "readonly_html"] = "markdown_bundle"
     include_source: bool = False
 
 

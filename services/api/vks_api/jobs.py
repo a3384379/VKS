@@ -457,6 +457,10 @@ def execute_job(service, jid):
                     from .materials import migrate_job
 
                     material_output = migrate_job(service, jid)
+                if kind == "export" and payload["format"] == "readonly_html":
+                    from .readonly_export import prepare_job
+
+                    readonly_output = prepare_job(service, jid, processing_cancelled)
                 if kind == "knowledge_task":
                     from .knowledge_tasks import KnowledgeTaskService
 
@@ -548,7 +552,11 @@ def execute_job(service, jid):
                 elif kind == "material_migrate":
                     result = material_output
                 elif kind == "export":
-                    result = service._perform_export(s, job)
+                    result = (
+                        service._perform_export(s, job, readonly_output)
+                        if payload["format"] == "readonly_html"
+                        else service._perform_export(s, job)
+                    )
                 elif kind == "detect_drift":
                     from .versions import VersionService
 

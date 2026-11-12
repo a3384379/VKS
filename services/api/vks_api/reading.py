@@ -215,6 +215,35 @@ def artifact_policy(s, artifact, _active=None):
         metadata.get("requires_source_read") or artifact.kind == "source" or artifact.sensitivity == "confidential"
     )
     base_trace = bool(metadata.get("requires_trace_read") or artifact.kind in ("trace", "capture"))
+    if (
+        artifact.kind == "markdown"
+        and artifact.relative_path.startswith("documents/")
+        and not metadata.get("prototype_input_artifact_ids")
+    ):
+        from .knowledge import SourceSnapshot
+
+        snapshot = s.get(SourceSnapshot, artifact.snapshot_id)
+        if snapshot and snapshot.project_id == artifact.project_id and snapshot.source_key.startswith("material."):
+            # Earlier material imports retained the exact uploads beside their
+            # extracted Markdown without writing the provenance reference. Read
+            # that immutable source closure, never the newest installed package.
+            # Images remain separate: hiding one attachment must not hide text.
+            cache = s.info.setdefault("vks_material_source_inputs", {})
+            key = (artifact.project_id, artifact.snapshot_id)
+            if key not in cache:
+                cache[key] = list(
+                    s.scalars(
+                        select(Artifact.id).where(
+                            Artifact.project_id == artifact.project_id,
+                            Artifact.snapshot_id == artifact.snapshot_id,
+                            Artifact.relative_path.startswith("inputs/"),
+                        )
+                    )
+                )
+            if cache[key]:
+                metadata["prototype_input_artifact_ids"] = cache[key]
+            else:
+                base_source, base_trace = True, True
     if artifact.kind == "fixture" and artifact.relative_path == "offline/original.html":
         from packages.analyzers.vks_ingest import MAX_FILES, source_digest
 
@@ -637,6 +666,8 @@ class ReadingService:
             for rid, eid, kind, key, art_kind, sensitivity, metadata, artifact_id, path, revision_metadata in rows:
                 if artifact_id and (
                     (path or "").startswith(("documents/generated-", "journeys/"))
+                    or art_kind == "markdown"
+                    and (path or "").startswith("documents/")
                     or (metadata or {}).get("original_artifact_id")
                     or "input_revision_provenance" in (metadata or {})
                     or (metadata or {}).get("prototype_surface_artifact_ids")
@@ -706,6 +737,8 @@ class ReadingService:
             for eid, kind, sensitivity, metadata, artifact_id, path in s.execute(query):
                 if (
                     path.startswith("documents/generated-")
+                    or kind == "markdown"
+                    and path.startswith("documents/")
                     or metadata.get("original_artifact_id")
                     or "input_revision_provenance" in metadata
                     or metadata.get("prototype_surface_artifact_ids")

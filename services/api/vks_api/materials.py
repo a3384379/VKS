@@ -27,6 +27,7 @@ from .models import (
     Release,
     Revision,
     Selection,
+    now,
     uid,
 )
 from .prototype_contracts import PrototypeEnvelope
@@ -183,7 +184,7 @@ class MaterialService:
             s, entity, art, name, content, locator or {"kind": "file", "relative_path": art.relative_path}, meta
         )
 
-    def _artifact(self, s, pid, snapshot, path, raw, kind="fixture", metadata=None):
+    def _artifact(self, s, pid, snapshot, path, raw, kind="fixture", metadata=None, media_type=None):
         old = s.scalar(
             select(Artifact).where(
                 Artifact.project_id == pid, Artifact.snapshot_id == snapshot, Artifact.relative_path == path
@@ -201,7 +202,7 @@ class MaterialService:
             sha256=sha(raw),
             size_bytes=len(raw),
             kind=kind,
-            media_type="text/markdown" if kind == "markdown" else "text/html",
+            media_type=media_type or ("text/markdown" if kind == "markdown" else "text/html"),
             sensitivity="internal",
             object_key=self.service._put_object(raw),
             metadata_json=metadata or {},
@@ -488,8 +489,28 @@ class MaterialService:
             self._artifact(s, pid, snapshot.id, "inputs/" + str(i) + "/" + PurePosixPath(n).name, b)
             for i, (n, b) in enumerate(files)
         ]
-        original = parsed["original"]
         runtime_meta = {"prototype_input_artifact_ids": [a.id for a in inputs]}
+        attachments = []
+        if form.kind == "documents":
+            for path, raw in parsed.get("files", []):
+                if PurePosixPath(path).suffix.lower() in {".md", ".markdown", ".txt", ".html", ".htm"}:
+                    continue
+                attachments.append(
+                    self._artifact(
+                        s,
+                        pid,
+                        snapshot.id,
+                        "documents/" + path,
+                        raw,
+                        metadata=dict(runtime_meta),
+                        media_type="application/octet-stream",
+                    )
+                )
+            # A whole-package reader (including warning/file names) inherits
+            # current restrictions on every retained attachment. The individual
+            # attachment still carries the original input provenance above.
+            runtime_meta = {"prototype_input_artifact_ids": [a.id for a in [*inputs, *attachments]]}
+        original = parsed["original"]
         if parsed["format"] == "static-site":
             from .material_site import site_html
 
@@ -526,7 +547,15 @@ class MaterialService:
                 )
                 counts["reused"] += 1
                 continue
-            art = self._artifact(s, pid, snapshot.id, "documents/" + path, markdown.encode(), "markdown")
+            art = self._artifact(
+                s,
+                pid,
+                snapshot.id,
+                "documents/" + path,
+                markdown.encode(),
+                "markdown",
+                metadata={"prototype_input_artifact_ids": [a.id for a in inputs]},
+            )
             doc_entity = (
                 s.get(Entity, prior.entity_id)
                 if prior
@@ -597,6 +626,7 @@ class MaterialService:
             "input_fingerprint": fingerprint,
             "document_count": len(parsed["documents"]),
             "section_count": len(members) - len(parsed["documents"]),
+            "attachment_artifact_ids": [a.id for a in attachments],
             "base_revision_id": active_base,
             "changes": counts,
             "prepared_for": analysis.id,
@@ -756,7 +786,7 @@ class MaterialService:
             )
         )
         primary_artifact = desired[chosen].artifact_id if chosen else None
-        if form.auto_migrate and (targets or issues or document_change and primary_artifact):
+        if form.auto_migrate and (targets or issues or document_change):
             job = self.service._new_job(
                 s,
                 actor,
@@ -768,6 +798,8 @@ class MaterialService:
                     "issues": issues,
                     "composition": self.composition_digest(s, pid, analysis.id),
                     "index_package_id": primary_artifact if document_change else None,
+                    "index_documents": document_change,
+                    "index_selection_version": analysis.selection_version,
                 },
             )
         s.flush()
@@ -1047,17 +1079,46 @@ def migrate_job(service, jid):
     with service.db() as s:
         job = s.get(Job, jid)
         payload, pid = dict(job.input_json), job.project_id
+        attempt = job.attempt
         completed = dict(job.result_json.get("completed", {}))
     targets = payload["targets"]
-    if payload.get("index_package_id") and assistant.rag.store.settings(pid).enabled:
+
+    def validate_index_scope():
+        with service.db() as s:
+            active = s.get(Job, jid)
+            if (
+                not active
+                or active.attempt != attempt
+                or active.state != "running"
+                or active.cancel_requested
+                or active.lease_until
+                and active.lease_until <= now()
+            ):
+                raise DomainError("VKS_CANCELLED", "索引任务已取消或执行资格已失效", 409)
+            current = current_actor(service, active.created_by, pid, s, job=active)
+            service.require(s, current, pid, "knowledge:edit")
+            workspace = s.get(StudioWorkspace, pid)
+            analysis = s.get(Analysis, payload["analysis_set_id"])
+            if (
+                not analysis
+                or analysis.state == "frozen"
+                or payload.get("index_selection_version") is not None
+                and analysis.selection_version != payload["index_selection_version"]
+                or workspace
+                and workspace.analysis_set_id != payload["analysis_set_id"]
+                or manager.composition_digest(s, pid, payload["analysis_set_id"]) != payload["composition"]
+            ):
+                raise DomainError("VKS_VERSION_CONFLICT", "资料组合已变化，停止旧版本文档索引", 409)
+
+    if (payload.get("index_documents") or payload.get("index_package_id")) and assistant.rag.store.settings(
+        pid
+    ).enabled:
+        validate_index_scope()
         with service.db() as s:
             job = s.get(Job, jid)
             actor = current_actor(service, job.created_by, pid, s, job=job)
-            if manager.composition_digest(s, pid, payload["analysis_set_id"]) != payload["composition"]:
-                raise DomainError("VKS_VERSION_CONFLICT", "资料组合已变化，停止旧索引任务", 409)
-        assistant.rag.start(
-            actor,
-            pid,
+            job.stage = "DOCUMENT_INDEX"
+        form = (
             AssistanceInput(
                 analysis_set_id=payload["analysis_set_id"],
                 package_id=payload["index_package_id"],
@@ -1070,7 +1131,18 @@ def migrate_job(service, jid):
                     "open_steps": [],
                 },
                 context={"scope": "module"},
-            ),
+            )
+            if payload.get("index_package_id")
+            else None
+        )
+        assistant.rag.build_documents(
+            actor,
+            pid,
+            analysis_set_id=payload["analysis_set_id"],
+            form=form,
+            validate_scope=validate_index_scope,
+            job_id=jid,
+            job_attempt=attempt,
         )
     for index, target in enumerate(targets):
         checkpoint()
