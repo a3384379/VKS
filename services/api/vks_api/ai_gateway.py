@@ -25,8 +25,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from services.browser_runner.network import NetworkDenied, NetworkPolicy, origin
 
-from .models import Analysis, Artifact, Base, Entity, Identified, Job, Project, uid
 from .model_connections import ModelConnection  # noqa: F401 - register mapped table
+from .models import Analysis, Artifact, Base, Entity, Identified, Job, Project, uid
 from .service import DomainError
 
 
@@ -161,7 +161,12 @@ def _endpoint_policy(config):
     local = parts.hostname in ("127.0.0.1", "localhost", "::1")
     if not local and not config["allow_external"]:
         failure("VKS_FORBIDDEN", "项目尚未允许模型数据出口", 403)
-    path = parts.path.rstrip("/") + ("/responses" if config["protocol"] == "responses" else "/chat/completions")
+    resource = {"responses": "/responses", "chat_completions": "/chat/completions", "embeddings": "/embeddings"}.get(
+        config["protocol"]
+    )
+    if resource is None:
+        failure("VKS_INVALID_INPUT", "模型协议不受支持")
+    path = parts.path.rstrip("/") + resource
     url = urlunsplit((parts.scheme, parts.netloc, path, "", ""))
     networks = [n.strip() for n in os.getenv("VKS_MODEL_ALLOWED_CIDRS", "0.0.0.0/0,::/0").split(",") if n.strip()]
     # Allowed origins are explicit instance configuration; metadata/control ranges

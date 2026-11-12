@@ -143,9 +143,33 @@ class InteractiveKnowledgeService:
         self.editor = PrototypeEditor(service)
 
     def _rows(self, s, actor, pid, choices):
-        return list(
-            self.reader._entities(s, actor, pid, choices, {"page", "action", "document", "section", "business_point"})
-        )
+        # Batch and retain immutable identities for this transaction. A fully
+        # authorized reader need not recompute the same source/trace policy for
+        # every chapter; project and entity/artifact ownership still apply.
+        retained = s.info.setdefault("vks_prefetched", {})
+        missing = [rid for rid in choices.values() if (Revision, rid) not in retained]
+        revisions = self.reader.reading.revision_rows(s, missing)
+        retained.update({(Revision, r.id): r for r in revisions})
+        complete = self.service._can(s, actor, pid, "source:read") and self.service._can(s, actor, pid, "trace:read")
+        result = []
+        for eid, rid in choices.items():
+            row = retained.get((Revision, rid))
+            entity = s.get(Entity, eid)
+            if (
+                not row
+                or not entity
+                or entity.type not in {"page", "action", "document", "section", "business_point"}
+                or row.entity_id != eid
+                or row.project_id != pid
+                or entity.project_id != pid
+            ):
+                continue
+            art = s.get(Artifact, row.artifact_id) if row.artifact_id else None
+            if row.artifact_id and (not art or art.project_id != pid):
+                continue
+            if complete or self.service._visible_revision(s, actor, pid, row):
+                result.append((entity, row))
+        return result
 
     def _packages(self, s, actor, pid, choices):
         snapshots = {
@@ -324,7 +348,13 @@ class InteractiveKnowledgeService:
             def write():
                 if analysis.state == "frozen":
                     raise DomainError("VKS_STATE_CONFLICT", "快照已冻结，请先创建草稿", 409)
-                version(analysis.selection_version, expected)
+                # Internal model writes validate all exact inputs again under
+                # this project/transaction lock. Other background links may have
+                # advanced the counter without changing those inputs.
+                version(
+                    analysis.selection_version,
+                    analysis.selection_version if generation and expected is None else expected,
+                )
                 if validate:
                     validate(s, analysis, choices)
                 if binding:

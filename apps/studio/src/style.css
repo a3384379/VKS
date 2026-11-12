@@ -1962,3 +1962,121 @@ kbd {
   color: #1b624a;
   font-weight: 700;
 }
+.assistant-background {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 14px;
+  padding: 9px 10px;
+  background: #f2f6f3;
+  color: #658273;
+  font-size: 12px;
+  border-radius: 7px;
+  line-height: 1.6;
+}
+.assistant-background svg {
+  flex-shrink: 0;
+}
+.related-results h2 {
+  font-size: 18px;
+  margin: 12px 0 16px;
+  line-height: 1.5;
+}
+.assistant-note {
+  font-size: 12px;
+  margin-top: 14px;
+}
+.rag-settings {
+  margin-top: 32px;
+  padding: 26px 30px;
+  background: white;
+  border: 1px solid #d8e5dd;
+  border-radius: 16px;
+}
+.rag-heading,
+.rag-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rag-heading {
+  justify-content: space-between;
+}
+.rag-heading h2 {
+  font-size: 21px;
+  margin: 0;
+}
+.rag-settings > p {
+  font-size: 14px;
+  color: #6e8275;
+  line-height: 1.8;
+  margin: 15px 0 22px;
+}
+.rag-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 24px;
+  margin-bottom: 20px;
+}
+.rag-progress {
+  padding: 18px;
+  background: #f3f7f4;
+  border-radius: 9px;
+  margin: 20px 0;
+}
+.rag-progress > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: #466c57;
+}
+.rag-progress progress {
+  width: 100%;
+  height: 12px;
+  margin-top: 16px;
+  accent-color: #21644d;
+}
+.rag-progress p {
+  font-size: 12px;
+  color: #6a8272;
+  margin-bottom: 0;
+}
+.rag-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.rag-settings small {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #809084;
+}
+@media (max-width: 780px) {
+  .rag-grid {
+    grid-template-columns: 1fr;
+  }
+  .rag-progress > div {
+    flex-direction: column;
+  }
+}
+.rag-success {
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: #276549;
+  background: #edf7ef;
+  font-size: 13px;
+}
+.rag-settings .check-line {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+.rag-settings .check-line input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #21644d;
+}

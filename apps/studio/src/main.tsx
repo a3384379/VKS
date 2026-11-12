@@ -82,6 +82,18 @@ type Assistance = {
   sections: Citation[];
   selection_version: number;
 };
+type Related = {
+  title: string;
+  sections: Citation[];
+  binding_id: string | null;
+  excluded: boolean;
+  origin: "retrieval" | "binding";
+  model_available: boolean;
+  selection_version: number;
+  elapsed_ms: number;
+  retrieval?: "keyword" | "hybrid" | "binding";
+  vector_available?: boolean;
+};
 type Catalog = {
   analysis_set_id: string;
   release_id: string | null;
@@ -187,6 +199,8 @@ function App() {
     editEpoch = useRef(0),
     loadEpoch = useRef(0),
     selectedBinding = useRef("");
+  const [related, setRelated] = useState<Related | null>(null),
+    [retrieving, setRetrieving] = useState(false);
   const [assistant, setAssistant] = useState<Assistance | null>(null),
     [assisting, setAssisting] = useState(false),
     [assistantMode, setAssistantMode] = useState<"documents" | "explain">(
@@ -201,6 +215,7 @@ function App() {
   const moduleControl = useRef<Control | null>(null),
     control = useRef<Control | null>(null),
     assistEpoch = useRef(0),
+    confirmedEpoch = useRef(-1),
     assistAbort = useRef<AbortController | null>(null),
     automaticTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
       undefined,
@@ -277,6 +292,8 @@ function App() {
     moduleControl.current = null;
     setModuleTitle("");
     setAssistant(null);
+    setRelated(null);
+    setRetrieving(false);
     setAssisting(false);
     setAssistantError("");
     setMenu(null);
@@ -440,8 +457,21 @@ function App() {
       ) || null,
     );
     setAssistant(null);
+    setRelated(null);
+    setRetrieving(false);
     setAssistantError("");
     setAssisting(false);
+  }
+  function switchKnowledge(mode: "documents" | "explain") {
+    setAssistantMode(mode);
+    if (!control.current) return;
+    if (mode === "documents" && (related || active)) return;
+    if (
+      mode === "explain" &&
+      (assistant || assisting || active?.origin === "model")
+    )
+      return;
+    void assist(control.current, mode);
   }
   async function assist(
     c: Control,
@@ -466,41 +496,120 @@ function App() {
       );
       return;
     }
-    if (mode === "documents" && existing && !refresh) return;
-    const epoch = assistEpoch.current;
-    const controller = new AbortController();
+    if (
+      existing &&
+      !refresh &&
+      (mode === "documents" || existing.origin === "model")
+    )
+      return;
+    const epoch = assistEpoch.current,
+      controller = new AbortController();
     assistAbort.current = controller;
-    setAssisting(true);
-    try {
-      const result = await api<Assistance>(`${prefix}/assist`, {
-        ...mutation("POST", {
-          ...(route.release
-            ? { release_id: route.release }
-            : { analysis_set_id: route.analysis }),
-          package_id: p.id,
-          target: c.target,
-          context: c.context,
-          mode,
-          refresh,
-        }),
-        signal: controller.signal,
-      });
-      if (epoch !== assistEpoch.current) return;
-      setAssistant(result);
-      setAssisting(false);
-      const updated = await reload();
-      if (epoch !== assistEpoch.current) return;
-      setActive(
-        updated?.b.find((b) => b.id === result.binding_id && !b.excluded) ||
-          existing ||
-          null,
-      );
-    } catch (e) {
-      if (epoch === assistEpoch.current && !controller.signal.aborted)
-        setAssistantError(text(e));
-    } finally {
-      if (epoch === assistEpoch.current) setAssisting(false);
+    const payload = {
+      ...(route.release
+        ? { release_id: route.release }
+        : { analysis_set_id: route.analysis }),
+      package_id: p.id,
+      target: c.target,
+      context: c.context,
+      mode,
+      refresh,
+    };
+    let matches: Related | null = existing
+      ? {
+          title: existing.title,
+          sections: existing.sections,
+          binding_id: existing.id,
+          excluded: false,
+          origin: "binding",
+          model_available: true,
+          selection_version: catalog?.selection_version || 0,
+          elapsed_ms: 0,
+        }
+      : null;
+    if (matches) setRelated(matches);
+    else {
+      setRetrieving(true);
+      try {
+        matches = await api<Related>(`${prefix}/related`, {
+          ...mutation("POST", payload),
+          signal: controller.signal,
+        });
+        if (epoch !== assistEpoch.current) return;
+        setRelated(matches);
+        if (matches.vector_available && matches.origin !== "binding") {
+          void api<Related>(`${prefix}/semantic`, {
+            ...mutation("POST", payload),
+            signal: controller.signal,
+          })
+            .then((result) => {
+              if (
+                epoch === assistEpoch.current &&
+                confirmedEpoch.current !== epoch
+              )
+                setRelated(result);
+            })
+            .catch(() => {});
+        }
+      } catch (e) {
+        if (epoch === assistEpoch.current && !controller.signal.aborted)
+          setAssistantError(text(e));
+        return;
+      } finally {
+        if (epoch === assistEpoch.current) setRetrieving(false);
+      }
     }
+    if (matches.excluded) {
+      setAssistantError("此关联已被移除，自动关联不会恢复它。");
+      return;
+    }
+    if (
+      mode === "documents" &&
+      (!automatic || !matches.model_available || !matches.sections.length)
+    )
+      return;
+    const runModel = async () => {
+      if (epoch !== assistEpoch.current || controller.signal.aborted) return;
+      setAssisting(true);
+      try {
+        const result = await api<Assistance>(`${prefix}/assist`, {
+          ...mutation("POST", payload),
+          signal: controller.signal,
+        });
+        if (epoch !== assistEpoch.current) return;
+        confirmedEpoch.current = epoch;
+        setAssistant(result);
+        setAssisting(false);
+        if (result.sections.length && (!existing || result.saved))
+          setRelated((previous) =>
+            previous
+              ? {
+                  ...previous,
+                  title: result.title,
+                  sections: result.sections,
+                  binding_id: result.binding_id,
+                  origin: result.saved ? "binding" : "retrieval",
+                }
+              : previous,
+          );
+        const updated = await reload();
+        if (epoch !== assistEpoch.current) return;
+        setActive(
+          updated?.b.find((b) => b.id === result.binding_id && !b.excluded) ||
+            existing ||
+            null,
+        );
+      } catch (e) {
+        if (epoch === assistEpoch.current && !controller.signal.aborted)
+          setAssistantError(text(e));
+      } finally {
+        if (epoch === assistEpoch.current) setAssisting(false);
+      }
+    };
+    if (mode === "documents") {
+      setAssisting(true);
+      automaticTimer.current = setTimeout(() => void runModel(), 350);
+    } else await runModel();
   }
   async function login(e: React.FormEvent) {
     e.preventDefault();
@@ -557,11 +666,12 @@ function App() {
         void assist(c, c.mode === "documents" ? "documents" : "explain");
       else if (!pinned) {
         chooseControl(c);
-        if (automatic && !bindings.some((b) => sameTarget(b.target, c.target)))
-          automaticTimer.current = setTimeout(
-            () => void assist(c, "documents"),
-            650,
-          );
+        if (
+          automatic &&
+          (route.view || "prototype") === "prototype" &&
+          !bindings.some((b) => sameTarget(b.target, c.target))
+        )
+          void assist(c, "documents");
       }
       return;
     }
@@ -592,6 +702,8 @@ function App() {
         JSON.stringify(c.frame_path) === JSON.stringify(target.frame_path)
       ) {
         setAssistant(null);
+        setRelated(null);
+        setRetrieving(false);
         setAssistantError("");
         control.current = null;
         setActive(null);
@@ -607,11 +719,8 @@ function App() {
         !pendingReveal.current
       ) {
         chooseControl(c.module);
-        if (automatic)
-          automaticTimer.current = setTimeout(
-            () => void assist(c.module!, "documents"),
-            650,
-          );
+        if (automatic && (route.view || "prototype") === "prototype")
+          void assist(c.module, "documents");
       }
     }
     if (event.type === "context.changed" && pendingReveal.current) {
@@ -635,6 +744,8 @@ function App() {
       assistAbort.current?.abort();
       clearTimeout(automaticTimer.current);
       setAssistant(null);
+      setRelated(null);
+      setRetrieving(false);
       setAssistantError("");
       setAssisting(false);
       setPicking(false);
@@ -655,6 +766,8 @@ function App() {
         assistAbort.current?.abort();
         clearTimeout(automaticTimer.current);
         setAssistant(null);
+        setRelated(null);
+        setRetrieving(false);
         setAssistantError("");
         setAssisting(false);
         control.current = null;
@@ -679,7 +792,7 @@ function App() {
     navigate({ view: "prototype" });
     setNotice("请点击需要关联的原型控件；按 Esc 或点击取消结束");
   }
-  function openDoc(c: Citation, b?: Binding) {
+  function openDoc(c: Citation, b?: Pick<Binding, "id">) {
     setOriginalBook(false);
     navigate({
       view: "documents",
@@ -703,6 +816,8 @@ function App() {
     assistEpoch.current++;
     assistAbort.current?.abort();
     setAssistant(null);
+    setRelated(null);
+    setRetrieving(false);
     setAssistantError("");
     setAssisting(false);
     setActive(b);
@@ -847,7 +962,7 @@ function App() {
   const selectedSection = editDoc?.sections.find(
     (s) => s.revision_id === sectionId,
   );
-  const related = bindings.filter(
+  const documentBindings = bindings.filter(
     (b) =>
       !b.excluded &&
       b.sections.some(
@@ -1205,8 +1320,8 @@ function App() {
             <aside className="related-sidebar">
               <span className="eyebrow">与当前文章相关</span>
               <h3>关联业务操作</h3>
-              {related.length ? (
-                related.map((b) => (
+              {documentBindings.length ? (
+                documentBindings.map((b) => (
                   <button key={b.id} onClick={() => reveal(b)}>
                     <MousePointer2 size={17} />
                     <span>
@@ -1238,7 +1353,12 @@ function App() {
           </section>
         )}
         {currentView === "ai" && (
-          <AISettings key={route.project} project={route.project} />
+          <AISettings
+            key={route.project}
+            project={route.project}
+            analysis={route.analysis}
+            release={route.release}
+          />
         )}
         {currentView === "links" && (
           <section className="links-space">
@@ -1470,36 +1590,109 @@ function App() {
                   <button
                     role="tab"
                     aria-selected={assistantMode === "documents"}
-                    disabled={assisting}
-                    onClick={() =>
-                      control.current &&
-                      void assist(control.current, "documents")
-                    }
+                    onClick={() => switchKnowledge("documents")}
                   >
                     相关文档
                   </button>
                   <button
                     role="tab"
                     aria-selected={assistantMode === "explain"}
-                    disabled={assisting}
-                    onClick={() =>
-                      control.current && void assist(control.current, "explain")
-                    }
+                    onClick={() => switchKnowledge("explain")}
                   >
                     AI 讲解
                   </button>
                 </div>
               )}
               <div className="knowledge-body">
-                {!editing && assisting && (
+                {!editing && retrieving && !related && (
                   <div className="assistant-loading" role="status">
-                    <LoaderCircle size={21} className="spinning" />
-                    <b>正在检索章节并生成讲解…</b>
-                    <p>根据当前控件、页面和弹窗匹配文档</p>
+                    <LoaderCircle size={18} className="spinning" />
+                    <b>正在查找本地章节…</b>
                   </div>
                 )}
+                {!editing && assisting && (
+                  <div className="assistant-background" role="status">
+                    <LoaderCircle size={14} className="spinning" />
+                    {assistantMode === "documents"
+                      ? "相关章节已显示，AI 正在后台核对关联…"
+                      : "AI 正在生成讲解，可先切换查看相关文档…"}
+                  </div>
+                )}
+                {!editing &&
+                  related &&
+                  (assistantMode === "documents" || !assistant) && (
+                    <section
+                      className="related-results"
+                      aria-label="相关文档检索结果"
+                    >
+                      <span className="eyebrow">
+                        {related.origin === "binding"
+                          ? "已保存的准确引用"
+                          : related.retrieval === "hybrid"
+                            ? "RAG 向量 + 关键词匹配 · 待 AI 核对"
+                            : "本地章节匹配 · 待 AI 核对"}
+                      </span>
+                      <h2>{related.title}</h2>
+                      {!related.sections.length && (
+                        <p>尚未找到相关章节，可在文档页搜索或补充资料。</p>
+                      )}
+                      {related.sections.map((c) => (
+                        <button
+                          key={c.revision_id}
+                          className="citation"
+                          onClick={() =>
+                            openDoc(
+                              c,
+                              related.binding_id
+                                ? { id: related.binding_id }
+                                : undefined,
+                            )
+                          }
+                        >
+                          <FileText size={18} />
+                          <span>
+                            {c.document_name}
+                            <small>{c.name}</small>
+                          </span>
+                          <ArrowUpRight size={15} />
+                        </button>
+                      ))}
+                      {related.sections.length > 0 && (
+                        <details className="inline-preview">
+                          <summary>
+                            {related.origin === "retrieval"
+                              ? "查看匹配片段"
+                              : "在小窗查看原文"}
+                          </summary>
+                          {related.sections.map((c) => (
+                            <div key={c.revision_id}>
+                              <h4>{c.name}</h4>
+                              <Markdown
+                                documentId={
+                                  catalog?.documents.find(
+                                    (d) =>
+                                      d.revision_id === c.document_revision_id,
+                                  )?.id
+                                }
+                                revisionId={c.document_revision_id}
+                              >
+                                {c.content}
+                              </Markdown>
+                            </div>
+                          ))}
+                        </details>
+                      )}
+                    </section>
+                  )}
                 {!editing && assistantError && (
-                  <div className="assistant-error" role="alert">
+                  <div
+                    className={
+                      related?.sections.length
+                        ? "assistant-error assistant-note"
+                        : "assistant-error"
+                    }
+                    role="alert"
+                  >
                     <b>暂未完成关联</b>
                     <p>{assistantError}</p>
                     <button
@@ -1515,7 +1708,7 @@ function App() {
                     </button>
                   </div>
                 )}
-                {!editing && assistant && (
+                {!editing && assistant && assistantMode === "explain" && (
                   <section
                     className="assistant-answer"
                     aria-label="AI 功能讲解"
@@ -1542,9 +1735,11 @@ function App() {
                     <p className="assistant-provenance">
                       {assistant.saved
                         ? "关联已保存，可从文档跳回此控件"
-                        : assistant.confidence < 0.7
-                          ? "匹配依据不足，未自动保存关联"
-                          : "当前版本只读，讲解未写入"}
+                        : active
+                          ? "本次讲解保留原有关联，未覆盖已保存的知识"
+                          : assistant.confidence < 0.7
+                            ? "匹配依据不足，未自动保存关联"
+                            : "当前版本只读，讲解未写入"}
                     </p>
                     <h4>
                       相关原文 <span>{assistant.sections.length}</span>
@@ -1553,7 +1748,14 @@ function App() {
                       <button
                         key={c.revision_id}
                         className="citation"
-                        onClick={() => openDoc(c, active || undefined)}
+                        onClick={() =>
+                          openDoc(
+                            c,
+                            assistant.binding_id
+                              ? { id: assistant.binding_id }
+                              : undefined,
+                          )
+                        }
                       >
                         <FileText size={18} />
                         <span>
@@ -1564,10 +1766,7 @@ function App() {
                       </button>
                     ))}
                     {assistant.sections.length > 0 && (
-                      <details
-                        className="inline-preview"
-                        open={assistantMode === "documents"}
-                      >
+                      <details className="inline-preview" open={false}>
                         <summary>在小窗查看原文</summary>
                         {assistant.sections.map((c) => (
                           <div key={c.revision_id}>
@@ -1671,8 +1870,10 @@ function App() {
                       </div>
                     )}
                   </>
-                ) : assistant || assisting ? null : active &&
-                  !active.excluded ? (
+                ) : assistant ||
+                  assisting ||
+                  related ||
+                  retrieving ? null : active && !active.excluded ? (
                   <>
                     <div className="knowledge-title">
                       <span className="eyebrow">

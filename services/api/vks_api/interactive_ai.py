@@ -9,6 +9,8 @@ import json
 import math
 import re
 import threading
+import time
+import weakref
 from collections import Counter, OrderedDict
 from contextlib import nullcontext
 from copy import deepcopy
@@ -21,7 +23,7 @@ from sqlalchemy import select
 from . import ai_gateway
 from .ai_gateway import AiService, ModelNotSent, ModelPolicy, PolicyInput, failure
 from .interactive import DOMTarget, InteractiveBinding, InteractiveCitation, InteractiveKnowledgeService
-from .models import Artifact
+from .models import Artifact, Revision
 from .prototype_contracts import PrototypeEnvelope
 from .prototype_edit import Input, PointText, Ref
 from .reading import artifact_policy
@@ -57,6 +59,19 @@ class AssistanceOutput(Input):
     sections: list[InteractiveCitation]
     selection_version: int
     retrieval: str = "章节关键词检索 + 模型关联"
+
+
+class RelatedOutput(Input):
+    title: str
+    sections: list[InteractiveCitation]
+    binding_id: str | None
+    excluded: bool = False
+    origin: Literal["retrieval", "binding"]
+    model_available: bool
+    selection_version: int
+    elapsed_ms: float
+    retrieval: Literal["keyword", "hybrid", "binding"] = "keyword"
+    vector_available: bool = False
 
 
 SCHEMA = {
@@ -100,7 +115,8 @@ class ChapterIndex:
         self.words = [tokens(c["document_name"] + " " + c["name"] + " " + c["content"]) for c in chapters]
         counts = Counter(t for terms in self.words for t in terms)
         self.idf = {t: math.log(1 + (len(chapters) - n + 0.5) / (n + 0.5)) for t, n in counts.items()}
-        self.average = sum(sum(x.values()) for x in self.words) / max(1, len(chapters))
+        self.lengths = [sum(x.values()) for x in self.words]
+        self.average = sum(self.lengths) / max(1, len(chapters))
 
     def search(self, target, context, preferred):
         query = tokens(
@@ -112,8 +128,7 @@ class ChapterIndex:
             )
         )
         ranked = []
-        for row, terms in zip(self.rows, self.words, strict=True):
-            length = sum(terms.values())
+        for row, terms, length in zip(self.rows, self.words, self.lengths, strict=True):
             score = sum(
                 self.idf.get(t, 0)
                 * min(w, 3)
@@ -149,8 +164,12 @@ class InteractiveAssistant:
         self.indexes = OrderedDict()
         self.cache = OrderedDict()
         self.lock = threading.RLock()
+        self.requests = weakref.WeakValueDictionary()
+        from .vector_rag import VectorRag
 
-    def prepare(self, actor, pid, form, *, session=None):
+        self.rag = VectorRag(service, self)
+
+    def prepare(self, actor, pid, form, *, session=None, for_model=True):
         with nullcontext(session) if session is not None else self.service.db() as s:
             analysis, release, choices, _ = self.links.reader.scope(
                 s, actor, pid, form.analysis_set_id, form.release_id
@@ -166,12 +185,16 @@ class InteractiveAssistant:
             if not package:
                 failure("VKS_NOT_FOUND", "当前版本中没有可读取的原型", 404)
             policy = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
-            if not policy or not policy.settings.get("enabled") or not policy.settings.get("allow_external"):
+            if for_model and (
+                not policy or not policy.settings.get("enabled") or not policy.settings.get("allow_external")
+            ):
                 failure("VKS_MODEL_NOT_CONFIGURED", "请在 AI 设置中保存并启用模型，允许使用本项目获授权的相关内容", 503)
-            config = PolicyInput.model_validate(policy.settings).model_dump()
+            config = PolicyInput.model_validate(policy.settings if policy else {}).model_dump()
             original = s.get(Artifact, form.package_id)
             p = artifact_policy(s, original)
-            if original.sensitivity == "confidential" or (p.get("requires_source_read") and not config["allow_source"]):
+            if for_model and (
+                original.sensitivity == "confidential" or (p.get("requires_source_read") and not config["allow_source"])
+            ):
                 failure("VKS_FORBIDDEN", "模型设置不允许使用此原型资料", 403)
             rows = self.links._rows(s, actor, pid, choices)
             chapters, revisions = [], {}
@@ -184,8 +207,9 @@ class InteractiveAssistant:
                         continue
                     art = s.get(Artifact, chapter.artifact_id)
                     ap = artifact_policy(s, art)
-                    if art.sensitivity == "confidential" or (
-                        ap.get("requires_source_read") and not config["allow_source"]
+                    if for_model and (
+                        art.sensitivity == "confidential"
+                        or (ap.get("requires_source_read") and not config["allow_source"])
                     ):
                         continue
                     chapters.append(
@@ -209,12 +233,14 @@ class InteractiveAssistant:
                     {
                         "pid": pid,
                         "analysis": analysis.id,
+                        "analysis_state": analysis.state,
                         "release": form.release_id,
                         "package": package,
                         "target": target_key(form.target),
                         "context": form.context.model_dump(),
                         "corpus": corpus,
                         "config": config,
+                        "rag": self.rag.store.settings(pid).model_dump(),
                     }
                 )
             )
@@ -227,24 +253,76 @@ class InteractiveAssistant:
                 bool(not release and analysis.state != "frozen" and self.service._can(s, actor, pid, "knowledge:edit")),
             )
 
-    def run(self, actor, pid, form):
-        # Serialize duplicate gestures within this application instance; permission and
-        # exact selection checks still run on every request, including cache hits.
+    def _index(self, corpus, chapters):
         with self.lock:
-            return self._run(actor, pid, form)
+            found = self.indexes.get(corpus)
+        if found is not None:
+            return found
+        built = ChapterIndex(chapters)
+        with self.lock:
+            found = self.indexes.setdefault(corpus, built)
+            if len(self.indexes) > 4:
+                self.indexes.popitem(last=False)
+        return found
 
-    def _run(self, actor, pid, form):
-        config, chapters, corpus, key, version, editable = self.prepare(actor, pid, form)
-        bindings = self.links.bindings(actor, pid, form.analysis_set_id, form.release_id)
-        current = next(
+    def _binding(self, actor, pid, form):
+        return next(
             (
                 b
-                for b in bindings
+                for b in self.links.bindings(actor, pid, form.analysis_set_id, form.release_id)
                 if b["package_id"] == form.package_id
                 and target_key(DOMTarget.model_validate(b["target"])) == target_key(form.target)
             ),
             None,
         )
+
+    def related(self, actor, pid, form):
+        started = time.perf_counter()
+        config, chapters, corpus, _, version, _ = self.prepare(actor, pid, form, for_model=False)
+        current = self._binding(actor, pid, form)
+        # These are retrieval candidates, never model-confirmed relationships.
+        sections = (
+            []
+            if current and current["excluded"]
+            else current["sections"]
+            if current
+            else self._index(corpus, chapters).search(form.target, form.context, set())
+        )
+        return {
+            "title": current["title"] if current else form.target.label,
+            "sections": sections,
+            "binding_id": current["id"] if current else None,
+            "excluded": bool(current and current["excluded"]),
+            "origin": "binding" if current else "retrieval",
+            "model_available": bool(config["enabled"] and config["allow_external"]),
+            "selection_version": version,
+            "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+            "retrieval": "binding" if current else "keyword",
+            "vector_available": self.rag.available(actor, pid, chapters),
+        }
+
+    def run(self, actor, pid, form):
+        # Coalesce the same gesture, without queuing unrelated pages behind an
+        # entire network/model request. The global lock only guards small maps.
+        key = canonical(
+            {
+                "pid": pid,
+                "actor": actor.id,
+                "scopes": sorted(actor.scopes),
+                **form.model_dump(exclude={"mode", "refresh"}),
+            }
+        )
+        with self.lock:
+            request_lock = self.requests.get(key)
+            if request_lock is None:
+                request_lock = threading.Lock()
+                self.requests[key] = request_lock
+        with request_lock:
+            return self._run(actor, pid, form)
+
+    def _run(self, actor, pid, form):
+        config, chapters, corpus, key, version, editable = self.prepare(actor, pid, form)
+        current = self._binding(actor, pid, form)
         if current and current["excluded"]:
             failure("VKS_STATE_CONFLICT", "此关联已由用户移除，自动关联不会恢复它", 409)
         cached = self.cache.get(key)
@@ -253,16 +331,53 @@ class InteractiveAssistant:
                 **cached,
                 "cached": True,
                 "selection_version": version,
-                "binding_id": current["id"] if current else None,
-                "saved": bool(current),
+                "binding_id": current["id"]
+                if current
+                and cached.get("saved")
+                and current.get("origin") == "model"
+                and current["summary"] == cached["explanation"]
+                else None,
+                "saved": bool(
+                    current
+                    and cached.get("saved")
+                    and current.get("origin") == "model"
+                    and current["summary"] == cached["explanation"]
+                ),
             }
-        if corpus not in self.indexes:
-            self.indexes[corpus] = ChapterIndex(chapters)
-            if len(self.indexes) > 4:
-                self.indexes.popitem(last=False)
-        candidates = self.indexes[corpus].search(
+        if current and current.get("origin") == "model" and current["sections"] and not form.refresh:
+            # Reuse persisted wording after a restart, only while every actual
+            # input revision remains selected and visible and the model matches.
+            with self.service.db() as s:
+                point = s.get(Revision, current["point_revision_id"])
+                art = s.get(Artifact, point.artifact_id)
+                generation = art.metadata_json.get("interactive_generation", {})
+                inputs = generation.get("input_revision_ids", [])
+                if (
+                    inputs
+                    and set(inputs) <= {c["revision_id"] for c in chapters}
+                    and generation.get("model_id") == config["model_id"]
+                ):
+                    return {
+                        "title": current["title"],
+                        "explanation": current["summary"],
+                        "unknowns": generation.get("unknowns", []),
+                        "confidence": generation.get("confidence", 0.7),
+                        "model_id": config["model_id"],
+                        "cached": True,
+                        "binding_id": current["id"],
+                        "saved": True,
+                        "sections": current["sections"],
+                        "selection_version": version,
+                    }
+        candidates = self._index(corpus, chapters).search(
             form.target, form.context, {c["revision_id"] for c in current["sections"]} if current else set()
         )
+        if self.rag.available(actor, pid, chapters):
+            try:
+                candidates = self.rag.hybrid(actor, pid, form, chapters, corpus, candidates)
+            except DomainError as e:
+                if e.code not in {"VKS_DEPENDENCY_UNAVAILABLE", "VKS_LIMIT_EXCEEDED"}:
+                    raise
         if not candidates:
             return {
                 "title": form.target.label,
@@ -325,7 +440,7 @@ class InteractiveAssistant:
         input_tokens = output_tokens = None
         submitted = False
         try:
-            self._unchanged(actor, pid, form, key, version, None)
+            self._unchanged(actor, pid, form, key, None, None)
             submitted = True
             response = ai_gateway.request_model(config, body)
             usage = response.get("usage", {})
@@ -367,16 +482,31 @@ class InteractiveAssistant:
                 failure("VKS_INVALID_INPUT", "模型讲解超出格式范围")
             # Check the entire sent corpus/context policy again, not just citations.
             latest = self.prepare(actor, pid, form)
-            if latest[3] != key or latest[4] != version:
+            if latest[3] != key:
                 failure("VKS_VERSION_CONFLICT", "请求期间资料、权限或模型设置已变化，请重试", 412)
+            version = latest[4]
+            current = self._binding(actor, pid, form)
+            if current and current["excluded"]:
+                failure("VKS_STATE_CONFLICT", "此关联已由用户移除，自动关联不会恢复它", 409)
             saved = False
-            if chosen and answer["confidence"] >= 0.7 and editable and not current:
+            if (
+                chosen
+                and answer["confidence"] >= 0.7
+                and editable
+                and (not current or (form.refresh and current.get("origin") == "model"))
+            ):
                 payload = InteractiveBinding(
                     analysis_set_id=form.analysis_set_id,
                     package_id=form.package_id,
                     target=form.target,
                     point=PointText(title=answer["title"], summary=answer["explanation"]),
                     section_revision_ids=chosen,
+                    **(
+                        {k: current[k] for k in ("binding_version", "point_revision_id")}
+                        | {"binding_id": current["id"]}
+                        if current
+                        else {}
+                    ),
                 )
                 generation = {
                     "origin": "model",
@@ -384,15 +514,16 @@ class InteractiveAssistant:
                     "confidence": answer["confidence"],
                     "input_revision_ids": [c["revision_id"] for c in candidates],
                     "request_key": key,
+                    "unknowns": answer["unknowns"],
                 }
                 result = self.links.save(
                     actor,
                     pid,
                     payload,
-                    str(version),
+                    None,
                     "assistant." + usage_id,
                     generation=generation,
-                    validate=lambda s, _a, _c: self._unchanged(actor, pid, form, key, version, s),
+                    validate=lambda s, _a, _c: self._unchanged(actor, pid, form, key, None, s),
                 )
                 version = result["selection_version"]
                 current = {"id": result["binding_id"]}
@@ -407,15 +538,16 @@ class InteractiveAssistant:
                 "confidence": answer["confidence"],
                 "model_id": config["model_id"],
                 "cached": False,
-                "binding_id": current["id"] if current else None,
-                "saved": saved or bool(current),
+                "binding_id": current["id"] if saved else None,
+                "saved": saved,
                 "sections": citations,
                 "selection_version": version,
             }
             self.ai.settle(usage_id, config, input_tokens, output_tokens, "succeeded")
-            self.cache[key] = result
-            if len(self.cache) > 128:
-                self.cache.popitem(last=False)
+            with self.lock:
+                self.cache[key] = result
+                if len(self.cache) > 128:
+                    self.cache.popitem(last=False)
             return result
         except ModelNotSent as exc:
             self.ai.settle(usage_id, config, 0, 0, "not_sent", exc.code)
@@ -435,12 +567,19 @@ class InteractiveAssistant:
 
     def _unchanged(self, actor, pid, form, key, version, s):
         state = self.prepare(actor, pid, form, session=s)
-        if state[3] != key or state[4] != version:
+        if state[3] != key or (version is not None and state[4] != version):
             failure("VKS_VERSION_CONFLICT", "资料或模型配置已变化，请重试", 412)
 
 
 def install_interactive_ai(app, service, actor, envelope):
     shared = InteractiveAssistant(service)
+    from .vector_rag import install_rag
+
+    install_rag(app, service, actor, envelope, shared, AssistanceInput, RelatedOutput)
+
+    @app.post("/api/v3/projects/{pid}/interactive/related", response_model=PrototypeEnvelope[RelatedOutput])
+    def related(pid: str, payload: AssistanceInput, request: Request, a: Annotated[Actor, Depends(actor)]):
+        return envelope(request, shared.related(a, pid, payload))
 
     @app.post("/api/v3/projects/{pid}/interactive/assist", response_model=PrototypeEnvelope[AssistanceOutput])
     def assist(pid: str, payload: AssistanceInput, request: Request, a: Annotated[Actor, Depends(actor)]):

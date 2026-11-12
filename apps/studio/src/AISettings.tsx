@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { api, mutation } from "../../web/src/api";
+import { RAGSettings } from "./RAGSettings";
 
 type Model = { id: string; name: string; description: string };
 type Provider = {
@@ -66,7 +67,15 @@ const initials: Record<string, string> = {
   custom: "＋",
 };
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-export function AISettings({ project }: { project: string }) {
+export function AISettings({
+  project,
+  analysis,
+  release,
+}: {
+  project: string;
+  analysis: string;
+  release: string;
+}) {
   const [catalog, setCatalog] = useState<Catalog | null>(null),
     [form, setForm] = useState<Form | null>(null),
     [configured, setConfigured] = useState(false),
@@ -682,6 +691,7 @@ export function AISettings({ project }: { project: string }) {
           </footer>
         </form>
       </div>
+      <RAGSettings project={project} analysis={analysis} release={release} />
     </section>
   );
 }

@@ -103,7 +103,9 @@ def test_reject_invalid_or_stale_results(assistant, monkeypatch, kind):
             from vks_api.models import Analysis
 
             with service.db() as s:
-                s.get(Analysis, aid).selection_version += 1
+                row = s.get(Analysis, aid)
+                row.state = "frozen"
+                row.selection_version += 1
         return response("not-a-candidate" if kind == "invented_citation" else data["chapters"][0]["revision_id"])
 
     monkeypatch.setattr(ai_gateway, "request_model", model)
@@ -124,6 +126,7 @@ def test_manual_knowledge_is_never_overwritten(assistant):
     web.post(root(pid) + "/bindings", json=form(aid, package, section), headers=_headers(grant, v, "manual"))
     result = web.post(root(pid) + "/assist", json=body, headers=_headers(grant, 0, "explain"))
     assert result.status_code == 200, result.text
+    assert not result.json()["data"]["saved"] and result.json()["data"]["binding_id"] is None
     links = web.get(root(pid) + "/bindings", params={"analysis_set_id": aid}, headers=_headers(grant, 0, "r")).json()[
         "data"
     ]

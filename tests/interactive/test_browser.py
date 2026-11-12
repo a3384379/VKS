@@ -7,7 +7,7 @@ import subprocess
 import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 
 import httpx
 from playwright.sync_api import expect, sync_playwright
@@ -141,7 +141,12 @@ def test_original_interaction_links_refresh_and_runtime_isolation(interactive, w
                         # substituted: module links coexist with the authored Add link.
                         from vks_api import ai_gateway
 
+                        model_started = Event()
+                        model_release = Event()
+
                         def model(config, body):
+                            model_started.set()
+                            model_release.wait(timeout=5)
                             data = json.loads(body["input"][1]["content"])
                             rows = data["chapters"]
                             answer = {
@@ -168,7 +173,11 @@ def test_original_interaction_links_refresh_and_runtime_isolation(interactive, w
                         page.get_by_role("button", name="原型", exact=True).click()
                         expect(page.get_by_role("button", name="模块知识", exact=True)).to_be_enabled()
                         page.get_by_role("button", name="模块知识", exact=True).click()
-                        expect(page.get_by_role("region", name="AI 功能讲解")).to_contain_text("收费项模块知识")
+                        expect(page.get_by_role("region", name="相关文档检索结果")).to_be_visible()
+                        assert model_started.wait(timeout=3)
+                        expect(page.locator(".knowledge-window .citation").first).to_be_visible()
+                        expect(page.get_by_role("tab", name="相关文档", exact=True)).to_be_enabled()
+                        model_release.set()
                         page.get_by_role("tab", name="AI 讲解", exact=True).click()
                         expect(page.get_by_role("region", name="AI 功能讲解")).to_contain_text("自动生成的模块说明")
                         page.locator(".knowledge-window .citation").first.click()
@@ -182,6 +191,8 @@ def test_original_interaction_links_refresh_and_runtime_isolation(interactive, w
                         expect(field).to_be_visible()
                         source.get_by_role("button", name="Close", exact=True).click()
                         expect(field).not_to_be_visible()
+                        expect(page.get_by_role("region", name="相关文档检索结果")).to_be_visible()
+                        page.get_by_role("tab", name="AI 讲解", exact=True).click()
                         expect(page.get_by_role("region", name="AI 功能讲解")).to_contain_text("控件：Close")
                         expect(page.locator(".assistant-provenance")).to_contain_text("关联已保存")
                     finally:
