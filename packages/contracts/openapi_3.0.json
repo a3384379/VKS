@@ -1689,10 +1689,501 @@
           }
         }
       }
+    },
+    "/api/v3/projects/{pid}/materials/open": {
+      "post": {
+        "summary": "Open Workspace",
+        "operationId": "open_workspace_api_v3_projects__pid__materials_open_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenWorkspace"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials": {
+      "get": {
+        "summary": "Library",
+        "operationId": "library_api_v3_projects__pid__materials_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Set Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/prepare": {
+      "post": {
+        "summary": "Prepare",
+        "operationId": "prepare_api_v3_projects__pid__materials_prepare_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareMaterial"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/activate": {
+      "post": {
+        "summary": "Activate",
+        "operationId": "activate_api_v3_projects__pid__materials_activate_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 90,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateMaterials"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/versions": {
+      "post": {
+        "summary": "Save Version",
+        "operationId": "save_version_api_v3_projects__pid__materials_versions_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveMaterialVersion"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/restore": {
+      "post": {
+        "summary": "Restore",
+        "operationId": "restore_api_v3_projects__pid__materials_restore_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreMaterialVersion"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/migrate": {
+      "post": {
+        "summary": "Migrate",
+        "operationId": "migrate_api_v3_projects__pid__materials_migrate_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenWorkspace"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ActivateMaterials": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "revision_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Revision Ids"
+          },
+          "remove_package_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Remove Package Ids"
+          },
+          "replace_all": {
+            "type": "boolean",
+            "title": "Replace All",
+            "default": false
+          },
+          "primary_package_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Package Id"
+          },
+          "auto_migrate": {
+            "type": "boolean",
+            "title": "Auto Migrate",
+            "default": true
+          },
+          "prepared": {
+            "type": "boolean",
+            "title": "Prepared",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id"
+        ],
+        "title": "ActivateMaterials"
+      },
       "Anchor": {
         "properties": {
           "anchorKey": {
@@ -2596,6 +3087,17 @@
             },
             "type": "array",
             "title": "Documents"
+          },
+          "primary_package_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Package Id"
           }
         },
         "additionalProperties": false,
@@ -2879,6 +3381,26 @@
         ],
         "title": "JobOutput"
       },
+      "OpenWorkspace": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "OpenWorkspace"
+      },
       "PointText": {
         "properties": {
           "title": {
@@ -2921,6 +3443,69 @@
           "summary"
         ],
         "title": "PointText"
+      },
+      "PrepareMaterial": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "prototype",
+              "documents"
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "artifact_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Artifact Ids"
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
+          },
+          "entry": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Entry",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "kind",
+          "name",
+          "artifact_ids"
+        ],
+        "title": "PrepareMaterial"
       },
       "PreviewInput": {
         "properties": {
@@ -4025,6 +4610,29 @@
         ],
         "title": "RelatedOutput"
       },
+      "RestoreMaterialVersion": {
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Release Id"
+          },
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "release_id",
+          "analysis_set_id"
+        ],
+        "title": "RestoreMaterialVersion"
+      },
       "RuntimePackage": {
         "properties": {
           "id": {
@@ -4050,6 +4658,21 @@
           "adapter_version": {
             "type": "string",
             "title": "Adapter Version"
+          },
+          "package_key": {
+            "type": "string",
+            "title": "Package Key",
+            "default": ""
+          },
+          "revision_id": {
+            "type": "string",
+            "title": "Revision Id",
+            "default": ""
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -4063,6 +4686,29 @@
           "adapter_version"
         ],
         "title": "RuntimePackage"
+      },
+      "SaveMaterialVersion": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "name"
+        ],
+        "title": "SaveMaterialVersion"
       },
       "SettingsEdit": {
         "properties": {

@@ -173,7 +173,7 @@ def publish_job(job_id, kind):
         "vks-browser"
         if kind == "capture"
         else "vks-model"
-        if kind in ("generate_documents", "knowledge_task")
+        if kind in ("generate_documents", "knowledge_task", "material_migrate")
         else "vks-index"
     )
     celery.send_task("vks.execute_job", args=[job_id], queue=queue, serializer="json", retry=False)
@@ -453,6 +453,10 @@ def execute_job(service, jid):
                     from .ai_gateway import AiService
 
                     document_output = AiService(service).prepare_document(jid)
+                if kind == "material_migrate":
+                    from .materials import migrate_job
+
+                    material_output = migrate_job(service, jid)
                 if kind == "knowledge_task":
                     from .knowledge_tasks import KnowledgeTaskService
 
@@ -541,6 +545,8 @@ def execute_job(service, jid):
                     from .knowledge_tasks import KnowledgeTaskService
 
                     result = KnowledgeTaskService(service).finalize(s, job, task_output)
+                elif kind == "material_migrate":
+                    result = material_output
                 elif kind == "export":
                     result = service._perform_export(s, job)
                 elif kind == "detect_drift":

@@ -70,6 +70,9 @@ class RuntimePackage(Input):
     size_bytes: int
     name: str
     adapter_version: str
+    package_key: str = ""
+    revision_id: str = ""
+    format: str = ""
 
 
 class InteractiveDocumentInfo(Input):
@@ -86,6 +89,7 @@ class InteractiveCatalog(Input):
     editable: bool
     packages: list[RuntimePackage]
     documents: list[InteractiveDocumentInfo]
+    primary_package_id: str | None = None
 
 
 class InteractiveChapter(Input):
@@ -172,6 +176,30 @@ class InteractiveKnowledgeService:
         return result
 
     def _packages(self, s, actor, pid, choices):
+        from .materials import COMPOSITION, ROOT, readable, roots
+
+        installed = roots(s, pid, choices)
+        if installed or any(COMPOSITION in r.metadata_json for _, r in self._rows(s, actor, pid, choices)):
+            result = []
+            for row in installed:
+                if not readable(self.service, s, actor, pid, row):
+                    continue
+                art = s.get(Artifact, row.artifact_id)
+                meta = row.metadata_json[ROOT]
+                result.append(
+                    {
+                        "id": art.id,
+                        "kind": "prototype" if meta["kind"] == "prototype" else "handbook",
+                        "sha256": art.sha256,
+                        "size_bytes": art.size_bytes,
+                        "name": row.name,
+                        "adapter_version": "material-dom-1",
+                        "package_key": row.entity_id,
+                        "revision_id": row.id,
+                        "format": meta["format"],
+                    }
+                )
+            return result
         snapshots = {
             s.get(Artifact, r.artifact_id).snapshot_id for _, r in self._rows(s, actor, pid, choices) if r.artifact_id
         }
@@ -209,8 +237,11 @@ class InteractiveKnowledgeService:
         with self.service.db() as s:
             analysis, release, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
             rows = self._rows(s, actor, pid, choices)
+            from .materials import primary
+
             return {
                 "analysis_set_id": analysis.id,
+                "primary_package_id": primary(s, pid, choices),
                 "release_id": release.id if release else None,
                 "selection_version": analysis.selection_version,
                 "editable": not release
@@ -276,11 +307,12 @@ class InteractiveKnowledgeService:
                     for eid in edge.get("evidence_ids", [])
                 )
             ]
+            package_ids = {p["id"] for p in self._packages(s, actor, pid, choices)}
             out = []
             for edge in visible:
                 action = rows[edge["from_revision_id"]][1]
                 meta = action.metadata_json.get("interactive_anchor")
-                if edge["relation_type"] != "has_business_point" or not meta:
+                if edge["relation_type"] != "has_business_point" or not meta or meta["package_id"] not in package_ids:
                     continue
                 point = rows[edge["to_revision_id"]][1]
                 citations = []
@@ -339,8 +371,22 @@ class InteractiveKnowledgeService:
             art = s.get(Artifact, form.package_id)
             locator = form.target.model_dump()
             signature = {k: v for k, v in locator.items() if k != "open_steps"}
-            action_key = "interactive." + sha(canonical({"package": art.id, "target": signature}))[:40]
-            action_entity = _identity(s, pid, "action", action_key)
+            package = next(p for p in self._packages(s, actor, pid, choices) if p["id"] == art.id)
+            action_key = (
+                "interactive."
+                + sha(canonical({"package": package.get("package_key") or art.id, "target": signature}))[:40]
+            )
+            existing = next(
+                (
+                    r
+                    for _, r in self._rows(s, actor, pid, choices)
+                    if r.metadata_json.get("interactive_anchor", {}).get("package_id") == art.id
+                    and {k: v for k, v in r.metadata_json["interactive_anchor"]["target"].items() if k != "open_steps"}
+                    == signature
+                ),
+                None,
+            )
+            action_entity = s.get(Entity, existing.entity_id) if existing else _identity(s, pid, "action", action_key)
             prior_action = s.get(Revision, choices.get(action_entity.id)) if action_entity else None
             prior_edges = _edges(s, analysis, prior_action.id) if prior_action else []
             binding = next((edge for edge in prior_edges if edge.relation_type == "has_business_point"), None)

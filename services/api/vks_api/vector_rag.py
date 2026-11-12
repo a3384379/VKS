@@ -362,17 +362,22 @@ class VectorRag:
                     raise
             state["phase"] = "预热模块查询"
             self.store.state(pid, state)
+            from .models import Artifact
+
             with self.service.db() as s:
                 _, _, choices, _ = self.assistant.links.reader.scope(
                     s, actor, pid, form.analysis_set_id, form.release_id
                 )
+                package_artifact = s.get(Artifact, form.package_id)
                 pages = [
                     (r.name, r.metadata_json.get("prototype_manifest", {}).get("routeAliases", []))
                     for e, r in self.assistant.links._rows(s, actor, pid, choices)
                     if e.type == "page"
+                    and r.artifact_id
+                    and s.get(Artifact, r.artifact_id).snapshot_id == package_artifact.snapshot_id
                 ]
             queries = {
-                f"module:{corpus}:{route}": "模块：" + name.split(" · ")[0]
+                f"module:{corpus}:{form.package_id}:{route}": "模块：" + name.split(" · ")[0]
                 for name, routes in pages
                 for route in routes
             }
@@ -409,12 +414,12 @@ class VectorRag:
                             continue
                         row = db.execute(
                             "SELECT embedding FROM queries WHERE project=? AND space=? AND id=?",
-                            (pid, space, f"module:{corpus}:{logical}"),
+                            (pid, space, f"module:{corpus}:{form.package_id}:{logical}"),
                         ).fetchone()
                         if row:
                             db.execute(
                                 "INSERT OR REPLACE INTO queries VALUES (?,?,?,?)",
-                                (pid, space, f"module:{corpus}:/" + physical.lstrip("/"), row[0]),
+                                (pid, space, f"module:{corpus}:{form.package_id}:/" + physical.lstrip("/"), row[0]),
                             )
             state.update(state="ready", phase="混合检索可用", corpus=corpus)
             self.store.state(pid, state)
@@ -439,7 +444,7 @@ class VectorRag:
             + "\n上下文："
             + form.context.section_title
         )
-        key = f"module:{corpus}:{form.target.route}" if form.context.scope == "module" else sha(text)
+        key = f"module:{corpus}:{form.package_id}:{form.target.route}" if form.context.scope == "module" else sha(text)
         with self.lock:
             lock = self.query_locks.setdefault((pid, space, key), threading.Lock())
         with lock:

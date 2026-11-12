@@ -149,3 +149,63 @@ def test_distinct_targets_do_not_queue_behind_one_model_lock(assistant, monkeypa
         )
         == 2
     )
+
+
+def test_module_query_cache_isolated_between_prototypes_with_same_route(assistant, monkeypatch):
+    from vks_api.interactive import InteractiveKnowledgeService
+    from vks_api.materials import ActivateMaterials, MaterialService, PrepareMaterial
+    from vks_api.models import uid
+
+    from tests.prototype.test_v3_workflow import _upload
+
+    (_web, service, owner, pid, aid, _grant, _package, _section, _raw), body, _calls = assistant
+    calls = []
+
+    def embed(config, payload):
+        calls.extend(payload["input"])
+        return {
+            "data": [
+                {"index": i, "embedding": [1.0] + [0.0] * (payload["dimensions"] - 1)}
+                for i, _ in enumerate(payload["input"])
+            ],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setattr(ai_gateway, "request_model", embed)
+    manager = MaterialService(service)
+    manager.open(owner, pid, aid)
+
+    def version():
+        return str(InteractiveKnowledgeService(service).catalog(owner, pid, aid)["selection_version"])
+
+    upload = _upload(service, owner, pid, b"<title>Another module</title><button>Another action</button>", "other.html")
+    p = manager.prepare(
+        owner,
+        pid,
+        PrepareMaterial(analysis_set_id=aid, kind="prototype", name="Other prototype", artifact_ids=[upload]),
+        version(),
+        uid(),
+    )
+    manager.activate(
+        owner, pid, ActivateMaterials(analysis_set_id=aid, revision_ids=[p["revision_id"]]), version(), uid()
+    )
+    engine = InteractiveAssistant(service)
+    engine.rag.save(owner, pid, RagSettings(enabled=True, dimensions=64))
+    first = AssistanceInput.model_validate(
+        {
+            **body,
+            "target": {**body["target"], "selector": "body", "route": "/", "label": "First module"},
+            "context": {"scope": "module"},
+        }
+    )
+    engine.rag._build(owner, pid, first)
+    state = engine.prepare(owner, pid, first)
+    engine.rag.hybrid(owner, pid, first, state[1], state[2], [])
+    before = len(calls)
+    second = first.model_copy(
+        update={"package_id": p["artifact_id"], "target": first.target.model_copy(update={"label": "Another module"})}
+    )
+    second_state = engine.prepare(owner, pid, second)
+    engine.rag.hybrid(owner, pid, second, second_state[1], second_state[2], [])
+    assert len(calls) == before + 1
+    assert calls[-1] == "模块：Another module"

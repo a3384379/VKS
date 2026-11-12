@@ -6,11 +6,11 @@ policies, or permission decisions. Those are re-read for each transaction.
 
 from __future__ import annotations
 
+import re
 from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import RLock
-import re
 
 from sqlalchemy import Text, cast, func, literal, or_, select
 from sqlalchemy.orm import load_only
@@ -664,8 +664,10 @@ class ReadingService:
                 )
                 for eid, key in pages:
                     page = s.get(Revision, scope[eid]) if eid in scope else None
-                    if page and page.metadata_json.get("prototype_manifest") and self.service._visible_revision(
-                        s, actor, pid, page
+                    if (
+                        page
+                        and page.metadata_json.get("prototype_manifest")
+                        and self.service._visible_revision(s, actor, pid, page)
                     ):
                         prototype_pages.add(key)
         for eid, key in prototype_actions.items():
@@ -870,9 +872,10 @@ class ReadingService:
     def action_context(
         self, actor, pid, eid, analysis_set_id=None, release_id=None, depth=2, max_nodes=50, relation_policy="valid"
     ):
-        from .service import DomainError, sha
         from collections import deque
-        from .workbench_v2 import TECHNICAL_TYPES, KNOWLEDGE_TYPES, technical_adjacency
+
+        from .service import DomainError, sha
+        from .workbench_v2 import KNOWLEDGE_TYPES, TECHNICAL_TYPES, technical_adjacency
 
         with self.db() as s:
             if relation_policy not in ("valid", "outdated", "all"):
@@ -1201,6 +1204,16 @@ class ReadingService:
 
     def job_dto(self, s, actor, job):
         dto = self.service.job_dto(job)
+        if job.kind == "material_migrate" and not all(
+            self.service._can(s, actor, job.project_id, scope) for scope in ("source:read", "trace:read")
+        ):
+            dto.pop("result", None)
+            dto.pop("issue_count", None)
+            dto["result_refs"] = []
+            dto["diagnostics_restricted"] = True
+            if "error" in dto:
+                dto["error"] = {"code": dto["error"]["code"], "message": "当前权限无法查看迁移诊断", "retryable": False}
+            return dto
         if job.kind == "import_preview" or job.input_json.get("_prototype_batch"):
             submitted = set(job.input_json.get("_authorization", {}).get("scopes", []))
             required = {"source:import"} | (submitted & {"source:read", "trace:read"})

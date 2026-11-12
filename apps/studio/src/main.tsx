@@ -17,6 +17,7 @@ import {
   Sparkles,
   LoaderCircle,
   Settings2,
+  Folders,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -29,6 +30,8 @@ import { OriginalRuntime, isTarget } from "./runtime";
 import type { Target, RuntimeEvent, RuntimeHandle } from "./runtime";
 import "./style.css";
 import { AISettings } from "./AISettings";
+import { Projects } from "./Projects";
+import { Materials } from "./Materials";
 
 type DocRef = { id: string; revision_id: string; name: string; path: string };
 type Chapter = {
@@ -98,7 +101,15 @@ type Catalog = {
   release_id: string | null;
   selection_version: number;
   editable: boolean;
-  packages: { id: string; kind: string; name: string; sha256: string }[];
+  packages: {
+    id: string;
+    kind: string;
+    name: string;
+    sha256: string;
+    package_key?: string;
+    revision_id?: string;
+  }[];
+  primary_package_id?: string;
   documents: DocRef[];
 };
 type Route = {
@@ -109,12 +120,22 @@ type Route = {
   doc: string;
   section: string;
   binding: string;
+  package: string;
+  book: string;
 };
 const getRoute = (): Route =>
   Object.fromEntries(
-    ["project", "analysis", "release", "view", "doc", "section", "binding"].map(
-      (k) => [k, new URLSearchParams(location.hash.slice(1)).get(k) || ""],
-    ),
+    [
+      "project",
+      "analysis",
+      "release",
+      "view",
+      "doc",
+      "section",
+      "binding",
+      "package",
+      "book",
+    ].map((k) => [k, new URLSearchParams(location.hash.slice(1)).get(k) || ""]),
   ) as Route;
 const sameTarget = (a: Target, b: Target) =>
   a.route === b.route &&
@@ -162,14 +183,26 @@ function App() {
     [username, setUsername] = useState("owner"),
     [password, setPassword] = useState("");
   const [route, setRoute] = useState(getRoute),
-    [catalog, setCatalog] = useState<Catalog | null>(null),
-    [bindings, setBindings] = useState<Binding[]>([]),
+    [loadedCatalog, setCatalog] = useState<Catalog | null>(null),
+    [loadedBindings, setBindings] = useState<Binding[]>([]),
     [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
+  const catalog =
+    loadedCatalog &&
+    (route.release
+      ? loadedCatalog.release_id === route.release
+      : !!route.analysis && loadedCatalog.analysis_set_id === route.analysis)
+      ? loadedCatalog
+      : null;
+  const bindings = catalog ? loadedBindings : [];
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
-    [viewDoc, setViewDoc] = useState<Document | null>(null),
+    [loadedDocument, setViewDoc] = useState<Document | null>(null),
     [docQuery, setDocQuery] = useState(""),
     [originalBook, setOriginalBook] = useState(false);
+  const viewDoc =
+    catalog && loadedDocument?.revision_id === route.doc
+      ? loadedDocument
+      : null;
   const [bookMounted, setBookMounted] = useState(false);
   const [target, setTarget] = useState<Target | null>(null),
     [active, setActive] = useState<Binding | null>(null),
@@ -264,20 +297,28 @@ function App() {
   useEffect(() => {
     if (!auth) return;
     let cancelled = false;
-    api<{ id: string; name: string }[]>("/projects")
+    api<{ id: string; name: string }[]>("/projects?limit=100")
       .then(async (p) => {
         if (cancelled) return;
         setProjects(p);
         if (!route.project && p[0]) navigate({ project: p[0].id }, true);
-        else if (route.project && !route.analysis && !route.release) {
-          const w = await api<{ selected_analysis_set: { id: string } }>(
-            "/projects/" + route.project + "/workspace",
+        else if (!route.project) navigate({ view: "projects" }, true);
+        else if (route.project && !route.release) {
+          const w = await api<{ analysis_set_id: string }>(
+            `/api/v3/projects/${route.project}/materials/open`,
+            mutation("POST", { analysis_set_id: route.analysis || null }),
           );
-          if (!cancelled)
-            navigate(
-              { analysis: w.selected_analysis_set.id, view: "prototype" },
-              true,
-            );
+          if (!cancelled) {
+            if (!route.analysis)
+              navigate(
+                {
+                  analysis: w.analysis_set_id,
+                  view: route.view || "prototype",
+                },
+                true,
+              );
+            else void reload().catch((e) => setError(text(e)));
+          }
         }
       })
       .catch((e) => setError(text(e)));
@@ -293,6 +334,14 @@ function App() {
     control.current = null;
     moduleControl.current = null;
     setModuleTitle("");
+    setDocQuery("");
+    setPinned(false);
+    setDocked(false);
+    setPosition(null);
+    setAutomatic(
+      (localStorage.getItem(`vks.studio.${route.project}.auto-associate`) ||
+        localStorage.getItem("vks.studio.auto-associate")) !== "off",
+    );
     setAssistant(null);
     setRelated(null);
     setRetrieving(false);
@@ -315,6 +364,17 @@ function App() {
       loadEpoch.current++;
     };
   }, [auth, route.project, route.analysis, route.release, reload]);
+  useEffect(() => {
+    if (
+      route.view === "documents" &&
+      !route.doc &&
+      catalog?.documents[0] &&
+      (route.release
+        ? catalog.release_id === route.release
+        : catalog.analysis_set_id === route.analysis)
+    )
+      navigate({ doc: catalog.documents[0].revision_id }, true);
+  }, [route.view, route.doc, catalog, navigate]);
   useEffect(() => {
     if (!route.binding) {
       selectedBinding.current = "";
@@ -430,7 +490,10 @@ function App() {
   }
   function automaticPreference(enabled: boolean) {
     setAutomatic(enabled);
-    localStorage.setItem("vks.studio.auto-associate", enabled ? "on" : "off");
+    localStorage.setItem(
+      `vks.studio.${route.project}.auto-associate`,
+      enabled ? "on" : "off",
+    );
     if (automaticTimer.current !== undefined) {
       cancelAutomatic();
       setAssisting(false);
@@ -487,7 +550,7 @@ function App() {
       (assistant || assisting || active?.origin === "model")
     )
       return;
-    void assist(control.current, mode);
+    void assist(control.current, mode, active?.validity_status !== "valid");
   }
   async function assist(
     c: Control,
@@ -517,6 +580,7 @@ function App() {
     }
     if (
       existing &&
+      existing.validity_status === "valid" &&
       !refresh &&
       (mode === "documents" || existing.origin === "model")
     )
@@ -534,18 +598,19 @@ function App() {
       mode,
       refresh,
     };
-    let matches: Related | null = existing
-      ? {
-          title: existing.title,
-          sections: existing.sections,
-          binding_id: existing.id,
-          excluded: false,
-          origin: "binding",
-          model_available: true,
-          selection_version: catalog?.selection_version || 0,
-          elapsed_ms: 0,
-        }
-      : null;
+    let matches: Related | null =
+      existing && existing.validity_status === "valid"
+        ? {
+            title: existing.title,
+            sections: existing.sections,
+            binding_id: existing.id,
+            excluded: false,
+            origin: "binding",
+            model_available: true,
+            selection_version: catalog?.selection_version || 0,
+            elapsed_ms: 0,
+          }
+        : null;
     if (matches) setRelated(matches);
     else {
       setRetrieving(true);
@@ -691,7 +756,11 @@ function App() {
         if (
           automatic &&
           (route.view || "prototype") === "prototype" &&
-          !bindings.some((b) => sameTarget(b.target, c.target))
+          !bindings.some(
+            (b) =>
+              sameTarget(b.target, c.target) &&
+              (b.excluded || b.validity_status === "valid"),
+          )
         )
           void assist(c, "documents", false, false);
       }
@@ -841,12 +910,19 @@ function App() {
     setKnowledge(true);
     setAssistantOptions(false);
     setActive(b);
-    navigate({ view: "prototype", binding: b.id });
-    if (prototype.current)
+    const destination = catalog?.packages.find((p) => p.id === b.package_id);
+    navigate({
+      view: "prototype",
+      binding: b.id,
+      package: destination?.package_key || "",
+    });
+    if (prototype.current && p?.id === b.package_id)
       prototype.current.send("target.reveal", { target: b.target });
     else pendingReveal.current = b.target;
   }
   function editBinding(b: Binding) {
+    const destination = catalog?.packages.find((p) => p.id === b.package_id);
+    if (destination) navigate({ package: destination.package_key || "" });
     assistEpoch.current++;
     assistAbort.current?.abort();
     setAssistant(null);
@@ -990,8 +1066,64 @@ function App() {
         </form>
       </main>
     );
-  const p = catalog?.packages.find((p) => p.kind === "prototype"),
-    h = catalog?.packages.find((p) => p.kind === "handbook");
+  const prototypePackages =
+    catalog?.packages.filter((p) => p.kind === "prototype") || [];
+  const handbookPackages =
+    catalog?.packages.filter((p) => p.kind === "handbook") || [];
+  const p =
+      prototypePackages.find(
+        (p) => p.package_key === (route.package || catalog?.primary_package_id),
+      ) || prototypePackages[0],
+    h =
+      handbookPackages.find((p) => p.package_key === route.book) ||
+      handbookPackages[0];
+  function openProject(id: string) {
+    navigate({
+      project: id,
+      analysis: "",
+      release: "",
+      doc: "",
+      section: "",
+      binding: "",
+      package: "",
+      book: "",
+      view: "prototype",
+    });
+  }
+  async function materialsChanged(result: { analysis_set_id: string }) {
+    if (
+      getRoute().project !== route.project ||
+      getRoute().analysis !== route.analysis
+    )
+      return;
+    assistEpoch.current++;
+    assistAbort.current?.abort();
+    cancelAutomatic();
+    setKnowledge(false);
+    setAssistantOptions(false);
+    setActive(null);
+    setTarget(null);
+    setAssistant(null);
+    setRelated(null);
+    setRetrieving(false);
+    setAssisting(false);
+    control.current = null;
+    navigate({
+      analysis: result.analysis_set_id,
+      release: "",
+      binding: "",
+      doc: "",
+      section: "",
+      package: "",
+      book: "",
+    });
+    if (result.analysis_set_id === route.analysis) await reload();
+  }
+  function refreshProjects() {
+    void api<{ id: string; name: string }[]>("/projects?limit=100")
+      .then(setProjects)
+      .catch((e) => setError(text(e)));
+  }
   const currentView = route.view || "prototype";
   const selectedSection = editDoc?.sections.find(
     (s) => s.revision_id === sectionId,
@@ -1017,21 +1149,20 @@ function App() {
           </b>
           <span className="version">3.0</span>
         </div>
+        <button
+          className="project-center-trigger"
+          aria-label="项目中心"
+          onClick={() => navigate({ view: "projects" })}
+          disabled={editing}
+        >
+          <Folders size={18} />
+        </button>
         <span className="top-divider" />
         <select
           aria-label="当前项目"
           disabled={editing}
           value={route.project}
-          onChange={(e) =>
-            navigate({
-              project: e.target.value,
-              analysis: "",
-              release: "",
-              doc: "",
-              section: "",
-              binding: "",
-            })
-          }
+          onChange={(e) => openProject(e.target.value)}
         >
           {projects.map((p) => (
             <option key={p.id} value={p.id}>
@@ -1043,6 +1174,7 @@ function App() {
           {[
             ["prototype", "原型"],
             ["documents", "文档"],
+            ["materials", "资料管理"],
             ["links", "关联管理"],
             ["ai", "AI 设置"],
           ].map(([v, l]) => (
@@ -1075,6 +1207,7 @@ function App() {
               void api("/auth/session", mutation("DELETE", {})).finally(() => {
                 setAuth(false);
                 setCatalog(null);
+                setProjects([]);
               })
             }
           >
@@ -1091,7 +1224,11 @@ function App() {
                 ? "知识文档"
                 : currentView === "ai"
                   ? "AI 设置"
-                  : "关联管理"}
+                  : currentView === "materials"
+                    ? "资料管理"
+                    : currentView === "projects"
+                      ? "项目中心"
+                      : "关联管理"}
           </span>
           <ChevronRight size={13} />
           <span>
@@ -1101,10 +1238,42 @@ function App() {
                 ? viewDoc?.name || "独立阅读与章节关联"
                 : currentView === "ai"
                   ? "配置本项目的模型连接"
-                  : `${bindings.filter((b) => !b.excluded).length} 条有效关联`}
+                  : currentView === "materials"
+                    ? "安装、更新与恢复项目资料"
+                    : currentView === "projects"
+                      ? "每个项目独立维护原型与知识"
+                      : `${bindings.filter((b) => !b.excluded).length} 条有效关联`}
           </span>
         </div>
         <div>
+          {currentView === "prototype" && prototypePackages.length > 1 && (
+            <select
+              aria-label="当前原型包"
+              value={p?.package_key || p?.id}
+              onChange={(e) =>
+                navigate({ package: e.target.value, binding: "" })
+              }
+            >
+              {prototypePackages.map((p) => (
+                <option key={p.id} value={p.package_key || p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {currentView === "documents" && handbookPackages.length > 1 && (
+            <select
+              aria-label="原始文档包"
+              value={h?.package_key || h?.id}
+              onChange={(e) => navigate({ book: e.target.value })}
+            >
+              {handbookPackages.map((p) => (
+                <option key={p.id} value={p.package_key || p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
           {currentView === "prototype" && picking && (
             <button
               className="picker-active"
@@ -1141,7 +1310,7 @@ function App() {
           </button>
         </div>
       )}
-      {notice && (
+      {notice && catalog && (
         <div className="toast" role="status">
           <Check size={15} />
           {notice}
@@ -1177,7 +1346,15 @@ function App() {
               <h2>
                 {catalog ? "当前版本没有可运行的原型包" : "正在打开项目…"}
               </h2>
-              <p>原型通过现有资料导入入口导入后，在这里完整交互。</p>
+              <p>为这个项目导入 HTML 原型，保留菜单、表单和弹窗交互。</p>
+              {catalog && (
+                <button
+                  className="primary"
+                  onClick={() => navigate({ view: "materials" })}
+                >
+                  导入项目资料
+                </button>
+              )}
             </div>
           )}
         </section>
@@ -1340,6 +1517,18 @@ function App() {
             />
           </section>
         )}
+        {currentView === "projects" && (
+          <Projects onOpen={openProject} onUpdate={refreshProjects} />
+        )}
+        {currentView === "materials" && route.project && route.analysis && (
+          <Materials
+            key={route.project + route.analysis}
+            project={route.project}
+            analysis={route.analysis}
+            onChanged={materialsChanged}
+            onAI={() => navigate({ view: "ai" })}
+          />
+        )}
         {currentView === "ai" && (
           <AISettings
             key={route.project}
@@ -1360,7 +1549,13 @@ function App() {
                 <article key={b.id} className={b.excluded ? "excluded" : ""}>
                   <div className="card-label">
                     <Link2 size={15} />
-                    {b.excluded ? "已移除" : "已关联"}
+                    {b.excluded
+                      ? "已移除"
+                      : b.validity_status === "valid"
+                        ? "已关联"
+                        : b.validity_status === "broken"
+                          ? "待定位"
+                          : "待重新关联"}
                     <small>{b.sections.length} 个章节</small>
                   </div>
                   <h3>{b.title}</h3>
@@ -1485,41 +1680,43 @@ function App() {
           </button>
         </div>
       )}
-      {currentView !== "ai" && !(knowledge && docked) && (
-        <button
-          ref={assistantTrigger}
-          className={"assistant-launcher" + (knowledge ? " expanded" : "")}
-          aria-label={knowledge ? "收起知识助手" : "打开知识助手"}
-          aria-expanded={knowledge}
-          aria-controls="knowledge-assistant"
-          onClick={toggleAssistant}
-          title={retrieving || assisting ? "正在整理相关知识" : "知识助手"}
-        >
-          {knowledge ? <X size={23} /> : <Sparkles size={24} />}
-          {!knowledge &&
-            (related?.sections.length ||
-              active?.sections.length ||
-              assistant?.sections.length ||
-              0) > 0 && (
-              <span className="assistant-badge">
-                {Math.min(
-                  9,
-                  related?.sections.length ||
-                    active?.sections.length ||
-                    assistant?.sections.length ||
-                    0,
-                )}
-              </span>
+      {catalog &&
+        ["prototype", "documents", "links"].includes(currentView) &&
+        !(knowledge && docked) && (
+          <button
+            ref={assistantTrigger}
+            className={"assistant-launcher" + (knowledge ? " expanded" : "")}
+            aria-label={knowledge ? "收起知识助手" : "打开知识助手"}
+            aria-expanded={knowledge}
+            aria-controls="knowledge-assistant"
+            onClick={toggleAssistant}
+            title={retrieving || assisting ? "正在整理相关知识" : "知识助手"}
+          >
+            {knowledge ? <X size={23} /> : <Sparkles size={24} />}
+            {!knowledge &&
+              (related?.sections.length ||
+                active?.sections.length ||
+                assistant?.sections.length ||
+                0) > 0 && (
+                <span className="assistant-badge">
+                  {Math.min(
+                    9,
+                    related?.sections.length ||
+                      active?.sections.length ||
+                      assistant?.sections.length ||
+                      0,
+                  )}
+                </span>
+              )}
+            {!knowledge && (retrieving || assisting) && (
+              <span className="assistant-activity" aria-label="正在整理知识" />
             )}
-          {!knowledge && (retrieving || assisting) && (
-            <span className="assistant-activity" aria-label="正在整理知识" />
-          )}
-          <span className="assistant-launcher-label">
-            {knowledge ? "收起助手" : "知识助手"}
-          </span>
-        </button>
-      )}
-      {knowledge && currentView !== "ai" && (
+            <span className="assistant-launcher-label">
+              {knowledge ? "收起助手" : "知识助手"}
+            </span>
+          </button>
+        )}
+      {knowledge && catalog && currentView !== "ai" && (
         <aside
           ref={windowRef}
           id="knowledge-assistant"
@@ -1725,6 +1922,11 @@ function App() {
                 </div>
               )}
               <div className="knowledge-body">
+                {!editing && active && active.validity_status !== "valid" && (
+                  <p className="assistant-background">
+                    资料已更新，原有关联正在重新核对；可先查看检索结果。
+                  </p>
+                )}
                 {!editing && retrieving && !related && (
                   <div className="assistant-loading" role="status">
                     <LoaderCircle size={18} className="spinning" />
@@ -1994,7 +2196,9 @@ function App() {
                 ) : assistant ||
                   assisting ||
                   related ||
-                  retrieving ? null : active && !active.excluded ? (
+                  retrieving ? null : active &&
+                  !active.excluded &&
+                  active.validity_status === "valid" ? (
                   <>
                     <div className="knowledge-title">
                       <span className="eyebrow">

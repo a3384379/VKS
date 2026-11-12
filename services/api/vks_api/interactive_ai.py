@@ -285,7 +285,7 @@ class InteractiveAssistant:
             []
             if current and current["excluded"]
             else current["sections"]
-            if current
+            if current and current["validity_status"] == "valid" and current["sections"]
             else self._index(corpus, chapters).search(form.target, form.context, set())
         )
         return {
@@ -301,7 +301,7 @@ class InteractiveAssistant:
             "vector_available": self.rag.available(actor, pid, chapters),
         }
 
-    def run(self, actor, pid, form):
+    def run(self, actor, pid, form, *, migrate_manual=False, validate_scope=None):
         # Coalesce the same gesture, without queuing unrelated pages behind an
         # entire network/model request. The global lock only guards small maps.
         key = canonical(
@@ -318,9 +318,9 @@ class InteractiveAssistant:
                 request_lock = threading.Lock()
                 self.requests[key] = request_lock
         with request_lock:
-            return self._run(actor, pid, form)
+            return self._run(actor, pid, form, migrate_manual=migrate_manual, validate_scope=validate_scope)
 
-    def _run(self, actor, pid, form):
+    def _run(self, actor, pid, form, *, migrate_manual=False, validate_scope=None):
         config, chapters, corpus, key, version, editable = self.prepare(actor, pid, form)
         current = self._binding(actor, pid, form)
         if current and current["excluded"]:
@@ -344,7 +344,13 @@ class InteractiveAssistant:
                     and current["summary"] == cached["explanation"]
                 ),
             }
-        if current and current.get("origin") == "model" and current["sections"] and not form.refresh:
+        if (
+            current
+            and current.get("origin") == "model"
+            and current["validity_status"] == "valid"
+            and current["sections"]
+            and not form.refresh
+        ):
             # Reuse persisted wording after a restart, only while every actual
             # input revision remains selected and visible and the model matches.
             with self.service.db() as s:
@@ -482,6 +488,9 @@ class InteractiveAssistant:
                 failure("VKS_INVALID_INPUT", "模型讲解超出格式范围")
             # Check the entire sent corpus/context policy again, not just citations.
             latest = self.prepare(actor, pid, form)
+            if validate_scope:
+                with self.service.db() as session:
+                    validate_scope(session)
             if latest[3] != key:
                 failure("VKS_VERSION_CONFLICT", "请求期间资料、权限或模型设置已变化，请重试", 412)
             version = latest[4]
@@ -493,13 +502,20 @@ class InteractiveAssistant:
                 chosen
                 and answer["confidence"] >= 0.7
                 and editable
-                and (not current or (form.refresh and current.get("origin") == "model"))
+                and (not current or (form.refresh and (current.get("origin") == "model" or migrate_manual)))
             ):
                 payload = InteractiveBinding(
                     analysis_set_id=form.analysis_set_id,
                     package_id=form.package_id,
                     target=form.target,
-                    point=PointText(title=answer["title"], summary=answer["explanation"]),
+                    point=PointText(
+                        title=current["title"]
+                        if migrate_manual and current and current.get("origin") == "manual"
+                        else answer["title"],
+                        summary=current["summary"]
+                        if migrate_manual and current and current.get("origin") == "manual"
+                        else answer["explanation"],
+                    ),
                     section_revision_ids=chosen,
                     **(
                         {k: current[k] for k in ("binding_version", "point_revision_id")}
@@ -509,7 +525,7 @@ class InteractiveAssistant:
                     ),
                 )
                 generation = {
-                    "origin": "model",
+                    "origin": "manual" if migrate_manual and current and current.get("origin") == "manual" else "model",
                     "model_id": config["model_id"],
                     "confidence": answer["confidence"],
                     "input_revision_ids": [c["revision_id"] for c in candidates],
@@ -523,7 +539,10 @@ class InteractiveAssistant:
                     None,
                     "assistant." + usage_id,
                     generation=generation,
-                    validate=lambda s, _a, _c: self._unchanged(actor, pid, form, key, None, s),
+                    validate=lambda s, _a, _c: (
+                        self._unchanged(actor, pid, form, key, None, s),
+                        validate_scope(s) if validate_scope else None,
+                    ),
                 )
                 version = result["selection_version"]
                 current = {"id": result["binding_id"]}

@@ -46,6 +46,7 @@ JOB_SCOPES = {
     "knowledge_task": "analysis:run",
     "import": "source:import",
     "import_preview": "source:import",
+    "material_migrate": "knowledge:edit",
     "index": "analysis:run",
     "generate_documents": "analysis:run",
     "suggest_links": "analysis:run",
@@ -116,6 +117,7 @@ class Service:
             relationships,
             modules,
             project_profile,
+            materials,
         )
 
         self.data_dir = Path(data_dir or os.getenv("VKS_DATA_DIR", ".vks")).resolve()
