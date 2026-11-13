@@ -298,6 +298,70 @@ p {
   position: relative;
   background: white;
 }
+.native-document-space {
+  position: relative;
+}
+.native-runtime-retry {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+}
+.native-settings {
+  position: relative;
+}
+.native-settings-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 12px);
+  width: min(390px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid #d5e3dc;
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 12px 42px #173d2929;
+  color: #375448;
+  z-index: 90;
+}
+.native-settings-title,
+.native-settings-title b {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.native-settings-title {
+  justify-content: space-between;
+}
+.native-settings-panel p,
+.native-settings-panel small {
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: normal;
+}
+.native-settings-panel label {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.native-settings-panel textarea {
+  width: 100%;
+  resize: vertical;
+  line-height: 1.7;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.native-settings-panel > button {
+  margin-top: 16px;
+}
+.native-source-notice {
+  margin: 0;
+  border-radius: 0;
+  background: #fff8e8;
+  border-color: #ecdfbd;
+  color: #75623a;
+}
 .runtime-status {
   position: absolute;
   inset: 0;

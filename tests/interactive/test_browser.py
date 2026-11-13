@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_original_interaction_links_refresh_and_runtime_isolation(interactive, workspace, tmp_path, monkeypatch):
     monkeypatch.delenv("VKS_MODEL_API_KEY", raising=False)
+    monkeypatch.setenv("VKS_RUNTIME_DATA_DIR", str(tmp_path / "runtime-private"))
     _, _, _, pid, aid, _, _, _, _ = interactive
     app = workspace[0]
     runtime = ThreadingHTTPServer(("127.0.0.1", 0), RuntimeHandler)
@@ -56,6 +57,7 @@ def test_original_interaction_links_refresh_and_runtime_isolation(interactive, w
             )
             try:
                 url = f"http://127.0.0.1:{port}"
+                monkeypatch.setenv("VKS_STUDIO_ALLOWED_ORIGINS", url)
                 for _ in range(150):
                     assert process.poll() is None, (tmp_path / "vite.log").read_text()
                     try:

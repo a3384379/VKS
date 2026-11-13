@@ -19,8 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 materials = test_materials.materials
 
 
-def test_project_import_replace_and_complete_rollback_in_studio(materials, tmp_path):
+def test_project_import_replace_and_complete_rollback_in_studio(materials, tmp_path, monkeypatch):
     web, _service, _owner, _manager, projects = materials
+    monkeypatch.setenv("VKS_RUNTIME_DATA_DIR", str(tmp_path / "runtime-private"))
     runtime = ThreadingHTTPServer(("127.0.0.1", 0), RuntimeHandler)
     Thread(target=runtime.serve_forever, daemon=True).start()
     process = None
@@ -49,6 +50,7 @@ def test_project_import_replace_and_complete_rollback_in_studio(materials, tmp_p
                     env=os.environ.copy(),
                 )
                 url = f"http://127.0.0.1:{port}"
+                monkeypatch.setenv("VKS_STUDIO_ALLOWED_ORIGINS", url)
                 for _ in range(150):
                     assert process.poll() is None
                     try:

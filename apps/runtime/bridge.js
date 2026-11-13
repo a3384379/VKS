@@ -3,7 +3,16 @@
   "use strict";
   const query = new URLSearchParams(location.search);
   const instance = query.get("instance");
-  const host = query.get("host");
+  let config;
+  try {
+    config = JSON.parse(
+      document.querySelector("#vks-runtime-config").textContent,
+    );
+  } catch {
+    return;
+  }
+  const host = config.host;
+  const documentMode = config.mode === "document";
   if (!instance || !host || !/^https?:\/\//.test(host)) return;
   const frame = document.querySelector("#material");
   let port,
@@ -11,10 +20,14 @@
     sequence = 0,
     epoch = 1,
     loaded = false,
-    navigation = 0;
+    navigation = 0,
+    documentURL = "";
   const registered = new WeakMap();
   const windows = new Map();
   const histories = new WeakMap();
+  const sourcePaths = new WeakMap();
+  let documentNavigating = false,
+    lastDocument = null;
   const send = (type, payload = {}, request_id = "") =>
     port?.postMessage({
       protocol_version: 1,
@@ -201,6 +214,18 @@
     const own = win.__prototypePackPage;
     route = own?.path ? "/" + own.path.replace(/^\//, "") : route;
     windows.set(path.join("/"), { win, route, path });
+    if (documentMode) {
+      installDocument(win, route);
+      for (const child of doc.querySelectorAll("iframe")) {
+        if (child.contentWindow)
+          install(
+            child.contentWindow,
+            [...path, child.id || child.title || "frame"],
+            route,
+          );
+      }
+      return;
+    }
     if (registered.get(doc) !== doc.documentElement) {
       registered.set(doc, doc.documentElement);
       doc.addEventListener("load", scan, true);
@@ -320,6 +345,236 @@
         );
     }
   }
+  function handbookSources(doc) {
+    if (sourcePaths.has(doc)) return sourcePaths.get(doc);
+    const source = doc.getElementById("source-data");
+    if (!source) return null;
+    let paths = null;
+    try {
+      const entries = JSON.parse(source.textContent);
+      paths = Object.fromEntries(
+        Object.entries(entries)
+          .filter(([id, value]) => id && typeof value?.path === "string")
+          .map(([id, value]) => [id, value.path.replace(/^handbook\//, "")]),
+      );
+    } catch {}
+    sourcePaths.set(doc, paths);
+    return paths;
+  }
+  const decodeAnchor = (hash) => {
+    try {
+      return decodeURIComponent(hash.replace(/^#/, ""));
+    } catch {
+      return hash.replace(/^#/, "");
+    }
+  };
+  const normalizedPath = (path) => (path || "").replace(/^\//, "");
+  function documentPosition(win, route) {
+    const anchor = decodeAnchor(win.location.hash);
+    const sources = handbookSources(win.document);
+    if (sources) {
+      const ids = Object.keys(sources).filter(
+        (id) => anchor === id || anchor.startsWith(id + "--"),
+      );
+      if (ids.length !== 1) return null;
+      return { path: "handbook/" + sources[ids[0]], anchor, articleId: ids[0] };
+    }
+    if (win.__prototypePack || win.document.getElementById("fh-pack-data"))
+      return null;
+    return { path: normalizedPath(route === "/" ? "" : route), anchor };
+  }
+  function installDocument(win, route) {
+    const doc = win.document;
+    const position = documentPosition(win, route);
+    if (registered.get(doc) === doc.documentElement) return;
+    registered.set(doc, doc.documentElement);
+    const changed = () => {
+      // Only position observation: original navigation, clicks and context menus
+      // retain all of their own listeners and browser default behavior.
+      const next = documentPosition(win, route);
+      if (!next) return;
+      const previous = lastDocument;
+      lastDocument = next;
+      if (
+        !documentNavigating &&
+        JSON.stringify(previous) !== JSON.stringify(next)
+      )
+        send("document.changed", next);
+    };
+    win.addEventListener("hashchange", changed);
+    doc.addEventListener("load", scan, true);
+    if (position) {
+      const previous = lastDocument;
+      lastDocument = position;
+      if (
+        !documentNavigating &&
+        ((previous &&
+          win.__prototypePackPage &&
+          previous.path !== position.path) ||
+          (position.anchor &&
+            JSON.stringify(previous) !== JSON.stringify(position)))
+      )
+        send("document.changed", position);
+    }
+  }
+  function validDocumentLocation(value) {
+    if (!value || typeof value !== "object") return false;
+    for (const key of [
+      "path",
+      "anchor",
+      "articleId",
+      "document_anchor",
+      "selector",
+      "heading",
+    ])
+      if (
+        value[key] !== undefined &&
+        (typeof value[key] !== "string" || value[key].length > 2000)
+      )
+        return false;
+    if (
+      value.heading_ordinal !== undefined &&
+      (!Number.isSafeInteger(value.heading_ordinal) ||
+        value.heading_ordinal < 0 ||
+        value.heading_ordinal > 100000)
+    )
+      return false;
+    if (
+      value.heading_level !== undefined &&
+      (!Number.isInteger(value.heading_level) ||
+        value.heading_level < 1 ||
+        value.heading_level > 6)
+    )
+      return false;
+    return true;
+  }
+  async function revealDocument(location, request) {
+    if (!validDocumentLocation(location)) {
+      send(
+        "command.result",
+        { ok: false, message: "文档定位信息无效" },
+        request,
+      );
+      return;
+    }
+    const generation = ++navigation;
+    documentNavigating = true;
+    const path = normalizedPath(location.path);
+    let current,
+      articleId = location.articleId || location.document_anchor || "";
+    const anchor = decodeAnchor(location.anchor || "");
+    try {
+      for (let attempt = 0; attempt < 200 && !current; attempt++) {
+        if (generation !== navigation) return;
+        scan();
+        const entries = Array.from(windows.values());
+        for (const candidate of entries) {
+          const sources = handbookSources(candidate.win.document);
+          if (!sources) continue;
+          const matches = Object.keys(sources).filter(
+            (id) =>
+              (!path ||
+                normalizedPath(sources[id]) ===
+                  path.replace(/^handbook\//, "")) &&
+              (!articleId || id === articleId) &&
+              (!anchor || anchor === id || anchor.startsWith(id + "--")),
+          );
+          if (matches.length === 1) {
+            current = candidate;
+            articleId = matches[0];
+            break;
+          }
+        }
+        if (!current && !articleId) {
+          const pack = entries.find(({ win }) => win.__prototypePack?.show);
+          if (pack) {
+            const candidates = entries.filter(
+              ({ win }) =>
+                win.__prototypePackPage?.path &&
+                normalizedPath(win.__prototypePackPage.path) === path,
+            );
+            if (candidates.length === 1) current = candidates[0];
+            else if (attempt === 0 || attempt === 10)
+              pack.win.__prototypePack.show(path);
+          } else {
+            const candidates = entries.filter(
+              ({ win }) =>
+                !win.__prototypePack &&
+                !win.document.getElementById("fh-pack-data"),
+            );
+            const root = candidates.find(({ path }) => path.length === 0);
+            if (root) current = root;
+            else if (candidates.length === 1) current = candidates[0];
+          }
+        }
+        if (!current) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (!current) throw new Error("未找到准确的原文档页面");
+      const win = current.win,
+        doc = win.document;
+      const targetAnchor = anchor || articleId;
+      if (articleId) win.fhBookPages?.ensure(targetAnchor);
+      if (targetAnchor) {
+        const before = win.location.hash;
+        win.location.hash = targetAnchor;
+        if (win.location.hash === before)
+          win.dispatchEvent(new win.HashChangeEvent("hashchange"));
+        await new Promise((resolve) =>
+          win.requestAnimationFrame(() => win.requestAnimationFrame(resolve)),
+        );
+      }
+      if (generation !== navigation) return;
+      const article = articleId ? doc.getElementById(articleId) : doc.body;
+      if (!article) throw new Error("原文档中没有此文章");
+      let target = anchor ? doc.getElementById(anchor) : null;
+      if (anchor && !target) throw new Error("原文档中没有此准确锚点");
+      if (location.selector) {
+        const matches = Array.from(doc.querySelectorAll(location.selector));
+        if (matches.length !== 1 || (target && target !== matches[0]))
+          throw new Error("原文档位置不唯一或已变化");
+        target = matches[0];
+      }
+      if (location.heading_ordinal !== undefined) {
+        const headings = article.querySelectorAll("h1,h2,h3,h4,h5,h6");
+        const heading = headings[location.heading_ordinal];
+        const clean = (value) => (value || "").trim().replace(/\s+/g, " ");
+        if (
+          !heading ||
+          !location.heading ||
+          clean(heading.textContent) !== clean(location.heading) ||
+          (location.heading_level &&
+            heading.tagName !== "H" + location.heading_level) ||
+          (target && target !== heading)
+        )
+          throw new Error("原文档章节位置与索引不一致");
+        target = heading;
+      } else if (location.heading && !target)
+        throw new Error("缺少准确的原文档章节位置");
+      target ||= article;
+      if (articleId && !article.contains(target) && article !== target)
+        throw new Error("章节不属于此原文档文章");
+      for (
+        let element = target.parentElement;
+        element;
+        element = element.parentElement
+      )
+        if (element.tagName === "DETAILS") element.open = true;
+      if (!visible(target))
+        throw new Error("准确章节当前不可见，请使用原文档目录打开");
+      target.scrollIntoView({ block: "start", inline: "nearest" });
+      lastDocument = documentPosition(win, current.route);
+      send("command.result", { ok: true, message: "已定位到原文档" }, request);
+    } catch (error) {
+      if (generation === navigation)
+        send(
+          "command.result",
+          { ok: false, message: error.message || "原文档定位失败" },
+          request,
+        );
+    } finally {
+      if (generation === navigation) documentNavigating = false;
+    }
+  }
   async function reveal(t, request) {
     picking = false;
     const generation = ++navigation;
@@ -429,12 +684,22 @@
         data.payload?.bytes instanceof ArrayBuffer &&
         data.payload.bytes.byteLength <= 80 * 1024 * 1024
       ) {
-        frame.srcdoc = new TextDecoder().decode(data.payload.bytes);
+        if (documentMode) {
+          // Native submit listeners must run; CSP form-action 'none' still
+          // prevents a form from navigating or sending its fields directly.
+          frame.sandbox.add("allow-forms");
+          if (documentURL) URL.revokeObjectURL(documentURL);
+          documentURL = URL.createObjectURL(
+            new Blob([data.payload.bytes], { type: "text/html" }),
+          );
+          frame.src = documentURL;
+        } else frame.srcdoc = new TextDecoder().decode(data.payload.bytes);
         frame.hidden = false;
         document.querySelector("#status").hidden = true;
         loaded = true;
         send("material.loaded");
       } else if (data.type === "knowledge.request") {
+        if (documentMode) return;
         const c =
           data.payload?.scope === "module"
             ? currentModule
@@ -447,12 +712,20 @@
             mode: data.payload?.mode === "documents" ? "documents" : "explain",
           });
       } else if (data.type === "picker.start") {
+        if (documentMode) return;
         picking = true;
         send("picker.started");
       } else if (data.type === "picker.cancel") {
+        if (documentMode) return;
         picking = false;
         send("picker.cancelled");
-      } else if (data.type === "target.reveal" && data.payload?.target)
+      } else if (data.type === "document.reveal" && documentMode)
+        await revealDocument(data.payload?.location, data.request_id);
+      else if (
+        data.type === "target.reveal" &&
+        !documentMode &&
+        data.payload?.target
+      )
         await reveal(data.payload.target, data.request_id);
     };
     port.start();

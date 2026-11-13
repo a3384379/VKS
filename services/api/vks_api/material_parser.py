@@ -198,6 +198,7 @@ def parse(kind, files, entry=""):
         for name, _ in expanded
         if PurePosixPath(name).suffix.lower() in {".md", ".markdown", ".txt", ".html", ".htm"}
     ]
+    html_files = [(name, raw) for name, raw in expanded if PurePosixPath(name).suffix.lower() in {".html", ".htm"}]
     for name, raw in expanded:
         suffix = PurePosixPath(name).suffix.lower()
         if suffix in {".md", ".markdown", ".txt"}:
@@ -225,6 +226,21 @@ def parse(kind, files, entry=""):
         fail("没有可索引的文档；当前支持 Markdown、文本及 HTML 手册")
     if len(documents) > 5000 or len({p for p, _ in documents}) != len(documents):
         fail("文档路径重复或数量超过限制")
+    if fmt != "charge-handbook" and html_files:
+        chosen = (
+            next(((name, raw) for name, raw in html_files if name == entry), None)
+            if entry
+            else next(
+                ((name, raw) for name, raw in html_files if PurePosixPath(name).name.lower() == "index.html"),
+                html_files[0],
+            )
+        )
+        if not chosen:
+            fail("指定的文档 HTML 入口不存在")
+        entry, original = chosen
+        # Markdown/text members keep their standard reader. Only real HTML
+        # documents receive native locations inside this source site.
+        fmt = "static-site" if len(html_files) > 1 else "html-document"
     if not original:
         original = (
             "<!doctype html><meta charset=utf-8><title>文档包</title><h1>文档包</h1>"

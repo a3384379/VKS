@@ -3365,6 +3365,16 @@
             },
             "type": "array",
             "title": "Sections"
+          },
+          "native": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeDocument"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -3410,6 +3420,22 @@
               }
             ],
             "title": "Package Id"
+          },
+          "native_package_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Package Id"
+          },
+          "native_index_modified": {
+            "type": "boolean",
+            "title": "Native Index Modified",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -3566,6 +3592,113 @@
           "result_refs"
         ],
         "title": "JobOutput"
+      },
+      "NativeDocument": {
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "title": "Package Id"
+          },
+          "package_key": {
+            "type": "string",
+            "title": "Package Key",
+            "default": ""
+          },
+          "revision_id": {
+            "type": "string",
+            "title": "Revision Id",
+            "default": ""
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "document_anchor": {
+            "type": "string",
+            "title": "Document Anchor",
+            "default": ""
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/NativeDocumentSection"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "matches_index": {
+            "type": "boolean",
+            "title": "Matches Index"
+          },
+          "source_document_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Document Revision Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "sha256",
+          "format",
+          "path",
+          "sections",
+          "matches_index"
+        ],
+        "title": "NativeDocument"
+      },
+      "NativeDocumentSection": {
+        "properties": {
+          "revision_id": {
+            "type": "string",
+            "title": "Revision Id"
+          },
+          "anchor": {
+            "type": "string",
+            "title": "Anchor"
+          },
+          "selector": {
+            "type": "string",
+            "title": "Selector"
+          },
+          "heading": {
+            "type": "string",
+            "title": "Heading"
+          },
+          "heading_level": {
+            "type": "integer",
+            "title": "Heading Level"
+          },
+          "heading_ordinal": {
+            "type": "integer",
+            "title": "Heading Ordinal"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision_id",
+          "anchor",
+          "selector",
+          "heading",
+          "heading_level",
+          "heading_ordinal"
+        ],
+        "title": "NativeDocumentSection"
       },
       "OpenWorkspace": {
         "properties": {
@@ -4859,6 +4992,11 @@
             "type": "string",
             "title": "Format",
             "default": ""
+          },
+          "native_index_modified": {
+            "type": "boolean",
+            "title": "Native Index Modified",
+            "default": false
           }
         },
         "additionalProperties": false,

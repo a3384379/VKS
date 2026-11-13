@@ -73,6 +73,7 @@ class RuntimePackage(Input):
     package_key: str = ""
     revision_id: str = ""
     format: str = ""
+    native_index_modified: bool = False
 
 
 class InteractiveDocumentInfo(Input):
@@ -82,6 +83,8 @@ class InteractiveDocumentInfo(Input):
     path: str
     namespace: str = ""
     package_id: str | None = None
+    native_package_id: str | None = None
+    native_index_modified: bool = False
 
 
 class InteractiveCatalog(Input):
@@ -105,6 +108,28 @@ class InteractiveChapter(Input):
     heading_level: int = 0
 
 
+class NativeDocumentSection(Input):
+    revision_id: str
+    anchor: str
+    selector: str
+    heading: str
+    heading_level: int
+    heading_ordinal: int
+
+
+class NativeDocument(Input):
+    package_id: str
+    package_key: str = ""
+    revision_id: str = ""
+    sha256: str
+    format: str
+    path: str
+    document_anchor: str = ""
+    sections: list[NativeDocumentSection]
+    matches_index: bool
+    source_document_revision_id: str | None = None
+
+
 class InteractiveDocument(Input):
     id: str
     revision_id: str
@@ -112,6 +137,7 @@ class InteractiveDocument(Input):
     content: str = ""
     partial: bool = False
     sections: list[InteractiveChapter]
+    native: NativeDocument | None = None
 
 
 class InteractiveCitation(Input):
@@ -185,6 +211,7 @@ class InteractiveKnowledgeService:
 
     def _packages(self, s, actor, pid, choices):
         from .materials import COMPOSITION, ROOT, readable, roots
+        from .native_documents import complete_selection, package_documents
 
         installed = roots(s, pid, choices)
         if installed or any(COMPOSITION in r.metadata_json for _, r in self._rows(s, actor, pid, choices)):
@@ -194,6 +221,12 @@ class InteractiveKnowledgeService:
                     continue
                 art = s.get(Artifact, row.artifact_id)
                 meta = row.metadata_json[ROOT]
+                if not art or art.project_id != pid:
+                    continue
+                if meta["kind"] == "documents" and not complete_selection(
+                    self.service, s, actor, pid, choices, package_documents(s, pid, row)
+                ):
+                    continue
                 result.append(
                     {
                         "id": art.id,
@@ -229,6 +262,23 @@ class InteractiveKnowledgeService:
                 for key, cap in (("requires_source_read", "source:read"), ("requires_trace_read", "trace:read"))
             ):
                 continue
+            if kind == "handbook":
+                document_ids = list(
+                    s.scalars(
+                        select(Revision.entity_id)
+                        .join(Entity, Revision.entity_id == Entity.id)
+                        .join(Artifact, Revision.artifact_id == Artifact.id)
+                        .where(
+                            Revision.project_id == pid,
+                            Entity.project_id == pid,
+                            Entity.type == "document",
+                            Artifact.snapshot_id == art.snapshot_id,
+                            Artifact.project_id == pid,
+                        )
+                    )
+                )
+                if not complete_selection(self.service, s, actor, pid, choices, document_ids):
+                    continue
             rows.append(
                 {
                     "id": art.id,
@@ -237,6 +287,7 @@ class InteractiveKnowledgeService:
                     "size_bytes": art.size_bytes,
                     "name": "云收费原型" if kind == "prototype" else "云收费知识手册",
                     "adapter_version": "charge-dom-1",
+                    "format": "charge-prototype" if kind == "prototype" else "charge-handbook",
                 }
             )
         return rows
@@ -247,6 +298,17 @@ class InteractiveKnowledgeService:
             rows = self._rows(s, actor, pid, choices)
             from .document_navigation import build_navigation
             from .materials import primary
+            from .native_documents import catalog_locations, index_modified
+
+            packages = self._packages(s, actor, pid, choices)
+            native_locations = catalog_locations(s, pid, choices, rows, packages)
+            modified = {e.id: index_modified(s, pid, r) for e, r in rows if e.id in native_locations}
+            for package in packages:
+                package["native_index_modified"] = any(
+                    modified.get(entity_id, False)
+                    for entity_id, package_id in native_locations.items()
+                    if package_id == package["id"]
+                )
 
             return {
                 "analysis_set_id": analysis.id,
@@ -256,7 +318,7 @@ class InteractiveKnowledgeService:
                 "editable": not release
                 and analysis.state != "frozen"
                 and self.service._can(s, actor, pid, "knowledge:edit"),
-                "packages": self._packages(s, actor, pid, choices),
+                "packages": packages,
                 "navigation": build_navigation(
                     self.service, s, actor, pid, choices, [r.id for e, r in rows if e.type == "document"]
                 ),
@@ -272,6 +334,8 @@ class InteractiveKnowledgeService:
                             or r.metadata_json.get("logical_source_key")
                             or s.get(Artifact, r.artifact_id).snapshot_id,
                             "package_id": r.metadata_json.get("material_package_id"),
+                            "native_package_id": native_locations.get(e.id),
+                            "native_index_modified": modified.get(e.id, False),
                         }
                         for e, r in rows
                         if e.type == "document"
@@ -298,6 +362,7 @@ class InteractiveKnowledgeService:
             entity, row = selected_id(s, self.service, actor, pid, choices, rid, "document")
             chapters = self.documents._sections(s, entity, row)
             from .document_projection import readable_document
+            from .native_documents import describe
 
             visible = {
                 c.id
@@ -309,6 +374,9 @@ class InteractiveKnowledgeService:
                 "revision_id": row.id,
                 "name": row.name,
                 **readable_document(row, chapters, visible),
+                "native": describe(
+                    self.service, s, actor, pid, choices, row, chapters, self._packages(s, actor, pid, choices)
+                ),
             }
 
     def bindings(self, actor, pid, aid=None, release_id=None):

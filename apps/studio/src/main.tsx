@@ -31,6 +31,8 @@ import "./style.css";
 import { AISettings } from "./AISettings";
 import { Projects } from "./Projects";
 import { Materials } from "./Materials";
+import { NativeDocumentPane, NativeNetworkSettings } from "./NativeDocument";
+import type { NativeDocument, NativeLocation } from "./NativeDocument";
 import {
   DocumentLibrary,
   firstNavigationDocument,
@@ -44,6 +46,8 @@ type DocRef = {
   path: string;
   namespace?: string;
   package_id?: string | null;
+  native_package_id?: string | null;
+  native_index_modified?: boolean;
 };
 type Chapter = {
   id: string;
@@ -59,6 +63,7 @@ type Document = DocRef & {
   sections: Chapter[];
   content?: string;
   partial?: boolean;
+  native?: NativeDocument | null;
 };
 type Citation = {
   revision_id: string;
@@ -128,6 +133,8 @@ type Catalog = {
     sha256: string;
     package_key?: string;
     revision_id?: string;
+    format?: string;
+    native_index_modified?: boolean;
   }[];
   primary_package_id?: string;
   documents: DocRef[];
@@ -142,6 +149,7 @@ type Route = {
   binding: string;
   package: string;
   book: string;
+  reader: string;
 };
 const getRoute = (): Route =>
   Object.fromEntries(
@@ -155,6 +163,7 @@ const getRoute = (): Route =>
       "binding",
       "package",
       "book",
+      "reader",
     ].map((k) => [k, new URLSearchParams(location.hash.slice(1)).get(k) || ""]),
   ) as Route;
 const sameTarget = (a: Target, b: Target) =>
@@ -167,6 +176,7 @@ const text = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function App() {
   const [auth, setAuth] = useState<boolean | null>(null),
+    [accountId, setAccountId] = useState(""),
     [username, setUsername] = useState("owner"),
     [password, setPassword] = useState("");
   const [route, setRoute] = useState(getRoute),
@@ -184,8 +194,7 @@ function App() {
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [loadedDocument, setViewDoc] = useState<Document | null>(null),
-    [docQuery, setDocQuery] = useState(""),
-    [originalBook, setOriginalBook] = useState(false);
+    [docQuery, setDocQuery] = useState("");
   const viewDoc =
     catalog &&
     catalog.documents.some((document) => document.revision_id === route.doc) &&
@@ -193,6 +202,43 @@ function App() {
       ? loadedDocument
       : null;
   const [bookMounted, setBookMounted] = useState(false);
+  const [sourcePackage, setSourcePackage] = useState("");
+  const [network, setNetwork] = useState<{
+    key: string;
+    origins: string[];
+  } | null>(null);
+  const pendingNativeLocation = useRef<NativeLocation | null>(null);
+  const documentRef = catalog?.documents.find(
+    (doc) => doc.revision_id === route.doc,
+  );
+  const nativePackage = catalog?.packages.find((pack) =>
+    documentRef
+      ? pack.id === documentRef.native_package_id
+      : pack.kind === "handbook" &&
+        (!route.book ||
+          pack.id === route.book ||
+          pack.package_key === route.book) &&
+        catalog.documents.some((doc) => doc.native_package_id === pack.id),
+  );
+  const nativeDetail =
+    viewDoc?.native?.package_id === nativePackage?.id ? viewDoc?.native : null;
+  const nativePackageModified = !!nativePackage?.native_index_modified;
+  const originalBook =
+    !!nativePackage &&
+    route.reader !== "standard" &&
+    ((!route.doc && (!nativePackageModified || route.reader === "source")) ||
+      (nativeDetail
+        ? nativeDetail.matches_index || route.reader === "source"
+        : !viewDoc && sourcePackage === nativePackage.id));
+  const networkKey = `${accountId}:${route.project}:${nativePackage?.package_key || nativePackage?.id || ""}`;
+  const networkOrigins =
+    network?.key === networkKey
+      ? network.origins
+      : [
+          "https://api.openai.com",
+          "https://api.deepseek.com",
+          "https://dashscope.aliyuncs.com",
+        ];
   const [target, setTarget] = useState<Target | null>(null),
     [active, setActive] = useState<Binding | null>(null),
     [knowledge, setKnowledge] = useState(false),
@@ -213,7 +259,6 @@ function App() {
     top: number;
   } | null>(null);
   const prototype = useRef<RuntimeHandle | null>(null),
-    handbook = useRef<RuntimeHandle | null>(null),
     windowRef = useRef<HTMLElement>(null),
     pendingReveal = useRef<Target | null>(null),
     docEpoch = useRef(0),
@@ -265,9 +310,12 @@ function App() {
     };
   }, []);
   useEffect(() => {
-    api<{ authenticated: boolean; csrf_token?: string }>("/auth/session")
+    api<{ authenticated: boolean; csrf_token?: string; actor_id?: string }>(
+      "/auth/session",
+    )
       .then((s) => {
         setCsrf(s.csrf_token);
+        setAccountId(s.actor_id || "");
         setAuth(s.authenticated);
       })
       .catch(() => setAuth(false));
@@ -346,7 +394,8 @@ function App() {
     setEditing(false);
     setViewDoc(null);
     setBookMounted(false);
-    setOriginalBook(false);
+    setSourcePackage("");
+    pendingNativeLocation.current = null;
     setError("");
     void reload().catch((e) => setError(text(e)));
     return () => {
@@ -354,9 +403,38 @@ function App() {
     };
   }, [auth, route.project, route.analysis, route.release, reload]);
   useEffect(() => {
+    if (originalBook && nativePackage) {
+      setBookMounted(true);
+      setSourcePackage(nativePackage.id);
+    }
+  }, [originalBook, nativePackage?.id]);
+  useEffect(() => {
+    const reported = pendingNativeLocation.current;
+    if (!reported || !nativeDetail || reported.path !== nativeDetail.path)
+      return;
+    pendingNativeLocation.current = null;
+    const chapter = nativeDetail.sections.find(
+      (section) => section.anchor === reported.anchor,
+    );
+    if (chapter && route.section !== chapter.revision_id)
+      navigate({ section: chapter.revision_id }, true);
+  }, [nativeDetail, route.section, navigate]);
+  useEffect(() => {
+    if (
+      route.view === "documents" &&
+      catalog &&
+      route.doc &&
+      !catalog.documents.some((doc) => doc.revision_id === route.doc)
+    ) {
+      navigate({ doc: "", section: "", reader: "", book: "" }, true);
+      return;
+    }
     if (
       route.view === "documents" &&
       catalog?.documents.length &&
+      (route.reader === "standard" ||
+        (nativePackageModified && route.reader !== "source") ||
+        !catalog.documents.some((doc) => doc.native_package_id)) &&
       (!route.doc ||
         !catalog.documents.some(
           (document) => document.revision_id === route.doc,
@@ -367,12 +445,28 @@ function App() {
     )
       navigate(
         {
-          doc: firstNavigationDocument(catalog.navigation, catalog.documents),
+          doc:
+            nativePackageModified && route.reader !== "source"
+              ? catalog.documents.find(
+                  (doc) =>
+                    doc.native_package_id === nativePackage?.id &&
+                    doc.native_index_modified,
+                )?.revision_id ||
+                firstNavigationDocument(catalog.navigation, catalog.documents)
+              : firstNavigationDocument(catalog.navigation, catalog.documents),
           section: "",
         },
         true,
       );
-  }, [route.view, route.doc, catalog, navigate]);
+  }, [
+    route.view,
+    route.doc,
+    route.reader,
+    catalog,
+    nativePackage?.id,
+    nativePackageModified,
+    navigate,
+  ]);
   useEffect(() => {
     if (!route.binding) {
       selectedBinding.current = "";
@@ -728,11 +822,12 @@ function App() {
     e.preventDefault();
     setError("");
     try {
-      const s = await api<{ csrf_token: string }>(
+      const s = await api<{ csrf_token: string; actor_id: string }>(
         "/auth/login",
         mutation("POST", { username, password }),
       );
       setCsrf(s.csrf_token);
+      setAccountId(s.actor_id);
       setPassword("");
       setAuth(true);
     } catch (e) {
@@ -913,12 +1008,13 @@ function App() {
     setNotice("请点击需要关联的原型控件；按 Esc 或点击取消结束");
   }
   function openDoc(c: Citation, b?: Pick<Binding, "id">) {
-    setOriginalBook(false);
+    pendingNativeLocation.current = null;
     navigate({
       view: "documents",
       doc: c.document_revision_id,
       section: c.revision_id,
       binding: b?.id || "",
+      reader: "",
     });
     setKnowledge(false);
   }
@@ -1095,14 +1191,17 @@ function App() {
   const prototypePackages =
     catalog?.packages.filter((p) => p.kind === "prototype") || [];
   const handbookPackages =
-    catalog?.packages.filter((p) => p.kind === "handbook") || [];
+    catalog?.packages.filter(
+      (p) =>
+        p.kind === "handbook" &&
+        ["charge-handbook", "html-document", "static-site"].includes(
+          p.format || "",
+        ),
+    ) || [];
   const p =
-      prototypePackages.find(
-        (p) => p.package_key === (route.package || catalog?.primary_package_id),
-      ) || prototypePackages[0],
-    h =
-      handbookPackages.find((p) => p.package_key === route.book) ||
-      handbookPackages[0];
+    prototypePackages.find(
+      (p) => p.package_key === (route.package || catalog?.primary_package_id),
+    ) || prototypePackages[0];
   function openProject(id: string) {
     navigate({
       project: id,
@@ -1113,6 +1212,7 @@ function App() {
       binding: "",
       package: "",
       book: "",
+      reader: "",
       view: "prototype",
     });
   }
@@ -1142,6 +1242,7 @@ function App() {
       section: "",
       package: "",
       book: "",
+      reader: "",
     });
     if (result.analysis_set_id === route.analysis) await reload();
   }
@@ -1151,6 +1252,45 @@ function App() {
       .catch((e) => setError(text(e)));
   }
   const currentView = route.view || "prototype";
+  function nativeLocation(location: NativeLocation) {
+    if (!nativePackage || !originalBook || currentView !== "documents") return;
+    const candidates =
+      catalog?.documents.filter(
+        (doc) => doc.native_package_id === nativePackage.id,
+      ) || [];
+    const document =
+      candidates.find(
+        (doc) =>
+          doc.path.replace(/^\/+/, "") === location.path.replace(/^\/+/, ""),
+      ) ||
+      (nativePackage.format === "html-document" &&
+      !location.path.replace(/^\/+/, "") &&
+      candidates.length === 1
+        ? candidates[0]
+        : undefined);
+    if (!document) return;
+    // Native events are positions, never authority to load another package or
+    // request model work. Resolve them only through the authorized catalog.
+    pendingNativeLocation.current = { ...location, path: document.path };
+    const chapter =
+      document.revision_id === viewDoc?.revision_id
+        ? nativeDetail?.sections.find(
+            (section) => section.anchor === location.anchor,
+          )
+        : null;
+    if (
+      document.revision_id !== route.doc ||
+      (chapter && chapter.revision_id !== route.section)
+    )
+      navigate(
+        {
+          doc: document.revision_id,
+          section: chapter?.revision_id || "",
+          reader: "source",
+        },
+        true,
+      );
+  }
   const selectedSection = editDoc?.sections.find(
     (s) => s.revision_id === sectionId,
   );
@@ -1249,7 +1389,13 @@ function App() {
                   return;
                 }
                 navigate({ view: v });
-                if (v === "documents" && !route.doc && catalog?.documents[0])
+                if (
+                  v === "documents" &&
+                  !route.doc &&
+                  catalog?.documents[0] &&
+                  (route.reader === "standard" ||
+                    !catalog.documents.some((doc) => doc.native_package_id))
+                )
                   navigate({
                     view: v,
                     doc: firstNavigationDocument(
@@ -1274,6 +1420,7 @@ function App() {
             onClick={() =>
               void api("/auth/session", mutation("DELETE", {})).finally(() => {
                 setAuth(false);
+                setAccountId("");
                 setCatalog(null);
                 setProjects([]);
               })
@@ -1303,7 +1450,8 @@ function App() {
             {currentView === "prototype"
               ? target?.label || "在原页面操作，即可查看相关知识"
               : currentView === "documents"
-                ? viewDoc?.name || "独立阅读与章节关联"
+                ? viewDoc?.name ||
+                  (originalBook ? nativePackage?.name : "独立阅读与章节关联")
                 : currentView === "ai"
                   ? "配置本项目的模型连接"
                   : currentView === "materials"
@@ -1332,11 +1480,19 @@ function App() {
           {currentView === "documents" && handbookPackages.length > 1 && (
             <select
               aria-label="原始文档包"
-              value={h?.package_key || h?.id}
-              onChange={(e) => navigate({ book: e.target.value })}
+              value={nativePackage?.id || ""}
+              onChange={(e) => {
+                navigate({
+                  book: e.target.value,
+                  doc: "",
+                  section: "",
+                  reader: "source",
+                });
+              }}
             >
+              {!nativePackage && <option value="">选择原样资料包</option>}
               {handbookPackages.map((p) => (
-                <option key={p.id} value={p.package_key || p.id}>
+                <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
               ))}
@@ -1354,15 +1510,32 @@ function App() {
               取消选择
             </button>
           )}
-          {currentView === "documents" && (
+          {currentView === "documents" && nativePackage && (
             <button
               onClick={() => {
-                setOriginalBook(!originalBook);
-                setBookMounted(true);
+                navigate({ reader: originalBook ? "standard" : "source" });
               }}
             >
               <FileText size={14} />
-              {originalBook ? "工作区文档" : "原手册"}
+              {originalBook
+                ? "标准阅读"
+                : nativeDetail && !nativeDetail.matches_index
+                  ? "查看导入原件"
+                  : "原样文档"}
+            </button>
+          )}
+          {currentView === "documents" && nativePackage && accountId && (
+            <NativeNetworkSettings
+              account={accountId}
+              project={route.project}
+              packageId={nativePackage.package_key || nativePackage.id}
+              onOrigins={(origins) => setNetwork({ key: networkKey, origins })}
+            />
+          )}
+          {currentView === "documents" && originalBook && (
+            <button onClick={toggleAssistant}>
+              <Link2 size={14} />
+              关联知识
             </button>
           )}
           <span className="subtle">
@@ -1378,6 +1551,23 @@ function App() {
           </button>
         </div>
       )}
+      {currentView === "documents" &&
+        nativeDetail &&
+        !nativeDetail.matches_index && (
+          <div className="banner native-source-notice" role="status">
+            {originalBook
+              ? "正在查看导入原件；工作区正文已有修改，准确关联与最新内容请使用标准阅读。"
+              : "工作区正文已有修改，当前显示准确修订。可选择“查看导入原件”阅读来源页面。"}
+          </div>
+        )}
+      {currentView === "documents" &&
+        originalBook &&
+        !nativeDetail &&
+        nativePackageModified && (
+          <div className="banner native-source-notice" role="status">
+            正在查看导入原件；此资料包的工作区正文已有修改，最新内容与准确关联请使用标准阅读。
+          </div>
+        )}
       {notice && catalog && (
         <div className="toast" role="status">
           <Check size={15} />
@@ -1404,6 +1594,11 @@ function App() {
                 url={`${prefix}/packages/${p.id}/content?${scope}`}
                 digest={p.sha256}
                 kind="prototype"
+                storageScope={{
+                  accountId,
+                  projectId: route.project,
+                  packageId: p.package_key || p.id,
+                }}
                 handle={prototype}
                 onEvent={onRuntime}
               />
@@ -1439,8 +1634,12 @@ function App() {
             query={docQuery}
             onQuery={setDocQuery}
             onOpen={(revision, section = "") => {
-              setOriginalBook(false);
-              navigate({ view: "documents", doc: revision, section });
+              navigate({
+                view: "documents",
+                doc: revision,
+                section,
+                reader: "standard",
+              });
             }}
             loadDocument={(revision, signal) =>
               api<Document>(
@@ -1602,20 +1801,24 @@ function App() {
             </aside>
           </DocumentLibrary>
         )}
-        {h && bookMounted && (
-          <section
-            className="handbook-space"
-            hidden={currentView !== "documents" || !originalBook}
-          >
-            <OriginalRuntime
-              key={h.id + scope}
-              url={`${prefix}/packages/${h.id}/content?${scope}`}
-              digest={h.sha256}
-              kind="handbook"
-              handle={handbook}
-              onEvent={() => {}}
-            />
-          </section>
+        {nativePackage && accountId && (bookMounted || originalBook) && (
+          <NativeDocumentPane
+            key={nativePackage.id + scope}
+            pack={nativePackage}
+            native={nativeDetail || null}
+            section={route.section}
+            account={accountId}
+            project={route.project}
+            contentUrl={`${prefix}/packages/${nativePackage.id}/content?${scope}`}
+            origins={networkOrigins}
+            visible={currentView === "documents" && originalBook}
+            requestKey={`${route.project}:${scope}:${route.doc}:${route.section}:${route.view}:${route.reader}`}
+            onLocation={nativeLocation}
+            onFailure={(message) => {
+              setNotice(message);
+              navigate({ reader: "standard" }, true);
+            }}
+          />
         )}
         {currentView === "projects" && (
           <Projects onOpen={openProject} onUpdate={refreshProjects} />
@@ -1782,6 +1985,7 @@ function App() {
       )}
       {catalog &&
         ["prototype", "documents", "links"].includes(currentView) &&
+        !(currentView === "documents" && originalBook) &&
         !(knowledge && docked) && (
           <button
             ref={assistantTrigger}

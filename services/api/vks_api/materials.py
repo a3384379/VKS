@@ -526,6 +526,7 @@ class MaterialService:
         }
         consumed = set()
         for path, markdown in parsed["documents"]:
+            source_body_sha256 = sha(markdown)
             preserved_manual = False
             prior = old_docs.get(path)
             if not prior:
@@ -624,6 +625,7 @@ class MaterialService:
                     "section_count": len(chapters),
                     "material_package_id": package.id,
                     "material_path": path,
+                    "source_body_sha256": source_body_sha256,
                     "logical_source_key": "material." + package.id,
                     "locked_section_ids": list(prior.metadata_json.get("locked_section_ids", [])) if prior else [],
                 },

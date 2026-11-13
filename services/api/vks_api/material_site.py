@@ -26,15 +26,25 @@ const render=p=>{
  const doc=new DOMParser().parseFromString(new TextDecoder().decode(decode(f.data)),'text/html');
  doc.querySelectorAll('base').forEach(e=>e.remove());
  for(const el of doc.querySelectorAll('[src],[href],[poster]'))for(const a of ['src','href','poster'])if(el.hasAttribute(a)){
-  const v=el.getAttribute(a),k=resolve(p,v);if(!k||!files[k])continue;
-  if(el.tagName==='A'&&/\.html?$/i.test(k)){el.dataset.vksPage=k;el.setAttribute(a,'#');}
+  const v=el.getAttribute(a),k=resolve(p,v);if(!k||!files[k]||(el.tagName==='A'&&v.startsWith('#')))continue;
+  if(el.tagName==='A'&&/\.html?$/i.test(k)){el.dataset.vksPage=k+new URL(v,'https://package.invalid/'+p).hash;el.setAttribute(a,'#');}
   else if(urls[k])el.setAttribute(a,urls[k]);
  }
  const boot=doc.createElement('script');boot.textContent='window.__prototypePackPage='+JSON.stringify({path:p})+';document.addEventListener("click",e=>{const a=e.target.closest("a[data-vks-page]");if(a){e.preventDefault();parent.__prototypePack.show(a.dataset.vksPage)}},true);';
  (doc.head||doc.documentElement).prepend(boot);
  return html[p]=URL.createObjectURL(new Blob(['<!doctype html>'+doc.documentElement.outerHTML],{type:'text/html'}));
 };
-window.__prototypePack={show:p=>{p=p.replace(/^\//,'').split('?')[0];const u=render(p);if(u)document.getElementById('actualPage').src=u}};
+window.__prototypePack={show:p=>{
+ const target=new URL(p,'https://package.invalid/'),path=decodeURIComponent(target.pathname.slice(1)),fragment=target.hash.slice(1),u=render(path);if(!u)return;
+ const frame=document.getElementById('actualPage'),reveal=()=>{if(!fragment)return;try{
+  const win=frame.contentWindow,scroll=()=>win.requestAnimationFrame(()=>win.document.getElementById(decodeURIComponent(fragment))?.scrollIntoView());
+  win.addEventListener('hashchange',scroll,{once:true});const before=win.location.href;win.location.hash=fragment;
+  if(win.location.href===before)win.dispatchEvent(new win.HashChangeEvent('hashchange',{oldURL:before,newURL:before}));
+ }catch{}};
+ let current='';try{current=frame.contentWindow?.__prototypePackPage?.path||''}catch{}
+ if(current===path){reveal();return;}
+ frame.onload=reveal;frame.src=u+(fragment?'#'+fragment:'');
+}};
 window.__prototypePack.show(ENTRY);
 """.replace("ENTRY", json.dumps(entry))
     data = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")

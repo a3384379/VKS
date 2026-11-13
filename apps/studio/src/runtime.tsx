@@ -36,16 +36,35 @@ export function isTarget(value: unknown): value is Target {
   );
 }
 export type RuntimeHandle = { send: (type: string, payload?: unknown) => void };
+export type RuntimeStorageScope = {
+  accountId: string;
+  projectId: string;
+  packageId: string;
+};
+export type DocumentLocation = {
+  path?: string;
+  document_anchor?: string;
+  articleId?: string;
+  anchor?: string;
+  selector?: string;
+  heading?: string;
+  heading_level?: number;
+  heading_ordinal?: number;
+};
 export function OriginalRuntime({
   url,
   digest,
   kind,
+  storageScope,
+  networkOrigins = [],
   onEvent,
   handle,
 }: {
   url: string;
   digest: string;
   kind: string;
+  storageScope: RuntimeStorageScope;
+  networkOrigins?: string[];
   onEvent: (e: RuntimeEvent) => void;
   handle: { current: RuntimeHandle | null };
 }) {
@@ -54,14 +73,18 @@ export function OriginalRuntime({
   eventRef.current = onEvent;
   const [identity] = useState(() => crypto.randomUUID());
   const [status, setStatus] = useState("正在读取原始资料…");
-  const origin = `http://${identity}.localhost:${import.meta.env.VITE_RUNTIME_PORT || 5195}`;
+  const runtimePort = import.meta.env.VITE_RUNTIME_PORT || 5195;
+  const networkKey = JSON.stringify(kind === "prototype" ? [] : networkOrigins);
   useEffect(() => {
     const controller = new AbortController();
     let port: MessagePort | null = null,
       disposed = false,
       transferred = false,
       lastSequence = 0,
-      navigationRequest = "";
+      navigationRequest = "",
+      origin = "";
+    setStatus("正在读取原始资料…");
+    if (iframe.current) iframe.current.src = "about:blank";
     const bytes = fetch(url, {
       signal: controller.signal,
       credentials: "same-origin",
@@ -82,7 +105,8 @@ export function OriginalRuntime({
     });
     const send = (type: string, payload: unknown = {}) => {
       const request = crypto.randomUUID();
-      if (type === "target.reveal") navigationRequest = request;
+      if (type === "target.reveal" || type === "document.reveal")
+        navigationRequest = request;
       port?.postMessage({
         protocol_version: 1,
         runtime_instance_id: identity,
@@ -169,9 +193,42 @@ export function OriginalRuntime({
       );
     };
     window.addEventListener("message", listener);
-    // Listener is ready before assigning the runtime URL.
-    if (iframe.current)
-      iframe.current.src = `${origin}/?host=${encodeURIComponent(location.origin)}&instance=${identity}`;
+    // The server accepts registration only from the configured Studio origin.
+    // Material bytes and platform credentials never enter this request.
+    void fetch(`http://localhost:${runtimePort}/register`, {
+      method: "POST",
+      mode: "cors",
+      credentials: "omit",
+      redirect: "error",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: kind === "prototype" ? "prototype" : "document",
+        digest,
+        storageScope,
+        networkOrigins: JSON.parse(networkKey),
+      }),
+    })
+      .then(async (response) => {
+        const registration = await response.json();
+        if (!response.ok)
+          throw new Error(registration.error || "无法登记原始资料运行环境");
+        const expected = new URL(registration.origin);
+        if (
+          expected.protocol !== "http:" ||
+          !/^vks-[a-f0-9]{48}\.localhost$/.test(expected.hostname) ||
+          expected.port !== String(runtimePort) ||
+          typeof registration.registration !== "string"
+        )
+          throw new Error("原始资料运行环境地址无效");
+        if (disposed) return;
+        origin = expected.origin;
+        if (iframe.current)
+          iframe.current.src = `${origin}/?registration=${encodeURIComponent(registration.registration)}&instance=${identity}`;
+      })
+      .catch((error) => {
+        if (!disposed) setStatus(error.message);
+      });
     return () => {
       disposed = true;
       controller.abort();
@@ -179,7 +236,18 @@ export function OriginalRuntime({
       port?.close();
       handle.current = null;
     };
-  }, [url, digest, origin, identity, handle]);
+  }, [
+    url,
+    digest,
+    kind,
+    storageScope.accountId,
+    storageScope.projectId,
+    storageScope.packageId,
+    networkKey,
+    runtimePort,
+    identity,
+    handle,
+  ]);
   return (
     <div className="runtime-wrap">
       {status && (
@@ -190,7 +258,10 @@ export function OriginalRuntime({
       <iframe
         ref={iframe}
         title={kind === "prototype" ? "原 HTML 原型" : "原 HTML 手册"}
-        sandbox="allow-scripts allow-same-origin allow-modals allow-downloads"
+        sandbox={
+          "allow-scripts allow-same-origin allow-modals allow-downloads" +
+          (kind === "prototype" ? "" : " allow-forms")
+        }
       />
     </div>
   );
