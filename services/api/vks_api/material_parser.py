@@ -15,6 +15,7 @@ from packages.analyzers.vks_ingest import BundleError, safe_path
 from .service import DomainError
 
 LIMIT = 80 * 1024 * 1024
+MAX_FILES = 5000
 
 
 def fail(message):
@@ -106,21 +107,30 @@ def html_markdown(raw, name):
     )
 
 
-def zip_files(raw):
+def zip_files(raw, budget=None):
+    # One budget covers the complete material, including all uploaded ZIPs.
+    # Charge metadata before decompression so a later archive cannot briefly
+    # allocate another full package before an aggregate limit is noticed.
+    budget = budget if budget is not None else {"bytes": 0, "entries": 0}
     try:
         with ZipFile(BytesIO(raw)) as archive:
-            rows, seen, size = [], set(), 0
-            if len(archive.infolist()) > 5000:
+            rows, seen = [], set()
+            if budget["entries"] + len(archive.infolist()) > MAX_FILES:
                 fail("压缩包文件数量超过 5000")
             for item in archive.infolist():
+                budget["entries"] += 1
                 if item.is_dir():
                     continue
                 path = safe_path(item.filename)
                 if path.casefold() in seen or (item.external_attr >> 16) & 0o170000 == 0o120000:
                     fail("压缩包有重复路径或符号链接")
                 seen.add(path.casefold())
-                size += item.file_size
-                if size > LIMIT or item.file_size > LIMIT or item.file_size > max(1, item.compress_size) * 1000:
+                budget["bytes"] += item.file_size
+                if (
+                    budget["bytes"] > LIMIT
+                    or item.file_size > LIMIT
+                    or item.file_size > max(1, item.compress_size) * 1000
+                ):
                     fail("压缩包展开大小或压缩比超过限制")
                 if any(
                     p in {".git", "node_modules", ".env", ".env.local", "id_rsa"} for p in PurePosixPath(path).parts
@@ -137,12 +147,20 @@ def parse(kind, files, entry=""):
     if sum(len(raw) for _, raw in files) > LIMIT:
         fail("资料总大小超过 80 MiB")
     expanded = []
+    budget = {"bytes": 0, "entries": 0}
     for name, raw in files:
         try:
             name = safe_path(name)
         except BundleError:
             fail("资料文件名或路径不合法")
-        expanded.extend(zip_files(raw) if name.lower().endswith(".zip") else [(name, raw)])
+        if name.lower().endswith(".zip"):
+            expanded.extend(zip_files(raw, budget))
+        else:
+            budget["bytes"] += len(raw)
+            budget["entries"] += 1
+            if budget["bytes"] > LIMIT or budget["entries"] > MAX_FILES:
+                fail("资料展开总大小或文件数量超过限制")
+            expanded.append((name, raw))
     names = [name.casefold() for name, _ in expanded]
     if len(names) != len(set(names)):
         fail("资料含重复文件路径")

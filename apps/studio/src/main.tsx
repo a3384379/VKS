@@ -222,14 +222,23 @@ function App() {
   useEffect(() => () => documentCache.dispose(), [documentCache]);
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
-    [, setViewDoc] = useState<Document | null>(null),
+    [loadedDocument, setViewDoc] = useState<{
+      cacheId: string;
+      native: boolean;
+      document: Document;
+    } | null>(null),
     [documentError, setDocumentError] = useState(""),
     [documentRetry, setDocumentRetry] = useState(0),
     [docQuery, setDocQuery] = useState("");
   const viewDoc =
     catalog &&
     catalog.documents.some((document) => document.revision_id === route.doc)
-      ? documentCache.peek(route.doc, nativeRead) || null
+      ? documentCache.peek(route.doc, nativeRead) ||
+        (loadedDocument?.cacheId === documentCache.id &&
+        loadedDocument.native === nativeRead &&
+        loadedDocument.document.revision_id === route.doc
+          ? loadedDocument.document
+          : null)
       : null;
   const [bookMounted, setBookMounted] = useState(false);
   const [sourcePackage, setSourcePackage] = useState("");
@@ -325,7 +334,10 @@ function App() {
       scope,
       p?.id,
       catalog?.selection_version,
-      control.current,
+      control.current && {
+        target: control.current.target,
+        context: control.current.context,
+      },
     ]),
     prefix,
     route.release
@@ -555,7 +567,11 @@ function App() {
       .load(route.doc, nativeRead)
       .then((d) => {
         if (epoch === docEpoch.current) {
-          setViewDoc(d);
+          setViewDoc({
+            cacheId: documentCache.id,
+            native: nativeRead,
+            document: d,
+          });
         }
       })
       .catch((e) => {
@@ -1069,17 +1085,20 @@ function App() {
     navigate({ view: "prototype" });
     setNotice("请点击需要关联的原型控件；按 Esc 或点击取消结束");
   }
-  function openDoc(c: Citation, b?: Pick<Binding, "id">) {
-    pendingNativeLocation.current = null;
-    navigate({
-      view: "documents",
-      doc: c.document_revision_id,
-      section: c.revision_id,
-      binding: b?.id || "",
-      reader: "",
-    });
-    setKnowledge(false);
-  }
+  const openDoc = useCallback(
+    (c: Citation, b?: Pick<Binding, "id">) => {
+      pendingNativeLocation.current = null;
+      navigate({
+        view: "documents",
+        doc: c.document_revision_id,
+        section: c.revision_id,
+        binding: b?.id || "",
+        reader: "",
+      });
+      setKnowledge(false);
+    },
+    [navigate],
+  );
   function reveal(b: Binding) {
     chooseControl({
       target: b.target,
@@ -1211,6 +1230,206 @@ function App() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
   }
+  const markdownReading = useMemo<ReadingContext>(
+    () => ({
+      projectId: route.project,
+      analysisSetId: route.release ? undefined : route.analysis,
+      releaseId: route.release || undefined,
+      selectionVersion: catalog?.selection_version,
+      documents: catalog?.documents || [],
+      onDocument: (document, fragment) => {
+        const section =
+          document.revision_id === viewDoc?.revision_id
+            ? viewDoc.sections.find(
+                (s) =>
+                  s.revision_id === fragment ||
+                  s.name
+                    .toLowerCase()
+                    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+                    .replace(/\s+/g, "-") === fragment.toLowerCase(),
+              )
+            : undefined;
+        navigate({
+          view: "documents",
+          doc: document.revision_id,
+          section: section?.revision_id || fragment,
+        });
+      },
+      onSection: (reference) => openDoc(reference),
+      loadDocument: async (revision, signal) => {
+        if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+        const document = await documentCache.load(revision);
+        return (
+          document.content ??
+          document.sections.map((section) => section.content).join("\n\n")
+        );
+      },
+    }),
+    [
+      route.project,
+      route.analysis,
+      route.release,
+      catalog?.selection_version,
+      catalog?.documents,
+      viewDoc,
+      documentCache,
+      navigate,
+      openDoc,
+    ],
+  );
+  const documentArticle = useMemo(
+    () =>
+      !originalBook && route.view === "documents" ? (
+        <article className="document-reader">
+          <div className="reader-label">
+            工作区文档 <span>· 准确修订</span>
+          </div>
+          <h1>
+            {viewDoc?.name || documentRef?.name || "选择一篇文档开始阅读"}
+          </h1>
+          {!viewDoc &&
+            documentRef &&
+            (documentError ? (
+              <div role="alert">
+                <p>{documentError}</p>
+                <button onClick={() => setDocumentRetry((v) => v + 1)}>
+                  重新加载文档
+                </button>
+              </div>
+            ) : (
+              <p role="status" className="document-loading">
+                <LoaderCircle size={18} className="spinning" />
+                正在读取正文…
+              </p>
+            ))}
+          {viewDoc &&
+            viewDoc.sections.some((section) => section.heading_level !== 0) && (
+              <details
+                className="article-toc"
+                key={viewDoc.revision_id}
+                open={viewDoc.sections.length <= 6}
+              >
+                <summary>
+                  <b>本篇目录</b>
+                  <span>
+                    {
+                      viewDoc.sections.filter(
+                        (section) => section.heading_level !== 0,
+                      ).length
+                    }{" "}
+                    个章节
+                  </span>
+                </summary>
+                <nav aria-label="本篇目录">
+                  {viewDoc.sections.map((s, index) => {
+                    if (s.heading_level === 0) return null;
+                    const depth =
+                      /^ {0,3}(#{1,6})\s/.exec(s.content)?.[1].length || 1;
+                    if (index === 0 && depth === 1 && s.name === viewDoc.name)
+                      return null;
+                    return (
+                      <a
+                        key={s.id}
+                        href={`#section-${s.revision_id}`}
+                        style={{
+                          paddingInlineStart: Math.max(0, depth - 2) * 14,
+                        }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          navigate({ section: s.revision_id });
+                        }}
+                      >
+                        {s.name}
+                      </a>
+                    );
+                  })}
+                </nav>
+              </details>
+            )}
+          {viewDoc && (
+            <Markdown
+              documentId={viewDoc.id}
+              revisionId={viewDoc.revision_id}
+              omitInitialTitle={viewDoc.name}
+              sections={(() => {
+                let line = 1;
+                return viewDoc.sections.map((section) => {
+                  const current = {
+                    ...section,
+                    render_start_line:
+                      section.render_start_line ??
+                      (viewDoc.content ? section.start_line : undefined) ??
+                      line,
+                  };
+                  line += section.content.split(/\r\n?|\n/).length + 1;
+                  return current;
+                });
+              })()}
+              selectedSection={route.section}
+              sectionActions={(s, position) =>
+                position === "before" ? (
+                  s.content.trim() === "# " + viewDoc.name ? null : (
+                    <div className="chapter-actions">
+                      <button
+                        onClick={() => {
+                          navigate({ section: s.revision_id });
+                          setKnowledge(true);
+                          setActive(
+                            bindings.find(
+                              (b) =>
+                                !b.excluded &&
+                                b.sections.some(
+                                  (c) => c.revision_id === s.revision_id,
+                                ),
+                            ) || null,
+                          );
+                        }}
+                      >
+                        <Link2 size={13} />
+                        关联操作
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  bindings
+                    .filter(
+                      (b) =>
+                        !b.excluded &&
+                        b.sections.some((c) => c.revision_id === s.revision_id),
+                    )
+                    .map((b) => (
+                      <button
+                        key={b.id}
+                        className="reverse-link"
+                        onClick={() => reveal(b)}
+                      >
+                        <MousePointer2 size={15} />
+                        打开原型 · {b.target.label}
+                        <ArrowUpRight size={14} />
+                      </button>
+                    ))
+                )
+              }
+            >
+              {viewDoc.content ??
+                viewDoc.sections.map((s) => s.content).join("\n\n")}
+            </Markdown>
+          )}
+        </article>
+      ) : null,
+    [
+      originalBook,
+      route.view,
+      viewDoc,
+      documentRef?.name,
+      documentError,
+      route.section,
+      bindings,
+      catalog,
+      p?.id,
+      navigate,
+    ],
+  );
   if (auth === null) return <div className="splash">正在打开知境 Studio…</div>;
   if (!auth)
     return (
@@ -1359,40 +1578,7 @@ function App() {
           (!route.section || c.revision_id === route.section),
       ),
   );
-  const markdownReading: ReadingContext = {
-    projectId: route.project,
-    analysisSetId: route.release ? undefined : route.analysis,
-    releaseId: route.release || undefined,
-    selectionVersion: catalog?.selection_version,
-    documents: catalog?.documents || [],
-    onDocument: (document, fragment) => {
-      const section =
-        document.revision_id === viewDoc?.revision_id
-          ? viewDoc.sections.find(
-              (s) =>
-                s.revision_id === fragment ||
-                s.name
-                  .toLowerCase()
-                  .replace(/[^\p{L}\p{N}\s_-]/gu, "")
-                  .replace(/\s+/g, "-") === fragment.toLowerCase(),
-            )
-          : undefined;
-      navigate({
-        view: "documents",
-        doc: document.revision_id,
-        section: section?.revision_id || fragment,
-      });
-    },
-    onSection: (reference) => openDoc(reference),
-    loadDocument: async (revision, signal) => {
-      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      const document = await documentCache.load(revision);
-      return (
-        document.content ??
-        document.sections.map((section) => section.content).join("\n\n")
-      );
-    },
-  };
+
   const body = (
     <div className="studio">
       <header className="topbar">
@@ -1703,150 +1889,7 @@ function App() {
               )}
             hidden={originalBook}
           >
-            <article className="document-reader">
-              <div className="reader-label">
-                工作区文档 <span>· 准确修订</span>
-              </div>
-              <h1>
-                {viewDoc?.name || documentRef?.name || "选择一篇文档开始阅读"}
-              </h1>
-              {!viewDoc &&
-                documentRef &&
-                (documentError ? (
-                  <div role="alert">
-                    <p>{documentError}</p>
-                    <button onClick={() => setDocumentRetry((v) => v + 1)}>
-                      重新加载文档
-                    </button>
-                  </div>
-                ) : (
-                  <p role="status" className="document-loading">
-                    <LoaderCircle size={18} className="spinning" />
-                    正在读取正文…
-                  </p>
-                ))}
-              {viewDoc &&
-                viewDoc.sections.some(
-                  (section) => section.heading_level !== 0,
-                ) && (
-                  <details
-                    className="article-toc"
-                    key={viewDoc.revision_id}
-                    open={viewDoc.sections.length <= 6}
-                  >
-                    <summary>
-                      <b>本篇目录</b>
-                      <span>
-                        {
-                          viewDoc.sections.filter(
-                            (section) => section.heading_level !== 0,
-                          ).length
-                        }{" "}
-                        个章节
-                      </span>
-                    </summary>
-                    <nav aria-label="本篇目录">
-                      {viewDoc.sections.map((s, index) => {
-                        if (s.heading_level === 0) return null;
-                        const depth =
-                          /^ {0,3}(#{1,6})\s/.exec(s.content)?.[1].length || 1;
-                        if (
-                          index === 0 &&
-                          depth === 1 &&
-                          s.name === viewDoc.name
-                        )
-                          return null;
-                        return (
-                          <a
-                            key={s.id}
-                            href={`#section-${s.revision_id}`}
-                            style={{
-                              paddingInlineStart: Math.max(0, depth - 2) * 14,
-                            }}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              navigate({ section: s.revision_id });
-                            }}
-                          >
-                            {s.name}
-                          </a>
-                        );
-                      })}
-                    </nav>
-                  </details>
-                )}
-              {viewDoc && (
-                <Markdown
-                  documentId={viewDoc.id}
-                  revisionId={viewDoc.revision_id}
-                  omitInitialTitle={viewDoc.name}
-                  sections={(() => {
-                    let line = 1;
-                    return viewDoc.sections.map((section) => {
-                      const current = {
-                        ...section,
-                        render_start_line:
-                          section.render_start_line ??
-                          (viewDoc.content ? section.start_line : undefined) ??
-                          line,
-                      };
-                      line += section.content.split(/\r\n?|\n/).length + 1;
-                      return current;
-                    });
-                  })()}
-                  selectedSection={route.section}
-                  sectionActions={(s, position) =>
-                    position === "before" ? (
-                      s.content.trim() === "# " + viewDoc.name ? null : (
-                        <div className="chapter-actions">
-                          <button
-                            onClick={() => {
-                              navigate({ section: s.revision_id });
-                              setKnowledge(true);
-                              setActive(
-                                bindings.find(
-                                  (b) =>
-                                    !b.excluded &&
-                                    b.sections.some(
-                                      (c) => c.revision_id === s.revision_id,
-                                    ),
-                                ) || null,
-                              );
-                            }}
-                          >
-                            <Link2 size={13} />
-                            关联操作
-                          </button>
-                        </div>
-                      )
-                    ) : (
-                      bindings
-                        .filter(
-                          (b) =>
-                            !b.excluded &&
-                            b.sections.some(
-                              (c) => c.revision_id === s.revision_id,
-                            ),
-                        )
-                        .map((b) => (
-                          <button
-                            key={b.id}
-                            className="reverse-link"
-                            onClick={() => reveal(b)}
-                          >
-                            <MousePointer2 size={15} />
-                            打开原型 · {b.target.label}
-                            <ArrowUpRight size={14} />
-                          </button>
-                        ))
-                    )
-                  }
-                >
-                  {viewDoc.content ??
-                    viewDoc.sections.map((s) => s.content).join("\n\n")}
-                </Markdown>
-              )}
-            </article>
+            {documentArticle}
             <aside className="related-sidebar">
               <span className="eyebrow">与当前文章相关</span>
               <h3>关联业务操作</h3>
@@ -2320,7 +2363,7 @@ function App() {
                   <KnowledgeChat
                     chat={chat}
                     label={target.label}
-                    onCitation={(c) => openDoc(c)}
+                    onCitation={openDoc}
                     onSettings={() => navigate({ view: "ai" })}
                   />
                 )}

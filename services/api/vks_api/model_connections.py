@@ -80,7 +80,10 @@ class ConnectionService:
 
         require_admin(self.service, actor, pid)
         policy = AiService(self.service).get_policy(actor, pid)
-        with self.service.db() as s:
+        from .reading import ReadingService
+
+        with ReadingService(self.service).db() as s:
+            self.service.require(s, actor, pid, "project:manage")
             rows = list(
                 s.scalars(
                     select(ModelConnection)
@@ -212,6 +215,7 @@ class ConnectionService:
             # Keep opaque IDs intact; the account may expose text and other models.
             out[ident] = {"id": ident, "name": str(item.get("name") or ident)[:160], "description": "当前 Key 可见模型"}
         with self.service.db() as s:
+            self.service.require(s, actor, pid, "project:manage")
             self.service.audit(s, actor, pid, "model.connection.discover", pid)
         return {
             "models": sorted(out.values(), key=lambda r: r["id"]),

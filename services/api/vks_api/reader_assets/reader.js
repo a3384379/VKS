@@ -213,6 +213,8 @@
       consent: false,
     },
     models: [],
+    modelEpoch: 0,
+    modelController: null,
     search: "",
     searchResults: [],
     pendingQuestion: "",
@@ -294,7 +296,7 @@
         },
         signal,
       );
-      const result = await response.json(),
+      const result = await responseJson(response),
         vector = result.data?.[0]?.embedding;
       if (
         !Array.isArray(vector) ||
@@ -2093,6 +2095,16 @@
     return el("label", { class: "field" }, el("span", {}, title), input);
   }
   function renderSettings() {
+    function clearModelChoices() {
+      state.modelEpoch++;
+      state.modelController?.abort();
+      state.modelController = null;
+      state.models = [];
+      replace(models);
+      replace(modelList, el("option", { value: "" }, "获取模型后可下拉选择"));
+      replace(status);
+      fetchModels.disabled = false;
+    }
     const providers = [
       {
         id: "openai",
@@ -2118,6 +2130,7 @@
       {
         "aria-label": "模型服务",
         onchange: (event) => {
+          clearModelChoices();
           const chosen = providers.find((p) => p.id === event.target.value);
           state.config.provider = chosen.id;
           if (chosen.url) state.config.base_url = chosen.url;
@@ -2138,6 +2151,7 @@
       "aria-label": "接口地址",
       autocomplete: "off",
       oninput: (event) => {
+        clearModelChoices();
         state.config.base_url = event.target.value;
         state.config.consent = false;
         consent.checked = false;
@@ -2152,6 +2166,7 @@
       autocomplete: "off",
       spellcheck: "false",
       oninput: (event) => {
+        clearModelChoices();
         state.config.key = event.target.value;
       },
     });
@@ -2203,11 +2218,17 @@
     const fetchModels = button(
       "获取模型",
       async () => {
+        const generation = ++state.modelEpoch,
+          controller = new AbortController();
+        state.modelController?.abort();
+        state.modelController = controller;
+        const timer = setTimeout(() => controller.abort(), 30000);
         fetchModels.disabled = true;
         replace(status, el("span", { class: "hint" }, "正在读取模型列表…"));
         try {
-          const response = await request("models");
-          const result = await response.json();
+          const response = await request("models", null, controller.signal);
+          const result = await responseJson(response);
+          if (generation !== state.modelEpoch) return;
           state.models = [
             ...new Set(
               (result.data || result.models || [])
@@ -2219,9 +2240,13 @@
             throw new Error("该服务未返回可用模型，可手动输入模型 ID。");
           renderAssistant();
         } catch (error) {
-          replace(status, el("div", { class: "error" }, cleanError(error)));
+          if (generation === state.modelEpoch)
+            replace(status, el("div", { class: "error" }, cleanError(error)));
         } finally {
-          fetchModels.disabled = false;
+          clearTimeout(timer);
+          if (state.modelController === controller)
+            state.modelController = null;
+          if (generation === state.modelEpoch) fetchModels.disabled = false;
         }
       },
       "subtle-button",
@@ -2306,6 +2331,7 @@
         button(
           "清除本次密钥",
           () => {
+            clearModelChoices();
             state.config.key = "";
             state.config.consent = false;
             renderAssistant();
@@ -2398,9 +2424,41 @@
     }
     return response;
   }
+  const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+  function responseSize(bytes) {
+    if (bytes > MAX_RESPONSE_BYTES)
+      throw new Error(
+        "模型返回的数据超过 2 MiB，已停止接收，请缩短回答或检查服务。",
+      );
+  }
+  async function responseJson(response) {
+    if (!response.body) throw new Error("模型服务未返回数据。");
+    const reader = response.body.getReader(),
+      decoder = new TextDecoder();
+    let source = "",
+      size = 0;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        responseSize(size);
+        source += decoder.decode(value, { stream: true });
+      }
+      source += decoder.decode();
+    } finally {
+      void reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+    try {
+      return JSON.parse(source);
+    } catch {
+      throw new Error("模型服务未返回有效的 JSON 数据。");
+    }
+  }
   async function consume(response, onDelta, signal) {
     if (!response.headers.get("content-type")?.includes("text/event-stream")) {
-      const value = await response.json();
+      const value = await responseJson(response);
       if (
         value.error ||
         ["failed", "incomplete", "cancelled"].includes(value.status)
@@ -2422,6 +2480,7 @@
     const reader = response.body.getReader(),
       decoder = new TextDecoder();
     let buffer = "",
+      size = 0,
       complete = false,
       failed = false;
     function event(raw) {
@@ -2481,18 +2540,25 @@
         const { value, done } = await reader.read();
         if (done) break;
         if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        size += value.byteLength;
+        responseSize(size);
         buffer += decoder.decode(value, { stream: true });
         let boundary;
         while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
           event(buffer.slice(0, boundary.index).replace(/\r\n/g, "\n"));
           buffer = buffer.slice(boundary.index + boundary[0].length);
+          if (complete) break;
         }
+        if (complete) break;
       }
       buffer += decoder.decode();
-      if (buffer.trim()) event(buffer.replace(/\r\n/g, "\n"));
+      if (!complete && buffer.trim()) event(buffer.replace(/\r\n/g, "\n"));
       if (!complete && !failed)
         throw new Error("连接提前结束，回答可能不完整，请重试。");
     } finally {
+      // A completion event is terminal even when a compatible service keeps
+      // the HTTP stream open. Errors/limits must also release the network body.
+      void reader.cancel().catch(() => {});
       reader.releaseLock();
     }
   }

@@ -178,6 +178,16 @@ class MaterialService:
         if any(not self.service._visible_revision(s, actor, pid, r) for r in self.service._revisions(s, analysis.id)):
             raise DomainError("VKS_FORBIDDEN", "管理完整资料组合需要读取其中全部资料的权限", 403)
 
+    def _prepare_access(self, s, actor, pid, analysis, form):
+        self.service.require(s, actor, pid, "source:import")
+        self._complete_access(s, actor, pid, analysis)
+        if form.package_id:
+            candidates = [r for r in roots(s, pid) if r.entity_id == form.package_id]
+            if not candidates or any(not readable(self.service, s, actor, pid, r) for r in candidates):
+                raise missing()
+            if any(r.metadata_json[ROOT]["kind"] != form.kind for r in candidates):
+                raise DomainError("VKS_INVALID_INPUT", "更新资料包不能改变原型/文档类型", 422)
+
     def _revision(self, s, pid, kind, key, art, name, content, meta, locator=None):
         entity = _identity(s, pid, kind, key) or _new_entity(s, pid, kind, key)
         return self.docs._revision(
@@ -426,21 +436,18 @@ class MaterialService:
             self.service.require(s, actor, pid, "source:import")
             analysis = self._draft(s, actor, pid, form.analysis_set_id)
             version(analysis.selection_version, expected)
-            self._complete_access(s, actor, pid, analysis)
+            self._prepare_access(s, actor, pid, analysis, form)
             files = []
             for artifact_id in form.artifact_ids:
                 raw, upload = self.service._upload_data(s, actor, pid, artifact_id)
                 files.append((upload.filename, raw))
-            if form.package_id:
-                candidates = [r for r in roots(s, pid) if r.entity_id == form.package_id]
-                if not candidates or any(not readable(self.service, s, actor, pid, r) for r in candidates):
-                    raise missing()
-                if any(r.metadata_json[ROOT]["kind"] != form.kind for r in candidates):
-                    raise DomainError("VKS_INVALID_INPUT", "更新资料包不能改变原型/文档类型", 422)
         parsed = parse(form.kind, files, form.entry)
         with self.service.db() as s:
             analysis = self._draft(s, actor, pid, form.analysis_set_id)
             version(analysis.selection_version, expected)
+            # Parsing is intentionally outside the transaction. Recheck every
+            # grant and source closure before committing derived revisions.
+            self._prepare_access(s, actor, pid, analysis, form)
             return self.service.idem(
                 s,
                 actor,

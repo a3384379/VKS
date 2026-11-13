@@ -17,18 +17,33 @@ const files=JSON.parse(document.getElementById('vks-site').textContent),urls={},
 const decode=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 for(const [p,f] of Object.entries(files))if(!/\.html?$/i.test(p)&&!/\.css$/i.test(p))urls[p]=URL.createObjectURL(new Blob([decode(f.data)],{type:f.type}));
 const resolve=(base,p)=>{try{const u=new URL(p,'https://package.invalid/'+base);return u.origin==='https://package.invalid'?decodeURIComponent(u.pathname.slice(1)):null}catch{return null}};
+const resource=(base,value)=>{const key=resolve(base,value);return urls[key]?urls[key]+new URL(value,'https://package.invalid/'+base).hash:null};
+const srcset=(base,value)=>{
+ let position=0,cursor=0,result='';
+ while(position<value.length){
+  while(position<value.length&&/[,\t\n\f\r ]/.test(value[position]))position++;
+  const start=position;while(position<value.length&&!/[\t\n\f\r ]/.test(value[position]))position++;
+  let end=position;while(end>start&&value[end-1]===',')end--;
+  if(end===start)break;
+  const url=value.slice(start,end);result+=value.slice(cursor,start)+(resource(base,url)||url);cursor=end;
+  if(end<position)continue;
+  while(position<value.length&&value[position]!==',')position++;
+ }
+ return result+value.slice(cursor);
+};
 for(const [p,f] of Object.entries(files))if(/\.css$/i.test(p)){
- const css=new TextDecoder().decode(decode(f.data)).replace(/url\(\s*(['"]?)([^)'"\s]+)\1\s*\)/g,(all,q,v)=>{const k=resolve(p,v);return urls[k]?'url("'+urls[k]+'")':all});
+ const css=new TextDecoder().decode(decode(f.data)).replace(/url\(\s*(['"]?)([^)'"\s]+)\1\s*\)/g,(all,q,v)=>{const target=resource(p,v);return target?'url("'+target+'")':all});
  urls[p]=URL.createObjectURL(new Blob([css],{type:'text/css'}));
 }
 const render=p=>{
  if(html[p])return html[p]; const f=files[p];if(!f)return null;
  const doc=new DOMParser().parseFromString(new TextDecoder().decode(decode(f.data)),'text/html');
  doc.querySelectorAll('base').forEach(e=>e.remove());
+ for(const el of doc.querySelectorAll('[srcset]'))el.setAttribute('srcset',srcset(p,el.getAttribute('srcset')));
  for(const el of doc.querySelectorAll('[src],[href],[poster]'))for(const a of ['src','href','poster'])if(el.hasAttribute(a)){
   const v=el.getAttribute(a),k=resolve(p,v);if(!k||!files[k]||(el.tagName==='A'&&v.startsWith('#')))continue;
   if(el.tagName==='A'&&/\.html?$/i.test(k)){el.dataset.vksPage=k+new URL(v,'https://package.invalid/'+p).hash;el.setAttribute(a,'#');}
-  else if(urls[k])el.setAttribute(a,urls[k]);
+  else if(urls[k])el.setAttribute(a,resource(p,v));
  }
  const boot=doc.createElement('script');boot.textContent='window.__prototypePackPage='+JSON.stringify({path:p})+';document.addEventListener("click",e=>{const a=e.target.closest("a[data-vks-page]");if(a){e.preventDefault();parent.__prototypePack.show(a.dataset.vksPage)}},true);';
  (doc.head||doc.documentElement).prepend(boot);

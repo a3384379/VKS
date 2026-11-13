@@ -12,10 +12,11 @@ import sqlite3
 import sys
 import threading
 import time
+import weakref
 from array import array
 from base64 import b64encode
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -95,7 +96,9 @@ class VectorStore:
 
     @contextmanager
     def db(self):
-        with sqlite3.connect(self.path, timeout=30) as db:
+        # Connection.__exit__ commits/rolls back but does not close the SQLite
+        # connection. Explicit closing keeps frequent lookups from retaining FDs.
+        with closing(sqlite3.connect(self.path, timeout=30)) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             yield db
 
@@ -170,8 +173,8 @@ class VectorRag:
         self.store = VectorStore(service.data_dir)
         self.lock = threading.RLock()
         self.running = {}
-        self.query_locks = {}
-        self.export_locks = {}
+        self.query_locks = weakref.WeakValueDictionary()
+        self.export_locks = weakref.WeakValueDictionary()
 
     def document_scope(
         self,
@@ -193,7 +196,7 @@ class VectorRag:
         from .reading import artifact_policy
 
         requested = None if section_revision_ids is None else set(section_revision_ids)
-        with self.service.db() as s:
+        with self.assistant.links.reader.reading.db() as s:
             self.service.require(s, actor, pid, permission)
             analysis, release, choices, _ = self.assistant.links.reader.scope(
                 s, actor, pid, analysis_set_id, release_id
@@ -487,7 +490,7 @@ class VectorRag:
         }
 
     def config(self, actor, pid):
-        with self.service.db() as s:
+        with self.assistant.links.reader.reading.db() as s:
             self.service.require(s, actor, pid)
             policy = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
             if not policy or not policy.settings.get("enabled") or not policy.settings.get("allow_external"):
@@ -956,21 +959,36 @@ class VectorRag:
                 row = db.execute(
                     "SELECT embedding FROM queries WHERE project=? AND space=? AND id=?", (pid, space, key)
                 ).fetchone()
-            if row:
-                query = row[0]
+            query = row[0] if row else None
+            if isinstance(query, bytes) and len(query) == settings.dimensions * 4:
+                length = math.hypot(*vector(query))
+                if not math.isfinite(length) or not 0.999 <= length <= 1.001:
+                    query = None
             else:
+                query = None
+            if query is None:
                 query = self.embed(actor, pid, settings, config, [text])[0]
                 with self.store.db() as db:
                     db.execute("INSERT OR REPLACE INTO queries VALUES (?,?,?,?)", (pid, space, key, query))
         q = vector(query)
         lookup = {c["revision_id"]: c for c in chapters}
+
+        def similarity(blob):
+            if not isinstance(blob, bytes) or len(blob) != len(q) * 4:
+                return -2.0
+            try:
+                score = math.sumprod(vector(blob), q)
+            except (ValueError, OverflowError):
+                return -2.0
+            return score if math.isfinite(score) and -1.001 <= score <= 1.001 else -2.0
+
         with self.store.db() as db:
             # Filter current authorized revisions BEFORE computing nearest matches.
             db.execute("CREATE TEMP TABLE allowed(id TEXT PRIMARY KEY)")
             db.executemany("INSERT OR IGNORE INTO allowed VALUES (?)", ((rid,) for rid in lookup))
-            db.create_function("vks_dot", 1, lambda blob: math.sumprod(vector(blob), q))
+            db.create_function("vks_dot", 1, similarity)
             matches = db.execute(
-                "SELECT revision,content,vks_dot(embedding) AS score FROM chunks WHERE project=? AND space=? AND revision IN (SELECT id FROM allowed) ORDER BY score DESC LIMIT 36",
+                "SELECT id,revision,start,content,vks_dot(embedding) AS score FROM chunks WHERE project=? AND space=? AND revision IN (SELECT id FROM allowed) ORDER BY score DESC LIMIT 36",
                 (pid, space),
             ).fetchall()
         scores = {}
@@ -978,8 +996,19 @@ class VectorRag:
         seen = set()
         for rank, row in enumerate(lexical):
             scores[row["revision_id"]] = 1 / (60 + rank)
-        for rid, content, score in matches:
+        for cid, rid, start, content, score in matches:
             if rid in seen or score < 0.15:
+                continue
+            chapter = lookup[rid]
+            if (
+                not isinstance(start, int)
+                or start < 0
+                or start % 780
+                or chapter["content"][start : start + 900] != content
+            ):
+                continue
+            expected = chapter["document_name"][:160] + "\n" + chapter["name"][:160] + "\n" + content
+            if cid != sha(canonical([rid, start, expected])):
                 continue
             seen.add(rid)
             scores[rid] = scores.get(rid, 0) + 1.15 / (60 + len(seen))

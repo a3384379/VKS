@@ -248,8 +248,9 @@ class AiService:
 
     def get_policy(self, actor, pid):
         from .model_credentials import key_for_ref
+        from .reading import ReadingService
 
-        with self.service.db() as s:
+        with ReadingService(self.service).db() as s:
             self.service.require(s, actor, pid, "project:manage")
             p = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
             return {
@@ -360,7 +361,7 @@ class AiService:
 
     def settle(self, usage_id, config, input_tokens, output_tokens, state, error=""):
         with self.service.db() as s:
-            usage = s.get(ModelUsage, usage_id)
+            usage = s.scalar(select(ModelUsage).where(ModelUsage.id == usage_id).with_for_update())
             if usage.state != "reserved":
                 return
             ledger = s.scalar(select(ModelLedger).where(ModelLedger.id == usage.ledger_id).with_for_update())

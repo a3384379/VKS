@@ -3452,3 +3452,7 @@ p {
 .chat-composer button {
   padding: 6px 8px;
 }
+
+.ai-connection-form > .connection-fields {
+  display: contents;
+}

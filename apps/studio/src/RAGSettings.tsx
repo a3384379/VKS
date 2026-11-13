@@ -44,11 +44,15 @@ export function RAGSettings({
   const refresh = async () => {
     if (!payload.current) return;
     const n = epoch.current;
-    const s = await api<Status>(
-      base + "/documents/status",
-      mutation("POST", payload.current),
-    );
-    if (n === epoch.current) setStatus(s);
+    try {
+      const s = await api<Status>(
+        base + "/documents/status",
+        mutation("POST", payload.current),
+      );
+      if (n === epoch.current) setStatus(s);
+    } catch (error) {
+      if (n === epoch.current) throw error;
+    }
   };
   useEffect(() => {
     const n = ++epoch.current;
@@ -255,21 +259,25 @@ export function RAGSettings({
             <button
               disabled={busy || building}
               onClick={async () => {
+                const n = epoch.current;
                 setBusy(true);
                 setError("");
                 try {
                   await api(base + "/settings", mutation("POST", form));
+                  if (n !== epoch.current) return;
                   const result = await api<{
                     dimensions: number;
                     elapsed_ms: number;
                   }>(base + "/test", mutation("POST", {}));
+                  if (n !== epoch.current) return;
                   setNotice(
                     `嵌入连接验证成功：${result.dimensions} 维，${Math.round(result.elapsed_ms)} ms`,
                   );
                 } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e));
+                  if (n === epoch.current)
+                    setError(e instanceof Error ? e.message : String(e));
                 } finally {
-                  setBusy(false);
+                  if (n === epoch.current) setBusy(false);
                 }
               }}
             >

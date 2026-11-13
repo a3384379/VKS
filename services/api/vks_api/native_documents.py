@@ -3,6 +3,8 @@
 import base64
 import json
 import re
+import threading
+import weakref
 from collections import OrderedDict
 from pathlib import PurePosixPath
 
@@ -270,21 +272,56 @@ def _sources(raw, fmt, default_path):
 
 
 def _source_cache(service, artifact, fmt, path):
-    cache = service.__dict__.setdefault("_native_document_sources", OrderedDict())
+    # Retain only immutable source facts. Permission/selection checks always run
+    # before this cache. Concurrent readers share one parse and retain a local
+    # reference even when another request evicts the entry.
+    cache, guard, locks = service.__dict__.setdefault(
+        "_native_document_source_state", (OrderedDict(), threading.RLock(), weakref.WeakValueDictionary())
+    )
     key = (artifact.id, artifact.sha256, fmt, path if fmt == "html-document" else "")
-    if key not in cache:
-        raw = (service.data_dir / "objects" / artifact.object_key).read_bytes()
-        if len(raw) != artifact.size_bytes or sha(raw) != artifact.sha256:
-            raise DomainError("VKS_INTEGRITY_ERROR", "原始资料完整性校验失败", 409)
-        # Analyzer checkpoints can open a second DB transaction. This data-only
-        # parse is inside its owning read transaction; restore the outer fence.
-        with cancellation_scope(lambda: False):
-            cache[key] = _sources(raw, fmt, path)
-        while len(cache) > 4:
-            cache.popitem(last=False)
-    else:
-        cache.move_to_end(key)
-    return cache[key]
+    with guard:
+        lock = locks.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            locks[key] = lock
+    with lock:
+        with guard:
+            sources = cache.get(key)
+        if sources is None:
+            raw = (service.data_dir / "objects" / artifact.object_key).read_bytes()
+            if len(raw) != artifact.size_bytes or sha(raw) != artifact.sha256:
+                raise DomainError("VKS_INTEGRITY_ERROR", "原始资料完整性校验失败", 409)
+            # Source parsing never opens an independent task DB checkpoint.
+            with cancellation_scope(lambda: False):
+                sources = _sources(raw, fmt, path)
+        source = sources.get(path)
+        if source and "positions" not in source:
+            if "content" not in source:
+                source["content"] = html_markdown(source["raw"], path)
+            headings = _headings(source["rendered"] if "rendered" in source else source["raw"])
+            sections = parse_sections(source["content"], PurePosixPath(path).stem)
+            titles = [section for section in sections if section["headingEndLine"] > 0]
+            exact = len(titles) == len(headings) and all(
+                _plain(section["title"]) == heading["heading"]
+                for section, heading in zip(titles, headings, strict=False)
+            )
+            source["sections"] = sections
+            source["positions"] = (
+                {section["startLine"]: heading for section, heading in zip(titles, headings, strict=True)}
+                if exact
+                else {}
+            )
+            source["by_line"] = {section["startLine"]: section for section in sections}
+            by_content = {}
+            for section in sections:
+                by_content.setdefault(section["content"], []).append(section)
+            source["by_content"] = by_content
+        with guard:
+            cache[key] = sources
+            cache.move_to_end(key)
+            while len(cache) > 4:
+                cache.popitem(last=False)
+        return sources
 
 
 def describe(service, s, actor, pid, choices, row, chapters, packages):
@@ -332,32 +369,17 @@ def describe(service, s, actor, pid, choices, row, chapters, packages):
         return None
     if not source:
         return None
-    if "content" not in source:
-        source["content"] = html_markdown(source["raw"], path)
-    if "headings" not in source:
-        source["headings"] = _headings(
-            source["rendered"] if "rendered" in source else source["raw"].decode("utf-8-sig")
-        )
-    source_sections = parse_sections(source["content"], PurePosixPath(path).stem)
-    source_headings = [section for section in source_sections if section["headingEndLine"] > 0]
-    rendered = source["headings"]
-    exact_headings = len(source_headings) == len(rendered) and all(
-        _plain(section["title"]) == heading["heading"]
-        for section, heading in zip(source_headings, rendered, strict=False)
-    )
-    positions = {}
-    if exact_headings:
-        positions = {section["startLine"]: heading for section, heading in zip(source_headings, rendered, strict=True)}
+    positions = source["positions"]
     matches_index = row.content == source["content"]
     locations = []
     for chapter in chapters:
         # An edited/reordered chapter is linked only when its complete source
         # section remains unique. Never map a same-named edited section by guess.
-        matches = [section for section in source_sections if section["content"] == chapter.content]
+        matches = source["by_content"].get(chapter.content, [])
         source_section = matches[0] if len(matches) == 1 else None
         if matches_index:
             start = chapter.locator.get("startLine") or chapter.locator.get("line_start")
-            source_section = next((section for section in source_sections if section["startLine"] == start), None)
+            source_section = source["by_line"].get(start)
         location = positions.get(source_section["startLine"]) if source_section else None
         if location:
             locations.append({"revision_id": chapter.id, **location})

@@ -143,6 +143,22 @@ function visibleNavigation(
 }
 
 type Heading = { section: NavigationSection; children: Heading[] };
+function headingArticle(document: NavigationArticle): NavigationArticle {
+  return {
+    revision_id: document.revision_id,
+    name: document.name,
+    sections: document.sections.map((section) => ({
+      id: section.id,
+      revision_id: section.revision_id,
+      name: section.name,
+      heading_level:
+        section.heading_level ??
+        /^ {0,3}(#{1,6})\s/.exec(section.content)?.[1].length ??
+        1,
+      content: "",
+    })),
+  };
+}
 function chapterTree(document: NavigationArticle): Heading[] {
   const roots: Heading[] = [],
     stack: Array<{ heading: Heading; level: number }> = [];
@@ -278,7 +294,7 @@ export function DocumentLibrary({
       return;
     setCache((previous) => ({
       ...previous,
-      [currentDocument.revision_id]: currentDocument,
+      [currentDocument.revision_id]: headingArticle(currentDocument),
     }));
     setErrors(
       (previous) =>
@@ -319,7 +335,10 @@ export function DocumentLibrary({
           generation.current === expected &&
           document.revision_id === revision
         )
-          setCache((previous) => ({ ...previous, [revision]: document }));
+          setCache((previous) => ({
+            ...previous,
+            [revision]: headingArticle(document),
+          }));
       })
       .catch(() => {
         if (!controller.signal.aborted && generation.current === expected)

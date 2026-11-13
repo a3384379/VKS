@@ -5,6 +5,7 @@ import gzip
 import json
 import re
 
+import pytest
 from playwright.sync_api import expect, sync_playwright
 from vks_api.readonly_export import html_library
 
@@ -91,5 +92,98 @@ def test_untrusted_script_cannot_read_recipient_key_forge_paid_calls_or_navigate
             assert len(calls) == 1
             expect(page.get_by_label("API Key", exact=True)).to_have_value("fixture-recipient-only")
             assert "fixture-recipient-only" not in hostile.read_text()
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("mode", ["complete_without_eof", "oversize_sse", "oversize_json"])
+def test_model_response_completion_and_size_boundaries_cancel_the_network_reader(reader_file, mode):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=chromium_path(playwright), headless=True)
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        page.route(
+            "https://api.example.test/v1/models",
+            lambda route: route.fulfill(
+                json={"data": [{"id": "fixture-chat"}]}, headers={"Access-Control-Allow-Origin": "*"}
+            ),
+        )
+        try:
+            page.goto(reader_file.as_uri())
+            configure(page)
+            page.evaluate(
+                r"""mode => {
+              const original = window.fetch;
+              window.fetch = (url, init) => {
+                if (!String(url).endsWith('/chat/completions')) return original(url, init);
+                const content = mode === 'complete_without_eof'
+                  ? 'data: {"choices":[{"delta":{"content":"任务名称必填 [1]。"}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+                  : 'x'.repeat(2 * 1024 * 1024 + 1);
+                const body = new ReadableStream({
+                  start(controller) { controller.enqueue(new TextEncoder().encode(content)); },
+                  cancel() { window.responseReaderCancelled = true; }
+                });
+                return Promise.resolve(new Response(body, {headers: {'content-type': mode === 'oversize_json' ? 'application/json' : 'text/event-stream'}}));
+              };
+            }""",
+                mode,
+            )
+            page.get_by_label("向 AI 提问", exact=True).fill("创建任务需要哪些信息？")
+            page.get_by_role("button", name="发送", exact=True).click()
+            page.wait_for_function("window.responseReaderCancelled === true")
+            expect(page.get_by_role("button", name="发送", exact=True)).to_be_enabled()
+            if mode == "complete_without_eof":
+                expect(page.locator(".answer").last).to_have_text("任务名称必填 [1]。")
+                expect(page.locator(".chat-message .error")).to_have_count(0)
+            else:
+                expect(page.locator(".chat-message .error")).to_contain_text("超过 2 MiB")
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("changed_field", ["API Key", "接口地址"])
+def test_changing_recipient_connection_discards_previous_model_choices_and_late_catalog(reader_file, changed_field):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=chromium_path(playwright), headless=True)
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        page.route(
+            "https://api.example.test/v1/models",
+            lambda route: route.fulfill(
+                json={"data": [{"id": "fixture-chat"}]}, headers={"Access-Control-Allow-Origin": "*"}
+            ),
+        )
+        try:
+            page.goto(reader_file.as_uri())
+            configure(page)
+            page.get_by_role("button", name="连接设置", exact=True).click()
+            expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_count(2)
+            page.evaluate(r"""() => {
+              const original = window.fetch;
+              window.catalogReleases = [];
+              window.fetch = (url, init) => String(url).endsWith('/models')
+                ? new Promise(resolve => {
+                    const index = window.catalogReleases.length;
+                    window.catalogReleases.push(() => resolve(new Response(JSON.stringify({data: [{id:index ? 'current-account-model' : 'late-old-account-model'}]}), {headers: {'content-type':'application/json'}})));
+                  })
+                : original(url, init);
+            }""")
+            page.get_by_role("button", name="获取模型", exact=True).click()
+            page.wait_for_function("window.catalogReleases.length === 1")
+            page.get_by_label(changed_field, exact=True).fill(
+                "second-recipient-key" if changed_field == "API Key" else "https://other.example.test/v1"
+            )
+            expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_text(["获取模型后可下拉选择"])
+            expect(page.get_by_role("button", name="获取模型", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="获取模型", exact=True).click()
+            page.wait_for_function("window.catalogReleases.length === 2")
+            page.evaluate(
+                "async () => {window.catalogReleases[0](); await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));}"
+            )
+            expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_text(["获取模型后可下拉选择"])
+            expect(page.get_by_role("button", name="获取模型", exact=True)).to_be_disabled()
+            assert "late-old-account-model" not in page.locator("body").inner_text()
+            page.evaluate("window.catalogReleases[1]()")
+            expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_text(
+                ["从可用模型中选择…", "current-account-model"]
+            )
         finally:
             browser.close()

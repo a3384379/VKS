@@ -71,6 +71,9 @@ def test_contextual_questions_followup_citations_cancel_and_clear(assistant, tmp
                 panel.get_by_role("button", name="发送问题", exact=True).click()
                 expect(panel.locator(".chat-answer")).to_have_count(2)
                 assert [m["role"] for m in calls[1]["history"]] == ["user", "assistant"]
+                add.click(button="right", position={"x": 2, "y": 2})
+                page.get_by_role("menuitem", name="向 AI 提问", exact=True).click()
+                expect(panel.locator(".chat-answer")).to_have_count(2)
                 page.get_by_role("button", name="收起助手面板", exact=True).click()
                 page.get_by_role("button", name="打开知识助手", exact=True).click()
                 expect(panel.locator(".chat-answer")).to_have_count(2)
@@ -89,7 +92,63 @@ def test_contextual_questions_followup_citations_cancel_and_clear(assistant, tmp
                 page.get_by_role("button", name="打开知识助手", exact=True).click()
                 panel.get_by_role("button", name="清空问答", exact=True).click()
                 expect(panel.locator(".chat-answer")).to_have_count(0)
+                page.set_viewport_size({"width": 360, "height": 740})
+                expect(question).to_be_in_viewport(ratio=1)
+                expect(panel.get_by_role("button", name="发送问题", exact=True)).to_be_in_viewport(ratio=1)
                 assert not errors, errors
+            finally:
+                release.set()
+                browser.close()
+    finally:
+        release.set()
+
+
+def test_abandoned_question_does_not_resume_waiting_when_returning_to_control(assistant, tmp_path, monkeypatch):
+    (web, _service, _owner, pid, aid, _grant, _package, _section, _), _body, calls = assistant
+    release = Event()
+
+    def model(config, payload):
+        data = json.loads(payload["input"][1]["content"])
+        calls.append(data)
+        if data.get("question") == "等待后切换上下文":
+            release.wait(15)
+        return test_assistant.response(data["chapters"][0]["revision_id"])
+
+    monkeypatch.setattr(ai_gateway, "request_model", model)
+    try:
+        with native_studio(web.app, tmp_path, monkeypatch) as url, sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.add_init_script(
+                    "if(window.top === window) localStorage.setItem('vks.studio.auto-associate','off')"
+                )
+                page.goto(url + f"/#project={pid}&analysis={aid}&view=prototype")
+                page.get_by_label("密码", exact=True).fill("owner")
+                page.get_by_role("button", name="打开交互工作台").click()
+                add = (
+                    page.frame_locator('iframe[title="原 HTML 原型"]')
+                    .frame_locator("#material")
+                    .get_by_role("button", name="Add", exact=True)
+                )
+                expect(add).to_be_visible(timeout=30000)
+                add.click(button="right")
+                page.get_by_role("menuitem", name="向 AI 提问", exact=True).click()
+                panel = page.get_by_role("complementary", name="知识助手")
+                question = panel.get_by_label("向知识助手提问", exact=True)
+                question.fill("等待后切换上下文")
+                question.press("Enter")
+                expect(question).to_be_disabled()
+                panel.get_by_role("button", name="助手选项", exact=True).click()
+                panel.get_by_role("button", name="模块知识", exact=True).click()
+                panel.get_by_role("tab", name="AI 问答", exact=True).click()
+                expect(question).to_be_enabled()
+                add.click(button="right")
+                page.get_by_role("menuitem", name="向 AI 提问", exact=True).click()
+                expect(question).to_be_enabled(timeout=2000)
+                expect(panel.locator(".chat-status")).to_have_count(0)
+                release.set()
+                expect(panel.locator(".chat-answer")).to_have_count(0)
             finally:
                 release.set()
                 browser.close()

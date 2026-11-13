@@ -475,12 +475,17 @@ class ReadingService:
     def db(self):
         # Reads do not take the process mutation lock or SQLite's write lock.
         with self.service.Session.begin() as session:
-            session.info["vks_read_only"] = True
-            if self.service.engine.dialect.name == "postgresql":
-                session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-            elif self.service.engine.dialect.name == "sqlite":
-                session.connection().exec_driver_sql("BEGIN")
-            yield session
+            try:
+                session.info["vks_read_only"] = True
+                if self.service.engine.dialect.name == "postgresql":
+                    session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                elif self.service.engine.dialect.name == "sqlite":
+                    session.connection().exec_driver_sql("BEGIN")
+                yield session
+            finally:
+                # Permission cache -> transaction -> session is a cycle. Do not
+                # retain the entire prefetched corpus until a later GC pass.
+                session.info.clear()
 
     def baseline(self, s, actor, pid, analysis_set_id=None, release_id=None):
         from .service import DomainError

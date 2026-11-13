@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
   FolderPlus,
@@ -33,22 +33,49 @@ export function Projects({
   const [editing, setEditing] = useState<Project | null>(null),
     [name, setName] = useState(""),
     [description, setDescription] = useState("");
+  const epoch = useRef(0),
+    controller = useRef<AbortController | null>(null),
+    latestQuery = useRef(query);
+  latestQuery.current = query;
   const load = useCallback(
     async (after = "") => {
-      const p = await apiPage<Project[]>(
-        `/projects?limit=30&q=${encodeURIComponent(query)}${after ? `&cursor=${after}` : ""}`,
-      );
-      setRows((old) => (after ? [...old, ...p.data] : p.data));
-      setCursor(p.meta.next_cursor || null);
+      if (latestQuery.current !== query) return;
+      const current = ++epoch.current,
+        abort = new AbortController();
+      controller.current?.abort();
+      controller.current = abort;
+      try {
+        const p = await apiPage<Project[]>(
+          `/projects?limit=30&q=${encodeURIComponent(query)}${after ? `&cursor=${encodeURIComponent(after)}` : ""}`,
+          { signal: abort.signal },
+        );
+        if (current !== epoch.current || latestQuery.current !== query) return;
+        setRows((old) => (after ? [...old, ...p.data] : p.data));
+        setCursor(p.meta.next_cursor || null);
+        setError("");
+      } catch (error) {
+        if (
+          !abort.signal.aborted &&
+          current === epoch.current &&
+          latestQuery.current === query
+        )
+          throw error;
+      }
     },
     [query],
   );
   useEffect(() => {
+    setRows([]);
+    setCursor(null);
     const t = setTimeout(
       () => void load().catch((e) => setError(e.message)),
       180,
     );
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      epoch.current++;
+      controller.current?.abort();
+    };
   }, [load]);
   async function save() {
     setBusy(true);

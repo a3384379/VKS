@@ -293,7 +293,7 @@ class InteractiveKnowledgeService:
         return rows
 
     def catalog(self, actor, pid, aid=None, release_id=None):
-        with self.service.db() as s:
+        with self.reader.reading.db() as s:
             analysis, release, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
             rows = self._rows(s, actor, pid, choices)
             from .document_navigation import build_navigation
@@ -357,7 +357,7 @@ class InteractiveKnowledgeService:
             return raw
 
     def document(self, actor, pid, rid, aid=None, release_id=None, *, native=True):
-        with self.service.db() as s:
+        with self.reader.reading.db() as s:
             _, _, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
             entity, row = selected_id(s, self.service, actor, pid, choices, rid, "document")
             chapters = self.documents._sections(s, entity, row)
@@ -382,7 +382,7 @@ class InteractiveKnowledgeService:
             }
 
     def bindings(self, actor, pid, aid=None, release_id=None):
-        with self.service.db() as s:
+        with self.reader.reading.db() as s:
             analysis, release, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
             rows = {r.id: (e, r) for e, r in self._rows(s, actor, pid, choices)}
             relations = self.service._relations(s, analysis, release)
@@ -397,7 +397,32 @@ class InteractiveKnowledgeService:
                     for eid in edge.get("evidence_ids", [])
                 )
             ]
+            missing_points = set()
+            for edge in relations:
+                if (
+                    edge["from_revision_id"] in rows
+                    and edge["to_revision_id"] not in rows
+                    and edge["relation_type"] == "supported_by_section"
+                    and not edge["excluded"]
+                    and self.service._visible_relation(s, actor, pid, edge)
+                    and all(
+                        (ev := s.get(Evidence, eid)) and self.service._visible_evidence(s, actor, pid, ev)
+                        for eid in edge.get("evidence_ids", [])
+                    )
+                    and self.service._visible_revision(s, actor, pid, s.get(Revision, edge["to_revision_id"]))
+                ):
+                    missing_points.add(edge["from_revision_id"])
             package_ids = {p["id"] for p in self._packages(s, actor, pid, choices)}
+            # Index once rather than scanning all relations and documents for
+            # every binding. A selected orphan chapter is not a citation to the
+            # current document merely because its logical document key matches.
+            section_edges = {}
+            for edge in visible:
+                if edge["relation_type"] == "supported_by_section" and not edge["excluded"]:
+                    section_edges.setdefault(edge["from_revision_id"], []).append(edge)
+            documents = self._citation_documents(
+                s, rows, {edge["to_revision_id"] for edges in section_edges.values() for edge in edges}
+            )
             out = []
             for edge in visible:
                 action = rows[edge["from_revision_id"]][1]
@@ -406,37 +431,30 @@ class InteractiveKnowledgeService:
                     continue
                 point = rows[edge["to_revision_id"]][1]
                 citations = []
-                for citation in visible:
-                    if (
-                        citation["from_revision_id"] == point.id
-                        and citation["relation_type"] == "supported_by_section"
-                        and not citation["excluded"]
-                    ):
-                        section = rows[citation["to_revision_id"]][1]
-                        document = next(
-                            (
-                                (e, r)
-                                for e, r in rows.values()
-                                if e.type == "document" and e.stable_key == section.metadata_json.get("document_key")
-                            ),
-                            None,
+                missing_citation = point.id in missing_points or not section_edges.get(point.id)
+                for citation in section_edges.get(point.id, []):
+                    section = rows[citation["to_revision_id"]][1]
+                    document = documents.get(section.id)
+                    if document:
+                        citations.append(
+                            {
+                                "revision_id": section.id,
+                                "name": section.name,
+                                "content": section.content,
+                                "document_revision_id": document[1].id,
+                                "document_name": document[1].name,
+                            }
                         )
-                        if document:
-                            citations.append(
-                                {
-                                    "revision_id": section.id,
-                                    "name": section.name,
-                                    "content": section.content,
-                                    "document_revision_id": document[1].id,
-                                    "document_name": document[1].name,
-                                }
-                            )
+                    else:
+                        missing_citation = True
                 out.append(
                     {
                         "id": edge["id"],
                         "binding_version": edge["row_version"],
                         "excluded": edge["excluded"],
-                        "validity_status": edge["validity_status"],
+                        "validity_status": "outdated"
+                        if missing_citation and edge["validity_status"] == "valid"
+                        else edge["validity_status"],
                         "point_revision_id": point.id,
                         "title": point.name,
                         "summary": point.content,
@@ -449,6 +467,21 @@ class InteractiveKnowledgeService:
                     }
                 )
             return out
+
+    def _citation_documents(self, s, rows, section_ids):
+        by_key = {r.metadata_json.get("document_key") for _, r in rows.values() if r.id in section_ids}
+        result = {}
+        for entity, document in rows.values():
+            if entity.type != "document" or entity.stable_key not in by_key:
+                continue
+            try:
+                chapters = self.documents._sections(s, entity, document)
+            except DomainError:
+                continue
+            for chapter in chapters:
+                if chapter.id in section_ids:
+                    result[chapter.id] = (entity, document)
+        return result
 
     def save(self, actor, pid, form, expected, key, *, generation=None, validate=None):
         service = self.service
@@ -504,6 +537,11 @@ class InteractiveKnowledgeService:
                     selected_id(s, service, actor, pid, choices, rid, "section")[1]
                     for rid in dict.fromkeys(form.section_revision_ids)
                 ]
+                members = self._citation_documents(
+                    s, {r.id: (e, r) for e, r in self._rows(s, actor, pid, choices)}, {r.id for r in refs}
+                )
+                if any(r.id not in members for r in refs):
+                    raise missing()
                 action = prior_action
                 if not action:
                     action_entity_new = action_entity or _new_entity(s, pid, "action", action_key)
