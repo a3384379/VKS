@@ -80,6 +80,8 @@ class InteractiveDocumentInfo(Input):
     revision_id: str
     name: str
     path: str
+    namespace: str = ""
+    package_id: str | None = None
 
 
 class InteractiveCatalog(Input):
@@ -90,6 +92,7 @@ class InteractiveCatalog(Input):
     packages: list[RuntimePackage]
     documents: list[InteractiveDocumentInfo]
     primary_package_id: str | None = None
+    navigation: dict = Field(default_factory=lambda: {"packages": []})
 
 
 class InteractiveChapter(Input):
@@ -97,12 +100,17 @@ class InteractiveChapter(Input):
     revision_id: str
     name: str
     content: str
+    start_line: int = 1
+    end_line: int = 1
+    heading_level: int = 0
 
 
 class InteractiveDocument(Input):
     id: str
     revision_id: str
     name: str
+    content: str = ""
+    partial: bool = False
     sections: list[InteractiveChapter]
 
 
@@ -237,6 +245,7 @@ class InteractiveKnowledgeService:
         with self.service.db() as s:
             analysis, release, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
             rows = self._rows(s, actor, pid, choices)
+            from .document_navigation import build_navigation
             from .materials import primary
 
             return {
@@ -248,13 +257,21 @@ class InteractiveKnowledgeService:
                 and analysis.state != "frozen"
                 and self.service._can(s, actor, pid, "knowledge:edit"),
                 "packages": self._packages(s, actor, pid, choices),
+                "navigation": build_navigation(
+                    self.service, s, actor, pid, choices, [r.id for e, r in rows if e.type == "document"]
+                ),
                 "documents": sorted(
                     [
                         {
                             "id": e.id,
                             "revision_id": r.id,
                             "name": r.name,
-                            "path": s.get(Artifact, r.artifact_id).relative_path,
+                            "path": r.metadata_json.get("material_path")
+                            or s.get(Artifact, r.artifact_id).relative_path,
+                            "namespace": r.metadata_json.get("material_package_id")
+                            or r.metadata_json.get("logical_source_key")
+                            or s.get(Artifact, r.artifact_id).snapshot_id,
+                            "package_id": r.metadata_json.get("material_package_id"),
                         }
                         for e, r in rows
                         if e.type == "document"
@@ -280,15 +297,18 @@ class InteractiveKnowledgeService:
             _, _, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
             entity, row = selected_id(s, self.service, actor, pid, choices, rid, "document")
             chapters = self.documents._sections(s, entity, row)
+            from .document_projection import readable_document
+
+            visible = {
+                c.id
+                for c in chapters
+                if choices.get(c.entity_id) == c.id and self.service._visible_revision(s, actor, pid, c)
+            }
             return {
                 "id": entity.id,
                 "revision_id": row.id,
                 "name": row.name,
-                "sections": [
-                    {"id": c.entity_id, "revision_id": c.id, "name": c.name, "content": c.content}
-                    for c in chapters
-                    if choices.get(c.entity_id) == c.id and self.service._visible_revision(s, actor, pid, c)
-                ],
+                **readable_document(row, chapters, visible),
             }
 
     def bindings(self, actor, pid, aid=None, release_id=None):

@@ -75,179 +75,105 @@
       return null;
     }
   }
-  function inline(value, citations, fromDocument) {
-    const fragment = document.createDocumentFragment();
-    const pattern =
-      /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|!?\[[^\]\n]+\]\([^\s)]+\)|\[\d+\])/g;
-    let start = 0;
-    for (const match of value.matchAll(pattern)) {
-      fragment.append(document.createTextNode(value.slice(start, match.index)));
-      const token = match[0];
-      if (token.startsWith("`"))
-        fragment.append(el("code", {}, token.slice(1, -1)));
-      else if (token.startsWith("**") || token.startsWith("__"))
-        fragment.append(el("strong", {}, token.slice(2, -2)));
-      else if (token.startsWith("*"))
-        fragment.append(el("em", {}, token.slice(1, -1)));
-      else if (
-        /^\[\d+\]$/.test(token) &&
-        citations?.[Number(token.slice(1, -1)) - 1]
-      ) {
-        const section = citations[Number(token.slice(1, -1)) - 1];
-        fragment.append(
-          button(token, () => openSection(section.id), "citation-inline"),
-        );
-      } else if (token.includes("](")) {
-        const m = token.match(/^(!?)\[([^\]]+)\]\(([^)]+)\)$/);
-        if (m?.[1]) {
-          const image = documentMap?.get(fromDocument)?.images?.[m[3]] || m[3];
-          if (/^data:image\/(png|jpeg|gif|webp);base64,/i.test(image))
-            fragment.append(
-              el("img", { src: image, alt: m[2], loading: "lazy" }),
-            );
-          else fragment.append(document.createTextNode(m?.[2] || token));
-        } else if (m && documentLink(m[3], fromDocument)) {
-          const sectionId = documentLink(m[3], fromDocument);
-          fragment.append(
-            el(
-              "a",
-              {
-                href: "#" + new URLSearchParams({ section: sectionId }),
-                onclick: (event) => {
-                  event.preventDefault();
-                  openSection(sectionId);
-                },
-              },
-              m[2],
+  function markdownOptions(citations, fromDocument) {
+    const origin = documentMap?.get(fromDocument);
+    const referenced = [
+      ...new Set(
+        (citations || []).map((ref) => ref.document_id).filter(Boolean),
+      ),
+    ]
+      .map((id) => documentMap?.get(id))
+      .filter(Boolean);
+    const sources = origin ? [origin] : referenced;
+    return {
+      citations,
+      openSection,
+      referenceSource: origin?.markdown,
+      referenceSources: sources.map(
+        (doc) =>
+          doc.markdown ||
+          (doc.sections || []).map((section) => section.content).join("\n\n"),
+      ),
+      resolveImage: (reference) => {
+        const aliases = [reference];
+        try {
+          aliases.push(decodeURIComponent(reference));
+        } catch {}
+        const matches = [
+          ...new Set(
+            sources.flatMap((doc) =>
+              aliases.map((key) => doc.images?.[key]).filter(Boolean),
             ),
-          );
-        } else if (m && safeLink(m[3]) && !m[3].startsWith("#"))
-          fragment.append(
-            el(
-              "a",
-              { href: m[3], target: "_blank", rel: "noopener noreferrer" },
-              m[2],
-            ),
-          );
-        else fragment.append(document.createTextNode(m?.[2] || token));
-      } else fragment.append(document.createTextNode(token));
-      start = match.index + token.length;
-    }
-    fragment.append(document.createTextNode(value.slice(start)));
-    return fragment;
+          ),
+        ];
+        let uri =
+          matches.length === 1
+            ? matches[0]
+            : /^data:image\/(png|jpeg|gif|webp);base64,/i.test(reference)
+              ? reference
+              : null;
+        if (!uri && /^https:\/\//i.test(reference)) {
+          // A model cannot invent an automatic remote-image request. Only an
+          // exact image reference from the current original or cited text can
+          // be shown; credentials and generated knowledge never enter the URL.
+          const originals = origin
+            ? [
+                origin.markdown ||
+                  (origin.sections || [])
+                    .map((section) => section.content)
+                    .join("\n\n"),
+              ]
+            : (citations || []).map((ref) => ref.content || "");
+          try {
+            const url = new URL(reference);
+            if (
+              !url.username &&
+              !url.password &&
+              originals.some((value, index) =>
+                window.VksReaderMarkdown.imageReferences(
+                  value,
+                  origin
+                    ? []
+                    : [
+                        documentMap?.get(citations[index]?.document_id)
+                          ?.markdown || "",
+                      ],
+                ).has(reference),
+              )
+            )
+              return reference;
+          } catch {}
+        }
+        if (!uri) return null;
+        if (/^data:image\/svg\+xml;base64,/i.test(uri)) {
+          try {
+            const raw = new TextDecoder().decode(bytes(uri.split(",")[1]));
+            const safe = window.VksReaderMarkdown.sanitizedSvg(raw);
+            const encoded = new TextEncoder().encode(safe);
+            let value = "";
+            for (let i = 0; i < encoded.length; i += 32768)
+              value += String.fromCharCode(...encoded.subarray(i, i + 32768));
+            return "data:image/svg+xml;base64," + btoa(value);
+          } catch {
+            return null;
+          }
+        }
+        return /^data:image\/(png|jpeg|gif|webp);base64,/i.test(uri)
+          ? uri
+          : null;
+      },
+      link: (href) => {
+        const section = documentLink(href, fromDocument);
+        if (section) return { section };
+        return safeLink(href) && !href.startsWith("#") ? { href } : null;
+      },
+    };
   }
-  function markdown(value, citations, fromDocument) {
-    const fragment = document.createDocumentFragment();
-    const lines = text(value).replace(/\r\n?/g, "\n").split("\n");
-    for (let i = 0; i < lines.length; ) {
-      const line = lines[i];
-      if (!line.trim()) {
-        i++;
-        continue;
-      }
-      const fence = line.match(/^\s*(```+|~~~+)(.*)$/);
-      if (fence) {
-        const code = [];
-        i++;
-        while (i < lines.length && !lines[i].trim().startsWith(fence[1]))
-          code.push(lines[i++]);
-        if (i < lines.length) i++;
-        const pre = el("pre", {}, el("code", {}, code.join("\n")));
-        if (fence[2].trim()) pre.setAttribute("aria-label", fence[2].trim());
-        fragment.append(pre);
-        continue;
-      }
-      const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
-      if (heading) {
-        fragment.append(
-          el(
-            "h" + Math.min(6, heading[1].length + 1),
-            {},
-            inline(
-              heading[2].replace(/\s+#+\s*$/, ""),
-              citations,
-              fromDocument,
-            ),
-          ),
-        );
-        i++;
-        continue;
-      }
-      if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
-        fragment.append(el("hr"));
-        i++;
-        continue;
-      }
-      if (/^\s*>/.test(line)) {
-        const block = [];
-        while (i < lines.length && /^\s*>/.test(lines[i]))
-          block.push(lines[i++].replace(/^\s*>\s?/, ""));
-        fragment.append(
-          el(
-            "blockquote",
-            {},
-            markdown(block.join("\n"), citations, fromDocument),
-          ),
-        );
-        continue;
-      }
-      if (/^\s*([-+*]|\d+\.)\s+/.test(line)) {
-        const ordered = /^\s*\d+\./.test(line),
-          list = el(ordered ? "ol" : "ul");
-        while (i < lines.length && /^\s*([-+*]|\d+\.)\s+/.test(lines[i]))
-          list.append(
-            el(
-              "li",
-              {},
-              inline(
-                lines[i++].replace(/^\s*([-+*]|\d+\.)\s+/, ""),
-                citations,
-                fromDocument,
-              ),
-            ),
-          );
-        fragment.append(list);
-        continue;
-      }
-      if (
-        line.includes("|") &&
-        i + 1 < lines.length &&
-        /^\s*\|?\s*:?-{3,}/.test(lines[i + 1])
-      ) {
-        const table = el("table"),
-          row = (raw, type) =>
-            el(
-              "tr",
-              {},
-              raw
-                .replace(/^\s*\||\|\s*$/g, "")
-                .split("|")
-                .map((cell) =>
-                  el(type, {}, inline(cell.trim(), citations, fromDocument)),
-                ),
-            );
-        table.append(el("thead", {}, row(line, "th")));
-        i += 2;
-        const body = el("tbody");
-        while (i < lines.length && lines[i].includes("|") && lines[i].trim())
-          body.append(row(lines[i++], "td"));
-        table.append(body);
-        fragment.append(table);
-        continue;
-      }
-      const paragraph = [line];
-      i++;
-      while (
-        i < lines.length &&
-        lines[i].trim() &&
-        !/^\s*(#{1,6}\s|```|~~~|>|[-+*]\s|\d+\.\s)/.test(lines[i])
-      )
-        paragraph.push(lines[i++]);
-      fragment.append(
-        el("p", {}, inline(paragraph.join("\n"), citations, fromDocument)),
-      );
-    }
-    return fragment;
+  function markdown(value, citations, fromDocument, options = {}) {
+    return window.VksReaderMarkdown.render(value, {
+      ...markdownOptions(citations, fromDocument),
+      ...options,
+    });
   }
 
   let data,
@@ -255,9 +181,21 @@
     sectionMap,
     documentMap,
     index = [];
+  let navigation = [],
+    documentLocations = new Map(),
+    sectionsByDocument = new Map(),
+    documentSearchText = new Map();
+  const expandedFolders = new Set(),
+    expandedDocuments = new Set(),
+    expandedChapters = new Set();
+  const chapterTrees = new Map(),
+    chapterAncestors = new Map();
   const state = {
     view: "prototype",
     doc: null,
+    section: "",
+    libraryPackage: "",
+    category: "",
     prototype: null,
     context: null,
     assistant: false,
@@ -444,6 +382,292 @@
       .join(" ");
   }
 
+  function fallbackNavigation(documents) {
+    const packages = new Map();
+    const packageCount = new Set(
+      documents.map((item) => item.namespace || item.package_id || "documents"),
+    ).size;
+    for (const doc of documents) {
+      const key = text(doc.namespace || doc.package_id || "documents");
+      if (!packages.has(key))
+        packages.set(key, {
+          id: key,
+          name:
+            doc.package_name ||
+            (packageCount === 1
+              ? data.project.name
+              : `文档资料包 ${packages.size + 1}`),
+          categories: [],
+        });
+      const pack = packages.get(key),
+        parts = text(doc.path || doc.title)
+          .replace(/^\/+/, "")
+          .split("/")
+          .filter(Boolean);
+      const folder = parts.length > 1 ? parts[0] : "",
+        categoryPath = folder;
+      let category = pack.categories.find((item) => item.path === categoryPath);
+      if (!category) {
+        category = {
+          id: key + ":category:" + categoryPath,
+          name: folder || "概览",
+          path: categoryPath,
+          children: [],
+        };
+        pack.categories.push(category);
+      }
+      let children = category.children,
+        path = folder;
+      for (const part of parts.slice(folder ? 1 : 0, -1)) {
+        path = path ? path + "/" + part : part;
+        let node = children.find(
+          (item) => item.kind === "folder" && item.path === path,
+        );
+        if (!node) {
+          node = {
+            kind: "folder",
+            id: key + ":folder:" + path,
+            name: part,
+            path,
+            children: [],
+          };
+          children.push(node);
+        }
+        children = node.children;
+      }
+      children.push({
+        kind: "document",
+        id: doc.id,
+        name: doc.title,
+        path: doc.path || "",
+      });
+    }
+    return [...packages.values()];
+  }
+  function initializeNavigation() {
+    const used = new Set();
+    const clean = (nodes) =>
+      (Array.isArray(nodes) ? nodes : []).flatMap((node) => {
+        if (node.kind === "document") {
+          if (!documentMap.has(node.id)) return [];
+          used.add(node.id);
+          return [
+            {
+              kind: "document",
+              id: node.id,
+              name: text(node.name || documentMap.get(node.id).title),
+              path: text(node.path || documentMap.get(node.id).path || ""),
+            },
+          ];
+        }
+        if (node.kind === "folder") {
+          const children = clean(node.children);
+          return children.length
+            ? [
+                {
+                  kind: "folder",
+                  id: text(node.id),
+                  name: text(node.name),
+                  path: text(node.path),
+                  children,
+                },
+              ]
+            : [];
+        }
+        return [];
+      });
+    navigation = (data.navigation?.packages || []).flatMap((pack) => {
+      const categories = (pack.categories || []).flatMap((category) => {
+        const children = clean(category.children);
+        return children.length
+          ? [
+              {
+                id: text(category.id),
+                name: text(category.name),
+                path: text(category.path),
+                children,
+              },
+            ]
+          : [];
+      });
+      return categories.length
+        ? [{ id: text(pack.id), name: text(pack.name), categories }]
+        : [];
+    });
+    // Old files carry no source navigation. Preserve their array/path order;
+    // never impose a new global alphabetical ordering on their documents.
+    const missing = data.documents.filter((doc) => !used.has(doc.id));
+    for (const pack of fallbackNavigation(missing)) {
+      if (navigation.some((item) => item.id === pack.id))
+        pack.id += ":unlisted";
+      navigation.push(pack);
+    }
+    documentLocations = new Map();
+    const collect = (nodes, pack, category, ancestors = []) => {
+      for (const node of nodes) {
+        if (node.kind === "folder")
+          collect(node.children, pack, category, [...ancestors, node]);
+        else {
+          if (!documentLocations.has(node.id))
+            documentLocations.set(node.id, []);
+          documentLocations.get(node.id).push({ pack, category, ancestors });
+          category.documentIds.push(node.id);
+        }
+      }
+    };
+    for (const pack of navigation)
+      for (const category of pack.categories) {
+        category.documentIds = [];
+        collect(category.children, pack, category);
+      }
+  }
+  function currentLibrary() {
+    return (
+      navigation.find((pack) => pack.id === state.libraryPackage) ||
+      navigation[0]
+    );
+  }
+  function currentCategory() {
+    const pack = currentLibrary();
+    return (
+      pack?.categories.find((category) => category.id === state.category) ||
+      pack?.categories[0]
+    );
+  }
+  function followDocument(id) {
+    const choices = documentLocations.get(id) || [];
+    const location =
+      choices.find(
+        (item) =>
+          item.pack.id === state.libraryPackage &&
+          item.category.id === state.category,
+      ) || choices[0];
+    if (!location) return;
+    state.libraryPackage = location.pack.id;
+    state.category = location.category.id;
+    for (const ancestor of location.ancestors) expandedFolders.add(ancestor.id);
+    expandedDocuments.add(id);
+  }
+  function chapterTree(id) {
+    if (chapterTrees.has(id)) return chapterTrees.get(id);
+    const doc = documentMap.get(id),
+      nodes = [],
+      stack = [];
+    for (const [index, section] of (
+      sectionsByDocument.get(id) || []
+    ).entries()) {
+      if (section.heading_level === 0) continue;
+      if (index === 0 && section.title === doc?.title) continue;
+      const depth =
+        section.heading_level ||
+        /^ {0,3}(#{1,6})\s/.exec(section.content)?.[1].length ||
+        2;
+      while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+      const node = { section, depth, children: [] };
+      chapterAncestors.set(
+        section.id,
+        stack.map((item) => item.section.id),
+      );
+      (stack.length ? stack.at(-1).children : nodes).push(node);
+      stack.push(node);
+    }
+    chapterTrees.set(id, nodes);
+    return nodes;
+  }
+  function chooseCategory(id) {
+    const category = currentLibrary()?.categories.find(
+      (item) => item.id === id,
+    );
+    if (!category) return;
+    state.category = id;
+    ui.docFilter.value = "";
+    const first = category.documentIds.includes(state.doc)
+      ? state.doc
+      : category.documentIds[0];
+    if (first) openDocument(first);
+    else {
+      renderNavigation();
+      renderDocList();
+    }
+  }
+  function renderNavigation() {
+    const pack = currentLibrary(),
+      category = currentCategory();
+    replace(
+      ui.packageSelect,
+      ...navigation.map((item) => el("option", { value: item.id }, item.name)),
+    );
+    ui.packageSelect.value = pack?.id || "";
+    ui.packageSelect.hidden = navigation.length < 2;
+    replace(
+      ui.categories,
+      ...(pack?.categories || []).map((item) =>
+        button(
+          item.name,
+          () => chooseCategory(item.id),
+          item.id === category?.id ? "active" : "",
+          {
+            role: "tab",
+            "aria-selected": String(item.id === category?.id),
+            "data-category-id": item.id,
+          },
+        ),
+      ),
+    );
+    ui.sidebarHead.textContent = category
+      ? `${category.name} · ${new Set(category.documentIds).size} 篇`
+      : "项目文档";
+    const doc = documentMap.get(state.doc),
+      place = (documentLocations.get(state.doc) || []).find(
+        (item) =>
+          item.pack.id === pack?.id && item.category.id === category?.id,
+      );
+    replace(
+      ui.breadcrumb,
+      ...[
+        pack?.name,
+        category?.name,
+        ...(place?.ancestors || []).map((item) => item.name),
+        doc?.title,
+      ]
+        .filter(Boolean)
+        .flatMap((value, index) =>
+          index
+            ? [
+                el(
+                  "span",
+                  { "aria-hidden": "true", class: "breadcrumb-separator" },
+                  "›",
+                ),
+                el("span", {}, value),
+              ]
+            : [el("span", {}, value)],
+        ),
+    );
+    if (state.view === "documents")
+      [...ui.categories.children]
+        .find((node) => node.dataset.categoryId === category?.id)
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  function openDocument(id, updateHash = true, keepFilter = false) {
+    if (!documentMap.has(id)) return;
+    if (!keepFilter) ui.docFilter.value = "";
+    state.doc = id;
+    state.section = "";
+    followDocument(id);
+    setView("documents");
+    renderNavigation();
+    renderDocList(ui.docFilter.value);
+    renderDocument();
+    if (updateHash)
+      history.replaceState(null, "", "#" + new URLSearchParams({ doc: id }));
+    requestAnimationFrame(() =>
+      ui.docList
+        .querySelector(".document-link[aria-current='page']")
+        ?.scrollIntoView({ block: "nearest" }),
+    );
+  }
+
   function start() {
     sections = data.documents.flatMap((doc) =>
       (doc.sections?.length
@@ -458,9 +682,33 @@
     );
     sectionMap = new Map(sections.map((section) => [section.id, section]));
     documentMap = new Map(data.documents.map((doc) => [doc.id, doc]));
+    for (const section of sections) {
+      if (!sectionsByDocument.has(section.document_id))
+        sectionsByDocument.set(section.document_id, []);
+      sectionsByDocument.get(section.document_id).push(section);
+    }
+    documentSearchText = new Map(
+      data.documents.map((doc) => [
+        doc.id,
+        [
+          doc.title,
+          doc.path,
+          ...(sectionsByDocument.get(doc.id) || []).map(
+            (section) => section.title,
+          ),
+        ]
+          .join("\n")
+          .toLowerCase(),
+      ]),
+    );
+    initializeNavigation();
     buildIndex();
     state.prototype = data.prototypes[0]?.id || null;
-    state.doc = data.documents[0]?.id || null;
+    state.doc =
+      navigation[0]?.categories[0]?.documentIds[0] ||
+      data.documents[0]?.id ||
+      null;
+    followDocument(state.doc);
     state.view = state.prototype ? "prototype" : "documents";
     const defaults = data.ai || {};
     state.config.model = text(defaults.model || "");
@@ -540,26 +788,77 @@
     ui.docList = el("div", { class: "doc-list" });
     ui.docFilter = el("input", {
       class: "sidebar-filter",
-      placeholder: "筛选文档…",
+      placeholder: "筛选本分类的文章或章节…",
       "aria-label": "筛选文档",
       oninput: (event) => renderDocList(event.target.value),
+    });
+    ui.packageSelect = el("select", {
+      "aria-label": "文档资料包",
+      onchange: (event) => {
+        state.libraryPackage = event.target.value;
+        state.category = currentLibrary()?.categories[0]?.id || "";
+        chooseCategory(state.category);
+      },
+    });
+    ui.categories = el("nav", {
+      class: "document-categories",
+      role: "tablist",
+      "aria-label": "文档分类",
+    });
+    ui.categories.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+        return;
+      const categories = currentLibrary()?.categories || [],
+        index = categories.findIndex((item) => item.id === state.category);
+      if (!categories.length) return;
+      event.preventDefault();
+      const target =
+        categories[
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? categories.length - 1
+              : (index +
+                  (event.key === "ArrowRight" ? 1 : -1) +
+                  categories.length) %
+                categories.length
+        ];
+      chooseCategory(target.id);
+      [...ui.categories.children]
+        .find((node) => node.dataset.categoryId === target.id)
+        ?.focus();
+    });
+    ui.breadcrumb = el("div", {
+      class: "document-breadcrumb",
+      "aria-label": "当前位置",
     });
     ui.docScroll = el("div", { class: "doc-scroll" });
     ui.docsView = el(
       "div",
       { class: "docs-view" },
       el(
-        "aside",
-        { class: "doc-sidebar" },
-        el(
-          "div",
-          { class: "sidebar-head" },
-          `项目文档 · ${data.documents.length}`,
-        ),
-        ui.docFilter,
-        ui.docList,
+        "div",
+        { class: "document-library-bar" },
+        ui.packageSelect,
+        ui.categories,
       ),
-      ui.docScroll,
+      ui.breadcrumb,
+      el(
+        "div",
+        { class: "document-layout" },
+        el(
+          "aside",
+          { class: "doc-sidebar", "aria-label": "文章与章节目录" },
+          (ui.sidebarHead = el(
+            "div",
+            { class: "sidebar-head" },
+            `项目文档 · ${data.documents.length}`,
+          )),
+          ui.docFilter,
+          ui.docList,
+        ),
+        ui.docScroll,
+      ),
     );
     ui.launch = button("", () => openAssistant(), "assistant-launch", {
       "aria-label": "打开知识助手",
@@ -578,6 +877,7 @@
       ),
       ui.launch,
     );
+    renderNavigation();
     renderDocList();
     renderDocument();
     setView(state.view);
@@ -602,10 +902,14 @@
     });
     const hash = new URLSearchParams(location.hash.slice(1));
     if (sectionMap.has(hash.get("section"))) openSection(hash.get("section"));
+    else if (documentMap.has(hash.get("doc")))
+      openDocument(hash.get("doc"), false);
     window.addEventListener("hashchange", () => {
       const params = new URLSearchParams(location.hash.slice(1));
       if (sectionMap.has(params.get("section")))
         openSection(params.get("section"), false);
+      else if (documentMap.has(params.get("doc")))
+        openDocument(params.get("doc"), false);
     });
   }
   function empty(title, detail) {
@@ -626,34 +930,167 @@
     ui.documentTab.setAttribute("aria-pressed", String(view === "documents"));
   }
   function renderDocList(filter = "") {
-    const docs = data.documents.filter((doc) =>
-      doc.title.toLowerCase().includes(filter.toLowerCase()),
-    );
-    replace(
-      ui.docList,
-      ...docs
-        .map((doc) =>
-          button(
-            "",
-            () => {
-              state.doc = doc.id;
-              renderDocList(ui.docFilter.value);
-              renderDocument();
-            },
-            state.doc === doc.id ? "active" : "",
-            { "aria-current": state.doc === doc.id ? "page" : undefined },
-          ),
-        )
-        .map((node, i) => {
-          node.append(
-            el("span", { class: "doc-symbol", "aria-hidden": "true" }, "▤"),
-            el("span", {}, docs[i].title),
+    const category = currentCategory(),
+      query = filter.trim().toLowerCase();
+    const matches = (node) => {
+      if (!query) return true;
+      if (node.kind === "folder")
+        return (
+          node.name.toLowerCase().includes(query) || node.children.some(matches)
+        );
+      return documentSearchText.get(node.id)?.includes(query);
+    };
+    const chapterList = (nodes) =>
+      el(
+        "ol",
+        { class: "doc-chapters" },
+        nodes.map((node) => {
+          const open = expandedChapters.has(node.section.id),
+            row = el("div", { class: "chapter-row" });
+          if (node.children.length)
+            row.append(
+              button(
+                open ? "▾" : "▸",
+                () => {
+                  if (open) expandedChapters.delete(node.section.id);
+                  else expandedChapters.add(node.section.id);
+                  renderDocList(ui.docFilter.value);
+                },
+                "chapter-expand",
+                {
+                  "aria-label": open ? "收起子章节" : "展开子章节",
+                  "aria-expanded": String(open),
+                },
+              ),
+            );
+          else
+            row.append(
+              el("span", { class: "chapter-spacer", "aria-hidden": "true" }),
+            );
+          row.append(
+            button(
+              node.section.title,
+              () => openSection(node.section.id),
+              "chapter-link" +
+                (state.section === node.section.id ? " selected" : ""),
+              {
+                "aria-current":
+                  state.section === node.section.id ? "location" : undefined,
+                "data-chapter-id": node.section.id,
+              },
+            ),
           );
-          return node;
+          return el(
+            "li",
+            {},
+            row,
+            node.children.length && open ? chapterList(node.children) : null,
+          );
         }),
-    );
-    if (!docs.length)
-      ui.docList.append(empty("没有匹配文档", "试试其他关键词。"));
+      );
+    const renderNodes = (nodes, inheritedMatch = false) =>
+      el(
+        "ol",
+        { class: "doc-articles" },
+        nodes
+          .filter((node) => inheritedMatch || matches(node))
+          .map((node) => {
+            if (node.kind === "folder") {
+              const open = !!query || expandedFolders.has(node.id);
+              const toggle = button(
+                "",
+                () => {
+                  if (expandedFolders.has(node.id))
+                    expandedFolders.delete(node.id);
+                  else expandedFolders.add(node.id);
+                  renderDocList(ui.docFilter.value);
+                },
+                "folder-toggle",
+                { "aria-expanded": String(open), "data-folder-id": node.id },
+              );
+              toggle.append(
+                el(
+                  "span",
+                  { "aria-hidden": "true", class: "folder-chevron" },
+                  open ? "▾" : "▸",
+                ),
+                el("span", {}, node.name),
+              );
+              return el(
+                "li",
+                { class: "doc-folder" },
+                toggle,
+                open
+                  ? renderNodes(
+                      node.children,
+                      inheritedMatch ||
+                        (!!query && node.name.toLowerCase().includes(query)),
+                    )
+                  : null,
+              );
+            }
+            const doc = documentMap.get(node.id),
+              tree = chapterTree(node.id),
+              expanded = expandedDocuments.has(node.id),
+              row = el("div", {
+                class: "doc-row" + (state.doc === doc.id ? " active" : ""),
+              });
+            if (tree.length)
+              row.append(
+                button(
+                  expanded ? "▾" : "▸",
+                  () => {
+                    if (expanded) expandedDocuments.delete(node.id);
+                    else expandedDocuments.add(node.id);
+                    renderDocList(ui.docFilter.value);
+                  },
+                  "doc-expand",
+                  {
+                    "aria-label": expanded ? "收起文章章节" : "展开文章章节",
+                    "aria-expanded": String(expanded),
+                    "data-expand-document": doc.id,
+                  },
+                ),
+              );
+            else
+              row.append(
+                el("span", {
+                  class: "doc-expand-placeholder",
+                  "aria-hidden": "true",
+                }),
+              );
+            const link = button(
+              "",
+              () => openDocument(doc.id, true, true),
+              "document-link",
+              {
+                "aria-current": state.doc === doc.id ? "page" : undefined,
+                "data-document-id": doc.id,
+              },
+            );
+            const ordinal = (category?.documentIds.indexOf(doc.id) ?? -1) + 1;
+            link.append(
+              el(
+                "span",
+                { class: "doc-ordinal", "aria-hidden": "true" },
+                String(ordinal).padStart(2, "0"),
+              ),
+              el("span", {}, node.name || doc.title),
+            );
+            row.append(link);
+            const chapters = expanded && tree.length ? chapterList(tree) : null;
+            if (chapters) {
+              chapters.id = "chapters-" + doc.id;
+              chapters.setAttribute("aria-label", doc.title + "的章节");
+            }
+            return el("li", { class: "doc-entry" }, row, chapters);
+          }),
+      );
+    replace(ui.docList, renderNodes(category?.children || []));
+    if (!ui.docList.querySelector(".document-link"))
+      ui.docList.append(
+        empty("没有匹配文档", "试试其他关键词，或使用顶部搜索检索整个项目。"),
+      );
   }
   function renderDocument() {
     const doc = documentMap.get(state.doc);
@@ -667,14 +1104,51 @@
       el("div", { class: "doc-meta" }, `${data.project.name} / 知识文档`),
       el("h1", {}, doc.title),
     );
-    for (const section of sections.filter(
-      (item) => item.document_id === doc.id,
-    )) {
-      const block = el(
-        "section",
-        { id: "section-" + section.id, "data-section-id": section.id },
-        markdown(section.content || section.title, undefined, doc.id),
+    if (doc.partial)
+      article.append(
+        el(
+          "p",
+          { class: "doc-meta", role: "status" },
+          "此版本仅包含导出时有权读取的章节。",
+        ),
       );
+    const chapters = sectionsByDocument.get(doc.id) || [];
+    const outline = chapters.filter(
+      (section) => section.heading_level !== 0 && section.title !== doc.title,
+    );
+    if (outline.length > 1)
+      article.append(
+        el(
+          "details",
+          { class: "reader-toc" },
+          el("summary", {}, `本篇目录 · ${outline.length} 个章节`),
+          el(
+            "nav",
+            { "aria-label": "本篇目录" },
+            outline.map((section) =>
+              button(
+                section.title,
+                () => openSection(section.id),
+                "reader-toc-link",
+                {
+                  style: `padding-left:${12 + Math.max(0, (section.heading_level || 2) - 2) * 12}px`,
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+    let line = 1;
+    const mapped = chapters.map((section) => {
+      const result = {
+        ...section,
+        start_line:
+          !doc.partial && section.start_line ? section.start_line : line,
+      };
+      line += (section.content || "").split("\n").length + 1;
+      return result;
+    });
+    const sectionLinks = (section, block) => {
       const links = (data.bindings || []).filter(
         (binding) =>
           (binding.section_ids || []).includes(section.id) &&
@@ -694,8 +1168,21 @@
             ),
           ),
         );
-      article.append(block);
-    }
+    };
+    article.append(
+      window.VksReaderMarkdown.render(
+        doc.markdown ||
+          chapters
+            .map((section) => section.content || section.title)
+            .join("\n\n"),
+        {
+          ...markdownOptions(undefined, doc.id),
+          title: doc.title,
+          sections: mapped,
+          sectionLinks,
+        },
+      ),
+    );
     replace(ui.docScroll, article);
     ui.docScroll.scrollTop = 0;
   }
@@ -704,13 +1191,23 @@
     if (!section) return notify("该引用未包含在此版本中。");
     $(".search-backdrop")?.remove();
     state.doc = section.document_id;
+    state.section = id;
+    followDocument(state.doc);
+    chapterTree(state.doc);
+    for (const ancestor of chapterAncestors.get(id) || [])
+      expandedChapters.add(ancestor);
+    ui.docFilter.value = "";
     setView("documents");
+    renderNavigation();
     renderDocList(ui.docFilter.value);
     renderDocument();
     requestAnimationFrame(() => {
       const node = document.getElementById("section-" + id);
       node?.scrollIntoView({ block: "start" });
       node?.classList.add("highlight");
+      ui.docList
+        .querySelector(".chapter-link[aria-current='location']")
+        ?.scrollIntoView({ block: "nearest" });
     });
     if (updateHash)
       history.replaceState(
@@ -1443,6 +1940,68 @@
         ),
       );
   }
+  const messageNodes = new WeakMap();
+  function chatMessageNode(message) {
+    const signature = JSON.stringify([
+      message.content,
+      message.error,
+      message.mode,
+      (message.refs || []).map((ref) => ref.id),
+      !!message.finished,
+    ]);
+    const previous = messageNodes.get(message);
+    if (previous?.signature === signature) return previous.node;
+    const node = el(
+      "div",
+      {
+        class:
+          "chat-message " +
+          (message.role === "assistant" ? "assistant-message" : "user"),
+      },
+      el("div", { class: "role" }, message.role === "user" ? "你" : "知识助手"),
+      el(
+        "div",
+        { class: "answer" },
+        markdown(message.content, message.refs, undefined, {
+          deferDiagrams:
+            message.role === "assistant" &&
+            (!message.finished || !!message.error),
+        }),
+      ),
+    );
+    if (message.error)
+      node.append(el("div", { class: "error" }, message.error));
+    if (message.mode)
+      node.append(el("div", { class: "settings-note" }, message.mode));
+    if (message.refs?.length)
+      node.append(
+        el(
+          "div",
+          { class: "chat-citations" },
+          message.refs.map((ref, i) =>
+            button(`[${i + 1}] ${ref.document_title} · ${ref.title}`, () =>
+              openSection(ref.id),
+            ),
+          ),
+        ),
+      );
+    messageNodes.set(message, { signature, node });
+    return node;
+  }
+  function updateChatMessages() {
+    const holder = ui.chatMessages;
+    if (!holder) return;
+    for (const [index, message] of state.messages.entries()) {
+      const node = chatMessageNode(message),
+        existing = holder.children[index];
+      if (existing !== node) {
+        if (existing) existing.replaceWith(node);
+        else holder.append(node);
+      }
+    }
+    if (holder.isConnected && ui.assistantBody)
+      ui.assistantBody.scrollTop = ui.assistantBody.scrollHeight;
+  }
   function renderChat() {
     if (!state.messages.length)
       ui.assistantBody.append(
@@ -1484,35 +2043,9 @@
           ),
         ),
       );
-    for (const message of state.messages) {
-      const node = el(
-        "div",
-        { class: "chat-message " + message.role },
-        el(
-          "div",
-          { class: "role" },
-          message.role === "user" ? "你" : "知识助手",
-        ),
-        el("div", { class: "answer" }, markdown(message.content, message.refs)),
-      );
-      if (message.error)
-        node.append(el("div", { class: "error" }, message.error));
-      if (message.mode)
-        node.append(el("div", { class: "settings-note" }, message.mode));
-      if (message.refs?.length)
-        node.append(
-          el(
-            "div",
-            { class: "chat-citations" },
-            message.refs.map((ref, i) =>
-              button(`[${i + 1}] ${ref.document_title} · ${ref.title}`, () =>
-                openSection(ref.id),
-              ),
-            ),
-          ),
-        );
-      ui.assistantBody.append(node);
-    }
+    ui.chatMessages = el("div", { class: "chat-message-list" });
+    ui.assistantBody.append(ui.chatMessages);
+    updateChatMessages();
     ui.question = el("textarea", {
       placeholder: "询问项目功能、步骤或业务规则…",
       "aria-label": "向 AI 提问",
@@ -1990,6 +2523,7 @@
       content: "",
       refs: [],
       mode: "正在本地检索相关章节…",
+      finished: false,
     };
     state.messages.push(answer);
     state.pendingQuestion = "";
@@ -2072,7 +2606,7 @@
           if (!timer)
             timer = setTimeout(() => {
               timer = null;
-              if (state.assistant && state.tab === "chat") renderAssistant();
+              if (state.assistant && state.tab === "chat") updateChatMessages();
             }, 75);
         },
         signal,
@@ -2090,6 +2624,7 @@
       answer.error = cleanError(error);
       if (!answer.content) answer.content = "本次回答未完成。";
     } finally {
+      answer.finished = true;
       state.busy = false;
       state.controller = null;
       if (state.assistant) renderAssistant();
@@ -2098,9 +2633,49 @@
   function showInfo() {
     const rag = data.rag || {};
     const coverage = rag.coverage || {};
-    notify(
-      `${data.project.name} · ${data.documents.length} 份文档 / ${sections.length} 个章节 / ${data.prototypes.length} 套原型 / ${rag.chunks?.length || 0} 个向量片段。版本：${data.snapshot?.name || data.snapshot?.id || "固定快照"}。离线支持阅读、原型演示和本地检索；新的 AI 回答需要联网与个人密钥。`,
+    const dialog = el("dialog", {
+      class: "library-info-dialog",
+      "aria-label": "知识库信息",
+    });
+    const close = button("关闭", () => dialog.close(), "subtle-button");
+    dialog.append(
+      el("h2", {}, data.project.name),
+      el(
+        "p",
+        {},
+        `${data.documents.length} 份文档 / ${sections.length} 个章节 / ${data.prototypes.length} 套原型 / ${rag.chunks?.length || 0} 个向量片段`,
+      ),
+      el(
+        "p",
+        {},
+        `固定版本：${data.snapshot?.name || data.snapshot?.id || "快照"}`,
+      ),
+      el(
+        "p",
+        {},
+        "离线可阅读、检索和浏览原型；新的 AI 回答需要联网与个人密钥。",
+      ),
     );
+    for (const warning of data.warnings || [])
+      dialog.append(el("p", { role: "status" }, warning));
+    try {
+      const license = JSON.parse(
+        $("#vks-markdown-licenses")?.textContent || '""',
+      );
+      if (license)
+        dialog.append(
+          el(
+            "details",
+            {},
+            el("summary", {}, "开源组件与许可"),
+            el("pre", {}, license),
+          ),
+        );
+    } catch {}
+    dialog.append(close);
+    dialog.addEventListener("close", () => dialog.remove());
+    document.body.append(dialog);
+    dialog.showModal();
   }
   async function boot() {
     try {

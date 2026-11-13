@@ -7,6 +7,7 @@ from pathlib import PurePosixPath
 from zipfile import BadZipFile, ZipFile
 
 from bs4 import BeautifulSoup
+from markdownify import MarkdownConverter
 
 from packages.analyzers.offline_prototype import PROTOTYPE, _inflate, _scripts, offline_bundle
 from packages.analyzers.vks_ingest import BundleError, safe_path
@@ -79,15 +80,30 @@ def inventory(html, route="/", frame_path=None):
 
 def html_markdown(raw, name):
     soup = BeautifulSoup(text(raw), "html.parser")
-    for node in soup(["script", "style", "noscript"]):
+    for node in soup(["script", "style", "noscript", "iframe", "object", "embed", "template"]):
         node.decompose()
     root = soup.body or soup
-    lines = []
-    for el in root.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "pre", "tr"]):
-        value = el.get_text(" ", strip=True)
-        if value:
-            lines.append(("#" * int(el.name[1]) + " " if el.name.startswith("h") else "") + value)
-    return "\n\n".join(lines) or root.get_text("\n", strip=True) or f"# {name}"
+
+    def language(node):
+        code = node.find("code") or node
+        return next(
+            (value.removeprefix("language-") for value in code.get("class", []) if value.startswith("language-")), ""
+        )
+
+    # Parse as data. Preserve structure without executing source HTML/scripts.
+    return (
+        MarkdownConverter(
+            heading_style="ATX",
+            bullets="-",
+            code_language_callback=language,
+            keep_inline_images_in=["td", "th", "h1", "h2", "h3", "h4", "h5", "h6"],
+            table_infer_header=True,
+            bs4_options="html.parser",
+        )
+        .convert_soup(root)
+        .strip()
+        or f"# {name}"
+    )
 
 
 def zip_files(raw):
@@ -177,6 +193,11 @@ def parse(kind, files, entry=""):
             "files": expanded if fmt == "static-site" else [],
             "warnings": warnings,
         }
+    document_files = [
+        name
+        for name, _ in expanded
+        if PurePosixPath(name).suffix.lower() in {".md", ".markdown", ".txt", ".html", ".htm"}
+    ]
     for name, raw in expanded:
         suffix = PurePosixPath(name).suffix.lower()
         if suffix in {".md", ".markdown", ".txt"}:
@@ -194,8 +215,8 @@ def parse(kind, files, entry=""):
                     original, fmt = raw, "charge-handbook"
                 else:
                     documents.append((name, html_markdown(raw, name)))
-                    if len(expanded) == 1:
-                        original, fmt = raw, "html-document"
+                    if len(document_files) == 1:
+                        original, fmt, entry = raw, "html-document", name
             except BundleError:
                 fail("离线手册结构或摘要校验失败")
         else:
@@ -209,6 +230,11 @@ def parse(kind, files, entry=""):
             "<!doctype html><meta charset=utf-8><title>文档包</title><h1>文档包</h1>"
             + "".join(f"<article><h2>{escape(p)}</h2><pre>{escape(v)}</pre></article>" for p, v in documents)
         ).encode()
+    navigation = {"order": [path for path, _ in documents], "categories": []}
+    if fmt == "charge-handbook":
+        from .document_navigation import handbook_navigation
+
+        navigation = handbook_navigation(original)
     return {
         "format": fmt,
         "entry": entry,
@@ -217,4 +243,5 @@ def parse(kind, files, entry=""):
         "targets": [],
         "files": expanded,
         "warnings": warnings,
+        "navigation": navigation,
     }

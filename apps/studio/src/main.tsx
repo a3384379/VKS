@@ -19,12 +19,11 @@ import {
   Settings2,
   Folders,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
-  MarkdownAttachment,
-  attachmentUrl,
-} from "../../web/src/MarkdownAttachment";
+  RichMarkdown as Markdown,
+  MarkdownReadingContext,
+  type ReadingContext,
+} from "./RichMarkdown";
 import { api, mutation, setCsrf } from "../../web/src/api";
 import { OriginalRuntime, isTarget } from "./runtime";
 import type { Target, RuntimeEvent, RuntimeHandle } from "./runtime";
@@ -32,15 +31,35 @@ import "./style.css";
 import { AISettings } from "./AISettings";
 import { Projects } from "./Projects";
 import { Materials } from "./Materials";
+import {
+  DocumentLibrary,
+  firstNavigationDocument,
+  type DocumentNavigation,
+} from "./DocumentNavigation";
 
-type DocRef = { id: string; revision_id: string; name: string; path: string };
+type DocRef = {
+  id: string;
+  revision_id: string;
+  name: string;
+  path: string;
+  namespace?: string;
+  package_id?: string | null;
+};
 type Chapter = {
   id: string;
   revision_id: string;
   name: string;
   content: string;
+  start_line?: number;
+  end_line?: number;
+  render_start_line?: number;
+  heading_level?: number;
 };
-type Document = DocRef & { sections: Chapter[] };
+type Document = DocRef & {
+  sections: Chapter[];
+  content?: string;
+  partial?: boolean;
+};
 type Citation = {
   revision_id: string;
   name: string;
@@ -97,6 +116,7 @@ type Related = {
   vector_available?: boolean;
 };
 type Catalog = {
+  navigation?: DocumentNavigation;
   analysis_set_id: string;
   release_id: string | null;
   selection_version: number;
@@ -144,39 +164,6 @@ const sameTarget = (a: Target, b: Target) =>
   a.state === b.state &&
   JSON.stringify(a.frame_path) === JSON.stringify(b.frame_path);
 const text = (e: unknown) => (e instanceof Error ? e.message : String(e));
-function Markdown({
-  children,
-  documentId,
-  revisionId,
-}: {
-  children: string;
-  documentId?: string;
-  revisionId?: string;
-}) {
-  return (
-    <div className="markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          img: ({ src, alt }) => {
-            const source = attachmentUrl(
-              documentId,
-              revisionId,
-              typeof src === "string" ? src : undefined,
-            );
-            return source ? (
-              <MarkdownAttachment source={source} alt={alt || "文档图片"} />
-            ) : (
-              <span>{alt || "文档图片"}（可在原手册中查看）</span>
-            );
-          },
-        }}
-      >
-        {children}
-      </ReactMarkdown>
-    </div>
-  );
-}
 
 function App() {
   const [auth, setAuth] = useState<boolean | null>(null),
@@ -200,7 +187,9 @@ function App() {
     [docQuery, setDocQuery] = useState(""),
     [originalBook, setOriginalBook] = useState(false);
   const viewDoc =
-    catalog && loadedDocument?.revision_id === route.doc
+    catalog &&
+    catalog.documents.some((document) => document.revision_id === route.doc) &&
+    loadedDocument?.revision_id === route.doc
       ? loadedDocument
       : null;
   const [bookMounted, setBookMounted] = useState(false);
@@ -367,13 +356,22 @@ function App() {
   useEffect(() => {
     if (
       route.view === "documents" &&
-      !route.doc &&
-      catalog?.documents[0] &&
+      catalog?.documents.length &&
+      (!route.doc ||
+        !catalog.documents.some(
+          (document) => document.revision_id === route.doc,
+        )) &&
       (route.release
         ? catalog.release_id === route.release
         : catalog.analysis_set_id === route.analysis)
     )
-      navigate({ doc: catalog.documents[0].revision_id }, true);
+      navigate(
+        {
+          doc: firstNavigationDocument(catalog.navigation, catalog.documents),
+          section: "",
+        },
+        true,
+      );
   }, [route.view, route.doc, catalog, navigate]);
   useEffect(() => {
     if (!route.binding) {
@@ -414,15 +412,43 @@ function App() {
     return () => {
       docEpoch.current++;
     };
-  }, [catalog?.analysis_set_id, route.doc, prefix, scope]);
+  }, [
+    catalog?.analysis_set_id,
+    catalog?.selection_version,
+    route.doc,
+    prefix,
+    scope,
+  ]);
   useEffect(() => {
-    if (viewDoc && route.section && route.view === "documents")
-      requestAnimationFrame(() =>
-        document
-          .getElementById("section-" + route.section)
-          ?.scrollIntoView({ block: "start", behavior: "instant" }),
-      );
-  }, [viewDoc, route.section, route.view]);
+    if (
+      !viewDoc ||
+      !route.section ||
+      viewDoc.sections.some((section) => section.revision_id === route.section)
+    )
+      return;
+    const slug = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+        .replace(/\s+/g, "-");
+    const section = viewDoc.sections.find(
+      (section) => slug(section.name) === route.section.toLowerCase(),
+    );
+    if (section) navigate({ section: section.revision_id }, true);
+  }, [viewDoc, route.section, navigate]);
+  useEffect(() => {
+    if (viewDoc && route.view === "documents")
+      requestAnimationFrame(() => {
+        if (route.section)
+          document
+            .getElementById("section-" + route.section)
+            ?.scrollIntoView({ block: "start", behavior: "instant" });
+        else
+          document
+            .querySelector(".document-reader")
+            ?.scrollTo({ top: 0, behavior: "instant" });
+      });
+  }, [viewDoc?.revision_id, route.section, route.view]);
   useEffect(() => {
     if (!editDocId) {
       setEditDoc(null);
@@ -1137,7 +1163,43 @@ function App() {
           (!route.section || c.revision_id === route.section),
       ),
   );
-  return (
+  const markdownReading: ReadingContext = {
+    projectId: route.project,
+    analysisSetId: route.release ? undefined : route.analysis,
+    releaseId: route.release || undefined,
+    selectionVersion: catalog?.selection_version,
+    documents: catalog?.documents || [],
+    onDocument: (document, fragment) => {
+      const section =
+        document.revision_id === viewDoc?.revision_id
+          ? viewDoc.sections.find(
+              (s) =>
+                s.revision_id === fragment ||
+                s.name
+                  .toLowerCase()
+                  .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+                  .replace(/\s+/g, "-") === fragment.toLowerCase(),
+            )
+          : undefined;
+      navigate({
+        view: "documents",
+        doc: document.revision_id,
+        section: section?.revision_id || fragment,
+      });
+    },
+    onSection: (reference) => openDoc(reference),
+    loadDocument: async (revision, signal) => {
+      const document = await api<Document>(
+        `${prefix}/documents/${encodeURIComponent(revision)}?${scope}`,
+        { signal },
+      );
+      return (
+        document.content ??
+        document.sections.map((section) => section.content).join("\n\n")
+      );
+    },
+  };
+  const body = (
     <div className="studio">
       <header className="topbar">
         <div className="brand">
@@ -1188,7 +1250,13 @@ function App() {
                 }
                 navigate({ view: v });
                 if (v === "documents" && !route.doc && catalog?.documents[0])
-                  navigate({ view: v, doc: catalog.documents[0].revision_id });
+                  navigate({
+                    view: v,
+                    doc: firstNavigationDocument(
+                      catalog.navigation,
+                      catalog.documents,
+                    ),
+                  });
               }}
             >
               {l}
@@ -1359,128 +1427,160 @@ function App() {
           )}
         </section>
         {currentView === "documents" && (
-          <section className="documents-space" hidden={originalBook}>
-            <aside className="doc-sidebar">
-              <div className="sidebar-title">
-                <FileText size={17} />
-                <b>项目知识库</b>
-                <span>{catalog?.documents.length}</span>
-              </div>
-              <div className="search">
-                <Search size={15} />
-                <input
-                  aria-label="搜索文档"
-                  placeholder="搜索文档标题…"
-                  value={docQuery}
-                  onChange={(e) => setDocQuery(e.target.value)}
-                />
-              </div>
-              <div className="doc-list">
-                {catalog?.documents
-                  .filter((d) =>
-                    d.name.toLowerCase().includes(docQuery.toLowerCase()),
-                  )
-                  .map((d) => (
-                    <button
-                      className={d.revision_id === route.doc ? "active" : ""}
-                      key={d.id}
-                      onClick={() =>
-                        navigate({
-                          doc: d.revision_id,
-                          section: "",
-                          view: "documents",
-                        })
-                      }
-                    >
-                      <FileText size={14} />
-                      <span>{d.name}</span>
-                      {bindings.some(
-                        (b) =>
-                          !b.excluded &&
-                          b.sections.some(
-                            (s) => s.document_revision_id === d.revision_id,
-                          ),
-                      ) && <i className="link-dot" />}
-                    </button>
-                  ))}
-              </div>
-            </aside>
+          <DocumentLibrary
+            key={route.project + ":" + scope}
+            navigation={catalog?.navigation}
+            documents={catalog?.documents || []}
+            selectedDocument={route.doc}
+            selectedSection={route.section}
+            currentDocument={viewDoc}
+            scopeKey={route.project + ":" + scope}
+            selectionVersion={catalog?.selection_version}
+            query={docQuery}
+            onQuery={setDocQuery}
+            onOpen={(revision, section = "") => {
+              setOriginalBook(false);
+              navigate({ view: "documents", doc: revision, section });
+            }}
+            loadDocument={(revision, signal) =>
+              api<Document>(
+                `${prefix}/documents/${encodeURIComponent(revision)}?${scope}`,
+                { signal },
+              )
+            }
+            linkedDocuments={bindings
+              .filter((binding) => !binding.excluded)
+              .flatMap((binding) =>
+                binding.sections.map((section) => section.document_revision_id),
+              )}
+            hidden={originalBook}
+          >
             <article className="document-reader">
               <div className="reader-label">
                 工作区文档 <span>· 准确修订</span>
               </div>
               <h1>{viewDoc?.name || "选择一篇文档开始阅读"}</h1>
-              {viewDoc && (
-                <div className="article-toc">
-                  <b>本篇目录</b>
-                  {viewDoc.sections.map((s) => (
-                    <a
-                      key={s.id}
-                      href={`#section-${s.revision_id}`}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        navigate({ section: s.revision_id });
-                      }}
-                    >
-                      {s.name}
-                    </a>
-                  ))}
-                </div>
-              )}
-              {viewDoc?.sections.map((s) => (
-                <section
-                  className={
-                    "chapter " +
-                    (route.section === s.revision_id ? "chapter-selected" : "")
-                  }
-                  id={"section-" + s.revision_id}
-                  key={s.id}
-                >
-                  <div className="chapter-actions">
-                    <button
-                      onClick={() => {
-                        navigate({ section: s.revision_id });
-                        setKnowledge(true);
-                        setActive(
-                          bindings.find(
-                            (b) =>
-                              !b.excluded &&
-                              b.sections.some(
-                                (c) => c.revision_id === s.revision_id,
-                              ),
-                          ) || null,
-                        );
-                      }}
-                    >
-                      <Link2 size={13} />
-                      关联操作
-                    </button>
-                  </div>
-                  <Markdown
-                    documentId={viewDoc?.id}
-                    revisionId={viewDoc?.revision_id}
+              {viewDoc &&
+                viewDoc.sections.some(
+                  (section) => section.heading_level !== 0,
+                ) && (
+                  <details
+                    className="article-toc"
+                    key={viewDoc.revision_id}
+                    open={viewDoc.sections.length <= 6}
                   >
-                    {s.content}
-                  </Markdown>
-                  {bindings
-                    .filter(
-                      (b) =>
-                        !b.excluded &&
-                        b.sections.some((c) => c.revision_id === s.revision_id),
+                    <summary>
+                      <b>本篇目录</b>
+                      <span>
+                        {
+                          viewDoc.sections.filter(
+                            (section) => section.heading_level !== 0,
+                          ).length
+                        }{" "}
+                        个章节
+                      </span>
+                    </summary>
+                    <nav aria-label="本篇目录">
+                      {viewDoc.sections.map((s, index) => {
+                        if (s.heading_level === 0) return null;
+                        const depth =
+                          /^ {0,3}(#{1,6})\s/.exec(s.content)?.[1].length || 1;
+                        if (
+                          index === 0 &&
+                          depth === 1 &&
+                          s.name === viewDoc.name
+                        )
+                          return null;
+                        return (
+                          <a
+                            key={s.id}
+                            href={`#section-${s.revision_id}`}
+                            style={{
+                              paddingInlineStart: Math.max(0, depth - 2) * 14,
+                            }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              navigate({ section: s.revision_id });
+                            }}
+                          >
+                            {s.name}
+                          </a>
+                        );
+                      })}
+                    </nav>
+                  </details>
+                )}
+              {viewDoc && (
+                <Markdown
+                  documentId={viewDoc.id}
+                  revisionId={viewDoc.revision_id}
+                  omitInitialTitle={viewDoc.name}
+                  sections={(() => {
+                    let line = 1;
+                    return viewDoc.sections.map((section) => {
+                      const current = {
+                        ...section,
+                        render_start_line:
+                          section.render_start_line ??
+                          (viewDoc.content ? section.start_line : undefined) ??
+                          line,
+                      };
+                      line += section.content.split(/\r\n?|\n/).length + 1;
+                      return current;
+                    });
+                  })()}
+                  selectedSection={route.section}
+                  sectionActions={(s, position) =>
+                    position === "before" ? (
+                      s.content.trim() === "# " + viewDoc.name ? null : (
+                        <div className="chapter-actions">
+                          <button
+                            onClick={() => {
+                              navigate({ section: s.revision_id });
+                              setKnowledge(true);
+                              setActive(
+                                bindings.find(
+                                  (b) =>
+                                    !b.excluded &&
+                                    b.sections.some(
+                                      (c) => c.revision_id === s.revision_id,
+                                    ),
+                                ) || null,
+                              );
+                            }}
+                          >
+                            <Link2 size={13} />
+                            关联操作
+                          </button>
+                        </div>
+                      )
+                    ) : (
+                      bindings
+                        .filter(
+                          (b) =>
+                            !b.excluded &&
+                            b.sections.some(
+                              (c) => c.revision_id === s.revision_id,
+                            ),
+                        )
+                        .map((b) => (
+                          <button
+                            key={b.id}
+                            className="reverse-link"
+                            onClick={() => reveal(b)}
+                          >
+                            <MousePointer2 size={15} />
+                            打开原型 · {b.target.label}
+                            <ArrowUpRight size={14} />
+                          </button>
+                        ))
                     )
-                    .map((b) => (
-                      <button
-                        key={b.id}
-                        className="reverse-link"
-                        onClick={() => reveal(b)}
-                      >
-                        <MousePointer2 size={15} />
-                        打开原型 · {b.target.label}
-                        <ArrowUpRight size={14} />
-                      </button>
-                    ))}
-                </section>
-              ))}
+                  }
+                >
+                  {viewDoc.content ??
+                    viewDoc.sections.map((s) => s.content).join("\n\n")}
+                </Markdown>
+              )}
             </article>
             <aside className="related-sidebar">
               <span className="eyebrow">与当前文章相关</span>
@@ -1500,7 +1600,7 @@ function App() {
                 <p>选中原型控件并保存关联后，可在这里跳回对应操作。</p>
               )}
             </aside>
-          </section>
+          </DocumentLibrary>
         )}
         {h && bookMounted && (
           <section
@@ -1559,7 +1659,7 @@ function App() {
                     <small>{b.sections.length} 个章节</small>
                   </div>
                   <h3>{b.title}</h3>
-                  <p>{b.summary}</p>
+                  <Markdown references={b.sections}>{b.summary}</Markdown>
                   {b.sections.map((c) => (
                     <button
                       className="citation"
@@ -2043,7 +2143,9 @@ function App() {
                     </span>
                     <h2>{assistant.title}</h2>
                     {assistantMode === "explain" && (
-                      <Markdown>{assistant.explanation}</Markdown>
+                      <Markdown references={assistant.sections}>
+                        {assistant.explanation}
+                      </Markdown>
                     )}
                     {assistant.unknowns.length > 0 && (
                       <details open>
@@ -2209,7 +2311,9 @@ function App() {
                       <h2>{active.title}</h2>
                     </div>
                     {assistantMode === "explain" && (
-                      <Markdown>{active.summary}</Markdown>
+                      <Markdown references={active.sections}>
+                        {active.summary}
+                      </Markdown>
                     )}
                     <h4 className="source-label">
                       原文引用 <span>{active.sections.length}</span>
@@ -2332,6 +2436,11 @@ function App() {
         </aside>
       )}
     </div>
+  );
+  return (
+    <MarkdownReadingContext.Provider value={markdownReading}>
+      {body}
+    </MarkdownReadingContext.Provider>
   );
 }
 

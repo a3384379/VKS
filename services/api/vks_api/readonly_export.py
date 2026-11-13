@@ -9,15 +9,12 @@ from __future__ import annotations
 
 import base64
 import gzip
-import posixpath
+import json
 from html import escape
-from io import BytesIO
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
 
+from bs4 import BeautifulSoup
 from markdown_it import MarkdownIt
-from PIL import Image
-from sqlalchemy import select
 
 from .documents import DocumentService
 from .exports import allow_artifact, canonical, digest, read_original
@@ -26,75 +23,35 @@ from .models import Analysis, Artifact, Evidence, Job, Project, Release, Revisio
 from .service import DomainError
 
 
-def document_images(service, s, actor, pid, revision, sections, caps, mounted_attachments=None):
-    """Resolve only raster references inside the document's immutable source."""
-    art = s.get(Artifact, revision.artifact_id)
-    original = art.metadata_json.get("original_artifact_id") or revision.metadata_json.get("original_artifact_id")
-    if original:
-        origin = s.get(Artifact, original)
-        if origin and origin.project_id == pid:
-            art = origin
+def document_images(service, s, actor, pid, revision, sections, caps, mounted_attachments=None, markdown=None):
+    """Resolve the same exact, permission-scoped image assets as Studio."""
+    from .attachments import find_attachment, raster_media
+
     refs = set()
-    for token in MarkdownIt("commonmark").parse("\n\n".join(c["content"] for c in sections)):
-        for child in token.children or []:
+    source = markdown if markdown is not None else "\n\n".join(c["content"] for c in sections)
+    for token in MarkdownIt("commonmark").parse(source):
+        for child in [token, *(token.children or [])]:
             if child.type == "image":
                 refs.add(child.attrGet("src") or "")
+            elif child.type in {"html_inline", "html_block"}:
+                for image in BeautifulSoup(child.content, "html.parser").find_all("img", src=True):
+                    refs.add(image["src"])
     images, dependencies, missing = {}, set(), 0
     for reference in sorted(refs):
-        target = unquote(reference)
+        if reference.startswith("data:"):
+            continue
         try:
-            url = urlsplit(target)
-        except ValueError:
+            attachment, _ = find_attachment(s, revision, reference, mounted_attachments)
+        except DomainError:
             missing += 1
             continue
-        if url.scheme == "data":
-            continue
-        if (
-            url.scheme
-            or url.netloc
-            or url.query
-            or url.fragment
-            or target.startswith("/")
-            or "\\" in target
-            or "\0" in target
-        ):
-            missing += 1
-            continue
-        path = posixpath.normpath(posixpath.join(posixpath.dirname(art.relative_path), target))
-        if path.startswith("../") or path == "..":
-            missing += 1
-            continue
-        attachment = (
-            next(
-                (
-                    s.get(Artifact, aid)
-                    for aid in mounted_attachments
-                    if (candidate := s.get(Artifact, aid))
-                    and candidate.project_id == pid
-                    and candidate.relative_path == path
-                ),
-                None,
-            )
-            if mounted_attachments is not None
-            else s.scalar(
-                select(Artifact).where(
-                    Artifact.project_id == pid, Artifact.snapshot_id == art.snapshot_id, Artifact.relative_path == path
-                )
-            )
-        )
         if not attachment or not allow_artifact(attachment, caps, s):
             missing += 1
             continue
         raw = read_original(service, attachment)
         try:
-            with Image.open(BytesIO(raw)) as image:
-                media = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp", "GIF": "image/gif"}.get(
-                    image.format
-                )
-                if not media or image.width * image.height > 16777216:
-                    raise ValueError()
-                image.verify()
-        except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+            media = raster_media(raw)
+        except DomainError:
             missing += 1
             continue
         images[reference] = "data:" + media + ";base64," + base64.b64encode(raw).decode()
@@ -156,16 +113,23 @@ def projection(service, s, actor, pid, release_id, caps):
     for entity, row in rows.values():
         if entity.type != "document":
             continue
-        sections = [
-            {"id": c.id, "revision_id": c.id, "title": c.name, "content": c.content}
-            for c in DocumentService._sections(s, entity, row)
-            if c.id in rows and choices.get(c.entity_id) == c.id
-        ]
+        from .document_projection import readable_document
+
+        projected = readable_document(row, DocumentService._sections(s, entity, row), set(rows))
+        sections = [{**c, "id": c["revision_id"], "title": c["name"]} for c in projected["sections"]]
         if not sections:
             continue
         material = mounted_documents.get(row.metadata_json.get("material_package_id"), {})
         images, image_dependencies, absent = document_images(
-            service, s, actor, pid, row, sections, caps, material.get("attachment_artifact_ids")
+            service,
+            s,
+            actor,
+            pid,
+            row,
+            sections,
+            caps,
+            material.get("attachment_artifact_ids"),
+            markdown=projected["content"],
         )
         artifacts.update(image_dependencies)
         missing_images += absent
@@ -180,7 +144,8 @@ def projection(service, s, actor, pid, release_id, caps):
                 or s.get(Artifact, row.artifact_id).snapshot_id,
                 "path": row.metadata_json.get("material_path") or s.get(Artifact, row.artifact_id).relative_path,
                 "images": images,
-                "markdown": "\n\n".join(c["content"] for c in sections),
+                "markdown": projected["content"],
+                "partial": projected["partial"],
                 "sections": sections,
             }
         )
@@ -246,11 +211,27 @@ def projection(service, s, actor, pid, release_id, caps):
         ):
             raise DomainError("VKS_FORBIDDEN", "关联出处不能用于本次导出", 403)
         artifacts.add(ev.artifact_id)
+    from .document_navigation import build_navigation
+
+    navigation_dependencies = {"revision_ids": set(), "artifact_ids": set()}
+    navigation = build_navigation(
+        service,
+        s,
+        actor,
+        pid,
+        choices,
+        [document["id"] for document in documents],
+        capabilities=caps,
+        dependencies=navigation_dependencies,
+    )
+    revisions.update(navigation_dependencies["revision_ids"])
+    artifacts.update(navigation_dependencies["artifact_ids"])
     for rid in revisions:
         row = s.get(Revision, rid)
         if row.artifact_id:
             artifacts.add(row.artifact_id)
     project = s.get(Project, pid)
+
     payload = {
         "schema_version": 1,
         "project": {"id": pid, "name": project.name},
@@ -272,6 +253,7 @@ def projection(service, s, actor, pid, release_id, caps):
         ],
         "documents": sorted(documents, key=lambda d: d["title"]),
         "bindings": bindings,
+        "navigation": navigation,
         "warnings": [f"{missing_images} 张文档引用图片未包含在可用资料中，保留原文说明。"] if missing_images else [],
         # Recipient chooses their own connection. Never serialize publisher settings.
         "ai": {"base_url": "https://api.openai.com/v1", "protocol": "responses", "model": ""},
@@ -282,6 +264,7 @@ def projection(service, s, actor, pid, release_id, caps):
         "_export_evidence_ids": sorted(evidence_ids),
         "_export_artifact_ids": sorted(artifacts),
         "_export_source_snapshot_ids": [],
+        "_export_navigation_scope_version": 1,
     }
     return payload, deps, sorted(section_ids)
 
@@ -297,8 +280,14 @@ def html_library(payload):
             "<title>VKS 成品知识库</title>", "<title>" + escape(payload["project"]["name"]) + " · 成品知识库</title>"
         )
         .replace("/* VKS_READER_CSS */", (assets / "reader.css").read_text())
+        .replace("/* VKS_MARKDOWN_CSS */", (assets / "markdown-vendor.css").read_text())
         .replace("VKS_READER_PAYLOAD", encoded)
         .replace("/* VKS_READER_JS */", (assets / "reader.js").read_text())
+        .replace("/* VKS_MARKDOWN_JS */", (assets / "markdown-vendor.js").read_text())
+        .replace(
+            "VKS_MARKDOWN_LICENSES",
+            json.dumps((assets / "markdown-licenses.txt").read_text(), ensure_ascii=False).replace("<", "\\u003c"),
+        )
     ).encode()
 
 

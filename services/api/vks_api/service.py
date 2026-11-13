@@ -1801,6 +1801,9 @@ class Service:
             j = s.get(Job, jid)
             if not j or j.project_id != pid or j.kind != "export" or j.state != "succeeded" or j.created_by != actor.id:
                 raise DomainError("VKS_NOT_FOUND", "未找到导出结果", 404)
+            if j.input_json["format"] == "readonly_html" and j.input_json.get("_export_navigation_scope_version") != 1:
+                if not self._can(s, actor, pid, "source:read") or not self._can(s, actor, pid, "trace:read"):
+                    raise DomainError("VKS_FORBIDDEN", "旧成品库缺少完整目录来源范围，请重新导出", 403)
             if j.input_json.get("allowed_source") or j.input_json.get("allowed_confidential"):
                 self.require(s, actor, pid, "source:read")
             if j.input_json.get("allowed_trace"):

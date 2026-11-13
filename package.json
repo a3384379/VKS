@@ -8,15 +8,29 @@
   ],
   "scripts": {
     "dev": "bash scripts/dev.sh",
-    "build": "npm run build --workspace apps/web && npm run build --workspace apps/studio",
+    "build": "npm run build:reader && npm run build --workspace apps/web && npm run build --workspace apps/studio",
     "check": "npm run test && npm run build && uv run pytest",
     "test": "npm run test --workspace apps/web",
     "format": "prettier --write \"apps/web/src/**/*.{ts,tsx,css}\" apps/web/vite.config.ts",
     "format:check": "prettier --check \"apps/web/src/**/*.{ts,tsx,css}\" apps/web/vite.config.ts",
-    "dev:studio": "bash scripts/dev-studio.sh"
+    "dev:studio": "bash scripts/dev-studio.sh",
+    "build:reader": "node scripts/build_reader_markdown.mjs"
   },
   "devDependencies": {
-    "prettier": "3.6.2"
+    "prettier": "3.6.2",
+    "unified": "11.0.5",
+    "remark-parse": "11.0.0",
+    "remark-rehype": "11.1.2",
+    "rehype-raw": "7.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "katex": "0.19.1",
+    "lowlight": "3.3.0",
+    "mermaid": "12.2.0",
+    "dompurify": "3.4.17",
+    "esbuild": "0.28.2",
+    "remark-cjk-friendly": "2.3.4",
+    "remark-cjk-friendly-gfm-strikethrough": "2.3.3"
   },
   "overrides": {
     "katex": "0.19.1"

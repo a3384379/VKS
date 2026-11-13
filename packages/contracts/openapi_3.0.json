@@ -3238,6 +3238,11 @@
               }
             ],
             "title": "Primary Package Id"
+          },
+          "navigation": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Navigation"
           }
         },
         "additionalProperties": false,
@@ -3269,6 +3274,21 @@
           "content": {
             "type": "string",
             "title": "Content"
+          },
+          "start_line": {
+            "type": "integer",
+            "title": "Start Line",
+            "default": 1
+          },
+          "end_line": {
+            "type": "integer",
+            "title": "End Line",
+            "default": 1
+          },
+          "heading_level": {
+            "type": "integer",
+            "title": "Heading Level",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -3329,6 +3349,16 @@
             "type": "string",
             "title": "Name"
           },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "default": ""
+          },
+          "partial": {
+            "type": "boolean",
+            "title": "Partial",
+            "default": false
+          },
           "sections": {
             "items": {
               "$ref": "#/components/schemas/InteractiveChapter"
@@ -3364,6 +3394,22 @@
           "path": {
             "type": "string",
             "title": "Path"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "default": ""
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
           }
         },
         "additionalProperties": false,

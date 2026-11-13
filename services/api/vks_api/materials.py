@@ -511,7 +511,7 @@ class MaterialService:
             # attachment still carries the original input provenance above.
             runtime_meta = {"prototype_input_artifact_ids": [a.id for a in [*inputs, *attachments]]}
         original = parsed["original"]
-        if parsed["format"] == "static-site":
+        if parsed["format"] == "static-site" or parsed["format"] == "html-document" and len(parsed["files"]) > 1:
             from .material_site import site_html
 
             original = site_html(parsed["entry"], parsed["files"])
@@ -526,6 +526,7 @@ class MaterialService:
         }
         consumed = set()
         for path, markdown in parsed["documents"]:
+            preserved_manual = False
             prior = old_docs.get(path)
             if not prior:
                 matches = [r for r in old_docs.values() if r.content == markdown and r.entity_id not in consumed]
@@ -535,13 +536,19 @@ class MaterialService:
                 current_choice = s.get(Selection, (analysis.id, prior.entity_id))
                 current = s.get(Revision, current_choice.entity_revision_id) if current_choice else prior
                 if current and current.id != prior.id and prior.content == markdown:
-                    members.extend(
-                        [current.id, *[c.id for c in self.docs._sections(s, s.get(Entity, current.entity_id), current)]]
-                    )
-                    counts["reused"] += 1
-                    continue
+                    if current.metadata_json.get("material_path") == path:
+                        members.extend(
+                            [
+                                current.id,
+                                *[c.id for c in self.docs._sections(s, s.get(Entity, current.entity_id), current)],
+                            ]
+                        )
+                        counts["reused"] += 1
+                        continue
+                    markdown = current.content
+                    preserved_manual = True
                 prior = current or prior
-            if prior and prior.content == markdown:
+            if prior and prior.content == markdown and prior.metadata_json.get("material_path") == path:
                 members.extend(
                     [prior.id, *[c.id for c in self.docs._sections(s, s.get(Entity, prior.entity_id), prior)]]
                 )
@@ -554,7 +561,10 @@ class MaterialService:
                 "documents/" + path,
                 markdown.encode(),
                 "markdown",
-                metadata={"prototype_input_artifact_ids": [a.id for a in inputs]},
+                metadata={
+                    "prototype_input_artifact_ids": [a.id for a in inputs]
+                    + ([prior.artifact_id] if preserved_manual else [])
+                },
             )
             doc_entity = (
                 s.get(Entity, prior.entity_id)
@@ -581,6 +591,7 @@ class MaterialService:
                     "heading_path": section["heading_path"],
                     "body_fingerprint": section["body_fingerprint"],
                     "material_package_id": package.id,
+                    "manual_lock": bool(prior and entity.id in prior.metadata_json.get("locked_section_ids", [])),
                 }
                 chapter = self.docs._revision(
                     s,
@@ -597,7 +608,10 @@ class MaterialService:
                     metadata,
                 )
                 chapters.append(chapter)
-            title = sections[0]["title"] if sections else PurePosixPath(path).stem
+            title = next(
+                (section["title"] for section in sections if section["headingEndLine"] > 0),
+                sections[0]["title"] if sections else PurePosixPath(path).stem,
+            )
             document = self.docs._revision(
                 s,
                 doc_entity,
@@ -611,6 +625,7 @@ class MaterialService:
                     "material_package_id": package.id,
                     "material_path": path,
                     "logical_source_key": "material." + package.id,
+                    "locked_section_ids": list(prior.metadata_json.get("locked_section_ids", [])) if prior else [],
                 },
             )
             members.extend([document.id, *[c.id for c in chapters]])
@@ -627,6 +642,7 @@ class MaterialService:
             "document_count": len(parsed["documents"]),
             "section_count": len(members) - len(parsed["documents"]),
             "attachment_artifact_ids": [a.id for a in attachments],
+            "document_navigation": parsed.get("navigation", {"order": [], "categories": []}),
             "base_revision_id": active_base,
             "changes": counts,
             "prepared_for": analysis.id,
