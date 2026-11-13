@@ -22,8 +22,39 @@ from .service import DomainError, sha
 
 def complete_selection(service, s, actor, pid, choices, documents):
     """A whole source reader must not bypass a partial selected chapter view."""
+    from .reading import ReadingService
+
+    documents = set(documents)
+    retained = s.info.setdefault("vks_prefetched", {})
+    reader = ReadingService(service)
+
+    def preload(ids):
+        missing = [rid for rid in set(ids) if rid and (Revision, rid) not in retained]
+        retained.update({(Revision, row.id): row for row in reader.revision_rows(s, missing)})
+
+    preload(choices.get(entity_id) for entity_id in documents)
+    section_ids = []
+    for entity_id in documents:
+        row = retained.get((Revision, choices.get(entity_id)))
+        ids = row.metadata_json.get("section_revision_ids", []) if row else []
+        if isinstance(ids, list):
+            section_ids.extend(rid for rid in ids if isinstance(rid, str))
+    preload(section_ids)
+    full_access = service._can(s, actor, pid, "source:read") and service._can(s, actor, pid, "trace:read")
+
+    def visible(row):
+        entity = s.get(Entity, row.entity_id)
+        art = s.get(Artifact, row.artifact_id) if row.artifact_id else None
+        return bool(
+            row.project_id == pid
+            and entity
+            and entity.project_id == pid
+            and (not row.artifact_id or (art and art.project_id == pid))
+            and (full_access or service._visible_revision(s, actor, pid, row))
+        )
+
     docs = DocumentService(service)
-    for entity_id in set(documents):
+    for entity_id in documents:
         entity = s.get(Entity, entity_id)
         row = s.get(Revision, choices.get(entity_id)) if choices.get(entity_id) else None
         if (
@@ -33,7 +64,7 @@ def complete_selection(service, s, actor, pid, choices, documents):
             or not row
             or row.project_id != pid
             or row.entity_id != entity_id
-            or not service._visible_revision(s, actor, pid, row)
+            or not visible(row)
         ):
             return False
         try:
@@ -41,8 +72,7 @@ def complete_selection(service, s, actor, pid, choices, documents):
         except DomainError:
             return False
         if not chapters or any(
-            choices.get(chapter.entity_id) != chapter.id or not service._visible_revision(s, actor, pid, chapter)
-            for chapter in chapters
+            choices.get(chapter.entity_id) != chapter.id or not visible(chapter) for chapter in chapters
         ):
             return False
     return True

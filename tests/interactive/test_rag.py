@@ -209,3 +209,34 @@ def test_module_query_cache_isolated_between_prototypes_with_same_route(assistan
     engine.rag.hybrid(owner, pid, second, second_state[1], second_state[2], [])
     assert len(calls) == before + 1
     assert calls[-1] == "模块：Another module"
+
+
+def test_questions_use_distinct_query_vectors_and_keep_module_context(assistant, monkeypatch):
+    from vks_api.interactive_ai import InteractiveQuestionInput
+
+    (_web, service, owner, pid, _aid, _grant, _package, _section, _), body, _calls = assistant
+    queries = []
+
+    def embeddings(config, payload):
+        assert config["protocol"] == "embeddings"
+        queries.extend(payload["input"])
+        return {
+            "data": [{"index": i, "embedding": [1.0] + [0.0] * 63} for i, _ in enumerate(payload["input"])],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setattr(ai_gateway, "request_model", embeddings)
+    engine = InteractiveAssistant(service)
+    engine.rag.save(owner, pid, RagSettings(enabled=True, dimensions=64))
+    engine.rag._build(owner, pid, AssistanceInput.model_validate(body))
+    for question in ["前提是什么", "后续流程是什么"]:
+        form = InteractiveQuestionInput.model_validate(
+            {**body, "question": question, "context": {"scope": "module", "page_title": "当前收费模块"}}
+        )
+        state = engine.prepare(owner, pid, form)
+        before = len(queries)
+        assert engine.rag.hybrid(owner, pid, form, state[1], state[2], [])
+        assert len(queries) == before + 1
+        assert question in queries[-1] and "当前收费模块" in queries[-1]
+        assert engine.rag.hybrid(owner, pid, form, state[1], state[2], [])
+        assert len(queries) == before + 1

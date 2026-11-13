@@ -280,6 +280,18 @@ export function DocumentLibrary({
       ...previous,
       [currentDocument.revision_id]: currentDocument,
     }));
+    setErrors(
+      (previous) =>
+        new Set(
+          [...previous].filter((id) => id !== currentDocument.revision_id),
+        ),
+    );
+    setPending(
+      (previous) =>
+        new Set(
+          [...previous].filter((id) => id !== currentDocument.revision_id),
+        ),
+    );
   }, [currentDocument, documents]);
   useEffect(() => {
     if (!selectedSection || !cache[selectedDocument]) return;
@@ -324,6 +336,7 @@ export function DocumentLibrary({
       });
   };
   useEffect(() => {
+    if (hidden) return;
     for (const revision of articles)
       if (
         documents.some((doc) => doc.revision_id === revision) &&
@@ -331,7 +344,7 @@ export function DocumentLibrary({
         !errors.has(revision)
       )
         request(revision);
-  }, [articles, cache, identity, documents]);
+  }, [articles, cache, identity, documents, hidden]);
   const pack =
     tree.packages.find((pack) => pack.id === packageId) ||
     location?.package ||

@@ -182,6 +182,11 @@ export function AISettings({
       epoch.current++;
     };
   }, [base]);
+  useEffect(() => {
+    // Discover saved connections without inference or sending project content.
+    // Never query a partially entered key or an unsaved edited endpoint.
+    if (configured && form && !dirty && !form.api_key.trim()) void discover();
+  }, [base, form?.connection_id, form?.endpoint, configured]);
   function change(patch: Partial<Form>) {
     if (!form) return;
     epoch.current++;
@@ -540,7 +545,13 @@ export function AISettings({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
-              <span>{models ? "账户模型" : "预置模型"}</span>
+              <span>
+                {models
+                  ? "账户模型"
+                  : busy === "models"
+                    ? "正在查询"
+                    : "参考模型"}
+              </span>
             </div>
             <select
               id="ai-model-select"
@@ -558,19 +569,23 @@ export function AISettings({
             >
               {missingSelected && !custom && (
                 <option value={form.model_id}>
-                  {form.model_id} · 当前选择
+                  {form.model_id} ·{" "}
+                  {models ? "当前配置（列表未返回）" : "当前配置"}
                 </option>
               )}
               {!form.model_id && !custom && (
                 <option value="">请选择模型</option>
               )}
               <optgroup
-                label={models ? "当前 Key 可见的模型" : "服务商预置模型"}
+                label={
+                  models
+                    ? "服务返回的模型 ID"
+                    : "参考模型 ID（尚未验证账户权限）"
+                }
               >
                 {filtered.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.name}
-                    {m.name !== m.id ? " · " + m.id : ""}
+                    {m.id}
                   </option>
                 ))}
               </optgroup>
@@ -595,7 +610,7 @@ export function AISettings({
             <p className="model-availability">
               {models
                 ? `已从服务获取 ${models.length} 个模型。可见模型的协议与能力可能不同，可测试当前选择。`
-                : "预置模型可直接选择；点击“获取可用模型”查询此 Key 的实际可见列表。"}
+                : "以下仅为参考 ID，尚未验证账户权限。获取可用模型后，以服务返回的列表为准。"}
             </p>
           </div>
           <div className="ai-output-row">

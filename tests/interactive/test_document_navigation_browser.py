@@ -103,6 +103,7 @@ def test_studio_categories_source_order_lazy_heading_tree_and_global_search(mate
                             ["业务概览 Z", "业务补充 A", "业务总手册"]
                         )
                         assert not any(docs["业务补充 A"]["revision_id"] in request for request in requests)
+                        expect(sidebar).to_contain_text("办理步骤")
                         sidebar.get_by_role("button", name="展开下级章节 办理步骤", exact=True).click()
                         sidebar.get_by_role("button", name="深层节点", exact=True).click()
                         expect(article.locator(".chapter-selected")).to_have_attribute(
@@ -114,6 +115,13 @@ def test_studio_categories_source_order_lazy_heading_tree_and_global_search(mate
                         sidebar.get_by_role("button", name="备用章节", exact=True).click()
                         expect(article.get_by_role("heading", name="业务补充 A", exact=True)).to_be_visible()
                         expect(article.locator(".chapter-selected")).to_contain_text("备用章节")
+                        # Expanding the heading tree already fetched the full body;
+                        # choosing it or another section must not request it again.
+                        extra_revision = docs["业务补充 A"]["revision_id"]
+                        assert sum("/documents/" + extra_revision in request for request in requests) == 1
+                        assert sum("/documents/" + z_doc["revision_id"] in request for request in requests) == 1, [
+                            request for request in requests if "/documents/" + z_doc["revision_id"] in request
+                        ]
                         categories.get_by_role("button", name=re.compile(r"^01基础")).click()
                         expect(article.get_by_role("heading", name="基础说明 B", exact=True)).to_be_visible()
                         sidebar.get_by_label("搜索文档", exact=True).fill("业务补充")
@@ -133,6 +141,24 @@ def test_studio_categories_source_order_lazy_heading_tree_and_global_search(mate
                         expect(article.locator(".chapter-selected")).to_have_attribute(
                             "id", "section-" + deep["revision_id"]
                         )
+                        fail_once = [True]
+
+                        def temporary_failure(route):
+                            if fail_once[0]:
+                                fail_once[0] = False
+                                route.fulfill(status=503, json={"error": {"message": "Temporary document failure"}})
+                            else:
+                                route.continue_()
+
+                        page.route("**/interactive/documents/" + z_doc["revision_id"] + "?*", temporary_failure)
+                        page.reload()
+                        expect(article.get_by_role("alert")).to_contain_text("Temporary document failure")
+                        expect(article).not_to_contain_text("选择一篇文档开始阅读")
+                        article.get_by_role("button", name="重新加载文档", exact=True).click()
+                        expect(article).to_contain_text("开头介绍文字保留在正文")
+                        expect(sidebar).to_contain_text("办理步骤")
+                        expect(sidebar.get_by_role("button", name="章节未能读取，重试", exact=True)).to_have_count(0)
+                        page.unroute("**/interactive/documents/" + z_doc["revision_id"] + "?*", temporary_failure)
                         page.get_by_label("文档资料包", exact=True).select_option(label="附录资料")
                         expect(article.get_by_role("heading", name="附录说明", exact=True)).to_be_visible()
                         page.goto(url + f"/#project={second_pid}&analysis={second_aid}&view=documents")

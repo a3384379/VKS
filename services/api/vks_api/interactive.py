@@ -356,7 +356,7 @@ class InteractiveKnowledgeService:
             self.service.audit(s, actor, pid, "interactive.package.read", artifact.id)
             return raw
 
-    def document(self, actor, pid, rid, aid=None, release_id=None):
+    def document(self, actor, pid, rid, aid=None, release_id=None, *, native=True):
         with self.service.db() as s:
             _, _, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
             entity, row = selected_id(s, self.service, actor, pid, choices, rid, "document")
@@ -376,7 +376,9 @@ class InteractiveKnowledgeService:
                 **readable_document(row, chapters, visible),
                 "native": describe(
                     self.service, s, actor, pid, choices, row, chapters, self._packages(s, actor, pid, choices)
-                ),
+                )
+                if native
+                else None,
             }
 
     def bindings(self, actor, pid, aid=None, release_id=None):
@@ -616,8 +618,9 @@ def install_interactive(app, service, actor, envelope):
         a: ActorDep,
         analysis_set_id: str | None = None,
         release_id: str | None = None,
+        native: bool = True,
     ):
-        return envelope(request, shared.document(a, pid, rid, analysis_set_id, release_id))
+        return envelope(request, shared.document(a, pid, rid, analysis_set_id, release_id, native=native))
 
     @app.get(prefix + "/bindings", response_model=PrototypeEnvelope[list[InteractiveBindingOutput]])
     def bindings(

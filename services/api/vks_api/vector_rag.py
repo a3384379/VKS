@@ -932,7 +932,23 @@ class VectorRag:
             + "\n上下文："
             + form.context.section_title
         )
-        key = f"module:{corpus}:{form.package_id}:{form.target.route}" if form.context.scope == "module" else sha(text)
+        question = getattr(form, "question", None)
+        if question:
+            text = (
+                "问题："
+                + question
+                + "\n对话："
+                + " ".join(m.content for m in form.history if m.role == "user")[-4000:]
+                + "\n"
+                + form.context.page_title
+                + "\n"
+                + text
+            )
+        key = (
+            f"module:{corpus}:{form.package_id}:{form.target.route}"
+            if form.context.scope == "module" and not question
+            else sha(text)
+        )
         with self.lock:
             lock = self.query_locks.setdefault((pid, space, key), threading.Lock())
         with lock:
