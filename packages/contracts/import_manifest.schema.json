@@ -54,6 +54,18 @@
     "uiManifest": {
       "$ref": "#/$defs/manifestReference"
     },
+    "prototypeManifest": {
+      "$ref": "#/$defs/manifestReference"
+    },
+    "prototypeManifests": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/manifestReference"}
+    },
+    "businessPointsManifest": {
+      "$ref": "#/$defs/manifestReference"
+    },
     "bindings": {
       "$ref": "#/$defs/manifestReference"
     },
@@ -76,6 +88,7 @@
     }
   },
   "allOf": [
+    {"not": {"required": ["prototypeManifest", "prototypeManifests"]}},
     {
       "if": {
         "required": [
@@ -83,8 +96,10 @@
         ]
       },
       "then": {
-        "required": [
-          "uiManifest"
+        "anyOf": [
+          {"required": ["uiManifest"]},
+          {"required": ["prototypeManifest"]},
+          {"required": ["prototypeManifests"]}
         ]
       }
     }
@@ -630,6 +645,7 @@
                   "sql",
                   "table",
                   "document",
+                  "business_point",
                   "section",
                   "rule"
                 ]

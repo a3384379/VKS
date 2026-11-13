@@ -11,10 +11,14 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Button, Empty } from "./components";
-import { useWorkspace } from "./context";
+import { usePermission, useWorkspace } from "./context";
+import { prototypeManifest } from "./prototype";
 
 export function ProjectCockpit() {
   const { w, navigate, navigateExplanation } = useWorkspace();
+  const canImport = usePermission("source:import");
+  const canManage = usePermission("project:manage");
+  const hasPrototype = w.pages.some((page) => prototypeManifest(page));
   const journeys = w.entities.filter((e) => e.type === "journey");
   const business = journeys.filter(
     (e) => materialKind(e) === "business_process",
@@ -54,14 +58,31 @@ export function ProjectCockpit() {
                 "从业务场景进入规则、接口、实现与原始证据，保持每一次探索的版本和上下文。"}
             </p>
             <div className="row wrap">
-              <Button kind="primary" onClick={() => navigate("workbench")}>
-                <Boxes size={16} />
-                探索业务流程 <ArrowRight size={15} />
-              </Button>
-              <Button onClick={() => navigate("agent")}>
-                <Sparkles size={16} />
-                构建项目知识
-              </Button>
+              {w.pages.length > 0 && (
+                <Button kind="primary" onClick={() => navigate("workbench")}>
+                  <Boxes size={16} />
+                  {hasPrototype ? "进入导览" : "探索业务流程"}{" "}
+                  <ArrowRight size={15} />
+                </Button>
+              )}
+              {w.documents.length > 0 && !hasPrototype && (
+                <Button kind="primary" onClick={() => navigate("documents")}>
+                  打开项目文档 <ArrowRight size={15} />
+                </Button>
+              )}
+              {canManage &&
+                hasPrototype &&
+                !w.prototype_settings?.entry_page_id && (
+                  <Button onClick={() => navigate("settings")}>
+                    设置导览入口
+                  </Button>
+                )}
+              {canImport && (
+                <Button onClick={() => navigate("agent")}>
+                  <Sparkles size={16} />
+                  构建项目知识
+                </Button>
+              )}
             </div>
           </section>
           <div className="v2-metrics">
@@ -115,9 +136,11 @@ export function ProjectCockpit() {
             <dt>运行版本对齐</dt>
             <dd>{w.selected_analysis_set?.runtime_alignment || "unknown"}</dd>
           </dl>
-          <Button kind="primary" onClick={() => navigate("imports")}>
-            打开智能接入向导 <ArrowRight size={15} />
-          </Button>
+          {canImport && (
+            <Button kind="primary" onClick={() => navigate("imports")}>
+              打开智能接入向导 <ArrowRight size={15} />
+            </Button>
+          )}
         </Panel>
       </div>
       <BusinessModuleExplorer compact />
@@ -146,12 +169,18 @@ export function ProjectCockpit() {
                   className="v2-domain"
                   key={page.id}
                   onClick={() => {
-                    navigateExplanation({
-                      pageId: page.id,
-                      actionId: actions[0]?.id || "",
-                      followTarget: false,
-                    });
-                    navigate("workbench");
+                    if (
+                      navigateExplanation({
+                        pageId: page.id,
+                        actionId: prototypeManifest(page)
+                          ? ""
+                          : actions[0]?.id || "",
+                        stateKey: "",
+                        scenarioId: "",
+                        followTarget: false,
+                      })
+                    )
+                      navigate("workbench");
                   }}
                 >
                   <Boxes size={22} />
@@ -174,7 +203,11 @@ export function ProjectCockpit() {
             title="接入资料，建立业务入口"
             description="上传原型、Markdown 或 OpenAPI；缺少源码时仍可阅读与手工关联。"
             action={
-              <Button onClick={() => navigate("imports")}>接入项目</Button>
+              w.documents.length > 0 ? (
+                <Button onClick={() => navigate("documents")}>打开文档</Button>
+              ) : canImport ? (
+                <Button onClick={() => navigate("imports")}>导入资料</Button>
+              ) : undefined
             }
           />
         )}

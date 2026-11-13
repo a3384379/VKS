@@ -1364,6 +1364,20 @@ tbody tr:last-child td {
 .preflight-result details {
   margin-bottom: 16px;
 }
+.upload-batch-material {
+  border-top: 1px solid #dfebfa;
+  margin-top: 12px;
+  padding-top: 12px;
+  overflow-wrap: anywhere;
+}
+.upload-batch-material p,
+.upload-batch-material li {
+  margin-block: 5px;
+  font-size: 13px;
+}
+.upload-batch-material details {
+  margin-bottom: 8px;
+}
 summary {
   cursor: pointer;
   font-size: 12px;

@@ -18,6 +18,7 @@ import { arrangeJourney } from "./journey-editing";
 import { JourneyReader } from "./JourneyReader";
 import { JourneySourcePicker } from "./JourneySourcePicker";
 import { resolveJourneyReading } from "./journey-navigation";
+import { prototypeManifest } from "./prototype";
 import { workspaceBaseline } from "./workspace-baseline";
 import {
   journeyListRouteKey,
@@ -303,22 +304,40 @@ export function JourneyCanvas() {
       return;
     }
     if (target.kind === "state") {
-      navigateExplanation({
-        scenarioId: target.reference.scenario_id,
-        stateKey: target.reference.state_key,
-        followTarget: false,
-      });
-      navigate("workbench");
+      if (
+        navigateExplanation({
+          scenarioId: target.reference.scenario_id,
+          stateKey: target.reference.state_key,
+          followTarget: false,
+        })
+      )
+        navigate("workbench");
       return;
     }
     const entity = target.entity;
     if (entity.type === "action" || entity.type === "page") {
-      navigateExplanation(
-        entity.type === "action"
-          ? { actionId: entity.id, followTarget: false }
-          : { pageId: entity.id, followTarget: false },
-      );
-      navigate("workbench");
+      if (
+        navigateExplanation(
+          entity.type === "action"
+            ? {
+                actionId: entity.id,
+                followTarget: false,
+                ...(node.prototype_state_key
+                  ? {
+                      stateKey: node.prototype_state_key,
+                      triggerStateKey: node.prototype_state_key,
+                    }
+                  : {}),
+              }
+            : {
+                pageId: entity.id,
+                followTarget: false,
+                actionId: "",
+                stateKey: node.prototype_state_key || "",
+              },
+        )
+      )
+        navigate("workbench");
     } else
       navigate(
         entity.type === "document" || entity.type === "section"
@@ -915,6 +934,7 @@ export function JourneyCanvas() {
                                     binding: _,
                                     state_ref: _s,
                                     capture_ref: _c,
+                                    prototype_state_key: _p,
                                     ...rest
                                   } = node;
                                   change({
@@ -953,6 +973,7 @@ export function JourneyCanvas() {
                                     if (entity)
                                       patchNode(node.key, {
                                         title: entity.name,
+                                        prototype_state_key: undefined,
                                         binding: {
                                           entity_id: entity.id,
                                           revision_id:
@@ -970,6 +991,57 @@ export function JourneyCanvas() {
                                 </select>
                               </label>
                             )}
+                            {node.binding &&
+                              !node.state_ref &&
+                              !node.capture_ref &&
+                              (() => {
+                                const selected = bindingEntities.find(
+                                  (item) => item.id === node.binding?.entity_id,
+                                );
+                                const page =
+                                  selected?.type === "page"
+                                    ? selected
+                                    : w.pages.find(
+                                        (item) =>
+                                          item.stable_key ===
+                                          selected?.metadata.page_key,
+                                      );
+                                const states = prototypeManifest(
+                                  page,
+                                )?.states.filter(
+                                  (state) =>
+                                    selected?.type === "page" ||
+                                    state.anchors.some(
+                                      (anchor) =>
+                                        anchor.actionKey ===
+                                        selected?.stable_key,
+                                    ),
+                                );
+                                return states?.length ? (
+                                  <label>
+                                    原型状态
+                                    <select
+                                      value={node.prototype_state_key || ""}
+                                      onChange={(event) =>
+                                        patchNode(node.key, {
+                                          prototype_state_key:
+                                            event.target.value || undefined,
+                                        })
+                                      }
+                                    >
+                                      <option value="">默认状态</option>
+                                      {states.map((state) => (
+                                        <option
+                                          key={state.stateKey}
+                                          value={state.stateKey}
+                                        >
+                                          {state.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                ) : null;
+                              })()}
                             {(node.state_ref || node.capture_ref) && (
                               <Button
                                 onClick={() => {

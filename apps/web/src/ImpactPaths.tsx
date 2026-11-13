@@ -42,6 +42,12 @@ export function ImpactPaths({
   const changes = objects(report.changes).filter(
     (change) => !entityId || change.entity_id === entityId,
   );
+  const bindings = objects(report.binding_changes).filter(
+    (change) =>
+      !entityId ||
+      change.from_entity_id === entityId ||
+      change.to_entity_id === entityId,
+  );
   const paths = objects(report.impact_paths).filter(
     (path) => !entityId || path.changed_entity_id === entityId,
   );
@@ -89,10 +95,59 @@ export function ImpactPaths({
       <ProductEntityLink
         entity={target.entity}
         baseline={target.baseline}
+        selectionVersion={
+          target.baseline === to &&
+          typeof report.to_selection_version === "number"
+            ? report.to_selection_version
+            : undefined
+        }
         stepKey={stepKey}
       />
     ) : (
       <span className="muted">准确对象不在当前可见版本中</span>
+    );
+  }
+  function bindingSide(row: Dict, workspace: typeof before, baseline: string) {
+    if (!Object.keys(row).length) return <p className="muted">无关联</p>;
+    const binding = row as unknown as Relation;
+    const detail = obj(row.prototype_scope);
+    const states = Array.isArray(detail.states) ? detail.states.map(value) : [];
+    return (
+      <div>
+        <div className="product-impact-route">
+          {[row.from_revision_id, row.to_revision_id].map((id, index) => {
+            const endpoint = workspace?.entities.find(
+              (entry) => entry.entity_revision_id === id,
+            );
+            return (
+              <span key={index}>
+                {index === 1 && <span aria-hidden="true"> → </span>}
+                {endpoint && !stale ? (
+                  <ProductEntityLink
+                    entity={endpoint}
+                    baseline={baseline}
+                    selectionVersion={
+                      baseline === to &&
+                      typeof report.to_selection_version === "number"
+                        ? report.to_selection_version
+                        : undefined
+                    }
+                  />
+                ) : (
+                  <span className="muted">准确对象暂不可定位</span>
+                )}
+              </span>
+            );
+          })}
+        </div>
+        <RelationState relation={binding} />
+        {row.prototype_scope != null && (
+          <p>
+            适用状态 {states.length ? states.join("、") : "全部"} · 优先级{" "}
+            {value(detail.priority)}
+          </p>
+        )}
+      </div>
     );
   }
   const relations = new Map<string, Relation>(
@@ -203,6 +258,39 @@ export function ImpactPaths({
           </section>
         ))}
       </details>
+      {bindings.length > 0 && (
+        <section aria-label="原型关联变更">
+          <h4>原型关联变更 · {bindings.length} 项</h4>
+          {bindings.map((change) => (
+            <article
+              key={`${value(change.relation_type)}:${value(change.from_entity_id)}:${value(change.to_entity_id)}`}
+              className="proposal-card"
+            >
+              <Tag>
+                {{ added: "新增", modified: "更新", removed: "移除" }[
+                  value(change.change_kind)
+                ] || "变更"}
+              </Tag>
+              <Tag>
+                {
+                  {
+                    documents: "动作与相关文档",
+                    has_business_point: "动作与业务点",
+                    supported_by_section: "业务点与原文",
+                  }[value(change.relation_type)]
+                }
+              </Tag>
+              <details>
+                <summary>查看关联的原版本和目标基线</summary>
+                <h5>原版本</h5>
+                {bindingSide(obj(change.before), before, from)}
+                <h5>目标基线</h5>
+                {bindingSide(obj(change.after), after, to)}
+              </details>
+            </article>
+          ))}
+        </section>
+      )}
       <h4>
         潜在影响关联 · 显示 {Math.min(paths.length, 30)} / {paths.length} 条
       </h4>

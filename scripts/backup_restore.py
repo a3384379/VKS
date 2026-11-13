@@ -62,6 +62,38 @@ def _reference_keys(rows):
     return keys
 
 
+def _release_manifests(rows):
+    entries = []
+    for row in rows["knowledge_release"]:
+        try:
+            manifest = row["manifest_json"]
+            if isinstance(manifest, str):
+                manifest = json.loads(manifest)
+            valid = (
+                manifest["project_id"] == row["project_id"]
+                and manifest["analysis_set_id"] == row["analysis_set_id"]
+                and digest(canonical(manifest)) == row["manifest_sha256"]
+            )
+        except (KeyError, ValueError, TypeError):
+            valid = False
+        if not valid:
+            raise BackupError("数据库中的发布清单摘要或归属不匹配")
+        entries.append({"id": row["id"], "manifest_sha256": row["manifest_sha256"]})
+    return sorted(entries, key=lambda item: item["id"])
+
+
+def _validate_restored_database(rows, files, declared_releases):
+    required = _reference_keys(rows)
+    if any("objects/" + key not in files for key in required):
+        raise BackupError("恢复数据库对象引用缺失")
+    try:
+        expected = sorted(declared_releases, key=lambda item: item["id"])
+    except (KeyError, TypeError):
+        raise BackupError("备份清单中的发布记录无效") from None
+    if _release_manifests(rows) != expected:
+        raise BackupError("备份清单与数据库中的发布记录不一致")
+
+
 def _sqlite_rows(connection):
     names = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     result = {}
@@ -168,6 +200,7 @@ def backup(data_dir, destination, *, database_url=None, pg_tools_container=None)
                         files["database.dump"] = result.stdout
             finally:
                 engine.dispose()
+        releases = _release_manifests(rows)
         keys = _reference_keys(rows)
         checkpoint_keys = set()
         for record in rows.get("job_checkpoint", []):
@@ -201,9 +234,7 @@ def backup(data_dir, destination, *, database_url=None, pg_tools_container=None)
             "files": [
                 {"path": name, "size_bytes": len(raw), "sha256": digest(raw)} for name, raw in sorted(files.items())
             ],
-            "release_manifests": [
-                {"id": r["id"], "manifest_sha256": r["manifest_sha256"]} for r in rows["knowledge_release"]
-            ],
+            "release_manifests": releases,
             "excluded": ["bootstrap-token", "environment variables", "credential secret plaintext"],
             "credentials_policy": "restore revokes sessions, machine tokens and OAuth project grants",
         }
@@ -217,9 +248,30 @@ def backup(data_dir, destination, *, database_url=None, pg_tools_container=None)
             os.link(staging, target)
         except FileExistsError:
             raise BackupError("备份目标在执行期间已被创建，未覆盖") from None
+    archive_hash = digest(target.read_bytes())
+    recorded = False
+    try:
+        with tempfile.TemporaryDirectory(prefix=".backup-status-", dir=root) as directory:
+            status = Path(directory) / "status.json"
+            status.write_bytes(
+                canonical(
+                    {
+                        "created_at": manifest["created_at"],
+                        "database_kind": kind,
+                        "archive_sha256": archive_hash,
+                    }
+                )
+            )
+            status.chmod(0o600)
+            os.replace(status, root / "backup-status.json")
+            recorded = True
+    except OSError:
+        # The archive is still usable when the source is mounted read-only.
+        pass
     return {
         "path": str(target),
-        "sha256": digest(target.read_bytes()),
+        "sha256": archive_hash,
+        "status_recorded": recorded,
         "object_count": len(keys),
         "release_count": len(manifest["release_manifests"]),
     }
@@ -332,9 +384,7 @@ def restore(archive, destination, *, expected_sha256, database_url=None, pg_tool
             with sqlite3.connect(staging / "vks.db") as db:
                 if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise BackupError("恢复数据库完整性检查失败")
-                required = _reference_keys(_sqlite_rows(db))
-                if any("objects/" + key not in files for key in required):
-                    raise BackupError("恢复对象引用缺失")
+                _validate_restored_database(_sqlite_rows(db), files, manifest["release_manifests"])
                 _invalidate_credentials(db, "sqlite")
         else:
             if not database_url or make_url(database_url).get_backend_name() != "postgresql":
@@ -350,10 +400,9 @@ def restore(archive, destination, *, expected_sha256, database_url=None, pg_tool
             if result.returncode:
                 raise BackupError("PostgreSQL 事务恢复失败")
             with engine.begin() as conn:
-                required = _reference_keys(_postgres_rows(conn))
-                if any("objects/" + key not in files for key in required):
-                    raise BackupError("恢复数据库对象引用缺失")
                 _invalidate_credentials(conn, "postgres")
+            with engine.connect() as conn:
+                _validate_restored_database(_postgres_rows(conn), files, manifest["release_manifests"])
             (staging / "database.dump").unlink()
         report = {
             "source_sha256": expected_sha256,

@@ -4,6 +4,7 @@ from sqlalchemy import engine_from_config, pool
 from vks_api.models import Base
 from vks_api import knowledge, scenarios, jobs, identity  # noqa: F401 - register tables
 from vks_api import oauth, ai_gateway, documents, versions, relationships, modules, project_profile  # noqa: F401
+from vks_api import materials  # noqa: F401
 from vks_api.connection import database_url
 
 config = context.config

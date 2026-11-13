@@ -173,7 +173,7 @@ def publish_job(job_id, kind):
         "vks-browser"
         if kind == "capture"
         else "vks-model"
-        if kind in ("generate_documents", "knowledge_task")
+        if kind in ("generate_documents", "knowledge_task", "material_migrate")
         else "vks-index"
     )
     celery.send_task("vks.execute_job", args=[job_id], queue=queue, serializer="json", retry=False)
@@ -269,6 +269,11 @@ def _processor_version():
         root / "packages/analyzers/cancellation.py",
         root / "packages/analyzers/syntax_cache.py",
         root / "packages/analyzers/incremental.py",
+        root / "packages/analyzers/offline_prototype.py",
+        root / "packages/analyzers/prototype_manifest.py",
+        root / "packages/analyzers/business_points.py",
+        root / "packages/contracts/prototype_manifest.schema.json",
+        root / "packages/contracts/business_points_manifest.schema.json",
         root / "services/api/vks_api/source_cache.py",
     ]
     h = hashlib.sha256()
@@ -371,8 +376,9 @@ def save_parse_checkpoint(service, job_id, attempt, input_hash, parsed):
 
 
 def execute_job(service, jid):
-    from .knowledge import ImportService
+    from .knowledge import ImportService, persist_bundle
     from .models import Outbox, Project, Upload
+    from .prototype_import import finish_batch, finish_preview, prepare_batch
     from .scenarios import ScenarioService
     from .service import JOB_SCOPES, DomainError, canonical, future, sha
 
@@ -383,12 +389,8 @@ def execute_job(service, jid):
         job.attempt += 1
         attempt = job.attempt
         try:
-            service.require(
-                s,
-                current_actor(service, job.created_by, job.project_id, s, job=job),
-                job.project_id,
-                JOB_SCOPES[job.kind],
-            )
+            principal = current_actor(service, job.created_by, job.project_id, s, job=job)
+            service.require(s, principal, job.project_id, JOB_SCOPES[job.kind])
         except DomainError as error:
             job.state = "failed"
             job.stage = "AUTHORIZATION_FAILED"
@@ -406,11 +408,19 @@ def execute_job(service, jid):
         project = s.get(Project, pid)
         project_key = project.key
         upload = (
-            s.scalar(select(Upload).where(Upload.artifact_id == payload["artifact_ids"][0]))
-            if kind == "import"
+            s.scalar(
+                select(Upload).where(
+                    Upload.artifact_id == payload["artifact_ids"][0],
+                    Upload.project_id == pid,
+                    Upload.created_by == owner,
+                    Upload.complete.is_(True),
+                )
+            )
+            if kind == "import" and payload["kind"] == "bundle"
             else None
         )
         object_key = upload.sha256 if upload else None
+        upload_size = upload.size_bytes if upload else None
         input_hash = sha(canonical(payload))
 
     def processing_cancelled():
@@ -443,11 +453,21 @@ def execute_job(service, jid):
                     from .ai_gateway import AiService
 
                     document_output = AiService(service).prepare_document(jid)
+                if kind == "material_migrate":
+                    from .materials import migrate_job
+
+                    material_output = migrate_job(service, jid)
+                if kind == "export" and payload["format"] == "readonly_html":
+                    from .readonly_export import prepare_job
+
+                    readonly_output = prepare_job(service, jid, processing_cancelled)
                 if kind == "knowledge_task":
                     from .knowledge_tasks import KnowledgeTaskService
 
                     task_output = KnowledgeTaskService(service).prepare(jid)
-                if kind == "import":
+                if kind == "import_preview" or payload.get("_prototype_batch"):
+                    prepared = prepare_batch(service, principal, pid, payload, preview=kind == "import_preview")
+                elif kind == "import":
                     parsed = load_parse_checkpoint(service, jid, input_hash)
                     if parsed is None:
                         if payload["kind"] != "bundle":
@@ -461,6 +481,8 @@ def execute_job(service, jid):
                                 raise DomainError(
                                     "VKS_DEPENDENCY_UNAVAILABLE", "上传对象存储暂不可用", 503, retryable=True
                                 ) from e
+                            if len(data) != upload_size or sha(data) != object_key:
+                                raise DomainError("VKS_INTEGRITY_ERROR", "上传对象完整性校验失败", 409)
                             parsed = service._parse(data, project_key)
                         save_parse_checkpoint(service, jid, attempt, input_hash, parsed)
             with service.db() as s:
@@ -478,12 +500,29 @@ def execute_job(service, jid):
                     return
                 if job.lease_until and job.lease_until <= now():
                     return
-                service.require(s, current_actor(service, owner, pid, s, job=job), pid, JOB_SCOPES[kind])
-                if kind == "import":
+                principal = current_actor(service, owner, pid, s, job=job)
+                service.require(s, principal, pid, JOB_SCOPES[kind])
+                if kind == "import_preview":
+                    result = finish_preview(service, s, principal, pid, payload, prepared)
+                elif kind == "import" and payload.get("_prototype_batch"):
+                    result = finish_batch(service, s, principal, pid, payload, prepared)
+                elif kind == "import":
+                    if receipt := payload.get("_prototype_preview"):
+                        from .prototype import preview_fingerprint
+                        from .prototype_edit import draft, version
+
+                        analysis, _ = draft(s, service, principal, pid, payload["analysis_set_id"], "source:import")
+                        version(analysis.selection_version, receipt["selection_version"])
+                        if preview_fingerprint(parsed, payload, analysis.selection_version) != receipt["digest"]:
+                            raise DomainError("VKS_VERSION_CONFLICT", "导入资料与预检摘要不一致，请重新预检", 409)
                     if payload.get("_source_sync"):
                         from .source_sync import SourceSyncService
 
-                        result = SourceSyncService(service).persist(s, job, parsed)
+                        result = SourceSyncService(service).persist(s, job, parsed, principal)
+                    elif receipt:
+                        result = persist_bundle(
+                            service, s, pid, owner, parsed, analysis.id, actor=principal, reuse_imported_manifest=True
+                        )
                     else:
                         result = service._commit_bundle(
                             s,
@@ -491,6 +530,7 @@ def execute_job(service, jid):
                             owner,
                             parsed,
                             payload.get("analysis_set_id") if payload["kind"] != "bundle" else None,
+                            actor=principal,
                         )
                     if parsed.analysis_metrics:
                         result["analysis_metrics"] = parsed.analysis_metrics
@@ -509,8 +549,14 @@ def execute_job(service, jid):
                     from .knowledge_tasks import KnowledgeTaskService
 
                     result = KnowledgeTaskService(service).finalize(s, job, task_output)
+                elif kind == "material_migrate":
+                    result = material_output
                 elif kind == "export":
-                    result = service._perform_export(s, job)
+                    result = (
+                        service._perform_export(s, job, readonly_output)
+                        if payload["format"] == "readonly_html"
+                        else service._perform_export(s, job)
+                    )
                 elif kind == "detect_drift":
                     from .versions import VersionService
 

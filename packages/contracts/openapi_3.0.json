@@ -1,0 +1,5183 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "VKS additive V3 API",
+    "version": "3.0-dev"
+  },
+  "paths": {
+    "/api/v3/projects/{pid}/prototype/settings": {
+      "put": {
+        "summary": "Settings",
+        "operationId": "settings_api_v3_projects__pid__prototype_settings_put",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsEdit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PrototypeSettingsResult_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/prototype/menu": {
+      "get": {
+        "summary": "Menu",
+        "operationId": "menu_api_v3_projects__pid__prototype_menu_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PrototypeMenu_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/prototype/pages/{page_key}": {
+      "get": {
+        "summary": "Page",
+        "operationId": "page_api_v3_projects__pid__prototype_pages__page_key__get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "page_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Page Key"
+            }
+          },
+          {
+            "name": "state_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State Key"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PrototypePage_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/prototype/actions/{action_key}/context": {
+      "get": {
+        "summary": "Context",
+        "operationId": "context_api_v3_projects__pid__prototype_actions__action_key__context_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "action_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Action Key"
+            }
+          },
+          {
+            "name": "page_key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Page Key"
+            }
+          },
+          {
+            "name": "trigger_state_key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[a-z][a-z0-9._-]*$",
+              "title": "Trigger State Key"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          },
+          {
+            "name": "policy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "valid",
+                "outdated",
+                "all"
+              ],
+              "type": "string",
+              "default": "valid",
+              "title": "Policy"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PrototypeContext_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/sections/{section_key}/prototype-references": {
+      "get": {
+        "summary": "References",
+        "operationId": "references_api_v3_projects__pid__sections__section_key__prototype_references_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "section_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Section Key"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PrototypeReferences_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/prototype/pages/{page_key}/anchors": {
+      "put": {
+        "summary": "Anchors",
+        "operationId": "anchors_api_v3_projects__pid__prototype_pages__page_key__anchors_put",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "page_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Page Key"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnchorEdit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PrototypeAnchorsResult_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/prototype/actions/{action_key}/business-points": {
+      "post": {
+        "summary": "Binding",
+        "operationId": "binding_api_v3_projects__pid__prototype_actions__action_key__business_points_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "action_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Action Key"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindingEdit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PrototypeBindingResult_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/prototype/import-previews": {
+      "post": {
+        "summary": "Import Preview",
+        "operationId": "import_preview_api_v3_projects__pid__prototype_import_previews_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PreviewInput"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BatchPreview"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Single material preview report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_ImportPreviewResult_"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Batch preview job accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_JobOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/prototype/imports": {
+      "post": {
+        "summary": "Import Material",
+        "operationId": "import_material_api_v3_projects__pid__prototype_imports_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ImportConfirmation"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BatchConfirmation"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_JobOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/prototype/pages/{page_key}/states/{state_key}/image": {
+      "get": {
+        "summary": "Image",
+        "operationId": "image_api_v3_projects__pid__prototype_pages__page_key__states__state_key__image_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "page_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Page Key"
+            }
+          },
+          {
+            "name": "state_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Key"
+            }
+          },
+          {
+            "name": "page_revision_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Page Revision Id"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/rag/settings": {
+      "get": {
+        "summary": "Settings",
+        "operationId": "settings_api_v3_projects__pid__interactive_rag_settings_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Save",
+        "operationId": "save_api_v3_projects__pid__interactive_rag_settings_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RagSettings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/rag/status": {
+      "post": {
+        "summary": "Status",
+        "operationId": "status_api_v3_projects__pid__interactive_rag_status_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistanceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/rag/documents/status": {
+      "post": {
+        "summary": "Document Status",
+        "operationId": "document_status_api_v3_projects__pid__interactive_rag_documents_status_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentIndexInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/rag/documents/build": {
+      "post": {
+        "summary": "Document Build",
+        "operationId": "document_build_api_v3_projects__pid__interactive_rag_documents_build_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentIndexInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/rag/test": {
+      "post": {
+        "summary": "Test",
+        "operationId": "test_api_v3_projects__pid__interactive_rag_test_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/rag/build": {
+      "post": {
+        "summary": "Build",
+        "operationId": "build_api_v3_projects__pid__interactive_rag_build_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistanceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/semantic": {
+      "post": {
+        "summary": "Semantic",
+        "operationId": "semantic_api_v3_projects__pid__interactive_semantic_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistanceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_RelatedOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/related": {
+      "post": {
+        "summary": "Related",
+        "operationId": "related_api_v3_projects__pid__interactive_related_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistanceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_RelatedOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/assist": {
+      "post": {
+        "summary": "Assist",
+        "operationId": "assist_api_v3_projects__pid__interactive_assist_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistanceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_AssistanceOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/catalog": {
+      "get": {
+        "summary": "Catalog",
+        "operationId": "catalog_api_v3_projects__pid__interactive_catalog_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_InteractiveCatalog_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/packages/{package_id}/content": {
+      "get": {
+        "summary": "Content",
+        "operationId": "content_api_v3_projects__pid__interactive_packages__package_id__content_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "package_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Package Id"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/documents/{rid}": {
+      "get": {
+        "summary": "Document",
+        "operationId": "document_api_v3_projects__pid__interactive_documents__rid__get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_InteractiveDocument_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/bindings": {
+      "get": {
+        "summary": "Bindings",
+        "operationId": "bindings_api_v3_projects__pid__interactive_bindings_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_list_InteractiveBindingOutput__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Save",
+        "operationId": "save_api_v3_projects__pid__interactive_bindings_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InteractiveBinding"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_InteractiveSaved_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/bindings/{bid}/exclude": {
+      "post": {
+        "summary": "Exclude",
+        "operationId": "exclude_api_v3_projects__pid__interactive_bindings__bid__exclude_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "bid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Exclusion"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_InteractiveSelection_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/open": {
+      "post": {
+        "summary": "Open Workspace",
+        "operationId": "open_workspace_api_v3_projects__pid__materials_open_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenWorkspace"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials": {
+      "get": {
+        "summary": "Library",
+        "operationId": "library_api_v3_projects__pid__materials_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Set Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/prepare": {
+      "post": {
+        "summary": "Prepare",
+        "operationId": "prepare_api_v3_projects__pid__materials_prepare_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareMaterial"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/activate": {
+      "post": {
+        "summary": "Activate",
+        "operationId": "activate_api_v3_projects__pid__materials_activate_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 90,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateMaterials"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/versions": {
+      "post": {
+        "summary": "Save Version",
+        "operationId": "save_version_api_v3_projects__pid__materials_versions_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveMaterialVersion"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/restore": {
+      "post": {
+        "summary": "Restore",
+        "operationId": "restore_api_v3_projects__pid__materials_restore_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreMaterialVersion"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/migrate": {
+      "post": {
+        "summary": "Migrate",
+        "operationId": "migrate_api_v3_projects__pid__materials_migrate_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenWorkspace"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActivateMaterials": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "revision_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Revision Ids"
+          },
+          "remove_package_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Remove Package Ids"
+          },
+          "replace_all": {
+            "type": "boolean",
+            "title": "Replace All",
+            "default": false
+          },
+          "primary_package_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Package Id"
+          },
+          "auto_migrate": {
+            "type": "boolean",
+            "title": "Auto Migrate",
+            "default": true
+          },
+          "prepared": {
+            "type": "boolean",
+            "title": "Prepared",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id"
+        ],
+        "title": "ActivateMaterials"
+      },
+      "Anchor": {
+        "properties": {
+          "anchorKey": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$",
+            "title": "Anchorkey"
+          },
+          "actionKey": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$",
+            "title": "Actionkey"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Label"
+          },
+          "rect": {
+            "prefixItems": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              }
+            ],
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Rect"
+          },
+          "targetStateKey": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,95}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetstatekey"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "anchorKey",
+          "actionKey",
+          "label",
+          "rect"
+        ],
+        "title": "Anchor"
+      },
+      "AnchorEdit": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "page_revision_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Page Revision Id"
+          },
+          "state_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$",
+            "title": "State Key"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Name"
+          },
+          "anchors": {
+            "items": {
+              "$ref": "#/components/schemas/Anchor"
+            },
+            "type": "array",
+            "maxItems": 128,
+            "title": "Anchors"
+          },
+          "viewport": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Viewport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "upload_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upload Artifact Id"
+          },
+          "clear_surface": {
+            "type": "boolean",
+            "title": "Clear Surface",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "page_revision_id",
+          "state_key",
+          "name",
+          "anchors"
+        ],
+        "title": "AnchorEdit"
+      },
+      "AssistanceInput": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "package_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Package Id"
+          },
+          "target": {
+            "$ref": "#/components/schemas/DOMTarget"
+          },
+          "context": {
+            "$ref": "#/components/schemas/ControlContext"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "documents",
+              "explain"
+            ],
+            "title": "Mode",
+            "default": "explain"
+          },
+          "refresh": {
+            "type": "boolean",
+            "title": "Refresh",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "target"
+        ],
+        "title": "AssistanceInput"
+      },
+      "AssistanceOutput": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "unknowns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unknowns"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "cached": {
+            "type": "boolean",
+            "title": "Cached"
+          },
+          "binding_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Id"
+          },
+          "saved": {
+            "type": "boolean",
+            "title": "Saved"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveCitation"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          },
+          "retrieval": {
+            "type": "string",
+            "title": "Retrieval",
+            "default": "章节关键词检索 + 模型关联"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "explanation",
+          "unknowns",
+          "confidence",
+          "model_id",
+          "cached",
+          "binding_id",
+          "saved",
+          "sections",
+          "selection_version"
+        ],
+        "title": "AssistanceOutput"
+      },
+      "BatchConfirmation": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "preview_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Preview Id"
+          },
+          "preview_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Preview Digest"
+          },
+          "selected_artifact_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Selected Artifact Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "preview_id",
+          "preview_digest",
+          "selected_artifact_ids"
+        ],
+        "title": "BatchConfirmation"
+      },
+      "BatchPreview": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "artifact_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Artifact Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "artifact_ids"
+        ],
+        "title": "BatchPreview"
+      },
+      "BindingEdit": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "action_revision_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Action Revision Id"
+          },
+          "page_revision_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Page Revision Id"
+          },
+          "point_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$",
+            "title": "Point Key"
+          },
+          "point_revision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Revision Id"
+          },
+          "point": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PointText"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "section_revision_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 96,
+                  "minLength": 1
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Revision Ids"
+          },
+          "state_keys": {
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9._-]{0,95}$"
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "State Keys"
+          },
+          "priority": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "default": 0
+          },
+          "binding_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Version"
+          },
+          "excluded": {
+            "type": "boolean",
+            "title": "Excluded",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "action_revision_id",
+          "page_revision_id",
+          "point_key"
+        ],
+        "title": "BindingEdit"
+      },
+      "ControlContext": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "control",
+              "module"
+            ],
+            "title": "Scope",
+            "default": "control"
+          },
+          "page_title": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Page Title",
+            "default": ""
+          },
+          "section_title": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Section Title",
+            "default": ""
+          },
+          "nearby_labels": {
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Nearby Labels"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ControlContext"
+      },
+      "DOMTarget": {
+        "properties": {
+          "route": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^/",
+            "title": "Route"
+          },
+          "frame_path": {
+            "items": {
+              "type": "string",
+              "maxLength": 160,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Frame Path"
+          },
+          "selector": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Selector"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Label"
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "State",
+            "default": ""
+          },
+          "open_steps": {
+            "items": {
+              "type": "string",
+              "maxLength": 2000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Open Steps"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "route",
+          "frame_path",
+          "selector",
+          "label"
+        ],
+        "title": "DOMTarget"
+      },
+      "DocumentIndexInput": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "DocumentIndexInput"
+      },
+      "Exclusion": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "binding_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Binding Version"
+          },
+          "excluded": {
+            "type": "boolean",
+            "title": "Excluded"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "binding_version",
+          "excluded"
+        ],
+        "title": "Exclusion"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImportConfirmation": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "artifact_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Artifact Id"
+          },
+          "preview_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Preview Digest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "artifact_id",
+          "preview_digest"
+        ],
+        "title": "ImportConfirmation"
+      },
+      "ImportPreviewResult": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "preview_digest": {
+            "type": "string",
+            "title": "Preview Digest"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          },
+          "file_count": {
+            "type": "integer",
+            "title": "File Count"
+          },
+          "entity_count": {
+            "type": "integer",
+            "title": "Entity Count"
+          },
+          "operations": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Operations"
+          },
+          "mappings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Mappings"
+          },
+          "relation_count": {
+            "type": "integer",
+            "title": "Relation Count"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "issues": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Issues"
+          },
+          "prototype_import": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prototype Import"
+          }
+        },
+        "type": "object",
+        "required": [
+          "valid",
+          "preview_digest",
+          "selection_version",
+          "file_count",
+          "entity_count",
+          "operations",
+          "mappings",
+          "relation_count",
+          "size_bytes",
+          "issues",
+          "prototype_import"
+        ],
+        "title": "ImportPreviewResult"
+      },
+      "InteractiveBinding": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "package_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Package Id"
+          },
+          "target": {
+            "$ref": "#/components/schemas/DOMTarget"
+          },
+          "point": {
+            "$ref": "#/components/schemas/PointText"
+          },
+          "section_revision_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Section Revision Ids"
+          },
+          "binding_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Id"
+          },
+          "binding_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Version"
+          },
+          "point_revision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Revision Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "package_id",
+          "target",
+          "point",
+          "section_revision_ids"
+        ],
+        "title": "InteractiveBinding"
+      },
+      "InteractiveBindingOutput": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "binding_version": {
+            "type": "integer",
+            "title": "Binding Version"
+          },
+          "excluded": {
+            "type": "boolean",
+            "title": "Excluded"
+          },
+          "validity_status": {
+            "type": "string",
+            "title": "Validity Status"
+          },
+          "point_revision_id": {
+            "type": "string",
+            "title": "Point Revision Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "package_id": {
+            "type": "string",
+            "title": "Package Id"
+          },
+          "target": {
+            "$ref": "#/components/schemas/DOMTarget"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveCitation"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "default": "control"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin",
+            "default": "manual"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "binding_version",
+          "excluded",
+          "validity_status",
+          "point_revision_id",
+          "title",
+          "summary",
+          "package_id",
+          "target",
+          "sections"
+        ],
+        "title": "InteractiveBindingOutput"
+      },
+      "InteractiveCatalog": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          },
+          "editable": {
+            "type": "boolean",
+            "title": "Editable"
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimePackage"
+            },
+            "type": "array",
+            "title": "Packages"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveDocumentInfo"
+            },
+            "type": "array",
+            "title": "Documents"
+          },
+          "primary_package_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Package Id"
+          },
+          "navigation": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Navigation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "release_id",
+          "selection_version",
+          "editable",
+          "packages",
+          "documents"
+        ],
+        "title": "InteractiveCatalog"
+      },
+      "InteractiveChapter": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "revision_id": {
+            "type": "string",
+            "title": "Revision Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "start_line": {
+            "type": "integer",
+            "title": "Start Line",
+            "default": 1
+          },
+          "end_line": {
+            "type": "integer",
+            "title": "End Line",
+            "default": 1
+          },
+          "heading_level": {
+            "type": "integer",
+            "title": "Heading Level",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "revision_id",
+          "name",
+          "content"
+        ],
+        "title": "InteractiveChapter"
+      },
+      "InteractiveCitation": {
+        "properties": {
+          "revision_id": {
+            "type": "string",
+            "title": "Revision Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "document_revision_id": {
+            "type": "string",
+            "title": "Document Revision Id"
+          },
+          "document_name": {
+            "type": "string",
+            "title": "Document Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision_id",
+          "name",
+          "content",
+          "document_revision_id",
+          "document_name"
+        ],
+        "title": "InteractiveCitation"
+      },
+      "InteractiveDocument": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "revision_id": {
+            "type": "string",
+            "title": "Revision Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "default": ""
+          },
+          "partial": {
+            "type": "boolean",
+            "title": "Partial",
+            "default": false
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveChapter"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "native": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeDocument"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "revision_id",
+          "name",
+          "sections"
+        ],
+        "title": "InteractiveDocument"
+      },
+      "InteractiveDocumentInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "revision_id": {
+            "type": "string",
+            "title": "Revision Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "default": ""
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
+          },
+          "native_package_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Package Id"
+          },
+          "native_index_modified": {
+            "type": "boolean",
+            "title": "Native Index Modified",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "revision_id",
+          "name",
+          "path"
+        ],
+        "title": "InteractiveDocumentInfo"
+      },
+      "InteractiveSaved": {
+        "properties": {
+          "binding_id": {
+            "type": "string",
+            "title": "Binding Id"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "binding_id",
+          "selection_version"
+        ],
+        "title": "InteractiveSaved"
+      },
+      "InteractiveSelection": {
+        "properties": {
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "selection_version"
+        ],
+        "title": "InteractiveSelection"
+      },
+      "JobOutput": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "completeness": {
+            "type": "string",
+            "title": "Completeness"
+          },
+          "progress": {
+            "type": "integer",
+            "title": "Progress"
+          },
+          "attempt": {
+            "type": "integer",
+            "title": "Attempt"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "created_by": {
+            "type": "string",
+            "title": "Created By"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "issue_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Count"
+          },
+          "result_refs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Result Refs"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "diagnostics_restricted": {
+            "type": "boolean",
+            "title": "Diagnostics Restricted",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "kind",
+          "state",
+          "stage",
+          "completeness",
+          "progress",
+          "attempt",
+          "created_at",
+          "created_by",
+          "updated_at",
+          "result_refs"
+        ],
+        "title": "JobOutput"
+      },
+      "NativeDocument": {
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "title": "Package Id"
+          },
+          "package_key": {
+            "type": "string",
+            "title": "Package Key",
+            "default": ""
+          },
+          "revision_id": {
+            "type": "string",
+            "title": "Revision Id",
+            "default": ""
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "document_anchor": {
+            "type": "string",
+            "title": "Document Anchor",
+            "default": ""
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/NativeDocumentSection"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "matches_index": {
+            "type": "boolean",
+            "title": "Matches Index"
+          },
+          "source_document_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Document Revision Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "sha256",
+          "format",
+          "path",
+          "sections",
+          "matches_index"
+        ],
+        "title": "NativeDocument"
+      },
+      "NativeDocumentSection": {
+        "properties": {
+          "revision_id": {
+            "type": "string",
+            "title": "Revision Id"
+          },
+          "anchor": {
+            "type": "string",
+            "title": "Anchor"
+          },
+          "selector": {
+            "type": "string",
+            "title": "Selector"
+          },
+          "heading": {
+            "type": "string",
+            "title": "Heading"
+          },
+          "heading_level": {
+            "type": "integer",
+            "title": "Heading Level"
+          },
+          "heading_ordinal": {
+            "type": "integer",
+            "title": "Heading Ordinal"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision_id",
+          "anchor",
+          "selector",
+          "heading",
+          "heading_level",
+          "heading_ordinal"
+        ],
+        "title": "NativeDocumentSection"
+      },
+      "OpenWorkspace": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "OpenWorkspace"
+      },
+      "PointText": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Title"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Summary"
+          },
+          "applicability": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Applicability",
+            "default": ""
+          },
+          "outcome": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Outcome",
+            "default": ""
+          },
+          "exceptions": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Exceptions",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "summary"
+        ],
+        "title": "PointText"
+      },
+      "PrepareMaterial": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "prototype",
+              "documents"
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "artifact_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Artifact Ids"
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
+          },
+          "entry": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Entry",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "kind",
+          "name",
+          "artifact_ids"
+        ],
+        "title": "PrepareMaterial"
+      },
+      "PreviewInput": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "artifact_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Artifact Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "artifact_id"
+        ],
+        "title": "PreviewInput"
+      },
+      "PrototypeAnchor": {
+        "properties": {
+          "anchorKey": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$",
+            "title": "Anchorkey"
+          },
+          "actionKey": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,95}$",
+            "title": "Actionkey"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Label"
+          },
+          "rect": {
+            "prefixItems": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              }
+            ],
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Rect"
+          },
+          "targetStateKey": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,95}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetstatekey"
+          },
+          "action_id": {
+            "type": "string",
+            "title": "Action Id"
+          },
+          "action_revision_id": {
+            "type": "string",
+            "title": "Action Revision Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "anchorKey",
+          "actionKey",
+          "label",
+          "rect",
+          "action_id",
+          "action_revision_id"
+        ],
+        "title": "PrototypeAnchor"
+      },
+      "PrototypeAnchorsResult": {
+        "properties": {
+          "page_revision_id": {
+            "type": "string",
+            "title": "Page Revision Id"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_revision_id",
+          "selection_version"
+        ],
+        "title": "PrototypeAnchorsResult"
+      },
+      "PrototypeBindingResult": {
+        "properties": {
+          "point_key": {
+            "type": "string",
+            "title": "Point Key"
+          },
+          "point_revision_id": {
+            "type": "string",
+            "title": "Point Revision Id"
+          },
+          "binding_id": {
+            "type": "string",
+            "title": "Binding Id"
+          },
+          "binding_version": {
+            "type": "integer",
+            "title": "Binding Version"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "point_key",
+          "point_revision_id",
+          "binding_id",
+          "binding_version",
+          "selection_version"
+        ],
+        "title": "PrototypeBindingResult"
+      },
+      "PrototypeContext": {
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/PrototypeScope"
+          },
+          "page_key": {
+            "type": "string",
+            "title": "Page Key"
+          },
+          "page_revision_id": {
+            "type": "string",
+            "title": "Page Revision Id"
+          },
+          "action_key": {
+            "type": "string",
+            "title": "Action Key"
+          },
+          "action_id": {
+            "type": "string",
+            "title": "Action Id"
+          },
+          "action_revision_id": {
+            "type": "string",
+            "title": "Action Revision Id"
+          },
+          "trigger_state_key": {
+            "type": "string",
+            "title": "Trigger State Key"
+          },
+          "display_state_key": {
+            "type": "string",
+            "title": "Display State Key"
+          },
+          "missing_target_surface": {
+            "type": "boolean",
+            "title": "Missing Target Surface"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypePoint"
+            },
+            "type": "array",
+            "title": "Points"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeSource"
+            },
+            "type": "array",
+            "title": "Documents"
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "available",
+              "no_visible_explanation"
+            ],
+            "title": "Availability"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "page_key",
+          "page_revision_id",
+          "action_key",
+          "action_id",
+          "action_revision_id",
+          "trigger_state_key",
+          "display_state_key",
+          "missing_target_surface",
+          "points",
+          "documents",
+          "availability"
+        ],
+        "title": "PrototypeContext"
+      },
+      "PrototypeEnvelope_AssistanceOutput_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AssistanceOutput"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[AssistanceOutput]"
+      },
+      "PrototypeEnvelope_ImportPreviewResult_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ImportPreviewResult"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[ImportPreviewResult]"
+      },
+      "PrototypeEnvelope_InteractiveCatalog_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InteractiveCatalog"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[InteractiveCatalog]"
+      },
+      "PrototypeEnvelope_InteractiveDocument_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InteractiveDocument"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[InteractiveDocument]"
+      },
+      "PrototypeEnvelope_InteractiveSaved_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InteractiveSaved"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[InteractiveSaved]"
+      },
+      "PrototypeEnvelope_InteractiveSelection_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InteractiveSelection"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[InteractiveSelection]"
+      },
+      "PrototypeEnvelope_JobOutput_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/JobOutput"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[JobOutput]"
+      },
+      "PrototypeEnvelope_PrototypeAnchorsResult_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PrototypeAnchorsResult"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PrototypeAnchorsResult]"
+      },
+      "PrototypeEnvelope_PrototypeBindingResult_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PrototypeBindingResult"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PrototypeBindingResult]"
+      },
+      "PrototypeEnvelope_PrototypeContext_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PrototypeContext"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PrototypeContext]"
+      },
+      "PrototypeEnvelope_PrototypeMenu_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PrototypeMenu"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PrototypeMenu]"
+      },
+      "PrototypeEnvelope_PrototypePage_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PrototypePage"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PrototypePage]"
+      },
+      "PrototypeEnvelope_PrototypeReferences_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PrototypeReferences"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PrototypeReferences]"
+      },
+      "PrototypeEnvelope_PrototypeSettingsResult_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PrototypeSettingsResult"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PrototypeSettingsResult]"
+      },
+      "PrototypeEnvelope_RelatedOutput_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RelatedOutput"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[RelatedOutput]"
+      },
+      "PrototypeEnvelope_dict_": {
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Data"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[dict]"
+      },
+      "PrototypeEnvelope_list_InteractiveBindingOutput__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveBindingOutput"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[list[InteractiveBindingOutput]]"
+      },
+      "PrototypeMenu": {
+        "properties": {
+          "entry_page_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Page Key"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypePageEntry"
+            },
+            "type": "array",
+            "title": "Pages"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entry_page_key",
+          "pages",
+          "total",
+          "next_cursor"
+        ],
+        "title": "PrototypeMenu"
+      },
+      "PrototypePage": {
+        "properties": {
+          "page_key": {
+            "type": "string",
+            "title": "Page Key"
+          },
+          "page_revision_id": {
+            "type": "string",
+            "title": "Page Revision Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "state_key": {
+            "type": "string",
+            "title": "State Key"
+          },
+          "state_name": {
+            "type": "string",
+            "title": "State Name"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          },
+          "viewport": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Viewport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "image_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Sha256"
+          },
+          "anchors": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeAnchor"
+            },
+            "type": "array",
+            "title": "Anchors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_key",
+          "page_revision_id",
+          "name",
+          "state_key",
+          "state_name",
+          "origin",
+          "viewport",
+          "image_sha256",
+          "anchors"
+        ],
+        "title": "PrototypePage"
+      },
+      "PrototypePageEntry": {
+        "properties": {
+          "page_key": {
+            "type": "string",
+            "title": "Page Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "page_revision_id": {
+            "type": "string",
+            "title": "Page Revision Id"
+          },
+          "routes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Routes"
+          },
+          "has_surface": {
+            "type": "boolean",
+            "title": "Has Surface"
+          },
+          "group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_key",
+          "name",
+          "page_revision_id",
+          "routes",
+          "has_surface"
+        ],
+        "title": "PrototypePageEntry"
+      },
+      "PrototypePoint": {
+        "properties": {
+          "point_key": {
+            "type": "string",
+            "title": "Point Key"
+          },
+          "point_revision_id": {
+            "type": "string",
+            "title": "Point Revision Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "applicability": {
+            "type": "string",
+            "title": "Applicability"
+          },
+          "outcome": {
+            "type": "string",
+            "title": "Outcome"
+          },
+          "exceptions": {
+            "type": "string",
+            "title": "Exceptions"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "binding_id": {
+            "type": "string",
+            "title": "Binding Id"
+          },
+          "binding_version": {
+            "type": "integer",
+            "title": "Binding Version"
+          },
+          "state_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "State Keys"
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority"
+          },
+          "validity": {
+            "type": "string",
+            "title": "Validity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "point_key",
+          "point_revision_id",
+          "title",
+          "summary",
+          "applicability",
+          "outcome",
+          "exceptions",
+          "sources",
+          "binding_id",
+          "binding_version",
+          "state_keys",
+          "priority",
+          "validity"
+        ],
+        "title": "PrototypePoint"
+      },
+      "PrototypeReference": {
+        "properties": {
+          "page_key": {
+            "type": "string",
+            "title": "Page Key"
+          },
+          "page_id": {
+            "type": "string",
+            "title": "Page Id"
+          },
+          "page_name": {
+            "type": "string",
+            "title": "Page Name"
+          },
+          "state_key": {
+            "type": "string",
+            "title": "State Key"
+          },
+          "state_name": {
+            "type": "string",
+            "title": "State Name"
+          },
+          "action_key": {
+            "type": "string",
+            "title": "Action Key"
+          },
+          "action_id": {
+            "type": "string",
+            "title": "Action Id"
+          },
+          "action_name": {
+            "type": "string",
+            "title": "Action Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_key",
+          "page_id",
+          "page_name",
+          "state_key",
+          "state_name",
+          "action_key",
+          "action_id",
+          "action_name"
+        ],
+        "title": "PrototypeReference"
+      },
+      "PrototypeReferences": {
+        "properties": {
+          "section_revision_id": {
+            "type": "string",
+            "title": "Section Revision Id"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeReference"
+            },
+            "type": "array",
+            "title": "References"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "section_revision_id",
+          "references",
+          "total",
+          "next_cursor"
+        ],
+        "title": "PrototypeReferences"
+      },
+      "PrototypeScope": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_set_id"
+        ],
+        "title": "PrototypeScope"
+      },
+      "PrototypeSettingsResult": {
+        "properties": {
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          },
+          "entry_page_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Page Key"
+          },
+          "menu_order": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Menu Order"
+          },
+          "menu_groups": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Menu Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "row_version",
+          "entry_page_key",
+          "menu_order",
+          "menu_groups"
+        ],
+        "title": "PrototypeSettingsResult"
+      },
+      "PrototypeSource": {
+        "properties": {
+          "section_key": {
+            "type": "string",
+            "title": "Section Key"
+          },
+          "section_id": {
+            "type": "string",
+            "title": "Section Id"
+          },
+          "section_revision_id": {
+            "type": "string",
+            "title": "Section Revision Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "excerpt": {
+            "type": "string",
+            "title": "Excerpt"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Ids"
+          },
+          "validity": {
+            "type": "string",
+            "title": "Validity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "section_key",
+          "section_id",
+          "section_revision_id",
+          "title",
+          "excerpt",
+          "evidence_ids",
+          "validity"
+        ],
+        "title": "PrototypeSource"
+      },
+      "RagSettings": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "connection_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Id"
+          },
+          "model_id": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Model Id",
+            "default": "text-embedding-3-small"
+          },
+          "dimensions": {
+            "type": "integer",
+            "maximum": 3072.0,
+            "minimum": 64.0,
+            "title": "Dimensions",
+            "default": 512
+          },
+          "daily_token_limit": {
+            "type": "integer",
+            "maximum": 100000000.0,
+            "minimum": 10000.0,
+            "title": "Daily Token Limit",
+            "default": 10000000
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RagSettings"
+      },
+      "RelatedOutput": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveCitation"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "binding_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Id"
+          },
+          "excluded": {
+            "type": "boolean",
+            "title": "Excluded",
+            "default": false
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "retrieval",
+              "binding"
+            ],
+            "title": "Origin"
+          },
+          "model_available": {
+            "type": "boolean",
+            "title": "Model Available"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          },
+          "elapsed_ms": {
+            "type": "number",
+            "title": "Elapsed Ms"
+          },
+          "retrieval": {
+            "type": "string",
+            "enum": [
+              "keyword",
+              "hybrid",
+              "binding"
+            ],
+            "title": "Retrieval",
+            "default": "keyword"
+          },
+          "vector_available": {
+            "type": "boolean",
+            "title": "Vector Available",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "sections",
+          "binding_id",
+          "origin",
+          "model_available",
+          "selection_version",
+          "elapsed_ms"
+        ],
+        "title": "RelatedOutput"
+      },
+      "RestoreMaterialVersion": {
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Release Id"
+          },
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "release_id",
+          "analysis_set_id"
+        ],
+        "title": "RestoreMaterialVersion"
+      },
+      "RuntimePackage": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "adapter_version": {
+            "type": "string",
+            "title": "Adapter Version"
+          },
+          "package_key": {
+            "type": "string",
+            "title": "Package Key",
+            "default": ""
+          },
+          "revision_id": {
+            "type": "string",
+            "title": "Revision Id",
+            "default": ""
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "default": ""
+          },
+          "native_index_modified": {
+            "type": "boolean",
+            "title": "Native Index Modified",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "sha256",
+          "size_bytes",
+          "name",
+          "adapter_version"
+        ],
+        "title": "RuntimePackage"
+      },
+      "SaveMaterialVersion": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "name"
+        ],
+        "title": "SaveMaterialVersion"
+      },
+      "SettingsEdit": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "entry_page_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9._-]{0,95}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Page Key"
+          },
+          "menu_order": {
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9._-]{0,95}$"
+            },
+            "type": "array",
+            "maxItems": 512,
+            "title": "Menu Order"
+          },
+          "menu_groups": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^[a-z][a-z0-9._-]{0,95}$": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "minLength": 1,
+                    "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+                  }
+                },
+                "type": "object",
+                "maxProperties": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Menu Groups"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SettingsEdit"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "Viewport": {
+        "properties": {
+          "width": {
+            "type": "integer",
+            "maximum": 7680.0,
+            "minimum": 1.0,
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "maximum": 7680.0,
+            "minimum": 1.0,
+            "title": "Height"
+          },
+          "devicePixelRatio": {
+            "type": "number",
+            "maximum": 4.0,
+            "minimum": 0.5,
+            "title": "Devicepixelratio"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "width",
+          "height",
+          "devicePixelRatio"
+        ],
+        "title": "Viewport"
+      }
+    }
+  }
+}

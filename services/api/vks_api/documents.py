@@ -62,6 +62,10 @@ def parse_sections(markdown: str, fallback_title: str) -> list[dict]:
         )
     if not headings:
         headings = [{"title": fallback_title, "heading_path": [fallback_title], "startLine": 1, "headingEndLine": 0}]
+    elif headings[0]["startLine"] > 1 and "\n".join(lines[: headings[0]["startLine"] - 1]).strip():
+        headings.insert(
+            0, {"title": fallback_title, "heading_path": [fallback_title], "startLine": 1, "headingEndLine": 0}
+        )
     output = []
     for index, heading in enumerate(headings):
         end = headings[index + 1]["startLine"] - 1 if index + 1 < len(headings) else max(1, len(lines))
@@ -494,7 +498,7 @@ class DocumentService:
                 s,
                 document,
                 artifact,
-                sections[0]["title"],
+                next((section["title"] for section in sections if section["headingEndLine"] > 0), sections[0]["title"]),
                 markdown,
                 {"kind": "file", "path": artifact.relative_path},
                 metadata,

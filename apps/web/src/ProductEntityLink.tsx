@@ -11,11 +11,13 @@ let latestEntityIntent = 0;
 export function ProductEntityLink({
   entity,
   baseline,
+  selectionVersion,
   stepKey = "",
   children,
 }: {
   entity: Entity;
   baseline?: string;
+  selectionVersion?: number;
   stepKey?: string;
   children?: ReactNode;
 }) {
@@ -82,6 +84,13 @@ export function ProductEntityLink({
         { signal: controller.signal },
       );
       if (!isCurrent()) return;
+      if (
+        selectionVersion !== undefined &&
+        live.selected_analysis_set?.selection_version !== selectionVersion
+      ) {
+        notify("目标基线已变化，请重新比较后打开", "error");
+        return;
+      }
       const available =
         entity.type === "relation"
           ? live.relations.some((row) => row.id === entity.id)

@@ -19,12 +19,13 @@ from zoneinfo import ZoneInfo
 
 from fastapi import Depends, Header, Request
 from jsonschema import Draft202012Validator
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy import JSON, ForeignKey, Integer, String, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from services.browser_runner.network import NetworkDenied, NetworkPolicy, origin
 
+from .model_connections import ModelConnection  # noqa: F401 - register mapped table
 from .models import Analysis, Artifact, Base, Entity, Identified, Job, Project, uid
 from .service import DomainError
 
@@ -101,11 +102,12 @@ class Input(BaseModel):
 
 
 class PolicyInput(Input):
+    connection_id: str | None = Field(default=None, max_length=96)
     enabled: bool = False
     protocol: str = Field(default="responses", pattern=r"^(responses|chat_completions)$")
     endpoint: str = Field(default="", max_length=2048)
     model_id: str = Field(default="", max_length=160)
-    secret_ref: str | None = Field(default=None, pattern=r"^model-default$")
+    secret_ref: str | None = Field(default=None, pattern=r"^(model-default|model-connection-[0-9a-f-]{36})$")
     allow_external: bool = False
     allow_source: bool = False
     max_input_tokens: int = Field(default=12000, ge=1000, le=128000)
@@ -116,6 +118,11 @@ class PolicyInput(Input):
     input_rate_micro_per_million: int = Field(default=0, ge=0, le=100000000000)
     output_rate_micro_per_million: int = Field(default=0, ge=0, le=100000000000)
     timezone: str = Field(default="Asia/Shanghai", max_length=80)
+
+
+class CredentialInput(Input):
+    api_key: SecretStr
+    confirm_local_storage: bool = False
 
 
 class ModelNotSent(DomainError):
@@ -154,7 +161,12 @@ def _endpoint_policy(config):
     local = parts.hostname in ("127.0.0.1", "localhost", "::1")
     if not local and not config["allow_external"]:
         failure("VKS_FORBIDDEN", "项目尚未允许模型数据出口", 403)
-    path = parts.path.rstrip("/") + ("/responses" if config["protocol"] == "responses" else "/chat/completions")
+    resource = {"responses": "/responses", "chat_completions": "/chat/completions", "embeddings": "/embeddings"}.get(
+        config["protocol"]
+    )
+    if resource is None:
+        failure("VKS_INVALID_INPUT", "模型协议不受支持")
+    path = parts.path.rstrip("/") + resource
     url = urlunsplit((parts.scheme, parts.netloc, path, "", ""))
     networks = [n.strip() for n in os.getenv("VKS_MODEL_ALLOWED_CIDRS", "0.0.0.0/0,::/0").split(",") if n.strip()]
     # Allowed origins are explicit instance configuration; metadata/control ranges
@@ -184,7 +196,9 @@ def request_model(config, body):
             p, ip, port = policy.resolve(url)
         except (NetworkDenied, ValueError):
             failure("VKS_INVALID_INPUT", "模型端点解析或出站策略拒绝请求")
-        key = os.getenv("VKS_MODEL_API_KEY", "") if config.get("secret_ref") == "model-default" else ""
+        from .model_credentials import key_for_ref
+
+        key = key_for_ref(config.get("secret_ref"), config["endpoint"])
         if config.get("secret_ref") and not key:
             failure("VKS_DEPENDENCY_UNAVAILABLE", "模型凭证引用未配置", 503)
     # From connection construction onward any unclassified error is uncertain.
@@ -224,15 +238,29 @@ def request_model(config, body):
 class AiService:
     def __init__(self, service):
         self.service = service
+        from .model_credentials import load_credential
+
+        try:
+            load_credential(service)
+        except DomainError:
+            # Optional model credentials must not prevent opening the workspace.
+            pass
 
     def get_policy(self, actor, pid):
+        from .model_credentials import key_for_ref
+
         with self.service.db() as s:
             self.service.require(s, actor, pid, "project:manage")
             p = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
             return {
                 "row_version": p.row_version if p else 1,
                 **(p.settings if p else PolicyInput().model_dump()),
-                "configured_secret": bool(os.getenv("VKS_MODEL_API_KEY")),
+                "configured_secret": bool(
+                    key_for_ref(
+                        (p.settings if p else {}).get("secret_ref", "model-default"),
+                        (p.settings if p else {}).get("endpoint", ""),
+                    )
+                ),
             }
 
     def set_policy(self, actor, pid, settings, version):
@@ -660,11 +688,12 @@ class AiService:
         return result
 
     def finalize_document(self, s, job, result):
-        from .knowledge import persist_bundle
-        from .jobs import current_actor
-        from .models import Entity, Relation
-        from packages.collector.snapshots import Snapshot, bundle_bytes
         from packages.analyzers.vks_ingest import parse_bundle
+        from packages.collector.snapshots import Snapshot, bundle_bytes
+
+        from .jobs import current_actor
+        from .knowledge import persist_bundle
+        from .models import Entity, Relation
 
         actor = current_actor(self.service, job.created_by, job.project_id, s, job=job)
         self.service.require(s, actor, job.project_id, "knowledge:edit")
@@ -789,6 +818,18 @@ class AiService:
 def install_ai(app, service, actor, envelope, API="/api/v1"):
     ai = AiService(service)
 
+    @app.get(API + "/projects/{pid}/model-credential")
+    def credential(pid: str, request: Request, a=Depends(actor)):
+        from .model_credentials import credential_status
+
+        return envelope(request, credential_status(service, a, pid))
+
+    @app.post(API + "/projects/{pid}/model-credential")
+    def update_credential(pid: str, payload: CredentialInput, request: Request, a=Depends(actor)):
+        from .model_credentials import save_credential
+
+        return envelope(request, save_credential(service, a, pid, payload.api_key, payload.confirm_local_storage))
+
     @app.get(API + "/projects/{pid}/model-policy")
     def policy(pid: str, request: Request, a=Depends(actor)):
         return envelope(request, ai.get_policy(a, pid))
@@ -801,4 +842,7 @@ def install_ai(app, service, actor, envelope, API="/api/v1"):
     def usage(pid: str, request: Request, a=Depends(actor)):
         return envelope(request, ai.usage(a, pid))
 
+    from .model_connections import install_connections
+
+    install_connections(app, service, actor, envelope)
     return ai

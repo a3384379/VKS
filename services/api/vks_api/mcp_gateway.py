@@ -46,7 +46,7 @@ class APIBridge:
         self.token = token
         self.transport = transport
 
-    async def request(self, method: str, path: str, *, body=None, params=None, key=None):
+    async def request(self, method: str, path: str, *, body=None, params=None, key=None, if_match=None):
         token = HTTP_TOKEN.get() or self.token
         if not token:
             raise GatewayError(
@@ -55,6 +55,8 @@ class APIBridge:
         headers = {"Authorization": f"Bearer {token}"}
         if key:
             headers["Idempotency-Key"] = key
+        if if_match is not None:
+            headers["If-Match"] = str(if_match)
         async with httpx.AsyncClient(
             base_url=self.base_url, transport=self.transport, timeout=30, follow_redirects=False
         ) as client:
@@ -81,6 +83,19 @@ class APIBridge:
         project = a.pop("project_id", None)
         key = a.pop("idempotency_key", None)
         prefix = f"/projects/{project}"
+        if name == "get_prototype_action_context":
+            action = a.pop("action_key")
+            return await self.request("GET", f"/api/v3/projects/{project}/prototype/actions/{action}/context", params=a)
+        if name == "save_business_point_binding":
+            action = a.pop("action_key")
+            version = a.pop("selection_version")
+            return await self.request(
+                "POST",
+                f"/api/v3/projects/{project}/prototype/actions/{action}/business-points",
+                body=a,
+                key=key,
+                if_match=version,
+            )
         if name == "propose_journey":
             return await self.request("POST", f"/api/v2/projects/{project}/journeys", body=a, key=key)
         if name == "create_knowledge_task":

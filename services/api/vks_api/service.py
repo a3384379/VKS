@@ -45,6 +45,8 @@ SOURCE_TYPES = {"symbol", "sql", "table"}
 JOB_SCOPES = {
     "knowledge_task": "analysis:run",
     "import": "source:import",
+    "import_preview": "source:import",
+    "material_migrate": "knowledge:edit",
     "index": "analysis:run",
     "generate_documents": "analysis:run",
     "suggest_links": "analysis:run",
@@ -115,6 +117,7 @@ class Service:
             relationships,
             modules,
             project_profile,
+            materials,
         )
 
         self.data_dir = Path(data_dir or os.getenv("VKS_DATA_DIR", ".vks")).resolve()
@@ -162,6 +165,12 @@ class Service:
                 if "metadata_json" not in {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(relation)")}:
                     connection.exec_driver_sql(
                         "ALTER TABLE relation ADD COLUMN metadata_json JSON NOT NULL DEFAULT '{}'"
+                    )
+                if "menu_groups" not in {
+                    row[1] for row in connection.exec_driver_sql("PRAGMA table_info(prototype_settings)")
+                }:
+                    connection.exec_driver_sql(
+                        "ALTER TABLE prototype_settings ADD COLUMN menu_groups JSON NOT NULL DEFAULT '{}'"
                     )
                 connection.commit()
         elif os.getenv("VKS_AUTO_MIGRATE") == "1":
@@ -306,7 +315,11 @@ class Service:
             if row.payload_hash != h:
                 raise DomainError("VKS_IDEMPOTENCY_CONFLICT", "相同幂等键对应不同内容", 409)
             if operation == "snapshot.save":
-                self._check_snapshot_access(s, actor, pid, row.response_json["manifest"])
+                release_id = row.response_json.get("id")
+                release = s.get(Release, release_id) if release_id else None
+                if not release or release.project_id != pid or release.analysis_set_id != payload["analysis_set_id"]:
+                    raise DomainError("VKS_INTEGRITY_ERROR", "保存记录与发布版不一致", 409)
+                return self._saved_snapshot(s, actor, release)
             if operation in {
                 "propose_links",
                 "journey.create",
@@ -337,7 +350,7 @@ class Service:
                     or row.project_id != pid
                     or not self._visible_relation(s, actor, pid, row)
                     or not all(
-                        self._visible_revision(s, actor, pid, s.get(Revision, response[key]))
+                        self._visible_revision(s, actor, pid, s.get(Revision, response[key]), row.analysis_set_id)
                         for key in ("from_revision_id", "to_revision_id")
                     )
                     or not all(
@@ -527,6 +540,11 @@ class Service:
             "evidence_ids": r.evidence_ids,
             "reason": r.reason,
             "row_version": r.row_version,
+            **(
+                {"prototype_scope": r.metadata_json["prototype_scope"]}
+                if (r.metadata_json or {}).get("prototype_scope")
+                else {}
+            ),
         }
 
     def evidence_dto(self, e, max_chars=8000):
@@ -618,23 +636,49 @@ class Service:
             return [relation_payload(row) for row in release.manifest_json["relations"]]
         return [self.relation_dto(r) for r in s.scalars(select(Relation).where(Relation.analysis_set_id == a.id)).all()]
 
-    def _visible_revision(self, s, actor, pid, r):
+    def _prototype_page_for_action(self, s, action, aid):
+        return s.scalar(
+            select(Revision)
+            .join(Selection, Selection.entity_revision_id == Revision.id)
+            .join(Entity, Entity.id == Revision.entity_id)
+            .where(
+                Selection.analysis_set_id == aid,
+                Selection.entity_id == Entity.id,
+                Entity.project_id == action.project_id,
+                Entity.type == "page",
+                Entity.stable_key == action.metadata_json.get("page_key"),
+            )
+        )
+
+    def _visible_revision(self, s, actor, pid, r, analysis_set_id=None):
         from .reading import artifact_policy, scenario_trace_required, scenario_source_required
 
-        if not r:
+        if not r or r.project_id != pid:
+            return False
+        entity = s.get(Entity, r.entity_id)
+        if not entity or entity.project_id != pid:
             return False
         art = s.get(Artifact, r.artifact_id) if r.artifact_id else None
+        if r.artifact_id and (not art or art.project_id != pid):
+            return False
         policy = artifact_policy(s, art) if art else {}
-        source_restricted = s.get(Entity, r.entity_id).type in SOURCE_TYPES or (
+        source_restricted = entity.type in SOURCE_TYPES or (
             art and (art.kind == "source" or art.sensitivity == "confidential" or policy.get("requires_source_read"))
         )
         trace_restricted = art and (art.kind in ("trace", "capture") or policy.get("requires_trace_read"))
-        if s.get(Entity, r.entity_id).type == "scenario" and scenario_trace_required(r.metadata_json):
+        if entity.type == "scenario" and scenario_trace_required(r.metadata_json):
             trace_restricted = True
             source_restricted = source_restricted or scenario_source_required(s, pid, r.metadata_json)
-        return (not source_restricted or self._can(s, actor, pid, "source:read")) and (
-            not trace_restricted or self._can(s, actor, pid, "trace:read")
-        )
+        if (source_restricted and not self._can(s, actor, pid, "source:read")) or (
+            trace_restricted and not self._can(s, actor, pid, "trace:read")
+        ):
+            return False
+        if analysis_set_id and entity.type == "action" and r.metadata_json.get("prototype_action"):
+            page = self._prototype_page_for_action(s, r, analysis_set_id)
+            return bool(
+                page and page.metadata_json.get("prototype_manifest") and self._visible_revision(s, actor, pid, page)
+            )
+        return True
 
     def _visible_relation(self, s, actor, pid, relation):
         from .reading import relation_policy, ReadingService
@@ -651,7 +695,11 @@ class Service:
     def _visible_evidence(self, s, actor, pid, e):
         from .reading import artifact_policy
 
+        if not e or e.project_id != pid:
+            return False
         a = s.get(Artifact, e.artifact_id)
+        if not a or a.project_id != pid:
+            return False
         policy = artifact_policy(s, a)
         return (
             ((a.kind != "source" and not policy.get("requires_source_read")) or self._can(s, actor, pid, "source:read"))
@@ -663,7 +711,7 @@ class Service:
         )
 
     def workspace(self, actor, pid, analysis_set_id=None, release_id=None):
-        from .reading import ReadingService, relation_is_visible
+        from .reading import ReadingService, project_prototype_metadata, relation_is_visible
         from sqlalchemy.orm import load_only
 
         reading = ReadingService(self)
@@ -697,7 +745,7 @@ class Service:
             choices, index = reading.selections(s, a, release)
             permitted = reading.visible_ids(s, actor, pid, choices)
             revs = reading.revision_rows(s, permitted.values())
-            entities = [self.entity_dto(s, r, True) for r in revs]
+            entities = project_prototype_metadata(s, pid, [self.entity_dto(s, r, True) for r in revs])
             visible = {r.id for r in revs}
             rels = (
                 [
@@ -752,11 +800,38 @@ class Service:
             confirmed = {
                 r["from_revision_id"] for r in rels if (r["excluded"] is False) and r["validity_status"] == "valid"
             }
-            from .runtime import status
+            from .runtime import backup_status, status
 
             runtime = status(self, s, pid)
+            from .models import PrototypeSettings
+
+            settings = s.get(PrototypeSettings, pid)
+            pages = [e for e in entities if e["type"] == "page"]
+            page_by_key = {e["stable_key"]: e for e in pages if e["metadata"].get("prototype_manifest")}
+            order = [key for key in (settings.menu_order if settings else []) if key in page_by_key]
+            entry = page_by_key.get(settings.entry_page_key) if settings else None
+            if entry:
+                prototype = entry["metadata"]["prototype_manifest"]
+                if not any(
+                    state["stateKey"] == prototype["defaultStateKey"] and state.get("surface")
+                    for state in prototype["states"]
+                ):
+                    entry = None
+            sort_order = {key: index for index, key in enumerate(order)}
+            pages.sort(key=lambda page: sort_order.get(page["stable_key"], len(sort_order)))
             return {
+                "prototype_settings": {
+                    "entry_page_id": entry["id"] if entry else None,
+                    "menu_order": order,
+                    "menu_groups": {
+                        key: label
+                        for key, label in (settings.menu_groups if settings else {}).items()
+                        if key in page_by_key
+                    },
+                    "row_version": settings.row_version if settings else 0,
+                },
                 "runtime_status": runtime,
+                **({"backup_status": backup_status(self)} if actor.human and actor.id == self.owner_id else {}),
                 "project": self.project_dto(p),
                 "analysis_sets": [self.analysis_public(s, actor, x) for x in analyses],
                 "selected_analysis_set": self.analysis_public(s, actor, a) if a else None,
@@ -766,7 +841,7 @@ class Service:
                 "relations": rels,
                 "evidence": [self.evidence_dto(e) for e in evs],
                 "documents": [e for e in entities if e["type"] == "document"],
-                "pages": [e for e in entities if e["type"] == "page"],
+                "pages": pages,
                 "actions": actions,
                 "scenarios": [e for e in entities if e["type"] == "scenario"],
                 "sources": self._visible_sources(s, actor, pid, a.sources) if a else [],
@@ -1033,10 +1108,10 @@ class Service:
 
         return execute_job(self, jid)
 
-    def _commit_bundle(self, s, pid, owner, bundle, analysis_id=None):
+    def _commit_bundle(self, s, pid, owner, bundle, analysis_id=None, *, actor=None):
         from .knowledge import persist_bundle
 
-        return persist_bundle(self, s, pid, owner, bundle, analysis_id)
+        return persist_bundle(self, s, pid, owner, bundle, analysis_id, actor=actor)
 
     def get_job(self, actor, jid, pid=None):
         from .reading import ReadingService
@@ -1075,6 +1150,10 @@ class Service:
                 j.state = "cancelling"
                 j.cancel_requested = True
             self.audit(s, actor, j.project_id, "job.cancel", jid, metadata={"reason": reason[:500]})
+            if j.kind == "import_preview" or j.input_json.get("_prototype_batch"):
+                from .reading import ReadingService
+
+                return ReadingService(self).job_dto(s, actor, j)
             return self.job_dto(j)
 
     def retry_job(self, actor, jid):
@@ -1121,6 +1200,8 @@ class Service:
         a, b = f.type, t.type
         legal = {
             "documents": a != "section" and b == "section",
+            "has_business_point": a == "action" and b == "business_point",
+            "supported_by_section": a == "business_point" and b == "section",
             "renders": a in ("page", "symbol") and b in ("action", "page"),
             "handler_of": a == "symbol" and b in ("action", "api"),
             "may_call": a in ("action", "symbol", "api") and b in ("api", "symbol"),
@@ -1145,6 +1226,22 @@ class Service:
         }
         if not legal.get(r.relation_type, False):
             raise DomainError("VKS_INVALID_EVIDENCE", "关系端点类型不符合约束")
+        if r.relation_type == "has_business_point":
+            page = self._prototype_page_for_action(s, fr, r.analysis_set_id)
+            prototype = page.metadata_json.get("prototype_manifest", {}) if page else {}
+            states = {
+                row["stateKey"]
+                for row in prototype.get("states", [])
+                if any(anchor["actionKey"] == f.stable_key for anchor in row["anchors"])
+            }
+            scope = (r.metadata_json or {}).get("prototype_scope", {}).get("states", [])
+            if (
+                not fr.metadata_json.get("prototype_action")
+                or fr.metadata_json.get("status") == "removed"
+                or not states
+                or not set(scope) <= states
+            ):
+                raise DomainError("VKS_INVALID_EVIDENCE", "业务点关联缺少当前版本的准确动作热区")
 
     def candidates(self, actor, aid):
         with self.db() as s:
@@ -1157,7 +1254,7 @@ class Service:
                 if not self._visible_relation(s, actor, a.project_id, r):
                     continue
                 if not all(
-                    self._visible_revision(s, actor, a.project_id, s.get(Revision, rid))
+                    self._visible_revision(s, actor, a.project_id, s.get(Revision, rid), aid)
                     for rid in (r.from_revision_id, r.to_revision_id)
                 ):
                     continue
@@ -1207,7 +1304,7 @@ class Service:
                         self._verify_relation(s, r)
                         s.add(r)
                     if not self._visible_relation(s, actor, pid, r) or not all(
-                        self._visible_revision(s, actor, pid, s.get(Revision, rid))
+                        self._visible_revision(s, actor, pid, s.get(Revision, rid), a.id)
                         for rid in (r.from_revision_id, r.to_revision_id)
                     ):
                         raise DomainError("VKS_NOT_FOUND", "未找到可访问的关系端点", 404)
@@ -1221,15 +1318,19 @@ class Service:
 
             return self.idem(s, actor, pid, "propose_links", key, payload, create)
 
-    def _manifest(self, s, a):
+    def _manifest(self, s, a, revisions=None):
+        if revisions is None:
+            revisions = self._revisions(s, a.id)
         selections = [
             {"entity_id": r.entity_id, "entity_revision_id": r.id, "content_sha256": r.content_sha256}
-            for r in self._revisions(s, a.id)
+            for r in revisions
         ]
         selections.sort(key=lambda x: x["entity_id"])
+        selected = {row.id for row in revisions}
         relations = [
             self.relation_dto(r)
             for r in s.scalars(select(Relation).where(Relation.analysis_set_id == a.id, Relation.excluded == False))
+            if r.from_revision_id in selected and r.to_revision_id in selected
         ]
         relations.sort(key=lambda x: x["id"])
         return {
@@ -1566,12 +1667,19 @@ class Service:
         for selected in manifest["selections"]:
             revision = s.get(Revision, selected["entity_revision_id"])
             visible = visible and bool(
-                revision and revision.project_id == pid and self._visible_revision(s, actor, pid, revision)
+                revision
+                and revision.project_id == pid
+                and revision.entity_id == selected["entity_id"]
+                and revision.content_sha256 == selected["content_sha256"]
+                and self._visible_revision(s, actor, pid, revision)
             )
         for item in manifest["relations"]:
             relation = s.get(Relation, item["id"])
             visible = visible and bool(
-                relation and relation.project_id == pid and self._visible_relation(s, actor, pid, relation)
+                relation
+                and relation.project_id == pid
+                and relation.analysis_set_id == manifest["analysis_set_id"]
+                and self._visible_relation(s, actor, pid, relation)
             )
             for key in ("from_revision_id", "to_revision_id"):
                 revision = s.get(Revision, item[key])
@@ -1581,15 +1689,33 @@ class Service:
             for eid in item["evidence_ids"]:
                 evidence = s.get(Evidence, eid)
                 visible = visible and bool(
-                    evidence and evidence.project_id == pid and self._visible_evidence(s, actor, pid, evidence)
+                    evidence
+                    and evidence.project_id == pid
+                    and evidence.analysis_set_id == manifest["analysis_set_id"]
+                    and self._visible_evidence(s, actor, pid, evidence)
                 )
         if not visible:
             raise DomainError("VKS_FORBIDDEN", "需要读取当前版本全部材料的权限", 403)
 
+    def _saved_snapshot(self, s, actor, release):
+        manifest = release.manifest_json
+        if (
+            not isinstance(manifest, dict)
+            or sha(canonical(manifest)) != release.manifest_sha256
+            or manifest.get("project_id") != release.project_id
+            or manifest.get("analysis_set_id") != release.analysis_set_id
+        ):
+            raise DomainError("VKS_INTEGRITY_ERROR", "发布清单摘要不匹配", 409)
+        self._check_snapshot_access(s, actor, release.project_id, manifest)
+        return dict(self.release_dto(release), manifest=manifest)
+
     def save_snapshot(self, actor, pid, payload, key):
         """Save the current knowledge selection as an immutable version."""
+        from .prototype_read import validate_snapshot_prototypes
+
         with self.db() as s:
             project = self.require(s, actor, pid, "knowledge:edit")
+            s.refresh(project, with_for_update=True)
             analysis = s.scalar(select(Analysis).where(Analysis.id == payload["analysis_set_id"]).with_for_update())
             if not analysis or analysis.project_id != pid:
                 raise DomainError("VKS_NOT_FOUND", "未找到知识基线", 404)
@@ -1597,13 +1723,13 @@ class Service:
             def save():
                 existing = s.scalar(select(Release).where(Release.analysis_set_id == analysis.id))
                 if existing:
-                    self._check_snapshot_access(s, actor, pid, existing.manifest_json)
-                    return dict(self.release_dto(existing), manifest=existing.manifest_json)
+                    return self._saved_snapshot(s, actor, existing)
                 rows = self._revisions(s, analysis.id)
                 if not rows:
                     raise DomainError("VKS_STATE_CONFLICT", "当前基线没有知识内容", 409)
-                manifest = self._manifest(s, analysis)
+                manifest = self._manifest(s, analysis, rows)
                 self._check_snapshot_access(s, actor, pid, manifest)
+                validate_snapshot_prototypes(s, pid, rows)
                 sequence = len(list(s.scalars(select(Release.id).where(Release.project_id == pid)))) + 1
                 result = Release(
                     id=uid(),
@@ -1616,7 +1742,8 @@ class Service:
                     change_note=payload.get("change_note", "保存知识版本"),
                 )
                 analysis.state = "frozen"
-                project.current_release_id = result.id
+                if project.current_release_id is None:
+                    project.current_release_id = result.id
                 s.add(result)
                 s.flush()
                 self.audit(s, actor, pid, "snapshot.save", result.id)
@@ -1630,7 +1757,7 @@ class Service:
             r = s.get(Release, payload["release_id"])
             if not r or r.project_id != pid:
                 raise DomainError("VKS_NOT_FOUND", "未找到发布版", 404)
-            if payload["format"] not in ("markdown_bundle", "pdf", "vksbundle"):
+            if payload["format"] not in ("markdown_bundle", "pdf", "vksbundle", "readonly_html"):
                 raise DomainError("VKS_INVALID_INPUT", "不支持的导出格式")
             if payload.get("include_source"):
                 self.require(s, actor, pid, "source:read")
@@ -1657,21 +1784,47 @@ class Service:
                 ),
             )
 
-    def _perform_export(self, s, j):
+    def _perform_export(self, s, j, prepared=None):
+        if j.input_json["format"] == "readonly_html":
+            from .readonly_export import finalize
+
+            return finalize(self, s, j, prepared)
         from .exports import perform_export
 
         return perform_export(self, s, j)
 
     def download_export(self, actor, pid, jid):
+        from .exports import allow_artifact, visible_export_sources
+
         with self.db() as s:
             self.require(s, actor, pid, "knowledge:export")
             j = s.get(Job, jid)
             if not j or j.project_id != pid or j.kind != "export" or j.state != "succeeded" or j.created_by != actor.id:
                 raise DomainError("VKS_NOT_FOUND", "未找到导出结果", 404)
+            if j.input_json["format"] == "readonly_html" and j.input_json.get("_export_navigation_scope_version") != 1:
+                if not self._can(s, actor, pid, "source:read") or not self._can(s, actor, pid, "trace:read"):
+                    raise DomainError("VKS_FORBIDDEN", "旧成品库缺少完整目录来源范围，请重新导出", 403)
             if j.input_json.get("allowed_source") or j.input_json.get("allowed_confidential"):
                 self.require(s, actor, pid, "source:read")
             if j.input_json.get("allowed_trace"):
                 self.require(s, actor, pid, "trace:read")
+            snapshots = set(j.input_json.get("_export_source_snapshot_ids", []))
+            if j.input_json["format"] == "vksbundle" and "_export_source_snapshot_ids" not in j.input_json:
+                release = s.get(Release, j.input_json["release_id"])
+                if not release or release.project_id != pid:
+                    raise DomainError("VKS_NOT_FOUND", "未找到导出结果", 404)
+                snapshots = {
+                    source["source_snapshot_id"]
+                    for source in release.manifest_json.get("sources", [])
+                    if source.get("source_snapshot_id")
+                }
+            if snapshots != visible_export_sources(s, pid, snapshots, j.input_json):
+                raise DomainError("VKS_FORBIDDEN", "导出内容的当前来源权限已变化，请重新导出", 403)
+            if any(
+                not (art := s.get(Artifact, aid)) or art.project_id != pid or not allow_artifact(art, j.input_json, s)
+                for aid in j.input_json.get("_export_artifact_ids", [])
+            ):
+                raise DomainError("VKS_FORBIDDEN", "导出原型或出处的当前权限已变化，请重新导出", 403)
             if "_export_revision_ids" in j.input_json:
                 if (
                     any(
@@ -1691,10 +1844,13 @@ class Service:
             elif not self._can(s, actor, pid, "source:read") or not self._can(s, actor, pid, "trace:read"):
                 raise DomainError("VKS_FORBIDDEN", "旧导出缺少准确输入范围，请重新导出", 403)
             self.audit(s, actor, pid, "export.download", jid)
-            return (self.data_dir / "objects" / j.result_json["object_key"]).read_bytes(), j.result_json["filename"]
+            raw = (self.data_dir / "objects" / j.result_json["object_key"]).read_bytes()
+            if sha(raw) != j.result_json["object_key"]:
+                raise DomainError("VKS_INTEGRITY_ERROR", "导出文件完整性校验失败", 409)
+            return raw, j.result_json["filename"]
 
     def artifact_bytes(self, actor, pid, aid):
-        from .reading import artifact_policy
+        from .reading import ReadingService, artifact_policy
 
         with self.db() as s:
             self.require(s, actor, pid)
@@ -1702,11 +1858,14 @@ class Service:
             if not a or a.project_id != pid:
                 raise DomainError("VKS_NOT_FOUND", "未找到文件", 404)
             policy = artifact_policy(s, a)
+            if policy.get("offline_archive_invalid"):
+                raise DomainError("VKS_NOT_FOUND", "未找到文件", 404)
             if a.kind == "source" or a.sensitivity == "confidential" or policy.get("requires_source_read"):
                 self.require(s, actor, pid, "source:read")
             if a.kind in ("trace", "capture") or policy.get("requires_trace_read"):
                 self.require(s, actor, pid, "trace:read")
-            if not self._can(s, actor, pid, "knowledge:edit"):
+            can_edit = self._can(s, actor, pid, "knowledge:edit")
+            if not can_edit:
                 aids = {
                     s.get(Revision, x["entity_revision_id"]).artifact_id
                     for r in s.scalars(select(Release).where(Release.project_id == pid))
@@ -1714,8 +1873,17 @@ class Service:
                 }
                 if aid not in aids:
                     raise DomainError("VKS_NOT_FOUND", "未找到文件", 404)
+            if a.kind == "fixture":
+                reading = ReadingService(self)
+                if not all(reading.permissions(s, actor, pid)) and not reading.prototype_artifact_visible(
+                    s, actor, a, can_edit
+                ):
+                    raise DomainError("VKS_NOT_FOUND", "未找到文件", 404)
+            raw = (self.data_dir / "objects" / a.object_key).read_bytes()
+            if a.relative_path == "offline/original.html" and (len(raw) != a.size_bytes or sha(raw) != a.sha256):
+                raise DomainError("VKS_INTEGRITY_ERROR", "离线包原始文件完整性校验失败", 409)
             self.audit(s, actor, pid, "artifact.download", aid)
-            return (self.data_dir / "objects" / a.object_key).read_bytes(), Path(a.relative_path).name
+            return raw, Path(a.relative_path).name
 
     def scenario(self, actor, pid, sid, rid):
         with self.db() as s:

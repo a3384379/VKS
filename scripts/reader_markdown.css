@@ -1,0 +1,279 @@
+.rich-markdown {
+  font-size: 15px;
+  line-height: 1.85;
+  color: #253c32;
+}
+.rich-markdown strong,
+.rich-markdown b {
+  font-weight: 750;
+  color: #172f24;
+}
+.rich-markdown em,
+.rich-markdown i {
+  font-style: italic;
+}
+.rich-markdown h1 {
+  font-size: 28px;
+  line-height: 1.4;
+  margin: 30px 0 16px;
+}
+.rich-markdown h2 {
+  font-size: 23px;
+  line-height: 1.5;
+  margin: 30px 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e4ebe6;
+}
+.rich-markdown h3 {
+  font-size: 19px;
+  margin: 25px 0 13px;
+}
+.rich-markdown h4,
+.rich-markdown h5,
+.rich-markdown h6 {
+  font-size: 16px;
+  margin: 22px 0 12px;
+}
+.rich-markdown p {
+  margin: 12px 0;
+}
+.rich-markdown ul,
+.rich-markdown ol {
+  padding-left: 1.7em;
+  margin: 12px 0;
+}
+.rich-markdown ul ul,
+.rich-markdown ul ol,
+.rich-markdown ol ul,
+.rich-markdown ol ol {
+  margin: 5px 0;
+}
+.rich-markdown li {
+  margin: 4px 0;
+}
+.rich-markdown li > p {
+  margin: 5px 0;
+}
+.rich-markdown .task-list-item {
+  list-style: none;
+}
+.rich-markdown .task-list-item input {
+  margin: 0 8px 0 -20px;
+  accent-color: #23664e;
+}
+.rich-markdown pre {
+  white-space: pre;
+  overflow: auto;
+  max-width: 100%;
+  background: #f4f7f5;
+  border: 1px solid #dce6df;
+  border-radius: 8px;
+  padding: 16px 18px;
+  font:
+    13px/1.7 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.rich-markdown pre code {
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #304538;
+}
+.rich-markdown :not(pre) > code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  color: #9a3e57;
+  background: #f3f4f1;
+  border: 1px solid #e5e8e2;
+  border-radius: 4px;
+  padding: 0.12em 0.35em;
+}
+.rich-markdown .md-code-language {
+  display: block;
+  font:
+    11px/1.4 system-ui,
+    sans-serif;
+  color: #708477;
+  margin-bottom: 9px;
+  user-select: none;
+}
+.rich-markdown blockquote {
+  border-left: 3px solid #83a994;
+  padding: 7px 18px;
+  margin: 18px 0;
+  background: #f3f7f4;
+  color: #55715f;
+}
+.rich-markdown .md-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  margin: 18px 0;
+  border: 1px solid #dce5de;
+  border-radius: 6px;
+}
+.rich-markdown table {
+  border-collapse: collapse;
+  display: table;
+  width: 100%;
+  font-size: 14px;
+  margin: 0;
+}
+.rich-markdown th,
+.rich-markdown td {
+  border: 1px solid #e0e7e2;
+  padding: 10px 14px;
+  min-width: 70px;
+  vertical-align: top;
+}
+.rich-markdown th {
+  font-weight: 700;
+  background: #f0f5f1;
+}
+.rich-markdown tr:nth-child(even) td {
+  background: #fafcfa;
+}
+.rich-markdown a {
+  color: #246b52;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.rich-markdown figure {
+  margin: 20px 0;
+}
+.rich-markdown .md-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 5px;
+  cursor: zoom-in;
+}
+.rich-markdown .md-image-note {
+  display: inline-block;
+  font-size: 12px;
+  color: #7d8b80;
+  border: 1px dashed #ccd9cf;
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+.rich-markdown .md-image-caption {
+  display: block;
+  font-size: 12px;
+  color: #75877b;
+  text-align: center;
+  margin-top: 7px;
+}
+.rich-markdown .math-display {
+  overflow-x: auto;
+  margin: 18px 0;
+  padding: 8px 0;
+}
+.rich-markdown .math-error {
+  font-family: ui-monospace, monospace;
+  color: #9d4a45;
+  white-space: pre-wrap;
+}
+.rich-markdown .footnotes {
+  border-top: 1px solid #dde6df;
+  margin-top: 30px;
+  font-size: 13px;
+}
+.rich-markdown details {
+  margin: 14px 0;
+  padding: 10px 14px;
+  border: 1px solid #dce6df;
+  border-radius: 7px;
+}
+.rich-markdown summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.rich-markdown .md-diagram {
+  border: 1px solid #dce6df;
+  border-radius: 8px;
+  overflow: hidden;
+  background: white;
+  margin: 20px 0;
+}
+.rich-markdown .md-diagram-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 13px;
+  background: #f6f9f6;
+  font-size: 12px;
+  color: #698371;
+}
+.rich-markdown .md-diagram-status {
+  margin: 12px 15px;
+  font-size: 13px;
+  color: #7c8c80;
+}
+.rich-markdown .md-diagram-image {
+  overflow: auto;
+  padding: 18px;
+  text-align: center;
+}
+.rich-markdown .md-diagram-image img {
+  max-width: 100%;
+  height: auto;
+}
+.rich-markdown .md-diagram details {
+  border: 0;
+  border-top: 1px solid #e0e7e2;
+  border-radius: 0;
+  margin: 0;
+}
+.rich-markdown .md-diagram summary {
+  font-weight: 400;
+  font-size: 12px;
+  color: #75877b;
+}
+.rich-markdown .hljs-keyword,
+.rich-markdown .hljs-selector-tag,
+.rich-markdown .hljs-type {
+  color: #92509f;
+}
+.rich-markdown .hljs-string,
+.rich-markdown .hljs-attr,
+.rich-markdown .hljs-template-tag {
+  color: #2f7744;
+}
+.rich-markdown .hljs-number,
+.rich-markdown .hljs-literal,
+.rich-markdown .hljs-symbol {
+  color: #b45732;
+}
+.rich-markdown .hljs-title,
+.rich-markdown .hljs-function {
+  color: #386d94;
+}
+.rich-markdown .hljs-comment,
+.rich-markdown .hljs-quote {
+  color: #829185;
+  font-style: italic;
+}
+.md-image-dialog {
+  width: min(96vw, 1500px);
+  max-height: 95vh;
+  padding: 16px;
+  border: 1px solid #cedacf;
+  border-radius: 10px;
+  background: #fff;
+}
+.md-image-dialog::backdrop {
+  background: #13271dcc;
+}
+.md-image-dialog button {
+  position: sticky;
+  top: 0;
+  float: right;
+  z-index: 1;
+}
+.md-image-dialog img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: auto;
+}

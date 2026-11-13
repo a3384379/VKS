@@ -3,10 +3,11 @@ import {
   createElement,
   Fragment,
   useContext,
+  useMemo,
   type ReactNode,
 } from "react";
 import type { Entity, Session, View, Workspace } from "./types";
-import { hasProjectPermission } from "./permissions";
+import { hasProjectPermission, projectScopes } from "./permissions";
 import type { ExplanationNavigation, NavigationIntent } from "./navigation";
 import type { JourneyNavigation } from "./journey-navigation";
 export interface AppState {
@@ -18,7 +19,7 @@ export interface AppState {
   selected: string;
   setSelected: (id: string) => void;
   explanation: ExplanationNavigation;
-  navigateExplanation: (intent: NavigationIntent) => void;
+  navigateExplanation: (intent: NavigationIntent) => boolean;
   journey: JourneyNavigation;
   navigateJourney: (intent: JourneyNavigation, automatic?: boolean) => void;
   navigate: (view: View, entity?: Entity) => void;
@@ -54,7 +55,10 @@ export function usePermission(scope: string) {
 
 export function useReadScope() {
   const { w, session, baseline } = useWorkspace();
-  return workspaceReadScope(w, session, baseline);
+  return useMemo(
+    () => workspaceReadScope(w, session, baseline),
+    [w, session, baseline],
+  );
 }
 
 export function workspaceReadScope(
@@ -63,12 +67,13 @@ export function workspaceReadScope(
   baseline: string,
 ) {
   return JSON.stringify([
+    session.actor_id,
     w.project.id,
     baseline,
     w.selected_analysis_set?.id,
     w.selected_release?.id,
     w.selected_analysis_set?.selection_version,
-    session.project_permissions?.[w.project.id] ?? session.scopes ?? [],
+    projectScopes(session, w.project.id),
     w.entities.map((e) => e.entity_revision_id).sort(),
     (w.relations || [])
       .map(

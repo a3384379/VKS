@@ -159,6 +159,19 @@
           ],
           "default": null
         },
+        "prototype_state_key": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9._-]{0,95}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prototype State Key"
+        },
         "state_ref": {
           "anyOf": [
             {

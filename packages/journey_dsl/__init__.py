@@ -35,6 +35,7 @@ class Node(Strict):
     x: int = Field(ge=0, le=4000)
     y: int = Field(ge=0, le=4000)
     binding: Binding | None = None
+    prototype_state_key: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9._-]{0,95}$")
     state_ref: StateReference | None = None
     capture_ref: CaptureReference | None = None
 
@@ -126,6 +127,8 @@ def validate_journey(value):
             raise ValueError("声明步骤需要明确说明业务含义及尚无动作绑定的边界")
         if node.kind in ("step", "decision", "branch", "end") and node.binding:
             raise ValueError("控制节点不能携带知识引用")
+        if node.prototype_state_key and (node.kind not in ("page", "action") or node.state_ref or node.capture_ref):
+            raise ValueError("原型状态需要页面或动作修订，且不能与回放引用混用")
         if (
             node.state_ref
             and node.capture_ref

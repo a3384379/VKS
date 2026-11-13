@@ -38,6 +38,27 @@ class JourneyService:
             raise DomainError("VKS_INVALID_INPUT", str(error)) from error
         revisions = {row.entity_id: row for row in self.service._revisions(s, analysis.id)}
         references = []
+
+        def owner_page(action):
+            entity = s.scalar(
+                select(Entity).where(
+                    Entity.project_id == analysis.project_id,
+                    Entity.type == "page",
+                    Entity.stable_key == action.metadata_json.get("page_key"),
+                )
+            )
+            page = revisions.get(entity.id) if entity else None
+            if (
+                not page
+                or not page.metadata_json.get("prototype_manifest")
+                or action.metadata_json.get("status") == "removed"
+                or actor is not None
+                and not self.service._visible_revision(s, actor, analysis.project_id, page)
+            ):
+                raise DomainError("VKS_NOT_FOUND", "流程原型页不在当前可见版本", 404)
+            references.append(page)
+            return page
+
         source_bindings = dsl.get("semantics", {}).get("source_refs", [])
         if len({(ref["entity_id"], ref["revision_id"]) for ref in source_bindings}) != len(source_bindings):
             raise DomainError("VKS_INVALID_INPUT", "流程声明来源修订不可重复")
@@ -53,6 +74,8 @@ class JourneyService:
             source_entity = s.get(Entity, row.entity_id)
             if source_entity.type == "journey":
                 raise DomainError("VKS_INVALID_INPUT", "业务声明来源需要材料或场景修订，不能引用其他流程")
+            if source_entity.type == "action" and row.metadata_json.get("prototype_action"):
+                owner_page(row)
             references.append(row)
         for node in dsl["nodes"]:
             binding = node.get("binding")
@@ -75,6 +98,19 @@ class JourneyService:
             if kind not in allowed[node["kind"]]:
                 raise DomainError("VKS_INVALID_INPUT", "流程节点与引用类型不一致")
             references.append(row)
+            page = row if kind == "page" else None
+            if kind == "action" and row.metadata_json.get("prototype_action"):
+                page = owner_page(row)
+            if state_key := node.get("prototype_state_key"):
+                from .prototype_read import page_state
+
+                if not page:
+                    raise DomainError("VKS_NOT_FOUND", "流程原型页不在当前可见版本", 404)
+                state = page_state(page, state_key)
+                if kind == "action" and not any(
+                    anchor["actionKey"] == s.get(Entity, row.entity_id).stable_key for anchor in state["anchors"]
+                ):
+                    raise DomainError("VKS_INVALID_INPUT", "流程动作不属于该原型状态")
         from .journey_replay import replay_references
 
         replay_revisions, _ = replay_references(self.service, s, actor, analysis, dsl)

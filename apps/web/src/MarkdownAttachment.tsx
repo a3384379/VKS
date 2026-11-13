@@ -11,6 +11,11 @@ export function attachmentUrl(
   documentId: string | undefined,
   revisionId: string | undefined,
   path: string | undefined,
+  scope?: {
+    analysisSetId?: string;
+    releaseId?: string;
+    selectionVersion?: number;
+  },
 ) {
   if (!documentId || !revisionId || !path) return null;
   let decoded: string;
@@ -33,7 +38,15 @@ export function attachmentUrl(
     "/revisions/" +
     encodeURIComponent(revisionId) +
     "/attachments?path=" +
-    encodeURIComponent(relative)
+    encodeURIComponent(relative) +
+    (scope?.releaseId
+      ? "&release_id=" + encodeURIComponent(scope.releaseId)
+      : scope?.analysisSetId
+        ? "&analysis_set_id=" + encodeURIComponent(scope.analysisSetId)
+        : "") +
+    (scope?.releaseId || scope?.selectionVersion === undefined
+      ? ""
+      : "&selection_version=" + encodeURIComponent(scope.selectionVersion))
   );
 }
 export function rasterContentType(value: string | null) {

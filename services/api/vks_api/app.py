@@ -446,7 +446,11 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         raw, name = service.download_export(a, pid, jid)
         return Response(
             raw,
-            media_type="application/pdf" if name.endswith(".pdf") else "application/zip",
+            media_type="text/html"
+            if name.endswith(".html")
+            else "application/pdf"
+            if name.endswith(".pdf")
+            else "application/zip",
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"},
         )
 
@@ -540,6 +544,15 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     from .hotspots import install_hotspots
 
     install_hotspots(app, service, actor, envelope, API)
+    from .prototype import install_prototype
+
+    install_prototype(app, service, actor, envelope)
+    from .interactive import install_interactive
+
+    install_interactive(app, service, actor, envelope)
+    from .materials import install_materials
+
+    install_materials(app, service, actor, envelope)
     from .project_profile import install_project_profile
 
     install_project_profile(app, service, actor, envelope, API)

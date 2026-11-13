@@ -141,33 +141,37 @@ export function Versions() {
                 </Button>
               )}
               {canExport &&
-                ["markdown_bundle", "pdf", "vksbundle"].map((format) => (
-                  <Button
-                    key={format}
-                    kind="small"
-                    onClick={() =>
-                      void run(
-                        () =>
-                          api(
-                            `/projects/${w.project.id}/exports`,
-                            mutation("POST", {
-                              release_id: row.id,
-                              format,
-                              include_source: true,
-                            }),
-                          ),
-                        "导出任务已创建",
-                      )
-                    }
-                  >
-                    导出{" "}
-                    {format === "markdown_bundle"
-                      ? "Markdown"
-                      : format === "pdf"
-                        ? "PDF"
-                        : "可回导包"}
-                  </Button>
-                ))}
+                ["markdown_bundle", "pdf", "vksbundle", "readonly_html"].map(
+                  (format) => (
+                    <Button
+                      key={format}
+                      kind="small"
+                      onClick={() =>
+                        void run(
+                          () =>
+                            api(
+                              `/projects/${w.project.id}/exports`,
+                              mutation("POST", {
+                                release_id: row.id,
+                                format,
+                                include_source: true,
+                              }),
+                            ),
+                          "导出任务已创建",
+                        )
+                      }
+                    >
+                      导出{" "}
+                      {format === "markdown_bundle"
+                        ? "Markdown"
+                        : format === "pdf"
+                          ? "PDF"
+                          : format === "readonly_html"
+                            ? "只读 HTML"
+                            : "可回导包"}
+                    </Button>
+                  ),
+                )}
             </div>
           </article>
         ))}
@@ -232,6 +236,20 @@ export function Versions() {
               {changes.map((change, index) => (
                 <div key={index} className="proposal-card">
                   <Tag>{String(change.change_kind)}</Tag>
+                  {typeof change.change_scope === "string" && (
+                    <Tag>
+                      {
+                        (
+                          {
+                            prototype_layout: "原型布局与状态",
+                            prototype_action: "动作定义",
+                            document_content: "文档内容",
+                            business_point: "业务点",
+                          } as Record<string, string>
+                        )[change.change_scope]
+                      }
+                    </Tag>
+                  )}
                   <code>{String(change.entity_id)}</code>
                   <p>
                     原修订 {String(change.old_revision_id || "无")} → 新修订{" "}

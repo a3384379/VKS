@@ -36,10 +36,21 @@ jobs:
           $agentExit = $LASTEXITCODE
           Pop-Location
           if ($agentExit -ne 0) { exit $agentExit }
-      - uses: actions/upload-artifact@v4
+      # Tests, packaging and isolated startup above remain mandatory. Archiving
+      # the verified package may be unavailable when the account storage is full.
+      - name: Archive the verified Windows collector package
+        id: collector_artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
         with:
           name: vks-collector-windows
           path: output/collector/*
+      - name: Report optional collector archive failure
+        if: steps.collector_artifact.outcome == 'failure'
+        shell: pwsh
+        run: |
+          Write-Output '::warning::Windows collector tests, packaging and isolated startup passed, but optional artifact archiving failed. Check the Actions storage quota or artifact service.'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value 'Windows collector verification passed. Optional artifact archiving failed; no downloadable CI package is available for this run.'
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
