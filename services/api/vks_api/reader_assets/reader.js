@@ -2247,15 +2247,21 @@
     else if (state.tab === "explain") renderExplanation();
     else if (state.tab === "settings") renderSettings();
     else renderChat();
+    const explanation =
+      state.tab === "explain" && state.view === "prototype"
+        ? state.explanations.get(explanationKey())
+        : null;
     ui.assistant.append(
       el(
         "div",
         { class: "assistant-footer" },
         el(
           "span",
-          {},
+          { class: "assistant-footer-status", role: "status" },
           el("span", { class: "status-dot" }),
-          "内容已固定 · 本地阅读",
+          explanation?.finished && !explanation.error
+            ? "讲解已完成 · 仅本次会话"
+            : "内容已固定 · 本地阅读",
         ),
         el("div", { class: "spacer" }),
         el(
@@ -2263,6 +2269,7 @@
           { id: "vks-assistant-connection-status" },
           state.config.key ? "使用个人密钥" : "未配置 AI",
         ),
+        state.tab === "explain" ? explanationAction() : null,
       ),
     );
     document.body.append(ui.assistant);
@@ -2403,13 +2410,45 @@
         ),
       );
   }
+  function explanationAction() {
+    if (state.view !== "prototype" || !state.context) return null;
+    const generating =
+      state.busy &&
+      state.activity?.kind === "explain" &&
+      state.activity.key === explanationKey();
+    const ready = explanationConnectionReady();
+    return button(
+      generating ? "停止讲解" : !ready ? "配置模型" : "✧ 重新生成",
+      () =>
+        generating
+          ? state.controller?.abort()
+          : !ready
+            ? selectAssistantTab("settings")
+            : submitQuestion("explain"),
+      "subtle-button explanation-action",
+      {
+        id: "vks-generate-explanation",
+        "aria-label": generating
+          ? "停止讲解"
+          : !ready
+            ? "配置模型连接"
+            : "重新生成讲解",
+        disabled:
+          (state.busy && !generating) ||
+          (ready &&
+            !state.explanations.has(explanationKey()) &&
+            !hasExportedExplanation() &&
+            !generating),
+      },
+    );
+  }
   function renderExplanation() {
     const context = state.view === "prototype" ? state.context : null;
     if (!context) {
       ui.assistantBody.append(
         empty(
           "先选择要讲解的模块或控件",
-          "在交互原型中右键控件打开 AI 讲解，或点击「模块知识」选择当前页面。文档问题可在 AI 问答中提出。",
+          "在原型中选择功能后，会自动显示对应讲解。",
         ),
         button(
           "选择原型模块",
@@ -2423,67 +2462,15 @@
       );
       return;
     }
-    const key = explanationKey(context),
-      answer = state.explanations.get(key),
-      ready = explanationConnectionReady(),
-      exported = hasExportedExplanation(),
-      generating =
-        state.busy &&
-        state.activity?.kind === "explain" &&
-        state.activity.key === key;
-    ui.assistantBody.append(
-      el(
-        "div",
-        { class: "explanation-intro" },
-        el(
-          "div",
-          { class: "eyebrow" },
-          context.scope === "module" ? "当前模块讲解" : "当前控件讲解",
-        ),
-        el("h3", {}, context.target.label || "当前功能"),
-        el(
-          "p",
-          { class: "hint" },
-          "按用途、操作步骤、注意事项组织，区分原文事实、推断与资料不足，并附可核对的引用。",
-        ),
-        button(
-          generating
-            ? "停止讲解"
-            : !ready
-              ? "配置模型连接"
-              : answer || exported
-                ? "重新生成讲解"
-                : "正在准备讲解…",
-          () =>
-            generating
-              ? state.controller?.abort()
-              : !ready
-                ? selectAssistantTab("settings")
-                : submitQuestion("explain"),
-          "primary",
-          {
-            id: "vks-generate-explanation",
-            disabled:
-              (state.busy && !generating) ||
-              (ready && !answer && !exported && !generating),
-          },
-        ),
-        el(
-          "p",
-          { class: "settings-note" },
-          state.busy && !generating
-            ? "另一条请求正在进行，完成或停止后可生成讲解。"
-            : answer
-              ? "已保留本次讲解；切换页签不会重复调用。"
-              : exported
-                ? "已加载导出的讲解，可离线查看。"
-                : ready
-                  ? "正在自动讲解当前功能…"
-                  : "配置模型连接后，自动讲解当前功能。",
-        ),
-      ),
+    const answer = state.explanations.get(explanationKey(context));
+    const generating =
+      state.busy &&
+      state.activity?.kind === "explain" &&
+      state.activity.key === explanationKey(context);
+    const saved = explanationBindings(context).filter(
+      (binding) => binding.summary,
     );
-    ui.explanationAnswer = el("div", {
+    ui.explanationAnswer = el("section", {
       class: "explanation-current",
       role: "region",
       "aria-label": "本次 AI 讲解",
@@ -2491,28 +2478,29 @@
     });
     if (answer) {
       ui.explanationAnswer.append(
-        el("div", { class: "eyebrow" }, "本次 AI 讲解"),
-        chatMessageNode(answer),
+        el("div", { class: "eyebrow" }, "AI 讲解"),
+        answer.content || answer.error
+          ? chatMessageNode(answer)
+          : el(
+              "p",
+              { class: "explanation-loading", role: "status" },
+              "正在生成讲解…",
+            ),
       );
-      if (answer.finished && !answer.error)
-        ui.explanationAnswer.append(
-          el(
-            "div",
-            { class: "success", role: "status" },
-            "讲解已完成 · 仅本次会话",
-          ),
-        );
     }
     ui.assistantBody.append(ui.explanationAnswer);
-    const saved = explanationBindings(context).filter(
-      (binding) => binding.summary,
-    );
-    if (!saved.length) {
+    // The current response replaces the frozen explanation, just as in Studio.
+    // Keep the frozen version available as a fallback after a failed refresh.
+    if (answer && !answer.error) return;
+    if (!saved.length && !answer) {
       ui.assistantBody.append(
-        el(
-          "p",
-          { class: "settings-note" },
-          "此目标尚无已导出讲解；可联网生成本次讲解，或在相关知识中阅读原文。",
+        empty(
+          explanationConnectionReady() ? "正在生成讲解…" : "暂无讲解",
+          explanationConnectionReady()
+            ? state.busy
+              ? "等待当前请求完成。"
+              : "正在检索相关章节。"
+            : "在右上角配置模型连接后，会自动讲解当前功能。",
         ),
       );
       return;
@@ -2521,29 +2509,31 @@
       const refs = (binding.section_ids || [])
         .map((id) => sectionMap.get(id))
         .filter(Boolean);
+      const content = markdown(binding.summary, refs);
+      const firstHeading = content.firstElementChild;
+      const title =
+        binding.title &&
+        !(
+          firstHeading?.matches("h1,h2,h3,h4,h5,h6") &&
+          firstHeading.textContent.trim() === binding.title.trim()
+        )
+          ? el("h2", { class: "explanation-title" }, binding.title)
+          : null;
       ui.assistantBody.append(
         el(
           "section",
-          { class: "knowledge-card exported-explanation" },
+          { class: "exported-explanation" },
           el(
             "div",
             { class: "eyebrow" },
             binding.origin === "model"
-              ? "已导出讲解 · AI 生成"
+              ? "AI 讲解 · 已缓存"
               : !binding.origin || binding.origin === "manual"
-                ? "已导出讲解 · 手动说明"
-                : "已导出讲解",
+                ? "功能说明 · 人工"
+                : "功能说明",
           ),
-          el(
-            "strong",
-            {},
-            binding.title || binding.target?.label || "已有讲解",
-          ),
-          el(
-            "div",
-            { class: "knowledge-summary" },
-            markdown(binding.summary, refs),
-          ),
+          title,
+          el("div", { class: "knowledge-summary" }, content),
           el(
             "div",
             { class: "chat-citations" },
@@ -2568,7 +2558,7 @@
     ) {
       replace(
         ui.explanationAnswer,
-        el("div", { class: "eyebrow" }, "本次 AI 讲解"),
+        el("div", { class: "eyebrow" }, "AI 讲解"),
         chatMessageNode(answer),
       );
     }

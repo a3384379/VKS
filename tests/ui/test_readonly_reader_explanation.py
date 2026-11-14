@@ -79,7 +79,12 @@ def test_exported_explanation_is_offline_and_settings_use_header_icon(reader_fil
         try:
             page.goto(reader_file.as_uri())
             open_explanation(page)
-            expect(page.get_by_text("已导出讲解 · AI 生成", exact=True)).to_be_visible()
+            expect(page.get_by_text("AI 讲解 · 已缓存", exact=True)).to_be_visible()
+            expect(page.locator(".explanation-intro")).to_have_count(0)
+            expect(page.locator(".assistant-body .primary")).to_have_count(0)
+            expect(page.locator(".assistant-body")).not_to_contain_text("按用途、操作步骤、注意事项组织")
+            expect(page.locator(".assistant-footer #vks-generate-explanation")).to_be_visible()
+            expect(page.get_by_role("button", name="编辑知识", exact=True)).to_have_count(0)
             expect(page.get_by_role("tablist", name="助手功能").get_by_role("tab")).to_have_count(3)
             assert not calls
             configure(page)
@@ -89,6 +94,10 @@ def test_exported_explanation_is_offline_and_settings_use_header_icon(reader_fil
             page.get_by_role("button", name="重新生成讲解", exact=True).click()
             expect(page.get_by_text("讲解已完成 · 仅本次会话", exact=True)).to_be_visible()
             assert len(calls) == 1
+            expect(page.locator(".exported-explanation")).to_have_count(0)
+            expect(
+                page.locator(".assistant-footer").get_by_role("button", name="重新生成讲解", exact=True)
+            ).to_be_visible()
         finally:
             browser.close()
 
@@ -192,7 +201,7 @@ def test_context_changes_auto_refresh_and_discard_late_answer(reader_file):
             assert page.evaluate("window.releases.length") == 2
             frame.evaluate("document.title='另一业务页面'")
             page.wait_for_function("window.releases.length===3")
-            expect(page.locator(".explanation-intro h3")).to_have_text("另一业务页面")
+            expect(page.locator(".assistant-context")).to_contain_text("另一业务页面")
             page.evaluate("window.releases[2]()")
             expect(page.get_by_text("讲解已完成 · 仅本次会话", exact=True)).to_be_visible()
             page.get_by_role("button", name="知识文档", exact=True).click()
@@ -231,13 +240,13 @@ def test_rapid_plain_selections_debounce_to_latest_target_and_reuse_cache(reader
             expect(page.get_by_text("讲解已完成 · 仅本次会话", exact=True)).to_be_visible()
             frame = page.locator("iframe.prototype-frame").element_handle().content_frame()
             frame.evaluate("document.querySelector('input').click();document.querySelector('#another').click()")
-            expect(page.locator(".explanation-intro h3")).to_have_text("其他功能")
+            expect(page.locator(".assistant-context")).to_contain_text("其他功能")
             expect(page.get_by_text("讲解已完成 · 仅本次会话", exact=True)).to_be_visible()
             assert len(calls) == 2
             posted = calls[-1].post_data_json
             assert '"selector":"#another"' in (posted.get("input") or posted["messages"][1:])[0]["content"]
             page.frame_locator("iframe.prototype-frame").get_by_role("button", name="创建任务", exact=True).click()
-            expect(page.locator(".explanation-intro h3")).to_have_text("创建任务")
+            expect(page.locator(".assistant-context")).to_contain_text("创建任务")
             page.wait_for_timeout(400)
             assert len(calls) == 2
         finally:

@@ -988,24 +988,50 @@ a {
   padding: 7px 10px;
   color: var(--green);
 }
-.explanation-intro h3 {
-  margin: 8px 0;
-  font-size: 18px;
-  overflow-wrap: anywhere;
-}
-.explanation-intro .primary {
-  min-height: 44px;
-  width: 100%;
-}
 .explanation-current {
   overflow-wrap: anywhere;
-  margin: 16px 0;
+  margin: 0;
 }
 .explanation-current:empty {
   display: none;
 }
 .exported-explanation {
-  margin-top: 16px;
+  margin: 0 0 18px;
+}
+.exported-explanation .eyebrow,
+.explanation-current > .eyebrow {
+  margin-bottom: 12px;
+}
+.explanation-current .chat-message {
+  margin: 0;
+}
+.explanation-current .role {
+  display: none;
+}
+.explanation-action {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.assistant-footer-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assistant[data-tab="explain"] #vks-assistant-connection-status {
+  display: none;
+}
+.explanation-loading {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 20px 0;
+}
+.explanation-title {
+  font-size: 21px;
+  line-height: 1.5;
+  margin: 0 0 18px;
+  color: inherit;
+  overflow-wrap: anywhere;
 }
 .primary {
   background: var(--green);
