@@ -3,3 +3,5 @@ docs/design/** -text
 fixtures/** -text
 *.png -text
 *.zip -text
+# The generated highlighter contains significant whitespace in grammar literals.
+services/api/vks_api/reader_assets/markdown-vendor.js whitespace=-blank-at-eol

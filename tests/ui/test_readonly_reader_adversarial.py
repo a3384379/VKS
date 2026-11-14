@@ -71,7 +71,7 @@ def test_untrusted_script_cannot_read_recipient_key_forge_paid_calls_or_navigate
             frame = page.frame_locator("iframe.prototype-frame")
             expect(frame.get_by_role("button", name="检查宿主隔离", exact=True)).to_be_visible()
             configure(page)
-            page.get_by_role("tab", name="连接设置", exact=True).click()
+            page.get_by_role("button", name="连接设置", exact=True).click()
             page.get_by_label("API Key", exact=True).fill("fixture-recipient-only")
             expect(page.get_by_label("API Key", exact=True)).to_have_value("fixture-recipient-only")
             frame.get_by_role("button", name="检查宿主隔离", exact=True).click()
@@ -154,7 +154,7 @@ def test_changing_recipient_connection_discards_previous_model_choices_and_late_
         try:
             page.goto(reader_file.as_uri())
             configure(page)
-            page.get_by_role("tab", name="连接设置", exact=True).click()
+            page.get_by_role("button", name="连接设置", exact=True).click()
             expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_count(3)
             page.evaluate(r"""() => {
               const original = window.fetch;

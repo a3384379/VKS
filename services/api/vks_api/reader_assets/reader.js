@@ -202,8 +202,11 @@
     tab: "related",
     messages: [],
     explanations: new Map(),
+    layout: {},
     activity: null,
     settingsReturnTab: "chat",
+    settingsPreviousTab: "related",
+    appliedConnection: "",
     busy: false,
     controller: null,
     semantic: false,
@@ -224,6 +227,177 @@
     pendingQuestion: "",
   };
   const ui = {};
+  let explanationTimer = null;
+  function layoutStorageKey() {
+    return `vks.reader.layout:${data.project.id}:${data.snapshot?.id || "current"}`;
+  }
+  function loadAssistantLayout() {
+    try {
+      const value = JSON.parse(
+        localStorage.getItem(layoutStorageKey()) || "{}",
+      );
+      for (const kind of ["launcher", "panel"])
+        if (
+          Number.isFinite(value?.[kind]?.x) &&
+          Number.isFinite(value?.[kind]?.y)
+        )
+          state.layout[kind] = { x: value[kind].x, y: value[kind].y };
+    } catch {}
+  }
+  function saveAssistantLayout() {
+    try {
+      localStorage.setItem(layoutStorageKey(), JSON.stringify(state.layout));
+    } catch {}
+  }
+  function placeAssistant(kind, position = state.layout[kind]) {
+    const node = kind === "panel" ? ui.assistant : ui.launch;
+    if (!node?.isConnected || !position) return;
+    const bounds = node.getBoundingClientRect();
+    const size = getComputedStyle(node),
+      width = bounds.width || parseFloat(size.width),
+      height = bounds.height || parseFloat(size.height);
+    const clamped = {
+      x: Math.max(8, Math.min(position.x, Math.max(8, innerWidth - width - 8))),
+      y: Math.max(
+        8,
+        Math.min(position.y, Math.max(8, innerHeight - height - 8)),
+      ),
+    };
+    state.layout[kind] = clamped;
+    Object.assign(node.style, {
+      left: clamped.x + "px",
+      top: clamped.y + "px",
+      right: "auto",
+      bottom: "auto",
+    });
+  }
+  function draggableAssistant(handle, kind) {
+    let suppressClickUntil = 0;
+    handle.addEventListener(
+      "click",
+      (event) => {
+        if (performance.now() < suppressClickUntil) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      },
+      true,
+    );
+    handle.addEventListener("keydown", (event) => {
+      const step = {
+        ArrowLeft: [-20, 0],
+        ArrowRight: [20, 0],
+        ArrowUp: [0, -20],
+        ArrowDown: [0, 20],
+      }[event.key];
+      if (!event.altKey || !step) return;
+      event.preventDefault();
+      const node = kind === "panel" ? ui.assistant : ui.launch;
+      const rect = node.getBoundingClientRect();
+      placeAssistant(kind, { x: rect.left + step[0], y: rect.top + step[1] });
+      saveAssistantLayout();
+    });
+    handle.addEventListener("pointerdown", (event) => {
+      if (
+        event.button !== 0 ||
+        (kind === "panel" &&
+          event.target.closest("button,a,input,select,textarea"))
+      )
+        return;
+      const node = kind === "panel" ? ui.assistant : ui.launch;
+      const rect = node.getBoundingClientRect(),
+        start = { x: event.clientX, y: event.clientY };
+      let moved = false,
+        shield;
+      const move = (e) => {
+        if (e.pointerId !== event.pointerId) return;
+        const dx = e.clientX - start.x,
+          dy = e.clientY - start.y;
+        if (!moved && Math.hypot(dx, dy) < 6) return;
+        if (!moved) {
+          moved = true;
+          shield = el("div", {
+            class: "reader-drag-shield",
+            "aria-hidden": "true",
+          });
+          document.body.append(shield);
+          document.body.classList.add("reader-dragging");
+          try {
+            handle.setPointerCapture(event.pointerId);
+          } catch {}
+        }
+        e.preventDefault();
+        placeAssistant(kind, { x: rect.left + dx, y: rect.top + dy });
+      };
+      const finish = (e) => {
+        if (e?.pointerId != null && e.pointerId !== event.pointerId) return;
+        window.removeEventListener("pointermove", move, true);
+        window.removeEventListener("pointerup", finish, true);
+        window.removeEventListener("pointercancel", finish, true);
+        window.removeEventListener("blur", finish);
+        shield?.remove();
+        document.body.classList.remove("reader-dragging");
+        if (moved) {
+          suppressClickUntil = performance.now() + 350;
+          saveAssistantLayout();
+        }
+        try {
+          if (handle.hasPointerCapture(event.pointerId))
+            handle.releasePointerCapture(event.pointerId);
+        } catch {}
+      };
+      window.addEventListener("pointermove", move, {
+        capture: true,
+        passive: false,
+      });
+      window.addEventListener("pointerup", finish, true);
+      window.addEventListener("pointercancel", finish, true);
+      window.addEventListener("blur", finish);
+    });
+  }
+  function hasExportedExplanation() {
+    return explanationBindings().some(
+      (binding) => binding.origin === "model" && binding.summary?.trim(),
+    );
+  }
+  function explanationConnectionReady() {
+    return !!(
+      state.config.key.trim() &&
+      state.config.model.trim() &&
+      state.config.consent &&
+      state.appliedConnection === JSON.stringify(state.config)
+    );
+  }
+  function queueAutomaticExplanation() {
+    clearTimeout(explanationTimer);
+    explanationTimer = null;
+    const key = explanationKey();
+    if (
+      !state.assistant ||
+      state.tab !== "explain" ||
+      state.view !== "prototype" ||
+      !key ||
+      state.busy ||
+      !explanationConnectionReady() ||
+      state.explanations.has(key) ||
+      hasExportedExplanation()
+    )
+      return;
+    explanationTimer = setTimeout(() => {
+      explanationTimer = null;
+      if (
+        state.assistant &&
+        state.tab === "explain" &&
+        state.view === "prototype" &&
+        explanationKey() === key &&
+        !state.busy &&
+        explanationConnectionReady() &&
+        !state.explanations.has(key) &&
+        !hasExportedExplanation()
+      )
+        void submitQuestion("explain");
+    }, 250);
+  }
   function notify(message) {
     $(".toast")?.remove();
     const node = el("div", { class: "toast", role: "status" }, message);
@@ -373,13 +547,19 @@
       (binding) => binding.package_id === packageId,
     );
     const exact = source.filter(
-      (binding) => targetKey(binding.target) === targetKey(context.target),
+      (binding) =>
+        targetKey(binding.target) === targetKey(context.target) &&
+        (!binding.target?.label ||
+          binding.target.label === context.target?.label),
     );
     if (exact.length) return exact;
+    if (context.scope !== "module") return [];
     return source.filter(
       (binding) =>
         binding.scope === "module" &&
-        binding.target?.route === context.target?.route,
+        binding.target?.route === context.target?.route &&
+        JSON.stringify(binding.target?.frame_path || []) ===
+          JSON.stringify(context.target?.frame_path || []),
     );
   }
   function contextQuery(context = state.context) {
@@ -966,10 +1146,11 @@
     ui.launch = button("", () => openAssistant(), "assistant-launch", {
       "aria-label": "打开知识助手",
     });
+    ui.launch.title = "知识助手 · 拖动可移动";
     ui.launch.append(
       el("span", { class: "assistant-star", "aria-hidden": "true" }, "✧"),
-      el("span", {}, "知识助手"),
     );
+    draggableAssistant(ui.launch, "launcher");
     replace(
       $("#vks-root"),
       el(
@@ -980,6 +1161,12 @@
       ),
       ui.launch,
     );
+    loadAssistantLayout();
+    placeAssistant("launcher");
+    window.addEventListener("resize", () => {
+      placeAssistant("launcher");
+      placeAssistant("panel");
+    });
     renderNavigation();
     renderDocList();
     renderDocument();
@@ -1507,6 +1694,9 @@
     }
     function context(win, path, route, node) {
       const doc = win.document;
+      route = win.__prototypePackPage?.path
+        ? "/" + win.__prototypePackPage.path.replace(/^\//, "")
+        : route;
       return {
         target: {
           route,
@@ -1561,16 +1751,18 @@
         ? "/" + win.__prototypePackPage.path.replace(/^\//, "")
         : route;
       windows.set(JSON.stringify(path), { win, path, route });
+      let shown = true;
+      for (let frame = win; frame !== window && shown; frame = frame.parent)
+        shown = !!frame.frameElement && visible(frame.frameElement);
+      if (
+        shown &&
+        ((!win.__prototypePack &&
+          !doc.getElementById("prototypePackPayload")) ||
+          win.__prototypePackPage?.path)
+      )
+        nextModule = context(win, path, route);
       if (!registered.has(doc)) {
         registered.add(doc);
-        if (
-          (!win.__prototypePack &&
-            !doc.getElementById("prototypePackPayload")) ||
-          win.__prototypePackPage?.path
-        ) {
-          module = context(win, path, route);
-          send("context", module);
-        }
         doc.addEventListener(
           "contextmenu",
           (event) => {
@@ -1602,13 +1794,34 @@
               return;
             }
             const node = event.target.closest?.(
-              'button,a,[role="button"],[role="menuitem"],[role="tab"],[onclick],.el-menu-item',
+              'button,a,input,select,textarea,[contenteditable="true"],[role="button"],[role="menuitem"],[role="tab"],[onclick],label,.el-switch,.el-menu-item',
             );
             if (node && visible(node))
               send("context", context(win, path, route, node));
           },
           true,
         );
+        doc.addEventListener(
+          "focusin",
+          (event) => {
+            const node = event.target.closest?.(
+              'input,select,textarea,[contenteditable="true"]',
+            );
+            if (node && visible(node))
+              send("context", context(win, path, route, node));
+          },
+          true,
+        );
+        new win.MutationObserver(() => {
+          clearTimeout(scanTimer);
+          scanTimer = setTimeout(scan, 60);
+        }).observe(doc.documentElement, {
+          subtree: true,
+          childList: true,
+          characterData: true,
+          attributes: true,
+          attributeFilter: ["hidden", "class", "aria-selected"],
+        });
         doc.addEventListener("submit", (event) => event.preventDefault(), true);
         doc.addEventListener("load", scan, true);
       }
@@ -1620,9 +1833,16 @@
             route,
           );
     }
+    let nextModule = null,
+      scanTimer;
     function scan() {
       windows.clear();
+      nextModule = null;
       install(window, [], "/");
+      if (nextModule && JSON.stringify(nextModule) !== JSON.stringify(module)) {
+        module = nextModule;
+        send("context", module);
+      }
     }
     window.addEventListener("message", async (event) => {
       if (event.source !== parent || event.data?.vks_reader !== nonce) return;
@@ -1895,13 +2115,61 @@
     renderAssistant();
   }
   function selectAssistantTab(tab) {
-    if (tab === "settings")
+    if (tab === "settings" && state.tab !== "settings") {
+      state.settingsPreviousTab = state.tab;
       state.settingsReturnTab = state.tab === "explain" ? "explain" : "chat";
+    }
     state.tab = tab;
     renderAssistant();
-    $("#vks-assistant-tab-" + tab)?.focus({ preventScroll: true });
+    $(
+      tab === "settings"
+        ? "#vks-assistant-settings"
+        : "#vks-assistant-tab-" + tab,
+    )?.focus({ preventScroll: true });
+  }
+  function settingsButton() {
+    const node = button(
+      "",
+      () =>
+        state.tab === "settings"
+          ? selectAssistantTab(state.settingsPreviousTab)
+          : selectAssistantTab("settings"),
+      "icon-button assistant-settings-button",
+      {
+        id: "vks-assistant-settings",
+        "aria-label": "连接设置",
+        title: "连接设置",
+        "aria-pressed": String(state.tab === "settings"),
+        "aria-controls": "vks-assistant-panel",
+      },
+    );
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    for (const [key, value] of Object.entries({
+      viewBox: "0 0 24 24",
+      width: "19",
+      height: "19",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.8",
+      "stroke-linecap": "round",
+      "aria-hidden": "true",
+    }))
+      svg.setAttribute(key, value);
+    for (const [tag, attrs] of [
+      ["path", { d: "M3 6h3m5 0h10M3 18h10m5 0h3" }],
+      ["circle", { cx: "8.5", cy: "6", r: "2.5" }],
+      ["circle", { cx: "15.5", cy: "18", r: "2.5" }],
+    ]) {
+      const child = document.createElementNS(svg.namespaceURI, tag);
+      for (const [key, value] of Object.entries(attrs))
+        child.setAttribute(key, value);
+      svg.append(child);
+    }
+    node.append(svg);
+    return node;
   }
   function renderAssistant() {
+    clearTimeout(explanationTimer);
     const previous = ui.assistant,
       scrollTop =
         previous?.dataset.tab === state.tab ? ui.assistantBody.scrollTop : 0,
@@ -1910,12 +2178,12 @@
         : "";
     $(".assistant")?.remove();
     ui.launch.classList.toggle("hidden", state.assistant);
+    placeAssistant("launcher");
     if (!state.assistant) return;
     const tabs = [
       ["related", "相关知识"],
       ["explain", "AI 讲解"],
       ["chat", "AI 问答"],
-      ["settings", "连接设置"],
     ].map(([id, title], index, items) =>
       button(title, () => selectAssistantTab(id), "", {
         id: "vks-assistant-tab-" + id,
@@ -1945,6 +2213,7 @@
         el("span", { class: "assistant-star", "aria-hidden": "true" }, "✧"),
         el("strong", {}, "知识助手"),
         el("div", { class: "spacer" }),
+        settingsButton(),
         button(
           "−",
           () => {
@@ -1967,7 +2236,10 @@
       id: "vks-assistant-panel",
       class: "assistant-body",
       role: "tabpanel",
-      "aria-labelledby": "vks-assistant-tab-" + state.tab,
+      "aria-labelledby":
+        state.tab === "settings"
+          ? "vks-assistant-settings"
+          : "vks-assistant-tab-" + state.tab,
       tabindex: "0",
     });
     ui.assistant.append(ui.assistantBody);
@@ -1994,6 +2266,21 @@
       ),
     );
     document.body.append(ui.assistant);
+    const dragHandle = $(".assistant-head", ui.assistant);
+    dragHandle.tabIndex = 0;
+    dragHandle.setAttribute("aria-label", "移动知识助手");
+    dragHandle.title = "拖动移动 · Alt + 方向键微调";
+    draggableAssistant(dragHandle, "panel");
+    if (!state.layout.panel && state.layout.launcher) {
+      const anchor = state.layout.launcher,
+        size = getComputedStyle(ui.launch),
+        bounds = ui.assistant.getBoundingClientRect();
+      state.layout.panel = {
+        x: anchor.x + parseFloat(size.width) - bounds.width,
+        y: anchor.y + parseFloat(size.height) - bounds.height,
+      };
+    }
+    placeAssistant("panel");
     if (focusedId)
       $("#" + focusedId, ui.assistant)?.focus({ preventScroll: true });
     if (state.tab === "chat") {
@@ -2003,6 +2290,7 @@
           body.scrollTop = body.scrollHeight;
       });
     } else ui.assistantBody.scrollTop = scrollTop;
+    queueAutomaticExplanation();
   }
   function renderRelated() {
     const context = state.view === "prototype" ? state.context : null,
@@ -2137,6 +2425,8 @@
     }
     const key = explanationKey(context),
       answer = state.explanations.get(key),
+      ready = explanationConnectionReady(),
+      exported = hasExportedExplanation(),
       generating =
         state.busy &&
         state.activity?.kind === "explain" &&
@@ -2157,13 +2447,25 @@
           "按用途、操作步骤、注意事项组织，区分原文事实、推断与资料不足，并附可核对的引用。",
         ),
         button(
-          generating ? "停止讲解" : answer ? "重新生成讲解" : "生成讲解",
+          generating
+            ? "停止讲解"
+            : !ready
+              ? "配置模型连接"
+              : answer || exported
+                ? "重新生成讲解"
+                : "正在准备讲解…",
           () =>
-            generating ? state.controller?.abort() : submitQuestion("explain"),
+            generating
+              ? state.controller?.abort()
+              : !ready
+                ? selectAssistantTab("settings")
+                : submitQuestion("explain"),
           "primary",
           {
             id: "vks-generate-explanation",
-            disabled: state.busy && !generating,
+            disabled:
+              (state.busy && !generating) ||
+              (ready && !answer && !exported && !generating),
           },
         ),
         el(
@@ -2171,7 +2473,13 @@
           { class: "settings-note" },
           state.busy && !generating
             ? "另一条请求正在进行，完成或停止后可生成讲解。"
-            : "点击生成才会联网；新讲解仅保留在本次页面会话中。",
+            : answer
+              ? "已保留本次讲解；切换页签不会重复调用。"
+              : exported
+                ? "已加载导出的讲解，可离线查看。"
+                : ready
+                  ? "正在自动讲解当前功能…"
+                  : "配置模型连接后，自动讲解当前功能。",
         ),
       ),
     );
@@ -2657,6 +2965,7 @@
             throw new Error("请选择或填写回答模型。");
           if (!state.config.consent)
             throw new Error("请允许将问题及检索到的章节发送到所填服务。");
+          state.appliedConnection = JSON.stringify(state.config);
           state.tab = state.settingsReturnTab;
           renderAssistant();
           notify("模型连接已应用，密钥仅用于当前会话。 ");
@@ -2668,6 +2977,12 @@
     );
     replace(
       ui.assistantBody,
+      button(
+        "‹ 返回助手",
+        () => selectAssistantTab(state.settingsPreviousTab),
+        "subtle-button settings-back",
+        { "aria-label": "返回助手" },
+      ),
       el("div", { class: "eyebrow" }, "你的模型连接"),
       el(
         "div",
@@ -2966,6 +3281,7 @@
     if (!explaining) state.pendingQuestion = question;
     if (!state.config.key || !state.config.model || !state.config.consent) {
       state.settingsReturnTab = explaining ? "explain" : "chat";
+      state.settingsPreviousTab = state.settingsReturnTab;
       state.tab = "settings";
       renderAssistant();
       notify("先配置你的模型连接并允许发送相关章节。");

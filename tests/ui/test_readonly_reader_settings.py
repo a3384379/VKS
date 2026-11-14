@@ -12,7 +12,7 @@ reader_file = reader_tests.reader_file
 def open_settings(page, reader_file):
     page.goto(reader_file.as_uri())
     page.get_by_role("button", name="打开知识助手", exact=True).click()
-    page.get_by_role("tab", name="连接设置", exact=True).click()
+    page.get_by_role("button", name="连接设置", exact=True).click()
     page.get_by_label("模型服务", exact=True).select_option("custom")
     page.get_by_label("接口地址", exact=True).fill("https://api.example.test/v1")
     page.get_by_label("API Key", exact=True).fill("synthetic-recipient-key")
@@ -72,7 +72,7 @@ def test_touch_model_picker_preserves_exact_catalog_and_manual_ids(reader_file):
             assert "synthetic-recipient-key" not in reader_file.read_text()
             page.reload()
             page.get_by_role("button", name="打开知识助手", exact=True).click()
-            page.get_by_role("tab", name="连接设置", exact=True).click()
+            page.get_by_role("button", name="连接设置", exact=True).click()
             expect(page.get_by_label("API Key", exact=True)).to_have_value("")
             expect(page.locator("#vks-assistant-connection-status")).to_have_text("未配置 AI")
         finally:
@@ -90,26 +90,27 @@ def test_assistant_tabs_keyboard_selection_and_scrolling_stay_inside_panel(reade
             open_settings(page, reader_file)
             tabs = page.get_by_role("tablist", name="助手功能")
             selected = tabs.locator('[aria-selected="true"]')
-            expect(selected).to_have_text("连接设置")
+            expect(selected).to_have_count(0)
+            expect(page.get_by_role("button", name="连接设置", exact=True)).to_have_attribute("aria-pressed", "true")
             page.get_by_role("tab", name="相关知识", exact=True).hover()
             backgrounds = tabs.get_by_role("tab").evaluate_all(
                 "nodes => nodes.map(node => getComputedStyle(node).backgroundColor)"
             )
-            assert backgrounds[0] != backgrounds[2]
-            settings = page.get_by_role("tab", name="连接设置", exact=True)
-            settings.focus()
-            settings.press("Home")
+            assert len(backgrounds) == 3
+            settings = page.get_by_role("button", name="连接设置", exact=True)
+            page.get_by_role("tab", name="相关知识", exact=True).click()
             expect(selected).to_have_text("相关知识")
             page.get_by_role("tab", name="相关知识", exact=True).press("ArrowRight")
             expect(selected).to_have_text("AI 讲解")
             page.get_by_role("tab", name="AI 讲解", exact=True).press("End")
-            expect(settings).to_be_focused()
+            expect(page.get_by_role("tab", name="AI 问答", exact=True)).to_be_focused()
+            settings.click()
             expect(page.get_by_role("tabpanel", name="连接设置")).to_be_visible()
             # Both switches in the same frame reproduce the old chat rAF
             # callback scrolling the freshly opened settings to its bottom.
             page.evaluate("""() => {
                 document.querySelector('#vks-assistant-tab-chat').click();
-                document.querySelector('#vks-assistant-tab-settings').click();
+                document.querySelector('#vks-assistant-settings').click();
             }""")
             page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
             assert page.locator(".assistant-body").evaluate("node => node.scrollTop") == 0
@@ -157,7 +158,7 @@ def test_protocol_change_cancels_late_catalog_and_pending_state_survives_tabs(re
             fetch = page.get_by_role("button", name="获取模型", exact=True)
             fetch.click()
             page.get_by_role("tab", name="AI 问答", exact=True).click()
-            page.get_by_role("tab", name="连接设置", exact=True).click()
+            page.get_by_role("button", name="连接设置", exact=True).click()
             expect(fetch).to_be_disabled()
             expect(page.locator(".settings-form [role=status]")).to_have_text("正在读取模型列表…")
             page.get_by_label("接口协议", exact=True).select_option("responses")

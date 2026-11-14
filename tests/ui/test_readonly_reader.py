@@ -127,7 +127,7 @@ def test_file_reader_offline_links_isolation_and_ephemeral_prototype(reader_file
 
 def configure(page):
     page.get_by_role("button", name="打开知识助手", exact=True).click()
-    page.get_by_role("tab", name="连接设置", exact=True).click()
+    page.get_by_role("button", name="连接设置", exact=True).click()
     page.get_by_label("模型服务", exact=True).select_option("custom")
     page.get_by_label("接口地址", exact=True).fill("https://api.example.test/v1")
     page.get_by_label("API Key", exact=True).fill("fixture-recipient-only")
@@ -175,13 +175,13 @@ def test_recipient_model_dropdown_stream_citations_and_no_key_persistence(reader
             assert "fixture-recipient-only" not in reader_file.read_text()
             page.reload()
             page.get_by_role("button", name="打开知识助手", exact=True).click()
-            page.get_by_role("tab", name="连接设置", exact=True).click()
+            page.get_by_role("button", name="连接设置", exact=True).click()
             expect(page.get_by_label("API Key", exact=True)).to_have_value("")
         finally:
             browser.close()
 
 
-def test_response_stream_truncation_is_reported_and_context_does_not_trigger_model(reader_file):
+def test_automatic_explanation_reports_response_stream_truncation(reader_file):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=chromium_path(playwright), headless=True)
         page = browser.new_page()
@@ -205,15 +205,13 @@ def test_response_stream_truncation_is_reported_and_context_does_not_trigger_mod
         try:
             page.goto(reader_file.as_uri())
             configure(page)
-            page.get_by_role("tab", name="连接设置", exact=True).click()
+            page.get_by_role("button", name="连接设置", exact=True).click()
             page.get_by_label("接口协议", exact=True).select_option("responses")
             page.get_by_label("自定义模型 ID", exact=True).fill("fixture-chat")
             page.get_by_role("button", name="应用并开始提问", exact=True).click()
             frame = page.frame_locator("iframe.prototype-frame")
             frame.get_by_role("button", name="创建任务", exact=True).click(button="right")
             page.get_by_role("button", name="AI 讲解这个功能", exact=False).click()
-            assert not [call for call in calls if call.endswith("/responses")]
-            page.get_by_role("button", name="生成讲解", exact=True).click()
             expect(page.locator(".explanation-current .error")).to_have_text("连接提前结束，回答可能不完整，请重试。")
             expect(page.locator(".explanation-current .answer")).to_have_text("部分回答")
             assert len([call for call in calls if call.endswith("/responses")]) == 1
@@ -329,7 +327,7 @@ def test_responses_fragmented_crlf_and_utf8_with_citation_validation(reader_file
         try:
             page.goto(reader_file.as_uri())
             configure(page)
-            page.get_by_role("tab", name="连接设置", exact=True).click()
+            page.get_by_role("button", name="连接设置", exact=True).click()
             page.get_by_label("接口协议", exact=True).select_option("responses")
             page.get_by_label("自定义模型 ID", exact=True).fill("fixture-chat")
             page.get_by_role("button", name="应用并开始提问", exact=True).click()

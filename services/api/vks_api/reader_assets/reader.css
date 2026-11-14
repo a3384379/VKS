@@ -685,13 +685,16 @@ a {
   background: var(--green);
   box-shadow: 0 6px 24px #1c503737;
   color: #fff;
-  border-radius: 22px;
-  min-width: 55px;
-  height: 51px;
-  padding: 0 17px;
+  border-radius: 50%;
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  padding: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
+  justify-content: center;
+  touch-action: none;
+  cursor: grab;
   font-size: 13px;
 }
 .assistant-launch:hover {
@@ -727,6 +730,19 @@ a {
   background: #f6f9f6;
   font-size: 14px;
   min-height: 52px;
+  touch-action: none;
+  cursor: grab;
+}
+.reader-drag-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 28;
+  cursor: grabbing;
+}
+.reader-dragging,
+.reader-dragging * {
+  user-select: none !important;
+  cursor: grabbing !important;
 }
 .assistant-head,
 .assistant-context,
@@ -737,6 +753,18 @@ a {
 }
 .assistant-head strong {
   font-size: 13px;
+}
+.assistant-settings-button[aria-pressed="true"] {
+  background: #e4eee8;
+  color: var(--green);
+}
+.assistant-settings-button {
+  min-width: 32px;
+  min-height: 32px;
+}
+.settings-back {
+  align-self: flex-start;
+  margin-bottom: 12px;
 }
 .icon-button {
   padding: 4px 7px;
@@ -1432,8 +1460,10 @@ a {
   .assistant-launch {
     bottom: 18px;
     right: 16px;
-    height: 47px;
-    padding: 0 14px;
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
+    padding: 0;
     font-size: 12px;
   }
   .search-backdrop {
