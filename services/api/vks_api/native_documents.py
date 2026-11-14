@@ -27,6 +27,11 @@ def complete_selection(service, s, actor, pid, choices, documents):
     from .reading import ReadingService
 
     documents = set(documents)
+    full_access = service._can(s, actor, pid, "source:read") and service._can(s, actor, pid, "trace:read")
+    if full_access and s.info.get("vks_read_only"):
+        projected = _complete_mapped_selection(s, pid, choices, documents)
+        if projected is not None:
+            return projected
     retained = s.info.setdefault("vks_prefetched", {})
     reader = ReadingService(service)
 
@@ -42,7 +47,6 @@ def complete_selection(service, s, actor, pid, choices, documents):
         if isinstance(ids, list):
             section_ids.extend(rid for rid in ids if isinstance(rid, str))
     preload(section_ids)
-    full_access = service._can(s, actor, pid, "source:read") and service._can(s, actor, pid, "trace:read")
 
     def visible(row):
         entity = s.get(Entity, row.entity_id)
@@ -80,24 +84,132 @@ def complete_selection(service, s, actor, pid, choices, documents):
     return True
 
 
+def _complete_mapped_selection(s, pid, choices, document_ids):
+    """Validate mapped ownership without loading names, bodies or ORM instances.
+
+    None delegates legacy documents to the authoritative frozen/AST resolver.
+    The caller has already checked both source and trace capability for this
+    read snapshot; restricted readers continue through revision policy checks.
+    """
+    from .reading import chunks
+
+    documents = {}
+    ids = [choices.get(eid) for eid in document_ids]
+    if any(rid is None for rid in ids):
+        return False
+    for batch in chunks(ids):
+        query = (
+            select(
+                Revision.id,
+                Revision.entity_id,
+                Revision.project_id,
+                Revision.artifact_id,
+                Revision.metadata_json,
+                Entity.project_id,
+                Entity.type,
+                Entity.stable_key,
+                Artifact.project_id,
+            )
+            .join(Entity, Entity.id == Revision.entity_id)
+            .outerjoin(Artifact, Artifact.id == Revision.artifact_id)
+            .where(Revision.id.in_(batch))
+        )
+        documents.update({row[0]: row for row in s.execute(query)})
+    members = set()
+    for eid in document_ids:
+        row = documents.get(choices[eid])
+        if not row:
+            return False
+        _rid, entity_id, rpid, artifact_id, metadata, epid, kind, _key, apid = row
+        if entity_id != eid or rpid != pid or epid != pid or kind != "document" or (artifact_id and apid != pid):
+            return False
+        if "section_revision_ids" not in metadata:
+            return None
+        mapping = metadata["section_revision_ids"]
+        if (
+            not isinstance(mapping, list)
+            or not mapping
+            or any(not isinstance(rid, str) for rid in mapping)
+            or len(set(mapping)) != len(mapping)
+            or metadata.get("section_count") != len(mapping)
+        ):
+            return False
+        members.update(mapping)
+    chapters = {}
+    for batch in chunks(members):
+        query = (
+            select(
+                Revision.id,
+                Revision.entity_id,
+                Revision.project_id,
+                Revision.artifact_id,
+                Revision.metadata_json["document_key"],
+                Entity.project_id,
+                Entity.type,
+                Artifact.project_id,
+            )
+            .join(Entity, Entity.id == Revision.entity_id)
+            .outerjoin(Artifact, Artifact.id == Revision.artifact_id)
+            .where(Revision.id.in_(batch))
+        )
+        chapters.update({row[0]: row for row in s.execute(query)})
+    for eid in document_ids:
+        document = documents[choices[eid]]
+        identities = set()
+        for rid in document[4]["section_revision_ids"]:
+            row = chapters.get(rid)
+            if not row:
+                return False
+            _rid, entity_id, rpid, artifact_id, document_key, epid, kind, apid = row
+            if (
+                rpid != pid
+                or epid != pid
+                or kind != "section"
+                or artifact_id != document[3]
+                or (artifact_id and apid != pid)
+                or document_key != document[7]
+                or choices.get(entity_id) != rid
+                or entity_id in identities
+            ):
+                return False
+            identities.add(entity_id)
+    return True
+
+
 def package_documents(s, pid, package):
     from .materials import ROOT
     from .reading import chunks
 
+    members = package.metadata_json[ROOT].get("members", [])
+    cached = None
+    key = None
+    if s.info.get("vks_read_only"):
+        transaction = s.get_transaction()
+        state = s.info.get("vks_package_document_members")
+        if not state or state[0] is not transaction:
+            state = (transaction, {})
+            s.info["vks_package_document_members"] = state
+        cached = state[1]
+        key = (pid, package.id, tuple(members))
+        if key in cached:
+            return list(cached[key])
     output = []
-    for batch in chunks(package.metadata_json[ROOT].get("members", [])):
-        output.extend(
-            s.scalars(
-                select(Revision.entity_id)
-                .join(Entity, Revision.entity_id == Entity.id)
-                .where(
-                    Revision.id.in_(batch),
-                    Revision.project_id == pid,
-                    Entity.project_id == pid,
-                    Entity.type == "document",
-                )
-            )
+    for batch in chunks(members):
+        # Anchor on exact revision IDs. Combining project_id and this IN clause
+        # makes SQLite choose a repeated full-project index scan. Ownership and
+        # kind are still checked before any identity is returned to the caller.
+        rows = s.execute(
+            select(Revision.entity_id, Revision.project_id, Entity.project_id, Entity.type)
+            .join(Entity, Revision.entity_id == Entity.id)
+            .where(Revision.id.in_(batch))
         )
+        output.extend(
+            eid
+            for eid, revision_project, entity_project, kind in rows
+            if revision_project == pid and entity_project == pid and kind == "document"
+        )
+    if cached is not None:
+        cached[key] = tuple(output)
     return output
 
 

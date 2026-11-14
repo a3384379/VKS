@@ -81,6 +81,10 @@ class RestoreMaterialVersion(Input):
 
 
 def roots(s, pid, choices=None):
+    key = (pid, frozenset(choices.items())) if s.info.get("vks_read_only") and isinstance(choices, dict) else None
+    cache = s.info.setdefault("vks_material_roots", {})
+    if key is not None and key in cache:
+        return list(cache[key])
     query = (
         select(Revision)
         .join(Entity, Revision.entity_id == Entity.id)
@@ -95,7 +99,16 @@ def roots(s, pid, choices=None):
             if isinstance(choices, str)
             else query.where(Revision.id.in_(list(choices.values())))
         )
-    return [r for r in s.scalars(query) if ROOT in r.metadata_json]
+    result = [r for r in s.scalars(query) if ROOT in r.metadata_json]
+    if key is not None:
+        cache[key] = tuple(result)
+        # Keep the small package roots alive so later descriptor/navigation
+        # reads do not decode their large target/member metadata again.
+        from .reading import ReadingService
+
+        ReadingService(None).preload(s, result)
+        s.info.setdefault("vks_prefetched", {}).update({(Revision, row.id): row for row in result})
+    return result
 
 
 def root(s, pid, rid):
@@ -119,7 +132,14 @@ def readable(service, s, actor, pid, row):
     if complete:
         found = set()
         for batch in chunks(members):
-            found.update(s.scalars(select(Revision.id).where(Revision.project_id == pid, Revision.id.in_(batch))))
+            # Fetch by exact primary keys, then reject other-project members.
+            # The project predicate otherwise selects a repeated project scan
+            # on SQLite for every member batch.
+            found.update(
+                rid
+                for rid, owner in s.execute(select(Revision.id, Revision.project_id).where(Revision.id.in_(batch)))
+                if owner == pid
+            )
         result = found == set(members)
     else:
         result = all(
@@ -131,10 +151,23 @@ def readable(service, s, actor, pid, row):
 
 
 def primary(s, pid, choices):
-    for rid in choices.values():
-        row = s.get(Revision, rid)
-        if row and row.project_id == pid and COMPOSITION in row.metadata_json:
-            return row.metadata_json[COMPOSITION].get("primary_package_id")
+    from .reading import chunks
+
+    # Most choices are chapters. Inspect only the tiny composition JSON value,
+    # preserving selection order without materializing every revision body.
+    for batch in chunks(choices.values()):
+        rows = {
+            rid: value
+            for rid, project, value in s.execute(
+                select(Revision.id, Revision.project_id, Revision.metadata_json[COMPOSITION]).where(
+                    Revision.id.in_(batch)
+                )
+            )
+            if project == pid
+        }
+        for rid in batch:
+            if isinstance(rows.get(rid), dict):
+                return rows[rid].get("primary_package_id")
     return None
 
 

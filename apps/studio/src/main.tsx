@@ -185,6 +185,7 @@ function App() {
     [workspaceReady, setWorkspaceReady] = useState(""),
     [loadedCatalog, setCatalog] = useState<Catalog | null>(null),
     [loadedBindings, setBindings] = useState<Binding[]>([]),
+    [bindingsReady, setBindingsReady] = useState(false),
     [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const catalog =
     loadedCatalog &&
@@ -241,6 +242,7 @@ function App() {
           : null)
       : null;
   const [bookMounted, setBookMounted] = useState(false);
+  const [prototypeMounted, setPrototypeMounted] = useState(false);
   const [sourcePackage, setSourcePackage] = useState("");
   const [network, setNetwork] = useState<{
     key: string;
@@ -374,13 +376,22 @@ function App() {
   }, []);
   const reload = useCallback(async () => {
     const epoch = ++loadEpoch.current;
+    setBindingsReady(false);
     const [c, b] = await Promise.all([
-      api<Catalog>(`${prefix}/catalog?${scope}`),
+      api<Catalog>(`${prefix}/catalog?${scope}`).then((catalog) => {
+        if (epoch === loadEpoch.current) {
+          // The original page can start loading as soon as its authorized
+          // catalog is ready. Links may arrive later without blocking reading.
+          setCatalog(catalog);
+          setBindings([]);
+        }
+        return catalog;
+      }),
       api<Binding[]>(`${prefix}/bindings?${scope}`),
     ]);
     if (epoch !== loadEpoch.current) return;
-    setCatalog(c);
     setBindings(b);
+    setBindingsReady(true);
     return { c, b };
   }, [prefix, scope]);
   useEffect(() => {
@@ -446,11 +457,14 @@ function App() {
     setAssistantOptions(false);
     setCatalog(null);
     setBindings([]);
+    setBindingsReady(false);
     setActive(null);
     setTarget(null);
     setEditing(false);
+    setPicking(false);
     setViewDoc(null);
     setBookMounted(false);
+    setPrototypeMounted(false);
     setSourcePackage("");
     pendingNativeLocation.current = null;
     setError("");
@@ -467,11 +481,15 @@ function App() {
     workspaceReady,
   ]);
   useEffect(() => {
-    if (originalBook && nativePackage) {
+    if (route.view === "documents" && originalBook && nativePackage) {
       setBookMounted(true);
       setSourcePackage(nativePackage.id);
     }
-  }, [originalBook, nativePackage?.id]);
+  }, [route.view, originalBook, nativePackage?.id]);
+  useEffect(() => {
+    if ((route.view || "prototype") === "prototype" && p)
+      setPrototypeMounted(true);
+  }, [route.view, p?.id]);
   useEffect(() => {
     const reported = pendingNativeLocation.current;
     if (!reported || !nativeDetail || reported.path !== nativeDetail.path)
@@ -913,6 +931,8 @@ function App() {
     }
   }
   function onRuntime(event: RuntimeEvent) {
+    if (event.type === "material.loaded" && picking)
+      prototype.current?.send("picker.start");
     if (event.type === "context.dismiss") {
       setMenu(null);
       return;
@@ -1005,6 +1025,7 @@ function App() {
         isTarget(c.module.target) &&
         !pinned &&
         !editing &&
+        !picking &&
         (!route.binding || moduleChanged) &&
         !pendingReveal.current
       ) {
@@ -1030,6 +1051,10 @@ function App() {
     setMenu(null);
     if (!isTarget(t)) return;
     if (event.type === "target.selected") {
+      if (!checkBindingsReady()) {
+        setPicking(false);
+        return;
+      }
       assistEpoch.current++;
       assistAbort.current?.abort();
       cancelAutomatic();
@@ -1068,7 +1093,13 @@ function App() {
       );
     }
   }
+  function checkBindingsReady() {
+    if (bindingsReady) return true;
+    setNotice("正在加载关联，请稍后再编辑");
+    return false;
+  }
   function startPicker() {
+    if (!checkBindingsReady()) return;
     if (editing) {
       setNotice("请先保存或取消当前编辑");
       return;
@@ -1079,6 +1110,7 @@ function App() {
     setAssisting(false);
     setRetrieving(false);
     setPicking(true);
+    pendingReveal.current = null;
     setAssistantOptions(false);
     setKnowledge(false);
     prototype.current?.send("picker.start");
@@ -1124,6 +1156,7 @@ function App() {
     else pendingReveal.current = b.target;
   }
   function editBinding(b: Binding) {
+    if (!checkBindingsReady()) return;
     const destination = catalog?.packages.find((p) => p.id === b.package_id);
     if (destination) navigate({ package: destination.package_key || "" });
     assistEpoch.current++;
@@ -1662,6 +1695,7 @@ function App() {
                 setAuth(false);
                 setAccountId("");
                 setCatalog(null);
+                setBindingsReady(false);
                 setProjects([]);
               })
             }
@@ -1829,19 +1863,21 @@ function App() {
         >
           {p ? (
             <>
-              <OriginalRuntime
-                key={p.id + scope}
-                url={`${prefix}/packages/${p.id}/content?${scope}`}
-                digest={p.sha256}
-                kind="prototype"
-                storageScope={{
-                  accountId,
-                  projectId: route.project,
-                  packageId: p.package_key || p.id,
-                }}
-                handle={prototype}
-                onEvent={onRuntime}
-              />
+              {(currentView === "prototype" || prototypeMounted) && (
+                <OriginalRuntime
+                  key={p.id + scope}
+                  url={`${prefix}/packages/${p.id}/content?${scope}`}
+                  digest={p.sha256}
+                  kind="prototype"
+                  storageScope={{
+                    accountId,
+                    projectId: route.project,
+                    packageId: p.package_key || p.id,
+                  }}
+                  handle={prototype}
+                  onEvent={onRuntime}
+                />
+              )}
             </>
           ) : (
             <div className="empty">
@@ -1910,25 +1946,27 @@ function App() {
             </aside>
           </DocumentLibrary>
         )}
-        {nativePackage && accountId && (bookMounted || originalBook) && (
-          <NativeDocumentPane
-            key={nativePackage.id + scope}
-            pack={nativePackage}
-            native={nativeDetail || null}
-            section={route.section}
-            account={accountId}
-            project={route.project}
-            contentUrl={`${prefix}/packages/${nativePackage.id}/content?${scope}`}
-            origins={networkOrigins}
-            visible={currentView === "documents" && originalBook}
-            requestKey={`${route.project}:${scope}:${route.doc}:${route.section}:${route.view}:${route.reader}`}
-            onLocation={nativeLocation}
-            onFailure={(message) => {
-              setNotice(message);
-              navigate({ reader: "standard" }, true);
-            }}
-          />
-        )}
+        {nativePackage &&
+          accountId &&
+          (bookMounted || (currentView === "documents" && originalBook)) && (
+            <NativeDocumentPane
+              key={nativePackage.id + scope}
+              pack={nativePackage}
+              native={nativeDetail || null}
+              section={route.section}
+              account={accountId}
+              project={route.project}
+              contentUrl={`${prefix}/packages/${nativePackage.id}/content?${scope}`}
+              origins={networkOrigins}
+              visible={currentView === "documents" && originalBook}
+              requestKey={`${route.project}:${scope}:${route.doc}:${route.section}:${route.view}:${route.reader}`}
+              onLocation={nativeLocation}
+              onFailure={(message) => {
+                setNotice(message);
+                navigate({ reader: "standard" }, true);
+              }}
+            />
+          )}
         {currentView === "projects" && (
           <Projects onOpen={openProject} onUpdate={refreshProjects} />
         )}
@@ -1989,7 +2027,7 @@ function App() {
                   <footer>
                     <button onClick={() => reveal(b)}>打开原型</button>
                     <button
-                      disabled={!catalog?.editable}
+                      disabled={!catalog?.editable || !bindingsReady}
                       onClick={() => editBinding(b)}
                     >
                       编辑
@@ -2007,8 +2045,14 @@ function App() {
             {!bindings.length && (
               <div className="empty">
                 <Link2 />
-                <h3>从原型开始第一条关联</h3>
-                <button className="primary" onClick={startPicker}>
+                <h3>
+                  {bindingsReady ? "从原型开始第一条关联" : "正在加载关联…"}
+                </h3>
+                <button
+                  className="primary"
+                  disabled={!bindingsReady || !catalog?.editable || !p}
+                  onClick={startPicker}
+                >
                   选择控件并关联知识
                 </button>
               </div>
@@ -2084,8 +2128,9 @@ function App() {
           <hr />
           <button
             role="menuitem"
-            disabled={!catalog?.editable}
+            disabled={!catalog?.editable || !bindingsReady}
             onClick={() => {
+              if (!checkBindingsReady()) return;
               const b = bindings.find((b) => sameTarget(b.target, menu.target));
               setMenu(null);
               if (b) editBinding(b);
@@ -2290,7 +2335,7 @@ function App() {
                   <ChevronRight size={15} />
                 </button>
                 <button
-                  disabled={!catalog?.editable || !p}
+                  disabled={!catalog?.editable || !p || !bindingsReady}
                   onClick={startPicker}
                 >
                   <MousePointer2 size={16} />
@@ -2770,7 +2815,7 @@ function App() {
                     )}
                     {active && (
                       <button
-                        disabled={!catalog?.editable}
+                        disabled={!catalog?.editable || !bindingsReady}
                         onClick={() => editBinding(active)}
                       >
                         编辑知识

@@ -11,7 +11,8 @@ import re
 import threading
 import time
 import weakref
-from collections import Counter, OrderedDict
+from array import array
+from collections import Counter, OrderedDict, defaultdict
 from contextlib import nullcontext
 from copy import deepcopy
 from typing import Annotated, Literal
@@ -114,7 +115,9 @@ def tokens(value):
     return Counter(
         t
         for word in words
-        for t in ([word] if not re.match(r"[\u3400-\u9fff]", word) else [word[i : i + 2] for i in range(len(word) - 1)])
+        # The regex returns either ASCII words or a CJK run; no second regex is
+        # needed for every word in a large corpus.
+        for t in ([word] if word[0] < "\u3400" else [word[i : i + 2] for i in range(len(word) - 1)])
     )
 
 
@@ -127,11 +130,21 @@ class ChapterIndex:
 
     def __init__(self, chapters):
         self.rows = chapters
-        self.words = [tokens(c["document_name"] + " " + c["name"] + " " + c["content"]) for c in chapters]
-        counts = Counter(t for terms in self.words for t in terms)
-        self.idf = {t: math.log(1 + (len(chapters) - n + 0.5) / (n + 0.5)) for t, n in counts.items()}
-        self.lengths = [sum(x.values()) for x in self.words]
-        self.average = sum(self.lengths) / max(1, len(chapters))
+        # Compact (row, term frequency) postings avoid retaining a Counter and
+        # repeated token strings for every chapter. Only matching rows are scored.
+        self.postings = defaultdict(lambda: array("I"))
+        lengths = []
+        for index, chapter in enumerate(chapters):
+            terms = tokens(chapter["document_name"] + " " + chapter["name"] + " " + chapter["content"])
+            lengths.append(sum(terms.values()))
+            for term, frequency in terms.items():
+                self.postings[term].extend((index, frequency))
+        average = sum(lengths) / max(1, len(chapters))
+        self.norms = [1.2 * (0.25 + 0.75 * length / max(1, average)) for length in lengths]
+        self.idf = {
+            term: math.log(1 + (len(chapters) - len(posting) // 2 + 0.5) / (len(posting) // 2 + 0.5))
+            for term, posting in self.postings.items()
+        }
 
     def search(self, target, context, preferred):
         query = tokens(
@@ -142,16 +155,16 @@ class ChapterIndex:
                 + (context.nearby_labels if context.scope == "control" else [])
             )
         )
+        contributions = defaultdict(list)
+        for term, weight in query.items():
+            posting = self.postings.get(term, ())
+            for position in range(0, len(posting), 2):
+                index, frequency = posting[position], posting[position + 1]
+                score = self.idf[term] * min(weight, 3) * frequency * 2.2 / (frequency + self.norms[index])
+                contributions[index].append(score)
         ranked = []
-        for row, terms, length in zip(self.rows, self.words, self.lengths, strict=True):
-            score = sum(
-                self.idf.get(t, 0)
-                * min(w, 3)
-                * terms.get(t, 0)
-                * 2.2
-                / (terms.get(t, 0) + 1.2 * (0.25 + 0.75 * length / max(1, self.average)))
-                for t, w in query.items()
-            )
+        for index, row in enumerate(self.rows):
+            score = sum(contributions.get(index, ()))
             score += 20 if row["revision_id"] in preferred else 0
             score += 5 if len(target.label) > 1 and target.label in row["name"] else 0
             if score > 0:
@@ -163,7 +176,8 @@ class ChapterIndex:
                 continue
             per_doc[row["document_revision_id"]] += 1
             content = row["content"]
-            positions = [content.lower().find(t) for t in query if content.lower().find(t) >= 0]
+            lowered = content.lower()
+            positions = [position for t in query if (position := lowered.find(t)) >= 0]
             start = max(0, min(positions, default=0) - 100)
             result.append({**row, "content": content[start : start + 650]})
             if len(result) == 6:
@@ -193,7 +207,7 @@ class InteractiveAssistant:
             package = next(
                 (
                     p
-                    for p in self.links._packages(s, actor, pid, choices)
+                    for p in self.links._packages(s, actor, pid, choices, kind="prototype")
                     if p["id"] == form.package_id and p["kind"] == "prototype"
                 ),
                 None,
@@ -212,7 +226,7 @@ class InteractiveAssistant:
                 original.sensitivity == "confidential" or (p.get("requires_source_read") and not config["allow_source"])
             ):
                 failure("VKS_FORBIDDEN", "模型设置不允许使用此原型资料", 403)
-            rows = self.links._rows(s, actor, pid, choices)
+            rows = self.links._rows(s, actor, pid, choices, types={"document", "section"})
             chapters, revisions = [], {}
             sections = {r.id: r for e, r in rows if e.type == "section"}
             for entity, document in rows:
@@ -304,11 +318,11 @@ class InteractiveAssistant:
                     self.indexes.popitem(last=False)
             return built
 
-    def _binding(self, actor, pid, form):
+    def _binding(self, actor, pid, form, *, session=None):
         return next(
             (
                 b
-                for b in self.links.bindings(actor, pid, form.analysis_set_id, form.release_id)
+                for b in self.links.bindings(actor, pid, form.analysis_set_id, form.release_id, session=session)
                 if b["package_id"] == form.package_id
                 and target_key(DOMTarget.model_validate(b["target"])) == target_key(form.target)
             ),
@@ -317,14 +331,26 @@ class InteractiveAssistant:
 
     def related(self, actor, pid, form):
         started = time.perf_counter()
-        config, chapters, corpus, _, version, _ = self.prepare(actor, pid, form, for_model=False)
-        current = self._binding(actor, pid, form)
+        with self.links.reader.reading.db() as session:
+            state = self.prepare(actor, pid, form, session=session, for_model=False)
+            current = self._binding(actor, pid, form, session=session)
+        return self._related_result(actor, pid, form, state, current, started)
+
+    @staticmethod
+    def _has_current_binding(current):
+        return bool(
+            current and (current["excluded"] or (current["validity_status"] == "valid" and current["sections"]))
+        )
+
+    def _related_result(self, actor, pid, form, state, current, started, *, vector_available=None):
+        config, chapters, corpus, _, version, _ = state
+        bound = self._has_current_binding(current)
         # These are retrieval candidates, never model-confirmed relationships.
         sections = (
             []
             if current and current["excluded"]
             else current["sections"]
-            if current and current["validity_status"] == "valid" and current["sections"]
+            if bound
             else self._index(corpus, chapters).search(form.target, form.context, set())
         )
         return {
@@ -332,12 +358,14 @@ class InteractiveAssistant:
             "sections": sections,
             "binding_id": current["id"] if current else None,
             "excluded": bool(current and current["excluded"]),
-            "origin": "binding" if current else "retrieval",
+            "origin": "binding" if bound else "retrieval",
             "model_available": bool(config["enabled"] and config["allow_external"]),
             "selection_version": version,
             "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
-            "retrieval": "binding" if current else "keyword",
-            "vector_available": self.rag.available(actor, pid, chapters),
+            "retrieval": "binding" if bound else "keyword",
+            "vector_available": self.rag.available(actor, pid, chapters)
+            if vector_available is None
+            else vector_available,
         }
 
     def run(self, actor, pid, form, *, migrate_manual=False, validate_scope=None):
@@ -361,8 +389,9 @@ class InteractiveAssistant:
 
     def _run(self, actor, pid, form, *, migrate_manual=False, validate_scope=None):
         question = isinstance(form, InteractiveQuestionInput)
-        config, chapters, corpus, key, version, editable = self.prepare(actor, pid, form)
-        current = self._binding(actor, pid, form)
+        with self.links.reader.reading.db() as session:
+            config, chapters, corpus, key, version, editable = self.prepare(actor, pid, form, session=session)
+            current = self._binding(actor, pid, form, session=session)
         if current and current["excluded"] and not question:
             failure("VKS_STATE_CONFLICT", "此关联已由用户移除，自动关联不会恢复它", 409)
         cached = self.cache.get(key)
@@ -373,12 +402,14 @@ class InteractiveAssistant:
                 "selection_version": version,
                 "binding_id": current["id"]
                 if current
+                and current["validity_status"] == "valid"
                 and cached.get("saved")
                 and current.get("origin") == "model"
                 and current["summary"] == cached["explanation"]
                 else None,
                 "saved": bool(
                     current
+                    and current["validity_status"] == "valid"
                     and cached.get("saved")
                     and current.get("origin") == "model"
                     and current["summary"] == cached["explanation"]
@@ -552,14 +583,15 @@ class InteractiveAssistant:
             ):
                 failure("VKS_INVALID_INPUT", "模型讲解超出格式范围")
             # Check the entire sent corpus/context policy again, not just citations.
-            latest = self.prepare(actor, pid, form)
+            with self.links.reader.reading.db() as session:
+                latest = self.prepare(actor, pid, form, session=session)
+                current = self._binding(actor, pid, form, session=session)
             if validate_scope:
                 with self.service.db() as session:
                     validate_scope(session)
             if latest[3] != key:
                 failure("VKS_VERSION_CONFLICT", "请求期间资料、权限或模型设置已变化，请重试", 412)
             version = latest[4]
-            current = self._binding(actor, pid, form)
             if current and current["excluded"] and not question:
                 failure("VKS_STATE_CONFLICT", "此关联已由用户移除，自动关联不会恢复它", 409)
             saved = False

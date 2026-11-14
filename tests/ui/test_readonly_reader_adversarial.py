@@ -71,7 +71,7 @@ def test_untrusted_script_cannot_read_recipient_key_forge_paid_calls_or_navigate
             frame = page.frame_locator("iframe.prototype-frame")
             expect(frame.get_by_role("button", name="检查宿主隔离", exact=True)).to_be_visible()
             configure(page)
-            page.get_by_role("button", name="连接设置", exact=True).click()
+            page.get_by_role("tab", name="连接设置", exact=True).click()
             page.get_by_label("API Key", exact=True).fill("fixture-recipient-only")
             expect(page.get_by_label("API Key", exact=True)).to_have_value("fixture-recipient-only")
             frame.get_by_role("button", name="检查宿主隔离", exact=True).click()
@@ -154,8 +154,8 @@ def test_changing_recipient_connection_discards_previous_model_choices_and_late_
         try:
             page.goto(reader_file.as_uri())
             configure(page)
-            page.get_by_role("button", name="连接设置", exact=True).click()
-            expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_count(2)
+            page.get_by_role("tab", name="连接设置", exact=True).click()
+            expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_count(3)
             page.evaluate(r"""() => {
               const original = window.fetch;
               window.catalogReleases = [];
@@ -171,19 +171,23 @@ def test_changing_recipient_connection_discards_previous_model_choices_and_late_
             page.get_by_label(changed_field, exact=True).fill(
                 "second-recipient-key" if changed_field == "API Key" else "https://other.example.test/v1"
             )
-            expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_text(["获取模型后可下拉选择"])
+            expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_text(
+                ["获取模型后可下拉选择", "手动输入模型 ID…"]
+            )
             expect(page.get_by_role("button", name="获取模型", exact=True)).to_be_enabled()
             page.get_by_role("button", name="获取模型", exact=True).click()
             page.wait_for_function("window.catalogReleases.length === 2")
             page.evaluate(
                 "async () => {window.catalogReleases[0](); await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));}"
             )
-            expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_text(["获取模型后可下拉选择"])
+            expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_text(
+                ["获取模型后可下拉选择", "手动输入模型 ID…"]
+            )
             expect(page.get_by_role("button", name="获取模型", exact=True)).to_be_disabled()
             assert "late-old-account-model" not in page.locator("body").inner_text()
             page.evaluate("window.catalogReleases[1]()")
             expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_text(
-                ["从可用模型中选择…", "current-account-model"]
+                ["请选择可用模型", "current-account-model", "手动输入模型 ID…"]
             )
         finally:
             browser.close()

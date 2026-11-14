@@ -453,6 +453,40 @@ a {
   font-size: 14px;
   overflow-wrap: anywhere;
 }
+.document-pagination {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  max-width: 880px;
+  margin: 38px auto 0;
+}
+.document-page-link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.document-page-link strong {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--green);
+}
+.document-page-direction {
+  font-size: 12px;
+  color: var(--muted);
+}
+.document-page-next {
+  grid-column: 2;
+  align-items: flex-end;
+  text-align: right;
+}
 .reader-toc {
   margin: 16px 0 28px;
   border: 1px solid var(--border);
@@ -694,6 +728,13 @@ a {
   font-size: 14px;
   min-height: 52px;
 }
+.assistant-head,
+.assistant-context,
+.assistant-tabs,
+.assistant-footer,
+.chat-compose {
+  flex-shrink: 0;
+}
 .assistant-head strong {
   font-size: 13px;
 }
@@ -722,16 +763,25 @@ a {
 }
 .assistant-tabs button {
   font-size: 12px;
-  padding: 8px 12px;
+  padding: 8px 6px;
   flex: 1;
+  min-width: 0;
+  min-height: 44px;
 }
-.assistant-tabs .active {
-  background: var(--soft);
-  color: var(--green);
+.assistant-tabs button:hover {
+  background: #f3f5f3;
+}
+.assistant-tabs [aria-selected="true"],
+.assistant-tabs [aria-selected="true"]:hover {
+  background: var(--green);
+  color: #fff;
   font-weight: 650;
 }
 .assistant-body {
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scroll-padding: 15px;
   padding: 15px 17px;
   flex: 1;
   min-height: 0;
@@ -769,6 +819,51 @@ a {
   line-height: 1.7;
   color: #6c7e70;
   margin: 7px 0;
+}
+.knowledge-match {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.knowledge-match-title .rich-markdown {
+  font-weight: 650;
+  color: var(--green);
+}
+.knowledge-match .knowledge-match-title .rich-markdown > * {
+  font-size: 13px;
+  line-height: 1.6;
+  color: inherit;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.knowledge-match .rich-markdown strong {
+  display: inline;
+  font-size: inherit;
+  line-height: inherit;
+}
+.knowledge-match .rich-markdown p {
+  font-size: inherit;
+  color: inherit;
+}
+.knowledge-match-preview {
+  max-height: 224px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin: 8px 0;
+}
+.knowledge-match-preview.expanded {
+  max-height: none;
+}
+.knowledge-match-preview > .rich-markdown > :first-child {
+  margin-top: 0;
+}
+.knowledge-match-toggle {
+  display: block;
+  min-height: 32px;
+  font-size: 11px;
+  color: var(--green);
+  padding: 5px 0;
+  margin-bottom: 6px;
 }
 .knowledge-summary {
   font-size: 12px;
@@ -865,6 +960,25 @@ a {
   padding: 7px 10px;
   color: var(--green);
 }
+.explanation-intro h3 {
+  margin: 8px 0;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+.explanation-intro .primary {
+  min-height: 44px;
+  width: 100%;
+}
+.explanation-current {
+  overflow-wrap: anywhere;
+  margin: 16px 0;
+}
+.explanation-current:empty {
+  display: none;
+}
+.exported-explanation {
+  margin-top: 16px;
+}
 .primary {
   background: var(--green);
   color: white;
@@ -940,17 +1054,27 @@ a {
   display: flex;
   flex-direction: column;
   gap: 13px;
+  min-width: 0;
 }
 .field {
   display: flex;
   flex-direction: column;
   gap: 7px;
   font-size: 12px;
+  min-width: 0;
 }
 .field input,
 .field select {
   font-size: 12px;
   padding: 9px 10px;
+  width: 100%;
+  min-height: 44px;
+}
+.settings-form button {
+  min-height: 44px;
+}
+.model-custom {
+  margin-top: 4px;
 }
 .field-row {
   display: flex;
@@ -1261,6 +1385,20 @@ a {
   .document {
     font-size: 13px;
   }
+  .document-pagination {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    margin-top: 28px;
+  }
+  .document-page-link {
+    padding: 13px 12px;
+  }
+  .document-page-link strong {
+    font-size: 12px;
+  }
+  .document-page-next {
+    grid-column: auto;
+  }
   .document > h1 {
     font-size: 23px;
   }
@@ -1284,8 +1422,12 @@ a {
     bottom: 10px;
     max-width: calc(100vw - 20px);
     height: 650px;
-    max-height: calc(100dvh - 72px);
+    max-height: calc(100dvh - 20px);
     border-radius: 13px;
+  }
+  .assistant .field input,
+  .assistant .field select {
+    font-size: 16px;
   }
   .assistant-launch {
     bottom: 18px;

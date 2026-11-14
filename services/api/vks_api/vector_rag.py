@@ -1084,27 +1084,43 @@ def install_rag(app, service, actor, envelope, assistant, AssistanceInput, Relat
     @app.post("/api/v3/projects/{pid}/interactive/semantic", response_model=PrototypeEnvelope[RelatedOutput])
     def semantic(pid: str, payload: AssistanceInput, a: ActorDep, request: Request):
         started = time.perf_counter()
-        state = assistant.prepare(a, pid, payload)
-        current = assistant._binding(a, pid, payload)
+        with assistant.links.reader.reading.db() as session:
+            state = assistant.prepare(a, pid, payload, session=session)
+            current = assistant._binding(a, pid, payload, session=session)
         if current and current["excluded"]:
             failure("VKS_STATE_CONFLICT", "此关联已移除", 409)
-        if current:
-            return envelope(request, assistant.related(a, pid, payload))
+        if assistant._has_current_binding(current):
+            return envelope(request, assistant._related_result(a, pid, payload, state, current, started))
         available = rag.available(a, pid, state[1])
         if not available:
-            return envelope(request, assistant.related(a, pid, payload))
+            return envelope(
+                request, assistant._related_result(a, pid, payload, state, current, started, vector_available=False)
+            )
         lexical = assistant._index(state[2], state[1]).search(payload.target, payload.context, set())
         sections = rag.hybrid(a, pid, payload, state[1], state[2], lexical)
-        assistant._unchanged(a, pid, payload, state[3], None, None)
+        # Semantic retrieval may call the embedding service. Recheck inputs and
+        # an explicit removal together in a fresh snapshot after that boundary.
+        with assistant.links.reader.reading.db() as session:
+            latest = assistant.prepare(a, pid, payload, session=session)
+            latest_current = assistant._binding(a, pid, payload, session=session)
+        if latest[3] != state[3]:
+            failure("VKS_VERSION_CONFLICT", "资料或模型配置已变化，请重试", 412)
+        if latest_current and latest_current["excluded"]:
+            failure("VKS_STATE_CONFLICT", "此关联已移除", 409)
+        if assistant._has_current_binding(latest_current):
+            return envelope(
+                request,
+                assistant._related_result(a, pid, payload, latest, latest_current, started, vector_available=True),
+            )
         return envelope(
             request,
             {
                 "title": payload.target.label,
                 "sections": sections,
-                "binding_id": current["id"] if current else None,
-                "origin": "binding" if current else "retrieval",
+                "binding_id": latest_current["id"] if latest_current else None,
+                "origin": "retrieval",
                 "model_available": True,
-                "selection_version": state[4],
+                "selection_version": latest[4],
                 "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
                 "retrieval": "hybrid",
                 "vector_available": True,
