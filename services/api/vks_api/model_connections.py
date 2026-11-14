@@ -36,7 +36,7 @@ class ConnectionForm(BaseModel):
     model_id: str = Field(default="", max_length=160)
     api_key: SecretStr | None = None
     max_output_tokens: int = Field(default=2500, ge=100, le=16000)
-    daily_token_limit: int = Field(default=100000, ge=1000, le=100000000)
+    daily_token_limit: int = Field(default=100000, ge=1000, le=100000000, deprecated=True)
     enabled: bool = True
     allow_external: bool = True
 
@@ -337,7 +337,6 @@ class ConnectionService:
                 model_id=form.model_id.strip(),
                 secret_ref=ref,
                 max_output_tokens=form.max_output_tokens,
-                daily_token_limit=form.daily_token_limit,
                 enabled=form.enabled,
                 allow_external=form.allow_external,
             )

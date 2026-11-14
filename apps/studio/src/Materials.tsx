@@ -11,6 +11,8 @@ import {
   X,
   LoaderCircle,
   Download,
+  Trash2,
+  RotateCcw,
 } from "lucide-react";
 import { api, mutation, sha256, date } from "../../web/src/api";
 
@@ -26,6 +28,7 @@ type PackageVersion = {
   target_count: number;
   warnings: string[];
   changes?: Record<string, number>;
+  unchanged?: boolean;
 };
 type Material = {
   id: string;
@@ -41,11 +44,19 @@ type Library = {
   primary_package_id: string | null;
   packages: Material[];
   versions: { id: string; name: string; version: string; created_at: string }[];
+  trash: {
+    id: string;
+    name: string;
+    kind: "package" | "version";
+    deleted_at: string;
+  }[];
   jobs: {
     id: string;
     state: string;
     progress: number;
     stage: string;
+    created_at?: string;
+    current_scope?: boolean;
     error?: { message: string };
     result?: {
       total?: number;
@@ -59,6 +70,7 @@ type Library = {
     };
   }[];
 };
+type HistoryData = Pick<Library, "versions" | "trash">;
 type Result = {
   analysis_set_id: string;
   selection_version: number;
@@ -66,6 +78,68 @@ type Result = {
   migration?: Record<string, number>;
   job_id?: string;
 };
+const migrating = (j: Library["jobs"][number]) =>
+  ["queued", "running", "retry_wait", "cancelling"].includes(j.state);
+function migrationLabel(j: Library["jobs"][number]) {
+  if (j.state === "queued") return "排队等待迁移";
+  if (j.state === "retry_wait") return "等待自动重试";
+  if (j.state === "cancelling") return "正在停止迁移";
+  if (j.state === "cancelled") return "迁移已停止";
+  if (j.state === "succeeded") return "迁移分析完成";
+  if (j.state === "failed") return "迁移暂未完成";
+  if (j.stage === "DOCUMENT_INDEX") return "正在建立向量索引";
+  if (j.stage === "ASSOCIATE") return "正在核对关联";
+  return "正在准备迁移";
+}
+function MigrationRecord({ j }: { j: Library["jobs"][number] }) {
+  return (
+    <article
+      className="material-job"
+      data-current-scope={j.current_scope !== false}
+    >
+      <div>
+        <b>{migrationLabel(j)}</b>
+        <span>{j.progress}%</span>
+      </div>
+      {j.created_at && (
+        <small>
+          {date(j.created_at)} ·{" "}
+          {j.current_scope === false ? "旧资料版本" : "当前资料"}
+        </small>
+      )}
+      <progress value={j.progress} max={100} />
+      {j.result && (
+        <p>
+          {j.result.total !== undefined &&
+            `已处理 ${Object.keys(j.result.completed || {}).length} / ${j.result.total} · `}
+          已关联 {j.result.saved || 0}
+          {j.result.pending ? ` · ${j.result.pending} 项待关联` : ""}
+        </p>
+      )}
+      {j.error && <p className="error">{j.error.message}</p>}
+      {!!j.result?.issues?.length && (
+        <details>
+          <summary>暂未定位的位置（{j.result.issues.length}）</summary>
+          {j.result.issues.map((r, i) => (
+            <p key={i}>
+              <b>{r.label}</b> · {r.message}
+            </p>
+          ))}
+        </details>
+      )}
+      {j.result?.completed && (
+        <details>
+          <summary>查看逐项结果</summary>
+          {Object.entries(j.result.completed).map(([id, r]) => (
+            <p key={id}>
+              <b>{r.label}</b> · {r.message}
+            </p>
+          ))}
+        </details>
+      )}
+    </article>
+  );
+}
 export function Materials({
   project,
   analysis,
@@ -85,7 +159,7 @@ export function Materials({
     [notice, setNotice] = useState("");
   const [kind, setKind] = useState("prototype"),
     [name, setName] = useState(""),
-    [target, setTarget] = useState(""),
+    [target, setTarget] = useState("choose"),
     [entry, setEntry] = useState("");
   const [files, setFiles] = useState<File[]>([]),
     [staged, setStaged] = useState<PackageVersion[]>([]),
@@ -93,6 +167,20 @@ export function Materials({
   const [busy, setBusy] = useState(""),
     [snapshotName, setSnapshotName] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
+  const customName = useRef(false);
+  const mounted = useRef(true),
+    working = useRef(false);
+  const pending = useRef<{
+    controller: AbortController;
+    promise: Promise<Library>;
+  } | null>(null);
+  const historyAbort = useRef<AbortController | null>(null);
+  const [history, setHistory] = useState<HistoryData | null>(null);
+  const [historyError, setHistoryError] = useState("");
+  const [updateSuggestion, setUpdateSuggestion] = useState<{
+    package_id: string;
+    name: string;
+  } | null>(null);
   const [exportJob, setExportJob] = useState<{
     id: string;
     state: string;
@@ -107,7 +195,8 @@ export function Materials({
     )
       return;
     let live = true;
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = () => {
       void api<typeof exportJob>(`/jobs/${exportJob.id}?project_id=${project}`)
         .then((next) => {
           if (live) {
@@ -120,46 +209,99 @@ export function Materials({
         })
         .catch((e) => {
           if (live) setError(e.message);
+        })
+        .finally(() => {
+          if (live) timer = setTimeout(poll, 1800);
         });
-    }, 1800);
+    };
+    timer = setTimeout(poll, 1800);
     return () => {
       live = false;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
   }, [exportJob, project]);
   useEffect(() => {
     setExportJob(null);
   }, [project]);
-  const load = useCallback(async () => {
-    const next = await api<Library>(`${prefix}?analysis_set_id=${analysis}`);
-    setData(next);
-    return next;
+  const load = useCallback(
+    (fresh = false) => {
+      if (pending.current && !fresh) return pending.current.promise;
+      pending.current?.controller.abort();
+      const controller = new AbortController();
+      const promise = api<Library>(
+        `${prefix}?analysis_set_id=${analysis}&include_versions=false`,
+        { signal: controller.signal },
+      )
+        .then((next) => {
+          if (mounted.current && !controller.signal.aborted) setData(next);
+          return next;
+        })
+        .finally(() => {
+          if (pending.current?.controller === controller)
+            pending.current = null;
+        });
+      pending.current = { controller, promise };
+      return promise;
+    },
+    [prefix, analysis],
+  );
+  const loadHistory = useCallback(async () => {
+    historyAbort.current?.abort();
+    const controller = new AbortController();
+    historyAbort.current = controller;
+    setHistoryError("");
+    try {
+      const next = await api<HistoryData>(
+        `${prefix}/versions?analysis_set_id=${analysis}`,
+        { signal: controller.signal },
+      );
+      if (mounted.current && !controller.signal.aborted) setHistory(next);
+    } catch (e) {
+      if (mounted.current && !controller.signal.aborted)
+        setHistoryError((e as Error).message);
+    }
   }, [prefix, analysis]);
   useEffect(() => {
-    let live = true;
+    mounted.current = true;
     void load().catch((e) => {
-      if (live) setError(e.message);
+      if (mounted.current && e.name !== "AbortError") setError(e.message);
     });
+    void loadHistory();
     return () => {
-      live = false;
+      mounted.current = false;
+      pending.current?.controller.abort();
+      pending.current = null;
+      historyAbort.current?.abort();
     };
-  }, [load, selectionVersion]);
+  }, [load, loadHistory, selectionVersion]);
   useEffect(() => {
     if (
-      !data?.jobs.some((j) =>
-        ["queued", "running", "retry_wait"].includes(j.state),
-      )
+      busy ||
+      !data?.jobs.some((j) => j.current_scope !== false && migrating(j))
     )
       return;
-    const t = setInterval(
-      () => void load().catch((e) => setError(e.message)),
-      2500,
-    );
-    return () => clearInterval(t);
-  }, [load, data]);
+    let live = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        await load();
+      } catch (e) {
+        if (live && (e as Error).name !== "AbortError")
+          setError((e as Error).message);
+      }
+      if (live) timer = setTimeout(poll, 2500);
+    };
+    timer = setTimeout(poll, 2500);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [load, data, busy]);
   const jobStates = useRef<Record<string, string>>({});
   useEffect(() => {
-    for (const j of data?.jobs || []) {
+    for (const j of (data?.jobs || []).filter(
+      (j) => j.current_scope !== false,
+    )) {
       if (
         ["queued", "running", "retry_wait"].includes(jobStates.current[j.id]) &&
         ["succeeded", "failed", "cancelled"].includes(j.state)
@@ -172,22 +314,43 @@ export function Materials({
     }
   }, [data, analysis, onChanged]);
   async function work(label: string, fn: () => Promise<void>) {
+    if (working.current) return;
+    working.current = true;
     setBusy(label);
     setError("");
+    setUpdateSuggestion(null);
     setNotice("");
     try {
       await fn();
     } catch (e) {
-      setError((e as Error).message);
+      if ((e as Error).name !== "AbortError") setError((e as Error).message);
+      const failure = e as {
+        code?: string;
+        details?: { package_id?: string; name?: string };
+      };
+      if (
+        failure.code === "VKS_MATERIAL_UPDATE_REQUIRED" &&
+        failure.details?.package_id &&
+        failure.details?.name
+      )
+        setUpdateSuggestion({
+          package_id: failure.details.package_id,
+          name: failure.details.name,
+        });
+      if ((e as { code?: string }).code === "VKS_VERSION_CONFLICT")
+        void load(true).catch(() => {});
     } finally {
+      working.current = false;
       setBusy("");
     }
   }
   async function prepare() {
     await work("正在解析资料并准备版本…", async () => {
-      const current = await load(),
+      if (!data || target === "choose") return;
+      const current = data,
         ids = [];
       for (const file of files) {
+        setBusy(`正在上传 ${file.name}…`);
         const pending = await api<{ artifact_id: string; upload_url: string }>(
           `/projects/${project}/upload-sessions`,
           mutation("POST", {
@@ -200,6 +363,7 @@ export function Materials({
         await api(pending.upload_url, { method: "PUT", body: file });
         ids.push(pending.artifact_id);
       }
+      setBusy("正在解析资料并准备版本…");
       const row = await api<PackageVersion>(
         `${prefix}/prepare`,
         mutation(
@@ -215,19 +379,23 @@ export function Materials({
           current.selection_version,
         ),
       );
-      setStaged((old) => [
-        ...old.filter((p) => p.package_id !== row.package_id),
-        row,
-      ]);
+      if (!row.unchanged)
+        setStaged((old) => [
+          ...old.filter((p) => p.package_id !== row.package_id),
+          row,
+        ]);
       setFiles([]);
       setName("");
-      setTarget("");
+      customName.current = false;
+      setTarget("choose");
       setEntry("");
       if (fileInput.current) fileInput.current.value = "";
       setNotice(
-        "新版本已准备，可继续添加另一份资料后成套启用。当前页面仍使用原有资料。",
+        row.unchanged
+          ? "资料内容未变化，已保留当前版本，没有重复导入或重建知识库。"
+          : "新版本已准备，可继续添加另一份资料后成套启用。当前页面仍使用原有资料。",
       );
-      await load();
+      await load(true);
     });
   }
   async function activate(
@@ -237,7 +405,8 @@ export function Materials({
     entire = false,
   ) {
     await work("正在切换资料并迁移关联…", async () => {
-      const current = await load();
+      if (!data) return;
+      const current = data;
       const result = await api<Result>(
         `${prefix}/activate`,
         mutation(
@@ -256,10 +425,10 @@ export function Materials({
           current.selection_version,
         ),
       );
-      await onChanged(result);
+      await Promise.all([onChanged(result), load(true)]);
+      void loadHistory();
       setStaged([]);
       setReplaceAll(false);
-      await load();
       setNotice(
         `资料已启用${result.checkpoint_id ? "，替换前版本已自动保存" : ""}。${result.migration?.reassociate ? ` ${result.migration.reassociate} 项关联正在后台重新分析。` : ""}${result.migration?.unresolved ? ` ${result.migration.unresolved} 项旧位置暂未定位，可在迁移结果中查看。` : ""}`,
       );
@@ -275,7 +444,7 @@ export function Materials({
         }),
       );
       setSnapshotName("");
-      await load();
+      await loadHistory();
       setNotice(
         "原型、文档及知识关联已保存为完整版本，当前工作区可以继续编辑。",
       );
@@ -313,7 +482,7 @@ export function Materials({
           }),
         ),
       );
-      await load();
+      void loadHistory();
       setNotice(
         "正在固定资料并补齐向量索引。完成后可下载单文件 HTML，文件不携带 API Key。",
       );
@@ -321,7 +490,8 @@ export function Materials({
   }
   async function restore(id: string) {
     await work("正在恢复版本…", async () => {
-      const current = await load();
+      if (!data) return;
+      const current = data;
       const r = await api<Result>(
         `${prefix}/restore`,
         mutation(
@@ -333,6 +503,46 @@ export function Materials({
       await onChanged(r);
     });
   }
+  async function trash(
+    kind: "package" | "version",
+    id: string,
+    deleted = true,
+  ) {
+    await work(deleted ? "正在移入回收站…" : "正在恢复资料…", async () => {
+      if (!data) return;
+      await api(
+        `${prefix}/trash`,
+        mutation(
+          "POST",
+          { analysis_set_id: analysis, kind, target_id: id, deleted },
+          data.selection_version,
+        ),
+      );
+      await Promise.all([load(true), loadHistory()]);
+      if (kind === "package" && deleted) {
+        setStaged((old) => old.filter((p) => p.package_id !== id));
+        if (target === id) {
+          setTarget("choose");
+          setName("");
+        }
+      }
+      setNotice(
+        deleted
+          ? "已移入回收站，可随时恢复。已有完整版本和原始修订保持可追溯。"
+          : "已从回收站恢复。资料包恢复后可选择版本启用。",
+      );
+    });
+  }
+  const currentJobs = (data?.jobs || []).filter(
+    (j) => j.current_scope !== false,
+  );
+  const activeJobs = currentJobs.filter(migrating);
+  const currentJob =
+    [...activeJobs].sort((a, b) => b.progress - a.progress)[0] ||
+    currentJobs.find((j) => j.state !== "cancelled");
+  const previousJobs = (data?.jobs || []).filter(
+    (j) => j.id !== currentJob?.id,
+  );
   const active = data?.packages.filter((p) => p.active_revision_id) || [];
   return (
     <section className="materials-page">
@@ -423,9 +633,15 @@ export function Materials({
                   <select
                     aria-label="资料类型"
                     value={kind}
+                    disabled={!!busy}
                     onChange={(e) => {
                       setKind(e.target.value);
-                      setTarget("");
+                      setTarget("choose");
+                      setName("");
+                      customName.current = false;
+                      setFiles([]);
+                      setEntry("");
+                      if (fileInput.current) fileInput.current.value = "";
                     }}
                   >
                     <option value="prototype">交互原型</option>
@@ -436,15 +652,22 @@ export function Materials({
                   导入方式
                   <select
                     aria-label="导入方式"
+                    disabled={!!busy}
                     value={target}
                     onChange={(e) => {
                       setTarget(e.target.value);
                       const p = data?.packages.find(
                         (p) => p.id === e.target.value,
                       );
-                      if (p) setName(p.name);
+                      customName.current = false;
+                      setName(
+                        p?.name || files[0]?.name.replace(/\.[^.]+$/, "") || "",
+                      );
                     }}
                   >
+                    <option value="choose" disabled>
+                      请选择新增或更新
+                    </option>
                     <option value="">新增独立资料包</option>
                     {data?.packages
                       .filter((p) => p.kind === kind)
@@ -456,6 +679,23 @@ export function Materials({
                   </select>
                 </label>
               </div>
+              <p className="management-description">
+                替换现有内容请选择“更新”。“新增”会创建独立资料包；相同资料会自动拦截，未变化的更新直接复用。
+              </p>
+              {updateSuggestion && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTarget(updateSuggestion.package_id);
+                    setName(updateSuggestion.name);
+                    customName.current = false;
+                    setUpdateSuggestion(null);
+                    setError("");
+                  }}
+                >
+                  改为更新：{updateSuggestion.name}
+                </button>
+              )}
               <label>
                 资料包名称
                 <input
@@ -467,7 +707,10 @@ export function Materials({
                       ? "例如：物业收费原型"
                       : "例如：收费业务手册"
                   }
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    customName.current = true;
+                    setName(e.target.value);
+                  }}
                 />
               </label>
               <label className="material-file-picker">
@@ -495,7 +738,11 @@ export function Materials({
                   onChange={(e) => {
                     const picked = Array.from(e.target.files || []);
                     setFiles(picked);
-                    if (!name && picked[0])
+                    if (
+                      !customName.current &&
+                      (!target || target === "choose") &&
+                      picked[0]
+                    )
                       setName(picked[0].name.replace(/\.[^.]+$/, ""));
                   }}
                 />
@@ -516,7 +763,11 @@ export function Materials({
               <button
                 className="primary"
                 disabled={
-                  !!busy || !files.length || !name.trim() || !data?.editable
+                  !!busy ||
+                  target === "choose" ||
+                  !files.length ||
+                  !name.trim() ||
+                  !data?.editable
                 }
               >
                 <UploadCloud size={16} />
@@ -671,7 +922,25 @@ export function Materials({
                   >
                     更新资料
                   </button>
+                  <button
+                    disabled={
+                      !!busy || !data.editable || !!p.active_revision_id
+                    }
+                    title={
+                      p.active_revision_id
+                        ? "请先停用资料包，再删除；停用前会保存完整版本"
+                        : "移入回收站"
+                    }
+                    onClick={() => void trash("package", p.id)}
+                  >
+                    <Trash2 size={15} /> 删除
+                  </button>
                 </div>
+                {p.active_revision_id && (
+                  <small className="management-description">
+                    删除前请先停用，停用前会自动保存完整版本。
+                  </small>
+                )}
                 {p.kind === "prototype" && p.active_revision_id && (
                   <button
                     className="text-button"
@@ -718,7 +987,7 @@ export function Materials({
               </button>
             </form>
             <div className="material-history">
-              {data?.versions.map((v) => (
+              {history?.versions.map((v) => (
                 <article key={v.id}>
                   <div>
                     <b>{v.name}</b>
@@ -739,19 +1008,70 @@ export function Materials({
                     导出 HTML
                   </button>
                   <button
-                    disabled={!!busy || !data.editable}
+                    disabled={!!busy || !data?.editable}
                     onClick={() => void restore(v.id)}
                   >
                     恢复
                   </button>
+                  <button
+                    disabled={!!busy || !data?.editable}
+                    onClick={() => void trash("version", v.id)}
+                    aria-label={`删除完整版本 ${v.name}`}
+                  >
+                    <Trash2 size={15} /> 删除
+                  </button>
                 </article>
               ))}
             </div>
-            {data && !data.versions.length && (
+            {!history && !historyError && (
+              <p className="management-description" role="status">
+                正在读取历史版本，可先管理资料包…
+              </p>
+            )}
+            {historyError && (
+              <p role="alert">
+                {historyError}{" "}
+                <button onClick={() => void loadHistory()}>重新读取版本</button>
+              </p>
+            )}
+            {history && !history.versions.length && (
               <p className="management-empty">
                 保存第一个完整版本，或在替换资料时自动保存。
               </p>
             )}
+          </section>
+          <section className="management-panel">
+            <details>
+              <summary>
+                <Trash2 size={17} /> 回收站（
+                {(data?.trash.length || 0) + (history?.trash.length || 0)}）
+              </summary>
+              <p className="management-description">
+                删除的资料包和完整版本可在这里恢复。原始资料与历史引用保留；这项操作不会清理磁盘文件。
+              </p>
+              <div className="material-recycle-list">
+                {[...(data?.trash || []), ...(history?.trash || [])].map(
+                  (item) => (
+                    <article key={item.kind + item.id}>
+                      <div>
+                        <b>{item.name}</b>
+                        <small>
+                          {item.kind === "package" ? "资料包" : "完整版本"} ·{" "}
+                          {date(item.deleted_at)}
+                        </small>
+                      </div>
+                      <button
+                        disabled={!!busy || !data?.editable}
+                        onClick={() => void trash(item.kind, item.id, false)}
+                        aria-label={`从回收站恢复 ${item.name}`}
+                      >
+                        <RotateCcw size={15} /> 恢复
+                      </button>
+                    </article>
+                  ),
+                )}
+              </div>
+            </details>
           </section>
           <section className="management-panel">
             <div className="management-panel-title">
@@ -763,10 +1083,11 @@ export function Materials({
             </p>
             <div className="form-actions">
               <button
-                disabled={!!busy || !data?.editable}
+                disabled={!!busy || !data?.editable || !!activeJobs.length}
                 onClick={() =>
                   void work("正在安排关联迁移…", async () => {
-                    const c = await load();
+                    if (!data) return;
+                    const c = data;
                     await api(
                       `${prefix}/migrate`,
                       mutation(
@@ -775,65 +1096,28 @@ export function Materials({
                         c.selection_version,
                       ),
                     );
-                    await load();
+                    await load(true);
                   })
                 }
               >
                 <RefreshCw size={15} />
-                重试待关联
+                {activeJobs.length ? "迁移进行中" : "重试待关联"}
               </button>
               <button onClick={onAI}>
                 模型与向量库
                 <ArrowUpRight size={15} />
               </button>
             </div>
-            {data?.jobs.map((j) => (
-              <article className="material-job" key={j.id}>
-                <div>
-                  <b>
-                    {["queued", "running"].includes(j.state)
-                      ? "正在迁移"
-                      : j.state === "succeeded"
-                        ? "迁移分析完成"
-                        : j.state === "failed"
-                          ? "迁移暂未完成"
-                          : "迁移任务"}
-                  </b>
-                  <span>{j.progress}%</span>
-                </div>
-                <progress value={j.progress} max={100} />
-                {j.result && (
-                  <p>
-                    已关联 {j.result.saved || 0} / {j.result.total || 0}
-                    {j.result.pending ? ` · ${j.result.pending} 项待关联` : ""}
-                  </p>
-                )}
-                {j.error && <p className="error">{j.error.message}</p>}
-                {!!j.result?.issues?.length && (
-                  <details>
-                    <summary>
-                      暂未定位的位置（{j.result.issues.length}）
-                    </summary>
-                    {j.result.issues.map((r, i) => (
-                      <p key={i}>
-                        <b>{r.label}</b> · {r.message}
-                      </p>
-                    ))}
-                  </details>
-                )}
-                {j.result?.completed && (
-                  <details>
-                    <summary>查看逐项结果</summary>
-                    {Object.entries(j.result.completed).map(([id, r]) => (
-                      <p key={id}>
-                        <b>{r.label}</b> · {r.message}
-                      </p>
-                    ))}
-                  </details>
-                )}
-              </article>
-            ))}
-            {data && !data.jobs.length && (
+            {currentJob && <MigrationRecord j={currentJob} />}
+            {!!previousJobs.length && (
+              <details className="material-job-history">
+                <summary>迁移历史（{previousJobs.length}）</summary>
+                {previousJobs.map((j) => (
+                  <MigrationRecord key={j.id} j={j} />
+                ))}
+              </details>
+            )}
+            {data && !currentJob && (
               <p className="management-empty">
                 资料更新后，受影响的关联将在这里显示进度。
               </p>

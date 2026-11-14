@@ -112,9 +112,10 @@ class PolicyInput(Input):
     allow_source: bool = False
     max_input_tokens: int = Field(default=12000, ge=1000, le=128000)
     max_output_tokens: int = Field(default=2000, ge=100, le=16000)
-    daily_token_limit: int = Field(default=100000, ge=1000, le=100000000)
-    per_request_cost_limit_micro: int = Field(default=1000000, ge=0, le=1000000000)
-    daily_cost_limit_micro: int = Field(default=10000000, ge=0, le=100000000000)
+    # Accept historical clients/settings without enforcing project quotas.
+    daily_token_limit: int = Field(default=100000, ge=1000, le=100000000, deprecated=True)
+    per_request_cost_limit_micro: int = Field(default=1000000, ge=0, le=1000000000, deprecated=True)
+    daily_cost_limit_micro: int = Field(default=10000000, ge=0, le=100000000000, deprecated=True)
     input_rate_micro_per_million: int = Field(default=0, ge=0, le=100000000000)
     output_rate_micro_per_million: int = Field(default=0, ge=0, le=100000000000)
     timezone: str = Field(default="Asia/Shanghai", max_length=80)
@@ -223,7 +224,7 @@ def request_model(config, body):
         if len(raw) > 2 * 1024 * 1024:
             failure("VKS_LIMIT_EXCEEDED", "模型响应超过体积限制", 413)
         if response.status in (429, 500, 502, 503, 504):
-            failure("VKS_DEPENDENCY_UNAVAILABLE", "模型服务暂时不可用；可在预算内重试", 503, True)
+            failure("VKS_DEPENDENCY_UNAVAILABLE", "模型服务暂时不可用，请稍后重试", 503, True)
         if response.status != 200:
             failure("VKS_INVALID_INPUT", "模型服务拒绝请求或发生重定向")
         return json.loads(raw)
@@ -268,7 +269,7 @@ class AiService:
         try:
             ZoneInfo(settings["timezone"])
         except Exception:
-            failure("VKS_INVALID_INPUT", "预算时区无效")
+            failure("VKS_INVALID_INPUT", "用量统计时区无效")
         if settings["enabled"]:
             if not settings["model_id"].strip():
                 failure("VKS_INVALID_INPUT", "需指定模型标识")
@@ -313,8 +314,6 @@ class AiService:
         cost = math.ceil(input_bound * config["input_rate_micro_per_million"] / 1000000) + math.ceil(
             out * config["output_rate_micro_per_million"] / 1000000
         )
-        if input_bound > config["max_input_tokens"] or cost > config["per_request_cost_limit_micro"]:
-            failure("VKS_LIMIT_EXCEEDED", "本次模型上下文或费用达到预算上限", 429)
         day = datetime.now(ZoneInfo(config["timezone"])).date().isoformat()
         with self.service.db() as s:
             self.service.require(s, actor, pid, "knowledge:read")
@@ -334,11 +333,6 @@ class AiService:
                 )
                 s.add(ledger)
                 s.flush()
-            if (
-                ledger.spent_tokens + ledger.reserved_tokens + tokens > config["daily_token_limit"]
-                or ledger.spent_cost_micro + ledger.reserved_cost_micro + cost > config["daily_cost_limit_micro"]
-            ):
-                failure("VKS_LIMIT_EXCEEDED", "项目每日模型预算已达到上限", 429)
             ledger.reserved_tokens += tokens
             ledger.reserved_cost_micro += cost
             usage = ModelUsage(
@@ -539,7 +533,7 @@ class AiService:
             response = request_model(config, body)
             usage = response.get("usage", {})
             if not isinstance(usage, dict):
-                failure("VKS_INVALID_INPUT", "模型未返回有效用量，保留保守预算扣费")
+                failure("VKS_INVALID_INPUT", "模型未返回有效用量，已按保守估算记录")
             candidate_input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
             candidate_output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
             if (
@@ -548,7 +542,7 @@ class AiService:
                 or min(candidate_input_tokens, candidate_output_tokens) < 0
                 or max(candidate_input_tokens, candidate_output_tokens) > 1000000000
             ):
-                failure("VKS_INVALID_INPUT", "模型未返回有效用量，保留保守预算扣费")
+                failure("VKS_INVALID_INPUT", "模型未返回有效用量，已按保守估算记录")
             # Invalid or partial provider usage must leave both charge values
             # unknown. Only a complete validated pair can replace the reserve.
             input_tokens, output_tokens = candidate_input_tokens, candidate_output_tokens
@@ -583,8 +577,6 @@ class AiService:
                 validate_plan(answer, catalog, allowed_ids, plan_tools or [])
             if not knowledge_plan and not document and answer["answer"].strip() and not citations:
                 failure("VKS_INVALID_EVIDENCE", "模型关键结论缺少证据引用")
-            if output_tokens > config["max_output_tokens"] or input_tokens > config["max_input_tokens"]:
-                failure("VKS_LIMIT_EXCEEDED", "模型实际用量超过任务限额", 429)
             current = self.service.workspace(actor, pid, analysis_set_id, release_id)
             with self.service.db() as s:
                 self.validate_inputs(s, actor, pid, provenance[:20])

@@ -15,9 +15,6 @@ export interface ModelPolicy {
   allow_source: boolean;
   max_input_tokens: number;
   max_output_tokens: number;
-  daily_token_limit: number;
-  per_request_cost_limit_micro: number;
-  daily_cost_limit_micro: number;
   input_rate_micro_per_million: number;
   output_rate_micro_per_million: number;
   timezone: string;
@@ -49,9 +46,6 @@ export function policyPayload(policy: ModelPolicy): ModelPolicy {
     allow_source: policy.allow_source,
     max_input_tokens: policy.max_input_tokens,
     max_output_tokens: policy.max_output_tokens,
-    daily_token_limit: policy.daily_token_limit,
-    per_request_cost_limit_micro: policy.per_request_cost_limit_micro,
-    daily_cost_limit_micro: policy.daily_cost_limit_micro,
     input_rate_micro_per_million: policy.input_rate_micro_per_million,
     output_rate_micro_per_million: policy.output_rate_micro_per_million,
     timezone: policy.timezone.trim(),
@@ -64,34 +58,10 @@ const limits: {
   max: number;
 }[] = [
   {
-    key: "max_input_tokens",
-    label: "单次输入 token 上限",
-    min: 1000,
-    max: 128000,
-  },
-  {
     key: "max_output_tokens",
-    label: "单次输出 token 上限",
+    label: "回答长度（token）",
     min: 100,
     max: 16000,
-  },
-  {
-    key: "daily_token_limit",
-    label: "每日 token 预算",
-    min: 1000,
-    max: 100000000,
-  },
-  {
-    key: "per_request_cost_limit_micro",
-    label: "单次费用上限（微单位）",
-    min: 0,
-    max: 1000000000,
-  },
-  {
-    key: "daily_cost_limit_micro",
-    label: "每日费用预算（微单位）",
-    min: 0,
-    max: 100000000000,
   },
   {
     key: "input_rate_micro_per_million",
@@ -178,7 +148,7 @@ export function ModelSettings() {
       >
         <Notice>
           <ShieldCheck size={16} />
-          模型只收到当前身份有权读取的知识和证据，结果直接保存并标注来源。实例出站允许清单与项目预算共同约束每次调用。
+          模型只收到当前身份有权读取的知识和证据，结果直接保存并标注来源。调用使用项目配置的模型连接，并记录实际用量。
         </Notice>
         {error && (
           <Notice tone="red">
@@ -279,7 +249,7 @@ export function ModelSettings() {
                   </select>
                 </label>
                 <label>
-                  每日预算时区
+                  用量统计时区
                   <input
                     required
                     value={policy.timezone}
@@ -310,7 +280,7 @@ export function ModelSettings() {
                 />
                 允许包含源码上下文（调用者仍需 source:read 权限）
               </label>
-              <h3 className="detail-section-title">Token 与费用预算</h3>
+              <h3 className="detail-section-title">回答长度与用量计价</h3>
               <p className="section-description">
                 费率由管理员按服务协议填写，默认 0 表示未计价。1 个计价单位 =
                 1,000,000 微单位；此处不提供或推定供应商实时价格。
@@ -392,7 +362,7 @@ export function ModelSettings() {
         {!usage.length && (
           <Empty
             title="还没有模型调用记录"
-            description="确定性检索不产生模型用量。明确使用模型后，这里记录预算结算与结果代码。"
+            description="确定性检索不产生模型用量。明确使用模型后，这里记录调用用量与结果代码。"
           />
         )}
       </Panel>

@@ -1927,8 +1927,191 @@
               "type": "string",
               "title": "Analysis Set Id"
             }
+          },
+          {
+            "name": "include_versions",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Include Versions"
+            }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/versions": {
+      "get": {
+        "summary": "History",
+        "operationId": "history_api_v3_projects__pid__materials_versions_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Set Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Save Version",
+        "operationId": "save_version_api_v3_projects__pid__materials_versions_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveMaterialVersion"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/materials/trash": {
+      "post": {
+        "summary": "Trash",
+        "operationId": "trash_api_v3_projects__pid__materials_trash_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrashMaterial"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2061,65 +2244,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ActivateMaterials"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v3/projects/{pid}/materials/versions": {
-      "post": {
-        "summary": "Save Version",
-        "operationId": "save_version_api_v3_projects__pid__materials_versions_post",
-        "parameters": [
-          {
-            "name": "pid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Pid"
-            }
-          },
-          {
-            "name": "idempotency-key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "maxLength": 80,
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveMaterialVersion"
               }
             }
           }
@@ -5007,7 +5131,8 @@
             "maximum": 100000000.0,
             "minimum": 10000.0,
             "title": "Daily Token Limit",
-            "default": 10000000
+            "default": 10000000,
+            "deprecated": true
           }
         },
         "additionalProperties": false,
@@ -5270,6 +5395,43 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SettingsEdit"
+      },
+      "TrashMaterial": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "package",
+              "version"
+            ],
+            "title": "Kind"
+          },
+          "target_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Target Id"
+          },
+          "deleted": {
+            "type": "boolean",
+            "title": "Deleted",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "kind",
+          "target_id"
+        ],
+        "title": "TrashMaterial"
       },
       "ValidationError": {
         "properties": {

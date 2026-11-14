@@ -178,8 +178,8 @@ def test_cancelled_existing_binding_edit_uses_binding_control_for_explanation(as
     ):
         panel.get_by_role("button", name="助手选项", exact=True).click()
         panel.get_by_role("button", name="关联管理", exact=True).click()
-        card = page.locator(".binding-grid article").filter(has_text="Saved Add binding")
-        card.get_by_role("button", name="编辑", exact=True).click()
+        page.get_by_role("button", name="查看关联详情：Saved Add binding", exact=True).click()
+        page.get_by_role("article", name="关联详情").get_by_role("button", name="编辑", exact=True).click()
         expect(panel.locator(".knowledge-context")).to_contain_text("Add")
         expect(panel.get_by_label("业务说明", exact=True)).to_have_value("Synthetic manual Add explanation")
         panel.locator(".knowledge-footer").get_by_role("button", name="取消", exact=True).click()

@@ -99,6 +99,16 @@ def test_v2_cockpit_responsive_old_hash_and_onboarding(site, width):
             page.get_by_label("密码", exact=True).fill("owner")
             page.get_by_role("button", name="打开工作空间").click()
             expect(page.locator(".v2-hero")).to_be_visible()
+            if width == 375:
+                csrf = page.request.get(url + "/api/v1/auth/session").json()["data"]["csrf_token"]
+                draft = page.request.post(
+                    url + f"/api/v1/projects/{pid}/analysis-sets",
+                    headers={"X-CSRF-Token": csrf, "Idempotency-Key": "long-mobile-draft-name"},
+                    data={"name": "完整资料版本与知识关联检查用的草稿" * 5, "sources": [], "ruleset_version": "combined-v1"},
+                )
+                assert draft.ok, draft.text()
+                page.reload()
+                expect(page.locator(".v2-hero")).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth<=innerWidth+1"), page.evaluate(
                 "Array.from(document.querySelectorAll('body *')).map(e=>({tag:e.tagName,cls:e.className,right:e.getBoundingClientRect().right,width:e.getBoundingClientRect().width})).filter(e=>e.right>innerWidth+2).slice(0,16)"
             )

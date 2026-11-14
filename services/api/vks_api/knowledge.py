@@ -1151,7 +1151,11 @@ class KnowledgeService:
             old = s.get(Analysis, aid)
             if not old or old.project_id != pid:
                 error("VKS_NOT_FOUND", "未找到基线", 404)
-            if any(not service._visible_revision(s, actor, pid, r) for r in service._revisions(s, aid)):
+            from .reading import ReadingService
+
+            rows = service._revisions(s, aid)
+            ReadingService(service).preload(s, rows)
+            if any(not service._visible_revision(s, actor, pid, r) for r in rows):
                 error("VKS_FORBIDDEN", "克隆完整基线需要相应来源访问权限", 403)
 
             def create():

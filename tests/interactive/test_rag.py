@@ -295,3 +295,18 @@ def test_hybrid_repairs_bad_query_vectors_and_rejects_corrupt_cached_excerpts(as
         db.execute("UPDATE chunks SET embedding=? WHERE project=?", (b"bad-vector", pid))
     # Invalid cache data cannot break a query or replace authoritative excerpts.
     assert not engine.rag.hybrid(owner, pid, form, state[1], state[2], [])
+
+
+def test_embedding_usage_is_recorded_without_daily_token_quota(tmp_path):
+    from vks_api.vector_rag import VectorStore, RagSettings
+
+    store = VectorStore(tmp_path)
+    settings = RagSettings(daily_token_limit=10000)
+    first = store.reserve("project", settings, 30000)
+    store.settle(first, 25000, "succeeded")
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        keys = list(pool.map(lambda _: store.reserve("project", settings, 20000), range(3)))
+    for key in keys:
+        store.settle(key, 18000, "succeeded")
+    with store.db() as db:
+        assert db.execute("SELECT SUM(used),SUM(reserved) FROM usage").fetchone() == (79000, 0)

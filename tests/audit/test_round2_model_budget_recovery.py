@@ -242,7 +242,7 @@ def test_actual_local_refusal_releases_cost_and_one_call_then_manual_retry(audit
 
 @pytest.mark.parametrize("kind", KINDS)
 @pytest.mark.parametrize("limit", ["input", "request_cost", "daily_cost"])
-def test_local_budget_rejection_does_not_use_task_call(audit_store, monkeypatch, kind, limit):
+def test_retired_input_and_cost_limits_do_not_reject_task_calls(audit_store, monkeypatch, kind, limit):
     c = audit_store
     config, sent, constructed, _ = local_fixture_transport(c, monkeypatch)
     config.update(input_rate_micro_per_million=1000000, output_rate_micro_per_million=1000000)
@@ -257,9 +257,9 @@ def test_local_budget_rejection_does_not_use_task_call(audit_store, monkeypatch,
     tasks, job = make_task(c, kind)
     c.s.process_job(job["id"])
     first = tasks.get(c.owner, job["id"])
-    assert first["state"] == "failed" and first["error"]["code"] == "VKS_LIMIT_EXCEEDED"
-    assert budget(c) == (0, 0, 0, 0) and not model_slot(c, job["id"])
-    assert not sent and not constructed
+    assert first["state"] == "succeeded", first.get("error")
+    assert len(sent) == len(constructed) == 1 and model_slot(c, job["id"])
+    assert budget(c) == (0, 150, 0, 150)
 
 
 @pytest.mark.parametrize("kind", KINDS)

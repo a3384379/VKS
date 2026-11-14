@@ -38,7 +38,7 @@ class RagSettings(Input):
     connection_id: str | None = Field(default=None, max_length=96)
     model_id: str = Field(default="text-embedding-3-small", min_length=1, max_length=160)
     dimensions: int = Field(default=512, ge=64, le=3072)
-    daily_token_limit: int = Field(default=10000000, ge=10000, le=100000000)
+    daily_token_limit: int = Field(default=10000000, ge=10000, le=100000000, deprecated=True)
 
     @model_validator(mode="after")
     def supported_dimensions(self):
@@ -121,11 +121,6 @@ class VectorStore:
         key = uid()
         with self.lock, self.db() as db:
             db.execute("BEGIN IMMEDIATE")
-            used = db.execute(
-                "SELECT COALESCE(SUM(used+reserved),0) FROM usage WHERE project=? AND day=?", (pid, day)
-            ).fetchone()[0]
-            if used + bound > settings.daily_token_limit:
-                failure("VKS_LIMIT_EXCEEDED", "嵌入模型每日预算已达到上限；可调整预算后继续", 429)
             db.execute(
                 "INSERT INTO usage VALUES (?,?,?,?,?,?,?)", (key, pid, day, settings.model_id, bound, 0, "reserved")
             )

@@ -553,8 +553,6 @@ class InteractiveAssistant:
             if type(it) is not int or type(ot) is not int or min(it, ot) < 0 or max(it, ot) > 1000000000:
                 failure("VKS_INVALID_INPUT", "模型未返回有效用量")
             input_tokens, output_tokens = it, ot
-            if it > config["max_input_tokens"] or ot > config["max_output_tokens"]:
-                failure("VKS_LIMIT_EXCEEDED", "模型实际用量超过限额", 429)
             if config["protocol"] == "responses":
                 if response.get("status") not in (None, "completed"):
                     failure("VKS_INVALID_INPUT", "模型生成未完成，请重试")

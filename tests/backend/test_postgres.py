@@ -141,7 +141,7 @@ def test_postgres_same_import_idempotency_key_returns_same_job(postgres):
         service.import_bundle(owner, project["id"], conflict, "same-key")
 
 
-def test_postgres_model_budget_reservations_are_atomic_across_workers(postgres):
+def test_postgres_model_usage_reservations_are_atomic_without_quotas(postgres):
     from vks_api.ai_gateway import AiService, PolicyInput, ModelLedger
 
     service, second, owner, project = postgres
@@ -160,10 +160,10 @@ def test_postgres_model_budget_reservations_are_atomic_across_workers(postgres):
             f.result(timeout=10)
             for f in [pool.submit(reserve, service), pool.submit(reserve, second), pool.submit(reserve, service)]
         ]
-    assert sum((isinstance(x, str) for x in results)) == 2 and results.count(429) == 1
+    assert len(results) == 3 and all(isinstance(x, str) for x in results)
     with service.db() as session:
         ledger = session.scalar(select(ModelLedger).where(ModelLedger.project_id == project["id"]))
-        assert ledger.reserved_tokens == 2200 and ledger.spent_tokens == 0
+        assert ledger.reserved_tokens == 3300 and ledger.spent_tokens == 0
 
 
 def test_postgres_readonly_graph_search_snapshot_and_current_permissions(postgres):

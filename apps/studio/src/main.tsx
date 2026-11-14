@@ -33,6 +33,8 @@ import { Projects } from "./Projects";
 import { DocumentCache } from "./DocumentCache";
 import { KnowledgeChat, useKnowledgeChat } from "./KnowledgeChat";
 import { Materials } from "./Materials";
+import { BindingsManager } from "./BindingsManager";
+import { useFloatingWindow, type ResizeDirection } from "./useFloatingWindow";
 import { NativeDocumentPane, NativeNetworkSettings } from "./NativeDocument";
 import type { NativeDocument, NativeLocation } from "./NativeDocument";
 import {
@@ -292,12 +294,31 @@ function App() {
     [editDocId, setEditDocId] = useState(""),
     [sectionId, setSectionId] = useState(""),
     [popupQuery, setPopupQuery] = useState("");
-  const [position, setPosition] = useState<{
+  const [launcherPosition, setLauncherPosition] = useState<{
     left: number;
     top: number;
-  } | null>(null);
+  } | null>(() => {
+    try {
+      const saved = JSON.parse(
+        localStorage.getItem("vks.studio.assistant-launcher-position.v1") ||
+          "null",
+      );
+      return saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)
+        ? {
+            left: Math.max(8, Math.min(innerWidth - 62, saved.left)),
+            top: Math.max(8, Math.min(innerHeight - 62, saved.top)),
+          }
+        : null;
+    } catch {
+      return null;
+    }
+  });
+  const [launcherDragging, setLauncherDragging] = useState(false);
+  const launcherMoved = useRef(false),
+    launcherCleanup = useRef<(() => void) | null>(null);
+  const floating = useFloatingWindow(docked);
+  const { ref: windowRef, setPosition } = floating;
   const prototype = useRef<RuntimeHandle | null>(null),
-    windowRef = useRef<HTMLElement>(null),
     pendingReveal = useRef<Target | null>(null),
     docEpoch = useRef(0),
     editEpoch = useRef(0),
@@ -442,7 +463,6 @@ function App() {
     setDocQuery("");
     setPinned(false);
     setDocked(false);
-    setPosition(null);
     setAutomatic(
       (localStorage.getItem(`vks.studio.${route.project}.auto-associate`) ||
         localStorage.getItem("vks.studio.auto-associate")) !== "off",
@@ -646,28 +666,19 @@ function App() {
   }, [editDocId, prefix, scope]);
   useEffect(() => {
     const clamp = () =>
-      setPosition((p) =>
+      setLauncherPosition((p) =>
         p
           ? {
-              left: Math.max(
-                8,
-                Math.min(
-                  p.left,
-                  innerWidth - (windowRef.current?.offsetWidth || 420) - 8,
-                ),
-              ),
-              top: Math.max(
-                100,
-                Math.min(
-                  p.top,
-                  innerHeight - (windowRef.current?.offsetHeight || 560) - 8,
-                ),
-              ),
+              left: Math.max(8, Math.min(innerWidth - 62, p.left)),
+              top: Math.max(8, Math.min(innerHeight - 62, p.top)),
             }
           : null,
       );
     window.addEventListener("resize", clamp);
-    return () => window.removeEventListener("resize", clamp);
+    return () => {
+      window.removeEventListener("resize", clamp);
+      launcherCleanup.current?.();
+    };
   }, []);
   useEffect(() => {
     if (!menu) return;
@@ -1256,29 +1267,82 @@ function App() {
       setError(text(e));
     }
   }
-  function drag(e: React.PointerEvent) {
+  function drag(e: React.PointerEvent<HTMLElement>) {
     if ((e.target as HTMLElement).closest("button") || docked) return;
-    const rect = windowRef.current!.getBoundingClientRect();
+    floating.begin(e, "move");
+  }
+  function dragLauncher(e: React.PointerEvent<HTMLButtonElement>) {
+    if (e.button !== 0 || !e.isPrimary) return;
+    launcherCleanup.current?.();
+    launcherMoved.current = false;
+    const button = e.currentTarget,
+      rect = button.getBoundingClientRect();
     const x = e.clientX,
-      y = e.clientY;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) =>
-      setPosition({
+      y = e.clientY,
+      pointer = e.pointerId;
+    let next = { left: rect.left, top: rect.top };
+    let shield: HTMLDivElement | undefined;
+    button.setPointerCapture(pointer);
+    const move = (event: PointerEvent) => {
+      if (
+        event.pointerId !== pointer ||
+        (Math.hypot(event.clientX - x, event.clientY - y) < 5 &&
+          !launcherMoved.current)
+      )
+        return;
+      if (!launcherMoved.current) {
+        shield = document.createElement("div");
+        shield.className = "assistant-drag-shield";
+        shield.setAttribute("aria-hidden", "true");
+        document.body.append(shield);
+      }
+      event.preventDefault();
+      launcherMoved.current = true;
+      setLauncherDragging(true);
+      next = {
         left: Math.max(
           8,
-          Math.min(innerWidth - rect.width - 8, rect.left + ev.clientX - x),
+          Math.min(innerWidth - rect.width - 8, rect.left + event.clientX - x),
         ),
         top: Math.max(
-          100,
-          Math.min(innerHeight - rect.height - 8, rect.top + ev.clientY - y),
+          8,
+          Math.min(innerHeight - rect.height - 8, rect.top + event.clientY - y),
         ),
-      });
-    const end = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
+      };
+      setLauncherPosition(next);
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end);
+    const cleanup = () => {
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", end, true);
+      window.removeEventListener("pointercancel", end, true);
+      window.removeEventListener("blur", end);
+      shield?.remove();
+      launcherCleanup.current = null;
+    };
+    const end = (event: Event) => {
+      if ("pointerId" in event && event.pointerId !== pointer) return;
+      cleanup();
+      setLauncherDragging(false);
+      if (launcherMoved.current) {
+        try {
+          localStorage.setItem(
+            "vks.studio.assistant-launcher-position.v1",
+            JSON.stringify(next),
+          );
+        } catch {
+          /* Optional UI preference. */
+        }
+      }
+      if (event.type === "pointercancel") launcherMoved.current = false;
+    };
+    launcherCleanup.current = cleanup;
+    window.addEventListener("pointermove", move, {
+      capture: true,
+      passive: false,
+    });
+    window.addEventListener("pointerup", end, true);
+    window.addEventListener("pointercancel", end, true);
+    window.addEventListener("blur", end);
   }
   const markdownReading = useMemo<ReadingContext>(
     () => ({
@@ -2005,76 +2069,21 @@ function App() {
           />
         )}
         {currentView === "links" && (
-          <section className="links-space">
-            <span className="eyebrow">知识与业务操作</span>
-            <h1>关联管理</h1>
-            <p>
-              维护原型中的位置、业务说明与准确章节。点击操作即可返回原页面。
-            </p>
-            <div className="binding-grid">
-              {bindings.map((b) => (
-                <article key={b.id} className={b.excluded ? "excluded" : ""}>
-                  <div className="card-label">
-                    <Link2 size={15} />
-                    {b.excluded
-                      ? "已移除"
-                      : b.validity_status === "valid"
-                        ? "已关联"
-                        : b.validity_status === "broken"
-                          ? "待定位"
-                          : "待重新关联"}
-                    <small>{b.sections.length} 个章节</small>
-                  </div>
-                  <h3>{b.title}</h3>
-                  <Markdown references={b.sections}>{b.summary}</Markdown>
-                  {b.sections.map((c) => (
-                    <button
-                      className="citation"
-                      key={c.revision_id}
-                      onClick={() => openDoc(c, b)}
-                    >
-                      <FileText size={15} />
-                      <span>
-                        {c.document_name}
-                        <small>{c.name}</small>
-                      </span>
-                      <ArrowUpRight size={14} />
-                    </button>
-                  ))}
-                  <footer>
-                    <button onClick={() => reveal(b)}>打开原型</button>
-                    <button
-                      disabled={!catalog?.editable || !bindingsReady}
-                      onClick={() => editBinding(b)}
-                    >
-                      编辑
-                    </button>
-                    <button
-                      disabled={!catalog?.editable}
-                      onClick={() => void exclude(b)}
-                    >
-                      {b.excluded ? "恢复关联" : "移除关联"}
-                    </button>
-                  </footer>
-                </article>
-              ))}
-            </div>
-            {!bindings.length && (
-              <div className="empty">
-                <Link2 />
-                <h3>
-                  {bindingsReady ? "从原型开始第一条关联" : "正在加载关联…"}
-                </h3>
-                <button
-                  className="primary"
-                  disabled={!bindingsReady || !catalog?.editable || !p}
-                  onClick={startPicker}
-                >
-                  选择控件并关联知识
-                </button>
-              </div>
+          <BindingsManager
+            key={route.project + scope}
+            bindings={bindings}
+            ready={bindingsReady}
+            editable={!!catalog?.editable}
+            canCreate={!!p}
+            onCreate={startPicker}
+            onReveal={reveal}
+            onEdit={editBinding}
+            onToggle={(b) => void exclude(b)}
+            onSource={(b, i) => openDoc(b.sections[i], b)}
+            renderSummary={(b) => (
+              <Markdown references={b.sections}>{b.summary}</Markdown>
             )}
-          </section>
+          />
         )}
       </main>
       {menu && (
@@ -2172,11 +2181,34 @@ function App() {
         !(knowledge && docked) && (
           <button
             ref={assistantTrigger}
-            className={"assistant-launcher" + (knowledge ? " expanded" : "")}
+            className={
+              "assistant-launcher" +
+              (knowledge ? " expanded" : "") +
+              (launcherDragging ? " dragging" : "")
+            }
+            style={
+              launcherPosition
+                ? {
+                    left: launcherPosition.left,
+                    top: launcherPosition.top,
+                    right: "auto",
+                    bottom: "auto",
+                  }
+                : undefined
+            }
             aria-label={knowledge ? "收起知识助手" : "打开知识助手"}
             aria-expanded={knowledge}
             aria-controls="knowledge-assistant"
-            onClick={toggleAssistant}
+            onPointerDown={dragLauncher}
+            onClick={(e) => {
+              if (launcherMoved.current && e.detail !== 0) {
+                launcherMoved.current = false;
+                e.preventDefault();
+                return;
+              }
+              launcherMoved.current = false;
+              toggleAssistant();
+            }}
             title={retrieving || assisting ? "正在整理相关知识" : "知识助手"}
           >
             {knowledge ? <X size={23} /> : <Sparkles size={24} />}
@@ -2209,16 +2241,7 @@ function App() {
           id="knowledge-assistant"
           aria-label="知识助手"
           className={"knowledge-window " + (docked ? "docked" : "")}
-          style={
-            !docked && position
-              ? {
-                  left: position.left,
-                  top: position.top,
-                  right: "auto",
-                  bottom: "auto",
-                }
-              : {}
-          }
+          style={floating.style}
           onKeyDown={(e) => {
             if (e.key === "Escape" && !editing) {
               e.stopPropagation();
@@ -2330,6 +2353,15 @@ function App() {
                   </button>
                 </div>
               </div>
+              <button
+                className="assistant-options-back"
+                onClick={() => {
+                  floating.reset();
+                  setDocked(false);
+                }}
+              >
+                恢复默认位置与大小
+              </button>
               <div className="assistant-option-tools">
                 <button
                   onClick={() => {
@@ -2467,29 +2499,11 @@ function App() {
                         {!related.sections.length && (
                           <p>尚未找到相关章节，可在文档页搜索或补充资料。</p>
                         )}
-                        {related.sections.map((c) => (
-                          <button
-                            key={c.revision_id}
-                            className="citation"
-                            onClick={() =>
-                              openDoc(
-                                c,
-                                related.binding_id
-                                  ? { id: related.binding_id }
-                                  : undefined,
-                              )
-                            }
-                          >
-                            <FileText size={18} />
-                            <span>
-                              {c.document_name}
-                              <small>{c.name}</small>
-                            </span>
-                            <ArrowUpRight size={15} />
-                          </button>
-                        ))}
                         {related.sections.length > 0 && (
-                          <details className="inline-preview">
+                          <details
+                            className="inline-preview"
+                            open={assistantMode === "documents"}
+                          >
                             <summary>
                               {related.origin === "retrieval"
                                 ? "查看匹配片段"
@@ -2514,6 +2528,27 @@ function App() {
                             ))}
                           </details>
                         )}
+                        {related.sections.map((c) => (
+                          <button
+                            key={c.revision_id}
+                            className="citation"
+                            onClick={() =>
+                              openDoc(
+                                c,
+                                related.binding_id
+                                  ? { id: related.binding_id }
+                                  : undefined,
+                              )
+                            }
+                          >
+                            <FileText size={18} />
+                            <span>
+                              {c.document_name}
+                              <small>{c.name}</small>
+                            </span>
+                            <ArrowUpRight size={15} />
+                          </button>
+                        ))}
                       </section>
                     )}
                   {!editing && assistantError && (
@@ -2575,6 +2610,27 @@ function App() {
                               ? "匹配依据不足，未自动保存关联"
                               : "当前版本只读，讲解未写入"}
                       </p>
+                      {assistant.sections.length > 0 && (
+                        <details className="inline-preview" open={false}>
+                          <summary>在小窗查看原文</summary>
+                          {assistant.sections.map((c) => (
+                            <div key={c.revision_id}>
+                              <h4>{c.name}</h4>
+                              <Markdown
+                                documentId={
+                                  catalog?.documents.find(
+                                    (d) =>
+                                      d.revision_id === c.document_revision_id,
+                                  )?.id
+                                }
+                                revisionId={c.document_revision_id}
+                              >
+                                {c.content}
+                              </Markdown>
+                            </div>
+                          ))}
+                        </details>
+                      )}
                       <h4>
                         相关原文 <span>{assistant.sections.length}</span>
                       </h4>
@@ -2599,27 +2655,6 @@ function App() {
                           <ArrowUpRight size={15} />
                         </button>
                       ))}
-                      {assistant.sections.length > 0 && (
-                        <details className="inline-preview" open={false}>
-                          <summary>在小窗查看原文</summary>
-                          {assistant.sections.map((c) => (
-                            <div key={c.revision_id}>
-                              <h4>{c.name}</h4>
-                              <Markdown
-                                documentId={
-                                  catalog?.documents.find(
-                                    (d) =>
-                                      d.revision_id === c.document_revision_id,
-                                  )?.id
-                                }
-                                revisionId={c.document_revision_id}
-                              >
-                                {c.content}
-                              </Markdown>
-                            </div>
-                          ))}
-                        </details>
-                      )}
                     </section>
                   )}
                   {editing ? (
@@ -2724,23 +2759,6 @@ function App() {
                           {active.summary}
                         </Markdown>
                       )}
-                      <h4 className="source-label">
-                        原文引用 <span>{active.sections.length}</span>
-                      </h4>
-                      {active.sections.map((c) => (
-                        <button
-                          key={c.revision_id}
-                          className="citation"
-                          onClick={() => openDoc(c, active)}
-                        >
-                          <FileText size={18} />
-                          <span>
-                            {c.document_name}
-                            <small>{c.name}</small>
-                          </span>
-                          <ArrowUpRight size={15} />
-                        </button>
-                      ))}
                       <details
                         className="inline-preview"
                         open={assistantMode === "documents"}
@@ -2760,6 +2778,23 @@ function App() {
                           </Markdown>
                         ))}
                       </details>
+                      <h4 className="source-label">
+                        原文引用 <span>{active.sections.length}</span>
+                      </h4>
+                      {active.sections.map((c) => (
+                        <button
+                          key={c.revision_id}
+                          className="citation"
+                          onClick={() => openDoc(c, active)}
+                        >
+                          <FileText size={18} />
+                          <span>
+                            {c.document_name}
+                            <small>{c.name}</small>
+                          </span>
+                          <ArrowUpRight size={15} />
+                        </button>
+                      ))}
                     </>
                   ) : (
                     <div className="knowledge-empty">
@@ -2843,6 +2878,36 @@ function App() {
               </footer>
             </>
           )}
+          {!docked &&
+            (
+              ["n", "s", "e", "w", "nw", "ne", "sw", "se"] as ResizeDirection[]
+            ).map((direction) => (
+              <button
+                key={direction}
+                type="button"
+                className={"knowledge-resize knowledge-resize-" + direction}
+                tabIndex={direction === "se" ? 0 : -1}
+                aria-label={
+                  direction === "se"
+                    ? "调整助手大小"
+                    : `调整助手大小 ${direction}`
+                }
+                title="按住拖动调整大小，或使用方向键"
+                onPointerDown={(event) => floating.begin(event, direction)}
+                onKeyDown={(event) => {
+                  const delta: Record<string, [number, number]> = {
+                    ArrowLeft: [-20, 0],
+                    ArrowRight: [20, 0],
+                    ArrowUp: [0, -20],
+                    ArrowDown: [0, 20],
+                  };
+                  if (delta[event.key]) {
+                    event.preventDefault();
+                    floating.keyboardResize(...delta[event.key]);
+                  }
+                }}
+              />
+            ))}
         </aside>
       )}
     </div>

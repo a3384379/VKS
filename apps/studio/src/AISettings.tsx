@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api, mutation } from "../../web/src/api";
 import { RAGSettings } from "./RAGSettings";
+import { preferredAnswerModels } from "../../web/src/modelChoices";
 
 type Model = { id: string; name: string; description: string };
 type Provider = {
@@ -33,7 +34,6 @@ type Form = {
   model_id: string;
   api_key: string;
   max_output_tokens: number;
-  daily_token_limit: number;
   enabled: boolean;
   allow_external: boolean;
 };
@@ -54,7 +54,6 @@ type Catalog = {
     protocol: string;
     model_id: string;
     max_output_tokens: number;
-    daily_token_limit: number;
     enabled: boolean;
     allow_external: boolean;
   };
@@ -81,6 +80,8 @@ export function AISettings({
     [configured, setConfigured] = useState(false),
     [models, setModels] = useState<Model[] | null>(null),
     [query, setQuery] = useState(""),
+    [showAllModels, setShowAllModels] = useState(false),
+    [modelPage, setModelPage] = useState(0),
     [custom, setCustom] = useState(false),
     [advancedAddress, setAdvancedAddress] = useState(false),
     [busy, setBusy] = useState(""),
@@ -104,13 +105,14 @@ export function AISettings({
       model_id: p.settings.model_id,
       api_key: "",
       max_output_tokens: p.settings.max_output_tokens,
-      daily_token_limit: p.settings.daily_token_limit,
       enabled: p.settings.enabled,
       allow_external: p.settings.allow_external,
     });
     setConfigured(p.configured);
     setModels(null);
     setQuery("");
+    setShowAllModels(false);
+    setModelPage(0);
     setCustom(false);
     setAdvancedAddress(
       p.provider === "custom" || p.settings.endpoint !== preset.endpoint,
@@ -141,13 +143,14 @@ export function AISettings({
         prior && c.policy.model_id ? c.policy.model_id : p.models[0]?.id || "",
       api_key: "",
       max_output_tokens: prior ? c.policy.max_output_tokens : 2500,
-      daily_token_limit: prior ? c.policy.daily_token_limit : 100000,
       enabled: true,
       allow_external: true,
     });
     setConfigured(legacy);
     setModels(null);
     setQuery("");
+    setShowAllModels(false);
+    setModelPage(0);
     setCustom(false);
     setAdvancedAddress(p.id === "custom");
     setTest(null);
@@ -203,6 +206,8 @@ export function AISettings({
     ) {
       setModels(null);
       setQuery("");
+      setShowAllModels(false);
+      setModelPage(0);
     }
     if (patch.endpoint !== undefined) {
       setConfigured(false);
@@ -231,6 +236,8 @@ export function AISettings({
       if (current !== epoch.current) return;
       setModels(response.models);
       setQuery("");
+      setShowAllModels(false);
+      setModelPage(0);
       setNotice(`已获取当前 Key 可见的 ${response.models.length} 个模型`);
     } catch (e) {
       if (current === epoch.current) setError(message(e));
@@ -301,11 +308,20 @@ export function AISettings({
   const selected =
     (models || provider?.models || []).find((m) => m.id === form.model_id) ||
     provider?.models.find((m) => m.id === form.model_id);
-  const filtered = (models || provider?.models || []).filter((m) =>
+  const allModels = models || provider?.models || [];
+  const expandedModels = showAllModels || !!query.trim();
+  const filtered = (
+    expandedModels
+      ? allModels
+      : preferredAnswerModels(allModels, 6, form.provider)
+  ).filter((m) =>
     (m.id + " " + m.name).toLowerCase().includes(query.toLowerCase()),
   );
+  const pages = Math.max(1, Math.ceil(filtered.length / 20)),
+    page = Math.min(modelPage, pages - 1);
+  const choices = filtered.slice(page * 20, page * 20 + 20);
   const missingSelected =
-    form.model_id && !filtered.some((m) => m.id === form.model_id);
+    form.model_id && !choices.some((m) => m.id === form.model_id);
   const canConnect =
     !!form.endpoint.trim() && (configured || !!form.api_key.trim());
   return (
@@ -550,7 +566,10 @@ export function AISettings({
                   aria-label="搜索模型"
                   placeholder="搜索模型名称…"
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setModelPage(0);
+                  }}
                 />
                 <span>
                   {models
@@ -577,7 +596,9 @@ export function AISettings({
                 {missingSelected && !custom && (
                   <option value={form.model_id}>
                     {form.model_id} ·{" "}
-                    {models ? "当前配置（列表未返回）" : "当前配置"}
+                    {models && !allModels.some((m) => m.id === form.model_id)
+                      ? "当前配置（列表未返回）"
+                      : "当前选择"}
                   </option>
                 )}
                 {!form.model_id && !custom && (
@@ -585,12 +606,12 @@ export function AISettings({
                 )}
                 <optgroup
                   label={
-                    models
-                      ? "服务返回的模型 ID"
-                      : "参考模型 ID（尚未验证账户权限）"
+                    expandedModels
+                      ? "全部模型 · 当前页"
+                      : "常用回答模型 · 版本优先"
                   }
                 >
-                  {filtered.map((m) => (
+                  {choices.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.id}
                     </option>
@@ -598,6 +619,41 @@ export function AISettings({
                 </optgroup>
                 <option value="__custom__">＋ 自定义模型 ID…</option>
               </select>
+              <div className="model-list-controls">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAllModels(!expandedModels);
+                    setQuery("");
+                    setModelPage(0);
+                  }}
+                >
+                  {expandedModels
+                    ? "收起其他模型"
+                    : `查看全部模型（${allModels.length}）`}
+                </button>
+                {expandedModels && pages > 1 && (
+                  <span>
+                    <button
+                      type="button"
+                      disabled={page === 0}
+                      onClick={() => setModelPage(page - 1)}
+                    >
+                      上一页
+                    </button>
+                    <small>
+                      {page + 1} / {pages}
+                    </small>
+                    <button
+                      type="button"
+                      disabled={page === pages - 1}
+                      onClick={() => setModelPage(page + 1)}
+                    >
+                      下一页
+                    </button>
+                  </span>
+                )}
+              </div>
               {custom && (
                 <input
                   aria-label="自定义模型 ID"
@@ -616,7 +672,7 @@ export function AISettings({
               </div>
               <p className="model-availability">
                 {models
-                  ? `已从服务获取 ${models.length} 个模型。可见模型的协议与能力可能不同，可测试当前选择。`
+                  ? `已获取 ${models.length} 个模型，默认精简展示较新回答模型；其他模型可展开或搜索。`
                   : "以下仅为参考 ID，尚未验证账户权限。获取可用模型后，以服务返回的列表为准。"}
               </p>
             </div>
@@ -658,18 +714,6 @@ export function AISettings({
             </div>
             <details className="ai-budget">
               <summary>更多设置</summary>
-              <label>
-                每日 Token 预算
-                <input
-                  type="number"
-                  min={1000}
-                  max={100000000}
-                  value={form.daily_token_limit}
-                  onChange={(e) =>
-                    change({ daily_token_limit: Number(e.target.value) })
-                  }
-                />
-              </label>
               <label className="check-line">
                 <input
                   type="checkbox"

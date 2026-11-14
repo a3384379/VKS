@@ -172,7 +172,7 @@ def test_original_interaction_links_refresh_and_runtime_isolation(interactive, w
                         page.reload()
                         expect(page.get_by_label("回答模型", exact=True)).to_have_value("gpt-6.1-terra")
                         expect(
-                            page.locator('#ai-model-select optgroup[label="服务返回的模型 ID"] option')
+                            page.locator('#ai-model-select optgroup option')
                         ).to_have_text(["gpt-6.1-terra"])
                         page.locator(".ai-provider-pills").get_by_role("button", name="DeepSeek", exact=True).click()
                         expect(page.get_by_role("button", name="保存并使用", exact=True)).to_be_disabled()

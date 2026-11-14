@@ -2258,7 +2258,8 @@
             "maximum": 100000000.0,
             "minimum": 1000.0,
             "title": "Daily Token Limit",
-            "default": 100000
+            "default": 100000,
+            "deprecated": true
           },
           "enabled": {
             "type": "boolean",
@@ -4633,21 +4634,24 @@
             "maximum": 100000000.0,
             "minimum": 1000.0,
             "title": "Daily Token Limit",
-            "default": 100000
+            "default": 100000,
+            "deprecated": true
           },
           "per_request_cost_limit_micro": {
             "type": "integer",
             "maximum": 1000000000.0,
             "minimum": 0.0,
             "title": "Per Request Cost Limit Micro",
-            "default": 1000000
+            "default": 1000000,
+            "deprecated": true
           },
           "daily_cost_limit_micro": {
             "type": "integer",
             "maximum": 100000000000.0,
             "minimum": 0.0,
             "title": "Daily Cost Limit Micro",
-            "default": 10000000
+            "default": 10000000,
+            "deprecated": true
           },
           "input_rate_micro_per_million": {
             "type": "integer",
