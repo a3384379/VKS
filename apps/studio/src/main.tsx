@@ -726,6 +726,28 @@ function App() {
     if (!target && moduleControl.current)
       void assist(moduleControl.current, "documents", false, false);
   }
+  function controlForTarget(t: Target, samePackage = true): Control {
+    const current = samePackage ? control.current : null;
+    if (current && sameTarget(current.target, t))
+      return { ...current, target: t };
+    const module = samePackage ? moduleControl.current : null;
+    const samePage =
+      module?.target.route === t.route &&
+      JSON.stringify(module?.target.frame_path) ===
+        JSON.stringify(t.frame_path);
+    // Legacy action/picker events carry only a locator. Keep that exact target
+    // and use only known page context; never reuse a previous control's popup
+    // heading or nearby labels for a newly selected input.
+    return {
+      target: t,
+      context: {
+        scope: t.selector === "body" ? "module" : "control",
+        page_title: samePage && module ? module.context.page_title : t.label,
+        section_title: "",
+        nearby_labels: [],
+      },
+    };
+  }
   function chooseControl(c: Control) {
     assistEpoch.current++;
     assistAbort.current?.abort();
@@ -1055,17 +1077,11 @@ function App() {
         setPicking(false);
         return;
       }
-      assistEpoch.current++;
-      assistAbort.current?.abort();
-      cancelAutomatic();
-      setAssistant(null);
-      setRelated(null);
-      setRetrieving(false);
-      setAssistantError("");
-      setAssisting(false);
+      chooseControl(controlForTarget(t));
       setPicking(false);
-      setTarget(t);
-      const b = bindings.find((b) => sameTarget(b.target, t));
+      const b = bindings.find(
+        (b) => b.package_id === p?.id && sameTarget(b.target, t),
+      );
       setActive(b || null);
       setTitle(b?.title || t.label);
       setSummary(b?.summary || "");
@@ -1076,21 +1092,21 @@ function App() {
       setAssistantOptions(false);
       setNotice("已选中控件，请选择文档章节并保存说明");
     } else if (!pinned && !editing) {
-      if (!target || !sameTarget(target, t)) {
-        assistEpoch.current++;
-        assistAbort.current?.abort();
-        cancelAutomatic();
-        setAssistant(null);
-        setRelated(null);
-        setRetrieving(false);
-        setAssistantError("");
-        setAssisting(false);
-        control.current = null;
+      // Editable elements emit action.activated without control.activated.
+      // Keep the displayed target and the assistant/chat context together.
+      // Compare the synchronous ref so a richer preceding event is preserved.
+      if (!control.current || !sameTarget(control.current.target, t))
+        chooseControl(controlForTarget(t));
+      else {
+        control.current = controlForTarget(t);
+        setTarget(t);
+        setActive(
+          bindings.find(
+            (b) =>
+              b.package_id === p?.id && sameTarget(b.target, t) && !b.excluded,
+          ) || null,
+        );
       }
-      setTarget(t);
-      setActive(
-        bindings.find((b) => sameTarget(b.target, t) && !b.excluded) || null,
-      );
     }
   }
   function checkBindingsReady() {
@@ -1166,6 +1182,7 @@ function App() {
     setRetrieving(false);
     setAssistantError("");
     setAssisting(false);
+    control.current = controlForTarget(b.target, b.package_id === p?.id);
     setActive(b);
     setTarget(b.target);
     setTitle(b.title);
