@@ -3258,6 +3258,15 @@
             "type": "boolean",
             "title": "Include Source",
             "default": false
+          },
+          "document_mode": {
+            "type": "string",
+            "enum": [
+              "project",
+              "original"
+            ],
+            "title": "Document Mode",
+            "default": "project"
           }
         },
         "additionalProperties": false,

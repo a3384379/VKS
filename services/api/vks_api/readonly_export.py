@@ -69,12 +69,19 @@ def capabilities(service, s, actor, job):
     }
 
 
-def projection(service, s, actor, pid, release_id, caps):
+def projection(service, s, actor, pid, release_id, caps, document_mode="project"):
     """Read an immutable release using the same closure as Studio, before names."""
     from .materials import ROOT, roots
 
     links = InteractiveKnowledgeService(service)
     _, release, choices, _ = links.reader.scope(s, actor, pid, None, release_id)
+    if document_mode not in {"project", "original"}:
+        raise DomainError("VKS_INVALID_INPUT", "文档导出方式无效", 422)
+    from .document_presentation import presentation_for_release
+
+    presentation = presentation_for_release(s, release)
+    original_requested = document_mode == "original" or presentation["mode"] == "original"
+    original = original_requested or presentation["mode"] == "auto"
     rows = {
         row.id: (entity, row)
         for entity, row in links._rows(s, actor, pid, choices)
@@ -226,6 +233,15 @@ def projection(service, s, actor, pid, release_id, caps):
     )
     revisions.update(navigation_dependencies["revision_ids"])
     artifacts.update(navigation_dependencies["artifact_ids"])
+    native_documents, native_warnings = [], []
+    if original:
+        from .native_export import project_originals
+
+        native_documents, native_warnings, native_revisions, native_artifacts = project_originals(
+            service, s, actor, pid, choices, links, rows, documents, caps, warn_missing=original_requested
+        )
+        revisions.update(native_revisions)
+        artifacts.update(native_artifacts)
     for rid in revisions:
         row = s.get(Revision, rid)
         if row.artifact_id:
@@ -252,9 +268,16 @@ def projection(service, s, actor, pid, release_id, caps):
             for p, art, root in packages
         ],
         "documents": sorted(documents, key=lambda d: d["title"]),
+        "document_mode": document_mode,
+        "original_requested": original_requested,
+        "reader_mode": "original"
+        if original_requested or native_documents
+        else ("handbook" if presentation.get("mode") == "handbook" else "standard"),
+        "native_documents": native_documents,
         "bindings": bindings,
         "navigation": navigation,
-        "warnings": [f"{missing_images} 张文档引用图片未包含在可用资料中，保留原文说明。"] if missing_images else [],
+        "warnings": ([f"{missing_images} 张文档引用图片未包含在可用资料中，保留原文说明。"] if missing_images else [])
+        + native_warnings,
         # Recipient chooses their own connection. Never serialize publisher settings.
         "ai": {"base_url": "https://api.openai.com/v1", "protocol": "responses", "model": ""},
     }
@@ -280,9 +303,12 @@ def html_library(payload):
             "<title>VKS 成品知识库</title>", "<title>" + escape(payload["project"]["name"]) + " · 成品知识库</title>"
         )
         .replace("/* VKS_READER_CSS */", (assets / "reader.css").read_text())
+        .replace("/* VKS_HANDBOOK_CSS */", (assets / "handbook.css").read_text())
         .replace("/* VKS_MARKDOWN_CSS */", (assets / "markdown-vendor.css").read_text())
         .replace("VKS_READER_PAYLOAD", encoded)
         .replace("/* VKS_READER_JS */", (assets / "reader.js").read_text())
+        .replace("/* VKS_ASSISTANT_JS */", (assets / "assistant-runtime.js").read_text())
+        .replace("/* VKS_HANDBOOK_JS */", (assets / "handbook.js").read_text())
         .replace("/* VKS_MARKDOWN_JS */", (assets / "markdown-vendor.js").read_text())
         .replace(
             "VKS_MARKDOWN_LICENSES",
@@ -295,24 +321,30 @@ def prepare_job(service, jid, validate_scope=None):
     """Network and compression run outside the knowledge transaction/worker lock."""
     from .interactive_ai import InteractiveAssistant
     from .jobs import current_actor
+    from .reading import ReadingService
 
-    with service.db() as s:
+    with ReadingService(service).db() as s:
         job = s.get(Job, jid)
         actor = current_actor(service, job.created_by, job.project_id, session=s, job=job)
         caps = capabilities(service, s, actor, job)
         pid, release_id = job.project_id, job.input_json["release_id"]
-        payload, deps, section_ids = projection(service, s, actor, pid, release_id, caps)
+        mode = job.input_json.get("document_mode", "project")
+        payload, deps, section_ids = projection(service, s, actor, pid, release_id, caps, mode)
         before = digest(canonical([payload, deps]))
+    if validate_scope:
+        validate_scope()
     rag = InteractiveAssistant(service).rag.export_index(
         actor, pid, release_id=release_id, section_revision_ids=section_ids, ensure=True, validate_scope=validate_scope
     )
-    with service.db() as s:
+    with ReadingService(service).db() as s:
         job = s.get(Job, jid)
         actor = current_actor(service, job.created_by, pid, session=s, job=job)
         caps_now = capabilities(service, s, actor, job)
-        latest, current_deps, _ = projection(service, s, actor, pid, release_id, caps_now)
+        latest, current_deps, _ = projection(service, s, actor, pid, release_id, caps_now, mode)
         if caps != caps_now or before != digest(canonical([latest, current_deps])):
             raise DomainError("VKS_VERSION_CONFLICT", "导出期间资料或权限发生变化，请重新导出", 409)
+    if validate_scope:
+        validate_scope()
     payload["rag"] = rag
     return {
         "object_key": service._put_object(html_library(payload)),
@@ -329,7 +361,15 @@ def finalize(service, s, job, prepared):
         raise DomainError("VKS_STATE_CONFLICT", "成品库未完成预构建", 409)
     actor = current_actor(service, job.created_by, job.project_id, session=s, job=job)
     caps = capabilities(service, s, actor, job)
-    payload, deps, _ = projection(service, s, actor, job.project_id, job.input_json["release_id"], caps)
+    payload, deps, _ = projection(
+        service,
+        s,
+        actor,
+        job.project_id,
+        job.input_json["release_id"],
+        caps,
+        job.input_json.get("document_mode", "project"),
+    )
     if caps != prepared["caps"] or digest(canonical([payload, deps])) != prepared["projection_hash"]:
         raise DomainError("VKS_VERSION_CONFLICT", "导出期间资料或权限发生变化，请重新导出", 409)
     release = s.get(Release, job.input_json["release_id"])

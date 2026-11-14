@@ -54,6 +54,8 @@ class ConversationMessage(Input):
 
 
 class InteractiveQuestionInput(AssistanceInput):
+    package_id: Ref | None = None
+    document_revision_id: Ref | None = None
     question: str = Field(min_length=1, max_length=2000, pattern=r"\S")
     history: list[ConversationMessage] = Field(default_factory=list, max_length=6)
 
@@ -204,6 +206,9 @@ class InteractiveAssistant:
             analysis, release, choices, _ = self.links.reader.scope(
                 s, actor, pid, form.analysis_set_id, form.release_id
             )
+            document_question = isinstance(form, InteractiveQuestionInput) and not form.package_id
+            if isinstance(form, InteractiveQuestionInput) and form.package_id and form.document_revision_id:
+                failure("VKS_INVALID_INPUT", "请选择文档问答或原型问答中的一种范围", 422)
             package = next(
                 (
                     p
@@ -212,6 +217,25 @@ class InteractiveAssistant:
                 ),
                 None,
             )
+            if document_question:
+                document = None
+                if form.document_revision_id:
+                    document = next(
+                        (
+                            r
+                            for _, r in self.links._rows(
+                                s, actor, pid, choices, types={"document"}, revision_ids={form.document_revision_id}
+                            )
+                        ),
+                        None,
+                    )
+                    if not document:
+                        failure("VKS_NOT_FOUND", "当前版本中没有可读取的文档", 404)
+                package = {
+                    "id": document.id if document else "project-documents",
+                    "kind": "documents",
+                    "sha256": document.content_sha256 if document else "",
+                }
             if not package:
                 failure("VKS_NOT_FOUND", "当前版本中没有可读取的原型", 404)
             policy = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
@@ -220,10 +244,17 @@ class InteractiveAssistant:
             ):
                 failure("VKS_MODEL_NOT_CONFIGURED", "请在 AI 设置中保存并启用模型，允许使用本项目获授权的相关内容", 503)
             config = PolicyInput.model_validate(policy.settings if policy else {}).model_dump()
-            original = s.get(Artifact, form.package_id)
-            p = artifact_policy(s, original)
+            original = (
+                s.get(Artifact, document.artifact_id)
+                if document_question and document
+                else (s.get(Artifact, form.package_id) if form.package_id else None)
+            )
+            p = artifact_policy(s, original) if original else {}
             if for_model and (
-                original.sensitivity == "confidential" or (p.get("requires_source_read") and not config["allow_source"])
+                original
+                and original.sensitivity == "confidential"
+                or p.get("requires_source_read")
+                and not config["allow_source"]
             ):
                 failure("VKS_FORBIDDEN", "模型设置不允许使用此原型资料", 403)
             rows = self.links._rows(s, actor, pid, choices, types={"document", "section"})
@@ -319,6 +350,8 @@ class InteractiveAssistant:
             return built
 
     def _binding(self, actor, pid, form, *, session=None):
+        if isinstance(form, InteractiveQuestionInput) and not form.package_id:
+            return None
         return next(
             (
                 b

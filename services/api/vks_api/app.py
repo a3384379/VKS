@@ -7,7 +7,7 @@ import json
 import os
 import secrets
 from fastapi import FastAPI, Request, Depends, Header, Query
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
 from sqlalchemy import text
@@ -110,6 +110,14 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
             ):
                 raise DomainError("VKS_FORBIDDEN", "CSRF 校验失败，请重新登录", 403)
         return a
+
+    @app.get("/api/v3/document-templates/handbook/download", response_class=HTMLResponse)
+    def download_handbook_template(a: Actor = Depends(actor)):
+        from .handbook_authoring import template_html
+
+        return HTMLResponse(template_html(), headers={
+            "Content-Disposition": 'attachment; filename="vks-handbook-template.html"',
+        })
 
     @app.post("/api/v2/projects/{pid}/snapshots", status_code=201)
     def save_snapshot(
@@ -553,6 +561,14 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     from .materials import install_materials
 
     install_materials(app, service, actor, envelope)
+    from .bulk_association import install_bulk_association
+    from .document_presentation import install_document_presentation
+
+    install_bulk_association(app, service, actor, envelope)
+    install_document_presentation(app, service, actor, envelope)
+    from .prototype_scan import install_prototype_scan
+
+    install_prototype_scan(app, service, actor, envelope)
     from .project_profile import install_project_profile
 
     install_project_profile(app, service, actor, envelope, API)

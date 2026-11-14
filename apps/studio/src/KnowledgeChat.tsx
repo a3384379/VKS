@@ -33,6 +33,7 @@ export function useKnowledgeChat(
   baseline: { analysis_set_id?: string; release_id?: string },
   packageId: string,
   context: Context | null,
+  document?: { revision_id?: string },
 ) {
   const [state, setState] = useState<{
     key: string;
@@ -72,7 +73,7 @@ export function useKnowledgeChat(
       current.pending ||
       inFlight.current?.key === key ||
       !context ||
-      !packageId
+      (!packageId && !document)
     )
       return;
     const sequence = ++serial.current,
@@ -88,7 +89,10 @@ export function useKnowledgeChat(
       const answer = await api<Answer>(`${prefix}/questions`, {
         ...mutation("POST", {
           ...baseline,
-          package_id: packageId,
+          package_id: document ? null : packageId,
+          ...(document?.revision_id
+            ? { document_revision_id: document.revision_id }
+            : {}),
           target: context.target,
           context: context.context,
           question,

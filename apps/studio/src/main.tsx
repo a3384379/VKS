@@ -32,8 +32,15 @@ import { AISettings } from "./AISettings";
 import { Projects } from "./Projects";
 import { DocumentCache } from "./DocumentCache";
 import { KnowledgeChat, useKnowledgeChat } from "./KnowledgeChat";
+import { chatSourceFingerprint } from "./chatSourceFingerprint";
 import { Materials } from "./Materials";
 import { BindingsManager } from "./BindingsManager";
+import { BatchAssociations } from "./BatchAssociations";
+import {
+  HandbookTemplate,
+  type HandbookSearchResult,
+} from "./HandbookTemplate";
+import { DocumentAppearance, type Presentation } from "./DocumentAppearance";
 import { useFloatingWindow, type ResizeDirection } from "./useFloatingWindow";
 import { NativeDocumentPane, NativeNetworkSettings } from "./NativeDocument";
 import type { NativeDocument, NativeLocation } from "./NativeDocument";
@@ -125,6 +132,8 @@ type Related = {
   vector_available?: boolean;
 };
 type Catalog = {
+  source_fingerprint?: string;
+  presentation?: Presentation;
   navigation?: DocumentNavigation;
   analysis_set_id: string;
   release_id: string | null;
@@ -200,8 +209,19 @@ function App() {
   const documentRef = catalog?.documents.find(
     (doc) => doc.revision_id === route.doc,
   );
+  const presentation =
+    catalog?.presentation ||
+    ({
+      mode: "auto",
+      template_id: "handbook",
+      template_version: "1.0.0",
+    } as Presentation);
+  const readerChoice = route.reader || presentation.mode;
+  const handbookReader = readerChoice === "handbook";
   const nativeRead =
-    route.reader !== "standard" && !!documentRef?.native_package_id;
+    readerChoice !== "standard" &&
+    !handbookReader &&
+    !!documentRef?.native_package_id;
   const prototypePackages =
     catalog?.packages.filter((p) => p.kind === "prototype") || [];
   const p =
@@ -265,10 +285,14 @@ function App() {
   const nativePackageModified = !!nativePackage?.native_index_modified;
   const originalBook =
     !!nativePackage &&
-    route.reader !== "standard" &&
-    ((!route.doc && (!nativePackageModified || route.reader === "source")) ||
+    !handbookReader &&
+    readerChoice !== "standard" &&
+    ((!route.doc &&
+      (!nativePackageModified ||
+        ["source", "original"].includes(readerChoice))) ||
       (nativeDetail
-        ? nativeDetail.matches_index || route.reader === "source"
+        ? nativeDetail.matches_index ||
+          ["source", "original"].includes(readerChoice)
         : !viewDoc && sourcePackage === nativePackage.id));
   const networkKey = `${accountId}:${route.project}:${nativePackage?.package_key || nativePackage?.id || ""}`;
   const networkOrigins =
@@ -349,26 +373,89 @@ function App() {
       undefined,
     ),
     menuRef = useRef<HTMLDivElement>(null);
-  const chat = useKnowledgeChat(
+  const [citationChat, setCitationChat] = useState<{
+    scope: string;
+    key: string;
+    documentChat: boolean;
+    context: Control | null;
+    documentId?: string;
+    packageId: string;
+    sourceFingerprint: string;
+  } | null>(null);
+  const chatSources = useMemo(() => chatSourceFingerprint(catalog), [catalog]);
+  const citationOrigin =
+    route.view === "documents" &&
+    citationChat?.scope === route.project + scope &&
+    citationChat.sourceFingerprint === chatSources
+      ? citationChat
+      : null;
+  const [documentKnowledge, setDocumentKnowledge] = useState(false);
+  const documentChat =
+    citationOrigin?.documentChat ??
+    (route.view === "documents" && !documentKnowledge);
+  const prototypeAssistantMode = useRef(assistantMode),
+    inDocumentChat = useRef(false);
+  const documentChatLabel =
+    citationOrigin?.context?.target.label ||
+    documentRef?.name ||
+    projects.find((project) => project.id === route.project)?.name ||
+    "项目知识文档";
+  const chatContext: Control | null = citationOrigin
+    ? citationOrigin.context
+    : documentChat
+      ? {
+          target: {
+            route: "/documents",
+            frame_path: [],
+            selector: "body",
+            label: documentChatLabel,
+            state: "",
+            open_steps: [],
+          },
+          context: {
+            scope: "module",
+            page_title: documentChatLabel,
+            section_title: "",
+            nearby_labels: [],
+          },
+        }
+      : control.current;
+  const chatKey =
+    citationOrigin?.key ||
     JSON.stringify([
       accountId,
       auth,
       route.project,
       scope,
       p?.id,
-      catalog?.selection_version,
-      control.current && {
-        target: control.current.target,
-        context: control.current.context,
+      chatSources,
+      documentChat ? route.doc || "project-documents" : null,
+      chatContext && {
+        target: chatContext.target,
+        context: chatContext.context,
       },
-    ]),
+    ]);
+  const chatPackage = citationOrigin?.packageId ?? p?.id ?? "";
+  const chatDocument = documentChat
+    ? {
+        revision_id: citationOrigin
+          ? citationOrigin.documentId
+          : documentRef?.revision_id,
+      }
+    : undefined;
+  const chat = useKnowledgeChat(
+    chatKey,
     prefix,
     route.release
       ? { release_id: route.release }
       : { analysis_set_id: route.analysis },
-    p?.id || "",
-    control.current,
+    chatPackage,
+    chatContext,
+    chatDocument,
   );
+  useEffect(() => {
+    setDocumentKnowledge(false);
+  }, [route.project, scope, route.doc]);
   const navigate = useCallback((patch: Partial<Route>, replace = false) => {
     const next = { ...getRoute(), ...patch };
     const p = new URLSearchParams(Object.entries(next).filter(([, v]) => v));
@@ -533,8 +620,9 @@ function App() {
     }
     if (
       route.view === "documents" &&
+      !handbookReader &&
       catalog?.documents.length &&
-      (route.reader === "standard" ||
+      (readerChoice === "standard" ||
         (nativePackageModified && route.reader !== "source") ||
         !catalog.documents.some((doc) => doc.native_package_id)) &&
       (!route.doc ||
@@ -564,6 +652,8 @@ function App() {
     route.view,
     route.doc,
     route.reader,
+    readerChoice,
+    handbookReader,
     catalog,
     nativePackage?.id,
     nativePackageModified,
@@ -734,6 +824,10 @@ function App() {
     }
     setKnowledge(true);
     setAssistantOptions(false);
+    if (documentChat) {
+      switchKnowledge("chat");
+      return;
+    }
     if (!target && moduleControl.current)
       void assist(moduleControl.current, "documents", false, false);
   }
@@ -799,6 +893,25 @@ function App() {
       return;
     void assist(control.current, mode, active?.validity_status !== "valid");
   }
+  useEffect(() => {
+    if (!documentChat) {
+      if (inDocumentChat.current) {
+        inDocumentChat.current = false;
+        setAssistantMode(prototypeAssistantMode.current);
+      }
+      return;
+    }
+    if (!inDocumentChat.current) prototypeAssistantMode.current = assistantMode;
+    inDocumentChat.current = true;
+    // Document questions use their own scope, even when the assistant remained
+    // open while navigating away from a prototype control.
+    assistEpoch.current++;
+    assistAbort.current?.abort();
+    cancelAutomatic();
+    setAssistantMode("chat");
+    setAssisting(false);
+    setRetrieving(false);
+  }, [documentChat]);
   async function assist(
     c: Control,
     mode: "documents" | "explain",
@@ -1487,6 +1600,7 @@ function App() {
                       <button
                         onClick={() => {
                           navigate({ section: s.revision_id });
+                          setDocumentKnowledge(true);
                           setKnowledge(true);
                           setActive(
                             bindings.find(
@@ -1742,12 +1856,17 @@ function App() {
                   setNotice("请先保存或取消当前编辑");
                   return;
                 }
+                if (v === "documents") {
+                  setCitationChat(null);
+                  setDocumentKnowledge(false);
+                }
                 navigate({ view: v });
                 if (
                   v === "documents" &&
+                  !handbookReader &&
                   !route.doc &&
                   catalog?.documents[0] &&
-                  (route.reader === "standard" ||
+                  (readerChoice === "standard" ||
                     !catalog.documents.some((doc) => doc.native_package_id))
                 )
                   navigate({
@@ -1879,6 +1998,30 @@ function App() {
                   : "原样文档"}
             </button>
           )}
+          {currentView === "documents" && catalog && (
+            <DocumentAppearance
+              key={route.project + scope}
+              project={route.project}
+              analysis={route.analysis}
+              settings={{
+                ...presentation,
+                mode: ["standard", "handbook", "original"].includes(
+                  readerChoice,
+                )
+                  ? (readerChoice as Presentation["mode"])
+                  : readerChoice === "source"
+                    ? "original"
+                    : presentation.mode,
+              }}
+              version={catalog.selection_version}
+              editable={catalog.editable}
+              onSaved={async () => {
+                navigate({ reader: "" }, true);
+                await reload();
+                setNotice("文档阅读方式已保存，完整版本会保留当前模板选择。");
+              }}
+            />
+          )}
           {currentView === "documents" && nativePackage && accountId && (
             <NativeNetworkSettings
               account={accountId}
@@ -1978,7 +2121,58 @@ function App() {
             </div>
           )}
         </section>
-        {currentView === "documents" && (
+        {currentView === "documents" && handbookReader && (
+          <HandbookTemplate
+            key={documentCache.id}
+            projectName={
+              projects.find((project) => project.id === route.project)?.name ||
+              "项目知识库"
+            }
+            documents={catalog?.documents || []}
+            navigation={catalog?.navigation}
+            selectedDocument={route.doc}
+            selectedSection={route.section}
+            currentDocument={viewDoc}
+            scopeKey={route.project + ":" + scope}
+            selectionVersion={catalog?.selection_version}
+            loadDocument={(revision) => documentCache.load(revision)}
+            searchDocuments={(query, signal) =>
+              api<HandbookSearchResult[]>(
+                `/api/v3/projects/${route.project}/document-presentation/search`,
+                {
+                  ...mutation("POST", {
+                    ...(route.release
+                      ? { release_id: route.release }
+                      : { analysis_set_id: route.analysis }),
+                    query,
+                  }),
+                  signal,
+                },
+              )
+            }
+            onOpen={(doc, section = "") =>
+              navigate({ view: "documents", doc, section, reader: "handbook" })
+            }
+            onOverview={() =>
+              navigate({ doc: "", section: "", reader: "handbook" })
+            }
+            onAskAI={() => {
+              if (editing) {
+                setNotice("请先保存或取消当前编辑");
+                return;
+              }
+              setCitationChat(null);
+              setDocumentKnowledge(false);
+              setKnowledge(true);
+              setAssistantOptions(false);
+              switchKnowledge("chat");
+            }}
+            onUpdate={() => navigate({ view: "materials" })}
+            readOnly={!catalog?.editable}
+            renderReader={documentArticle}
+          />
+        )}
+        {currentView === "documents" && !handbookReader && (
           <DocumentLibrary
             key={documentCache.id}
             navigation={catalog?.navigation}
@@ -2068,22 +2262,37 @@ function App() {
             release={route.release}
           />
         )}
+        {catalog && (
+          <div hidden={currentView !== "links"} className="batch-task-slot">
+            <BatchAssociations
+              key={"batch:" + route.project + scope}
+              project={route.project}
+              analysis={catalog.analysis_set_id}
+              accountId={accountId || ""}
+              visible={currentView === "links"}
+              editable={!!catalog.editable && !route.release}
+              onChanged={reload}
+            />
+          </div>
+        )}
         {currentView === "links" && (
-          <BindingsManager
-            key={route.project + scope}
-            bindings={bindings}
-            ready={bindingsReady}
-            editable={!!catalog?.editable}
-            canCreate={!!p}
-            onCreate={startPicker}
-            onReveal={reveal}
-            onEdit={editBinding}
-            onToggle={(b) => void exclude(b)}
-            onSource={(b, i) => openDoc(b.sections[i], b)}
-            renderSummary={(b) => (
-              <Markdown references={b.sections}>{b.summary}</Markdown>
-            )}
-          />
+          <>
+            <BindingsManager
+              key={"bindings:" + route.project + scope}
+              bindings={bindings}
+              ready={bindingsReady}
+              editable={!!catalog?.editable}
+              canCreate={!!p}
+              onCreate={startPicker}
+              onReveal={reveal}
+              onEdit={editBinding}
+              onToggle={(b) => void exclude(b)}
+              onSource={(b, i) => openDoc(b.sections[i], b)}
+              renderSummary={(b) => (
+                <Markdown references={b.sections}>{b.summary}</Markdown>
+              )}
+            />
+          </>
         )}
       </main>
       {menu && (
@@ -2409,35 +2618,45 @@ function App() {
             <>
               <div className="knowledge-context">
                 <MousePointer2 size={14} />
-                <span>{target?.label || "请选择一个原型操作"}</span>
+                <span>
+                  {documentChat
+                    ? documentChatLabel
+                    : target?.label || "请选择一个原型操作"}
+                </span>
                 <span className="pill">
-                  {editing
-                    ? "维护关联"
-                    : target?.selector === "body"
-                      ? "模块知识"
-                      : "控件知识"}
+                  {documentChat
+                    ? "文档问答"
+                    : editing
+                      ? "维护关联"
+                      : target?.selector === "body"
+                        ? "模块知识"
+                        : "控件知识"}
                 </span>
               </div>
-              {!editing && target && (
+              {!editing && (target || documentChat) && (
                 <div
                   className="knowledge-tabs"
                   role="tablist"
                   aria-label="知识内容"
                 >
-                  <button
-                    role="tab"
-                    aria-selected={assistantMode === "documents"}
-                    onClick={() => switchKnowledge("documents")}
-                  >
-                    相关文档
-                  </button>
-                  <button
-                    role="tab"
-                    aria-selected={assistantMode === "explain"}
-                    onClick={() => switchKnowledge("explain")}
-                  >
-                    AI 讲解
-                  </button>
+                  {!documentChat && (
+                    <button
+                      role="tab"
+                      aria-selected={assistantMode === "documents"}
+                      onClick={() => switchKnowledge("documents")}
+                    >
+                      相关文档
+                    </button>
+                  )}
+                  {!documentChat && (
+                    <button
+                      role="tab"
+                      aria-selected={assistantMode === "explain"}
+                      onClick={() => switchKnowledge("explain")}
+                    >
+                      AI 讲解
+                    </button>
+                  )}
                   <button
                     role="tab"
                     aria-selected={assistantMode === "chat"}
@@ -2453,15 +2672,32 @@ function App() {
                   (assistantMode === "chat" && !editing ? " chat-body" : "")
                 }
               >
-                {!editing && assistantMode === "chat" && target && (
-                  <KnowledgeChat
-                    chat={chat}
-                    label={target.label}
-                    onCitation={openDoc}
-                    onSettings={() => navigate({ view: "ai" })}
-                  />
-                )}
-                <div hidden={!editing && assistantMode === "chat"}>
+                {!editing &&
+                  assistantMode === "chat" &&
+                  (target || documentChat) && (
+                    <KnowledgeChat
+                      chat={chat}
+                      label={documentChat ? documentChatLabel : target!.label}
+                      onCitation={(reference) => {
+                        setCitationChat({
+                          scope: route.project + scope,
+                          key: chatKey,
+                          documentChat,
+                          context: chatContext,
+                          documentId: chatDocument?.revision_id,
+                          packageId: chatPackage,
+                          sourceFingerprint: chatSources,
+                        });
+                        openDoc(reference);
+                      }}
+                      onSettings={() => navigate({ view: "ai" })}
+                    />
+                  )}
+                <div
+                  hidden={
+                    documentChat || (!editing && assistantMode === "chat")
+                  }
+                >
                   {!editing && active && active.validity_status !== "valid" && (
                     <p className="assistant-background">
                       资料已更新，原有关联正在重新核对；可先查看检索结果。
@@ -2852,9 +3088,13 @@ function App() {
                   <>
                     <span>
                       <i className="status-dot" />
-                      {active ? "关联已保存" : "跟随原型操作"}
+                      {documentChat
+                        ? "根据项目文档回答"
+                        : active
+                          ? "关联已保存"
+                          : "跟随原型操作"}
                     </span>
-                    {target && assistantMode !== "chat" && (
+                    {!documentChat && target && assistantMode !== "chat" && (
                       <button
                         disabled={assisting}
                         onClick={() =>
@@ -2865,7 +3105,7 @@ function App() {
                         <Sparkles size={14} /> AI 讲解
                       </button>
                     )}
-                    {active && (
+                    {!documentChat && active && (
                       <button
                         disabled={!catalog?.editable || !bindingsReady}
                         onClick={() => editBinding(active)}

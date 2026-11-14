@@ -36,4 +36,12 @@ for _ in range(60):
 else: raise SystemExit('Studio API 启动超时')
 PY
 printf '知境 Studio：http://127.0.0.1:%s\n' "$VKS_STUDIO_PORT"
-npm run dev --workspace apps/studio -- --port "$VKS_STUDIO_PORT"
+if [[ "${VKS_STUDIO_PREVIEW:-0}" == "1" ]]; then
+  if [[ ! -f apps/studio/dist/index.html ]]; then
+    printf '请先运行 npm run build --workspace apps/studio，再启动固定构建预览。\n' >&2
+    exit 1
+  fi
+  npm run preview --workspace apps/studio -- --port "$VKS_STUDIO_PORT"
+else
+  npm run dev --workspace apps/studio -- --port "$VKS_STUDIO_PORT"
+fi

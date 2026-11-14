@@ -12,7 +12,9 @@ from fastapi import Depends, Header, Request
 from fastapi.responses import Response
 from pydantic import Field
 from sqlalchemy import select
+from sqlalchemy.orm import load_only
 
+from .document_presentation import PresentationSettings, presentation_for_analysis, presentation_for_release
 from .documents import DocumentService
 from .knowledge import SourceSnapshot
 from .models import Artifact, Entity, Evidence, Relation, Revision
@@ -92,11 +94,13 @@ class InteractiveCatalog(Input):
     analysis_set_id: str
     release_id: str | None
     selection_version: int
+    source_fingerprint: str = ""
     editable: bool
     packages: list[RuntimePackage]
     documents: list[InteractiveDocumentInfo]
     primary_package_id: str | None = None
     navigation: dict = Field(default_factory=lambda: {"packages": []})
+    presentation: PresentationSettings = Field(default_factory=PresentationSettings)
 
 
 class InteractiveChapter(Input):
@@ -388,6 +392,68 @@ class InteractiveKnowledgeService:
                     snapshots.add(snapshot)
         return composition, snapshots
 
+    def _source_fingerprint(self, s, actor, pid, choices, documents, packages):
+        """Chat source identity excludes binding counters and never reads chapter bodies."""
+        from .reading import chunks
+
+        mapped = {}
+        legacy = set()
+        for entity, revision in documents:
+            ids = revision.metadata_json.get("section_revision_ids")
+            if isinstance(ids, list):
+                for rid in ids:
+                    if isinstance(rid, str):
+                        mapped.setdefault(rid, set()).add((revision.artifact_id, entity.stable_key))
+            else:
+                legacy.add((revision.artifact_id, entity.stable_key))
+        chapters = []
+        for batch in chunks(choices.values()):
+            rows = list(
+                s.scalars(
+                    select(Revision)
+                    .join(Entity, Entity.id == Revision.entity_id)
+                    .where(
+                        Revision.id.in_(batch),
+                        Revision.project_id == pid,
+                        Entity.project_id == pid,
+                        Entity.type == "section",
+                    )
+                    .options(
+                        load_only(
+                            Revision.id,
+                            Revision.entity_id,
+                            Revision.project_id,
+                            Revision.artifact_id,
+                            Revision.metadata_json,
+                            Revision.content_sha256,
+                        )
+                    )
+                )
+            )
+            self.reader.reading.preload(s, rows)
+            for row in rows:
+                membership = (row.artifact_id, row.metadata_json.get("document_key"))
+                if (
+                    choices.get(row.entity_id) != row.id
+                    or membership not in mapped.get(row.id, set()) | legacy
+                    or not self.service._visible_revision(s, actor, pid, row)
+                ):
+                    continue
+                # _visible_revision retains the existing complete-reader fast path
+                # while still checking entity/artifact ownership for every chapter.
+                chapters.append((row.id, row.content_sha256))
+        return sha(
+            canonical(
+                {
+                    "documents": sorted(
+                        (entity.id, revision.id, revision.content_sha256) for entity, revision in documents
+                    ),
+                    "chapters": sorted(chapters),
+                    "packages": sorted((p["id"], p["kind"], p.get("revision_id", ""), p["sha256"]) for p in packages),
+                }
+            )
+        )
+
     def catalog(self, actor, pid, aid=None, release_id=None):
         with self.reader.reading.db() as s:
             analysis, release, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
@@ -408,9 +474,13 @@ class InteractiveKnowledgeService:
 
             return {
                 "analysis_set_id": analysis.id,
+                "presentation": presentation_for_release(s, release)
+                if release
+                else presentation_for_analysis(s, analysis),
                 "primary_package_id": primary(s, pid, choices),
                 "release_id": release.id if release else None,
                 "selection_version": analysis.selection_version,
+                "source_fingerprint": self._source_fingerprint(s, actor, pid, choices, rows, packages),
                 "editable": not release
                 and analysis.state != "frozen"
                 and self.service._can(s, actor, pid, "knowledge:edit"),

@@ -181,6 +181,7 @@
     sectionMap,
     documentMap,
     index = [];
+  let contentGeneration = 0;
   let navigation = [],
     documentLocations = new Map(),
     sectionsByDocument = new Map(),
@@ -220,6 +221,9 @@
     },
     models: [],
     customModel: false,
+    modelQuery: "",
+    allModels: false,
+    modelPage: 0,
     modelEpoch: 0,
     modelController: null,
     search: "",
@@ -227,10 +231,16 @@
     pendingQuestion: "",
   };
   const ui = {};
+  let nativeView = null;
+  let handbookView = null;
+  let revealNativeSelection = false;
+  const standardNativeDocuments = new Set();
   let explanationTimer = null;
   function layoutStorageKey() {
     return `vks.reader.layout:${data.project.id}:${data.snapshot?.id || "current"}`;
   }
+  let assistantGesture = false,
+    deferredAssistantRender = false;
   function loadAssistantLayout() {
     try {
       const value = JSON.parse(
@@ -240,8 +250,20 @@
         if (
           Number.isFinite(value?.[kind]?.x) &&
           Number.isFinite(value?.[kind]?.y)
-        )
+        ) {
           state.layout[kind] = { x: value[kind].x, y: value[kind].y };
+          if (
+            kind === "panel" &&
+            Number.isFinite(value[kind].width) &&
+            Number.isFinite(value[kind].height) &&
+            value[kind].width > 0 &&
+            value[kind].height > 0
+          )
+            Object.assign(state.layout[kind], {
+              width: value[kind].width,
+              height: value[kind].height,
+            });
+        }
     } catch {}
   }
   function saveAssistantLayout() {
@@ -251,32 +273,71 @@
   }
   function placeAssistant(kind, position = state.layout[kind]) {
     const node = kind === "panel" ? ui.assistant : ui.launch;
-    if (!node?.isConnected || !position) return;
-    const bounds = node.getBoundingClientRect();
-    const size = getComputedStyle(node),
-      width = bounds.width || parseFloat(size.width),
-      height = bounds.height || parseFloat(size.height);
-    const clamped = {
-      x: Math.max(8, Math.min(position.x, Math.max(8, innerWidth - width - 8))),
-      y: Math.max(
-        8,
-        Math.min(position.y, Math.max(8, innerHeight - height - 8)),
-      ),
+    if (!node?.isConnected) return;
+    const rect = node.getBoundingClientRect();
+    position ||= { x: rect.left, y: rect.top };
+    const box = globalThis.VKSAssistant.clampWindowBox(
+      {
+        left: position.x,
+        top: position.y,
+        width: kind === "panel" ? position.width || rect.width : rect.width,
+        height: kind === "panel" ? position.height || rect.height : rect.height,
+      },
+      kind === "panel" ? undefined : { width: 0, height: 0 },
+    );
+    state.layout[kind] = {
+      x: box.left,
+      y: box.top,
+      ...(kind === "panel" ? { width: box.width, height: box.height } : {}),
     };
-    state.layout[kind] = clamped;
     Object.assign(node.style, {
-      left: clamped.x + "px",
-      top: clamped.y + "px",
+      left: box.left + "px",
+      top: box.top + "px",
       right: "auto",
       bottom: "auto",
+      ...(kind === "panel"
+        ? { width: box.width + "px", height: box.height + "px" }
+        : {}),
+    });
+  }
+  function windowGesture(event, handle, kind, direction = "move") {
+    if (event.button !== 0 || !event.isPrimary) return;
+    const node = kind === "panel" ? ui.assistant : ui.launch;
+    assistantGesture = true;
+    globalThis.VKSAssistant.startFloatingGesture(event, {
+      node,
+      handle,
+      direction,
+      minimum: kind === "panel" ? undefined : { width: 0, height: 0 },
+      shieldClass: "reader-drag-shield",
+      activeClass: "reader-resizing",
+      threshold: kind === "launcher" ? 5 : 3,
+      onCommit: (box) => {
+        state.layout[kind] = {
+          x: box.left,
+          y: box.top,
+          ...(kind === "panel" ? { width: box.width, height: box.height } : {}),
+        };
+        saveAssistantLayout();
+      },
+      onEnd: (moved) => {
+        assistantGesture = false;
+        if (moved)
+          handle.dataset.suppressClickUntil = String(performance.now() + 350);
+        if (deferredAssistantRender) {
+          deferredAssistantRender = false;
+          renderAssistant();
+        }
+      },
     });
   }
   function draggableAssistant(handle, kind) {
-    let suppressClickUntil = 0;
     handle.addEventListener(
       "click",
       (event) => {
-        if (performance.now() < suppressClickUntil) {
+        if (
+          performance.now() < Number(handle.dataset.suppressClickUntil || 0)
+        ) {
           event.preventDefault();
           event.stopImmediatePropagation();
         }
@@ -292,68 +353,57 @@
       }[event.key];
       if (!event.altKey || !step) return;
       event.preventDefault();
-      const node = kind === "panel" ? ui.assistant : ui.launch;
-      const rect = node.getBoundingClientRect();
-      placeAssistant(kind, { x: rect.left + step[0], y: rect.top + step[1] });
+      const node = kind === "panel" ? ui.assistant : ui.launch,
+        rect = node.getBoundingClientRect();
+      placeAssistant(kind, {
+        ...state.layout[kind],
+        x: rect.left + step[0],
+        y: rect.top + step[1],
+      });
       saveAssistantLayout();
     });
     handle.addEventListener("pointerdown", (event) => {
       if (
-        event.button !== 0 ||
-        (kind === "panel" &&
-          event.target.closest("button,a,input,select,textarea"))
+        kind === "panel" &&
+        event.target.closest("button,a,input,select,textarea")
       )
         return;
-      const node = kind === "panel" ? ui.assistant : ui.launch;
-      const rect = node.getBoundingClientRect(),
-        start = { x: event.clientX, y: event.clientY };
-      let moved = false,
-        shield;
-      const move = (e) => {
-        if (e.pointerId !== event.pointerId) return;
-        const dx = e.clientX - start.x,
-          dy = e.clientY - start.y;
-        if (!moved && Math.hypot(dx, dy) < 6) return;
-        if (!moved) {
-          moved = true;
-          shield = el("div", {
-            class: "reader-drag-shield",
-            "aria-hidden": "true",
-          });
-          document.body.append(shield);
-          document.body.classList.add("reader-dragging");
-          try {
-            handle.setPointerCapture(event.pointerId);
-          } catch {}
-        }
-        e.preventDefault();
-        placeAssistant(kind, { x: rect.left + dx, y: rect.top + dy });
-      };
-      const finish = (e) => {
-        if (e?.pointerId != null && e.pointerId !== event.pointerId) return;
-        window.removeEventListener("pointermove", move, true);
-        window.removeEventListener("pointerup", finish, true);
-        window.removeEventListener("pointercancel", finish, true);
-        window.removeEventListener("blur", finish);
-        shield?.remove();
-        document.body.classList.remove("reader-dragging");
-        if (moved) {
-          suppressClickUntil = performance.now() + 350;
-          saveAssistantLayout();
-        }
-        try {
-          if (handle.hasPointerCapture(event.pointerId))
-            handle.releasePointerCapture(event.pointerId);
-        } catch {}
-      };
-      window.addEventListener("pointermove", move, {
-        capture: true,
-        passive: false,
-      });
-      window.addEventListener("pointerup", finish, true);
-      window.addEventListener("pointercancel", finish, true);
-      window.addEventListener("blur", finish);
+      windowGesture(event, handle, kind);
     });
+  }
+  function resizeAssistant() {
+    for (const direction of ["n", "s", "e", "w", "nw", "ne", "sw", "se"]) {
+      const handle = el("button", {
+        class: "reader-resize reader-resize-" + direction,
+        type: "button",
+        tabindex: direction === "se" ? 0 : -1,
+        "aria-label":
+          direction === "se" ? "调整助手大小" : "调整助手大小 " + direction,
+        title: "按住拖动调整大小，或使用方向键",
+      });
+      handle.addEventListener("pointerdown", (event) =>
+        windowGesture(event, handle, "panel", direction),
+      );
+      handle.addEventListener("keydown", (event) => {
+        const step = {
+          ArrowLeft: [-20, 0],
+          ArrowRight: [20, 0],
+          ArrowUp: [0, -20],
+          ArrowDown: [0, 20],
+        }[event.key];
+        if (!step) return;
+        event.preventDefault();
+        const rect = ui.assistant.getBoundingClientRect();
+        placeAssistant("panel", {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width + step[0],
+          height: rect.height + step[1],
+        });
+        saveAssistantLayout();
+      });
+      ui.assistant.append(handle);
+    }
   }
   function hasExportedExplanation() {
     return explanationBindings().some(
@@ -931,12 +981,14 @@
       [...ui.categories.children]
         .find((node) => node.dataset.categoryId === category?.id)
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    handbookView?.update();
   }
   function openDocument(id, updateHash = true, keepFilter = false) {
     if (!documentMap.has(id)) return;
     if (!keepFilter) ui.docFilter.value = "";
     state.doc = id;
     state.section = "";
+    revealNativeSelection = true;
     followDocument(id);
     setView("documents");
     renderNavigation();
@@ -951,7 +1003,7 @@
     );
   }
 
-  function start() {
+  function rebuildDocumentState() {
     sections = data.documents.flatMap((doc) =>
       (doc.sections?.length
         ? doc.sections
@@ -965,6 +1017,7 @@
     );
     sectionMap = new Map(sections.map((section) => [section.id, section]));
     documentMap = new Map(data.documents.map((doc) => [doc.id, doc]));
+    sectionsByDocument = new Map();
     for (const section of sections) {
       if (!sectionsByDocument.has(section.document_id))
         sectionsByDocument.set(section.document_id, []);
@@ -986,11 +1039,16 @@
     );
     initializeNavigation();
     buildIndex();
+  }
+  function start() {
+    rebuildDocumentState();
     state.prototype = data.prototypes[0]?.id || null;
     state.doc =
-      navigation[0]?.categories[0]?.documentIds[0] ||
-      data.documents[0]?.id ||
-      null;
+      data.reader_mode === "handbook"
+        ? null
+        : navigation[0]?.categories[0]?.documentIds[0] ||
+          data.documents[0]?.id ||
+          null;
     followDocument(state.doc);
     state.view = state.prototype ? "prototype" : "documents";
     const defaults = data.ai || {};
@@ -1143,6 +1201,33 @@
         ui.docScroll,
       ),
     );
+    if (data.reader_mode === "handbook" && window.VksHandbook)
+      handbookView = window.VksHandbook.mount({
+        root: ui.docsView,
+        project: data.project,
+        documents: data.documents,
+        navigation,
+        packageSelect: ui.packageSelect,
+        categories: ui.categories,
+        docFilter: ui.docFilter,
+        docList: ui.docList,
+        docScroll: ui.docScroll,
+        getState: () => state,
+        onOpen: (id, section) =>
+          section ? openSection(section) : openDocument(id),
+        onOverview: () => {
+          state.doc = null;
+          state.section = "";
+          setView("documents");
+          renderNavigation();
+          renderDocList();
+          renderDocument();
+          history.replaceState(null, "", location.pathname + location.search);
+        },
+        onSearch: openSearch,
+        onAskAI: () => openAssistant("chat"),
+        onPrint: () => window.print(),
+      });
     ui.launch = button("", () => openAssistant(), "assistant-launch", {
       "aria-label": "打开知识助手",
     });
@@ -1173,6 +1258,7 @@
     setView(state.view);
     if (state.prototype) loadPrototype(state.prototype);
     window.addEventListener("message", handleFrameMessage);
+    window.addEventListener("message", handleNativeDocumentMessage);
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         $(".search-backdrop")?.remove();
@@ -1201,6 +1287,174 @@
       else if (documentMap.has(params.get("doc")))
         openDocument(params.get("doc"), false);
     });
+    installAuthoringHook();
+  }
+  function installAuthoringHook() {
+    if (
+      data.authoring !== "vks-handbook-authoring-1" ||
+      data.reader_mode !== "handbook" ||
+      !handbookView ||
+      data.prototypes.length ||
+      data.bindings?.length ||
+      data.native_documents?.length
+    ) return;
+    const validText = (value, maximum) =>
+      typeof value === "string" && value.length <= maximum;
+    function replaceAuthoring(payload) {
+      if (
+        !payload ||
+        payload.schema_version !== 1 ||
+        payload.authoring !== "vks-handbook-authoring-1" ||
+        payload.reader_mode !== "handbook" ||
+        payload.project?.id !== data.project.id ||
+        !Array.isArray(payload.documents) ||
+        payload.documents.length > 2000 ||
+        [payload.prototypes, payload.bindings, payload.native_documents].some(
+          (items) => !Array.isArray(items) || items.length,
+        ) ||
+        (payload.rag?.chunks?.length || 0) !== 0
+      )
+        throw new Error("只能更新本地知识手册的文档内容");
+      const identities = new Set();
+      const documents = payload.documents.map((doc) => {
+        if (
+          !doc ||
+          !validText(doc.id, 200) ||
+          !doc.id ||
+          identities.has(doc.id) ||
+          !validText(doc.title, 160) ||
+          !validText(doc.path, 1024) ||
+          doc.namespace !== "authoring" ||
+          !validText(doc.markdown, 2 * 1024 * 1024) ||
+          doc.native ||
+          !Array.isArray(doc.sections) ||
+          !doc.images ||
+          Array.isArray(doc.images) ||
+          typeof doc.images !== "object"
+        )
+          throw new Error("手册文档格式不合法");
+        identities.add(doc.id);
+        const sections = doc.sections.map((section) => {
+          if (
+            !section ||
+            !validText(section.id, 240) ||
+            !section.id ||
+            identities.has(section.id) ||
+            !validText(section.title, 500) ||
+            !validText(section.content, 2 * 1024 * 1024) ||
+            !Number.isInteger(section.heading_level) ||
+            section.heading_level < 0 ||
+            section.heading_level > 6 ||
+            !Number.isSafeInteger(section.start_line) ||
+            section.start_line < 1
+          )
+            throw new Error("手册章节格式不合法");
+          identities.add(section.id);
+          return {
+            id: section.id,
+            title: section.title,
+            content: section.content,
+            heading_level: section.heading_level,
+            start_line: section.start_line,
+          };
+        });
+        const images = Object.fromEntries(
+          Object.entries(doc.images).map(([reference, image]) => {
+            if (
+              reference.length > 2048 ||
+              typeof image !== "string" ||
+              !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(image)
+            )
+              throw new Error("手册图片格式不合法");
+            return [reference, image];
+          }),
+        );
+        return {
+          id: doc.id,
+          title: doc.title,
+          path: doc.path,
+          namespace: "authoring",
+          markdown: doc.markdown,
+          sections,
+          images,
+        };
+      });
+      const nextNavigation = JSON.parse(JSON.stringify(payload.navigation || { packages: [] }));
+      if (!Array.isArray(nextNavigation.packages))
+        throw new Error("手册目录格式不合法");
+      const nodes = [];
+      for (const pack of nextNavigation.packages) {
+        if (!pack || !Array.isArray(pack.categories))
+          throw new Error("手册目录格式不合法");
+        for (const category of pack.categories) {
+          if (!category || !Array.isArray(category.children))
+            throw new Error("手册目录格式不合法");
+          nodes.push(...category.children);
+        }
+      }
+      for (let offset = 0; offset < nodes.length; offset++) {
+        const node = nodes[offset];
+        if (!node || nodes.length > 100000)
+          throw new Error("手册目录格式不合法");
+        if (node.kind === "folder" && Array.isArray(node.children))
+          nodes.push(...node.children);
+        else if (node.kind !== "document" || !identities.has(node.id))
+          throw new Error("手册目录格式不合法");
+      }
+      // Only authored source facts replace the reader. Connection credentials
+      // remain in memory, and incoming AI/history/native fields are ignored.
+      contentGeneration++;
+      state.controller?.abort();
+      state.controller = null;
+      state.busy = false;
+      state.activity = null;
+      state.messages = [];
+      state.explanations.clear();
+      state.pendingQuestion = "";
+      state.search = "";
+      state.searchResults = [];
+      state.context = null;
+      clearTimeout(explanationTimer);
+      $(".search-backdrop")?.remove();
+      $(".context-menu")?.remove();
+      data = {
+        ...data,
+        documents,
+        navigation: nextNavigation,
+        prototypes: [],
+        bindings: [],
+        native_documents: [],
+        rag: { chunks: [] },
+      };
+      expandedFolders.clear();
+      expandedDocuments.clear();
+      expandedChapters.clear();
+      chapterTrees.clear();
+      chapterAncestors.clear();
+      standardNativeDocuments.clear();
+      nativeView = null;
+      revealNativeSelection = false;
+      rebuildDocumentState();
+      handbookView?.setData(documents, navigation);
+      state.doc = null;
+      state.section = "";
+      state.libraryPackage = navigation[0]?.id || "";
+      state.category = navigation[0]?.categories[0]?.id || "";
+      ui.docFilter.value = "";
+      renderNavigation();
+      renderDocList();
+      renderDocument();
+      setView("documents");
+      if (state.assistant) renderAssistant();
+      history.replaceState(null, "", location.pathname + location.search);
+      return { documents: documents.length };
+    }
+    window.VksHandbookAuthoring = Object.freeze({
+      replace: replaceAuthoring,
+      open: (id) => openDocument(id),
+      currentDocument: () => state.doc,
+    });
+    window.dispatchEvent(new CustomEvent("vks-handbook-authoring-ready"));
   }
   function empty(title, detail) {
     return el(
@@ -1390,13 +1644,327 @@
           }),
       );
     replace(ui.docList, renderNodes(category?.children || []));
-    if (!ui.docList.querySelector(".document-link"))
+    if (!ui.docList.querySelector(".doc-entry,.doc-folder"))
       ui.docList.append(
         empty("没有匹配文档", "试试其他关键词，或使用顶部搜索检索整个项目。"),
       );
+    handbookView?.update();
+  }
+  function nativeDocumentBridge(nonce, page) {
+    /* This adapter runs only in an opaque source-document sandbox. */
+    let revealGeneration = 0,
+      revealing = false;
+    const send = (type, payload = {}) =>
+      parent.postMessage({ vks_native_reader: nonce, type, payload }, "*");
+    const denyWrite = () => Promise.reject(new Error("此成品库为只读版本"));
+    for (const name of [
+      "showDirectoryPicker",
+      "showOpenFilePicker",
+      "showSaveFilePicker",
+    ])
+      try {
+        Object.defineProperty(window, name, {
+          value: denyWrite,
+          configurable: false,
+        });
+      } catch {}
+    const forbid = (node) =>
+      node?.closest?.(
+        '[id^="fh-update-"],#fh-ai-save-portable,#fh-ai-download-html,input[type="file"],[contenteditable]',
+      );
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (forbid(event.target)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return;
+        }
+        const anchor = event.target?.closest?.("a[href]");
+        if (!anchor) return;
+        revealGeneration++;
+        revealing = false;
+        if (anchor.dataset.vksNativePath) {
+          event.preventDefault();
+          send("navigate", {
+            path: anchor.dataset.vksNativePath,
+            anchor: anchor.dataset.vksNativeAnchor || "",
+          });
+        } else if (anchor.getAttribute("href").startsWith("#")) {
+          event.preventDefault();
+          window.location.hash = anchor.getAttribute("href");
+        }
+      },
+      true,
+    );
+    document.addEventListener(
+      "submit",
+      (event) => event.preventDefault(),
+      true,
+    );
+    const changed = () => {
+      if (!revealing)
+        send("changed", { path: page, anchor: window.location.hash.slice(1) });
+    };
+    window.addEventListener("hashchange", changed);
+    window.addEventListener("message", (event) => {
+      if (
+        event.source !== parent ||
+        event.data?.vks_native_reader !== nonce ||
+        event.data.type !== "reveal" ||
+        typeof event.data.location !== "object"
+      )
+        return;
+      const location = event.data.location;
+      const generation = ++revealGeneration;
+      revealing = true;
+      const articleId = location.document_anchor || "";
+      if (articleId) window.fhBookPages?.ensure(articleId);
+      const anchor = location.anchor || articleId;
+      if (anchor) window.location.hash = "#" + encodeURIComponent(anchor);
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (generation !== revealGeneration) return;
+          const article = articleId
+            ? document.getElementById(articleId)
+            : document;
+          let node = location.anchor
+            ? document.getElementById(location.anchor)
+            : null;
+          if (!node && location.heading) {
+            const headings = Array.from(
+              article?.querySelectorAll("h1,h2,h3,h4,h5,h6") || [],
+            );
+            const candidate = headings[location.heading_ordinal];
+            if (
+              candidate?.textContent.replace(/\s+/g, " ").trim() ===
+              location.heading
+            )
+              node = candidate;
+          }
+          node ||= article === document ? document.body : article;
+          node?.scrollIntoView({ block: "start" });
+          // Exact heading locations can have no HTML id. The host already has
+          // their revision; an article-only hash must not erase that selection.
+          revealing = false;
+        }),
+      );
+    });
+    const ready = () => {
+      for (const node of document.querySelectorAll(
+        '[id^="fh-update-"],input[type="file"],[contenteditable]',
+      )) {
+        node.hidden = true;
+        if ("disabled" in node) node.disabled = true;
+        node.removeAttribute("contenteditable");
+      }
+      send("ready");
+    };
+    if (document.readyState === "loading")
+      document.addEventListener("DOMContentLoaded", ready, { once: true });
+    else ready();
+  }
+  function revealNativeDocument(doc) {
+    if (!nativeView?.ready || !revealNativeSelection) return;
+    const location = doc.native;
+    const section = state.section
+      ? location.sections.find((item) => item.revision_id === state.section)
+      : null;
+    if (state.section && !section) {
+      standardNativeDocuments.add(doc.id);
+      notify("该章节无法在原件中准确定位，已切换为项目正文。");
+      renderDocument();
+      return;
+    }
+    revealNativeSelection = false;
+    nativeView.frame.contentWindow.postMessage(
+      {
+        vks_native_reader: nativeView.nonce,
+        type: "reveal",
+        location: {
+          document_anchor: location.document_anchor,
+          ...(section || {}),
+        },
+      },
+      "*",
+    );
+  }
+  function renderNativeDocument(doc, original) {
+    const page = doc.native.page;
+    const html = original.pages?.[page];
+    if (typeof html !== "string") return false;
+    if (
+      nativeView?.packageId === original.id &&
+      nativeView.page === page &&
+      nativeView.frame.isConnected
+    ) {
+      revealNativeDocument(doc);
+      return true;
+    }
+    const frame = el("iframe", {
+      class: "native-document-frame",
+      title: "原样知识文档",
+      sandbox: "allow-scripts allow-modals",
+      referrerpolicy: "no-referrer",
+    });
+    const nonce = crypto.randomUUID();
+    nativeView = { packageId: original.id, page, frame, nonce, ready: false };
+    const parsed = new DOMParser().parseFromString(html, "text/html");
+    for (const node of parsed.querySelectorAll(
+      'base,meta[http-equiv="Content-Security-Policy" i],meta[http-equiv="refresh" i]',
+    ))
+      node.remove();
+    const csp = parsed.createElement("meta");
+    csp.httpEquiv = "Content-Security-Policy";
+    csp.content =
+      "default-src 'none'; script-src 'unsafe-inline' blob: data:; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:; frame-src 'none'; connect-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
+    const bridge = parsed.createElement("script");
+    bridge.textContent =
+      "(" +
+      nativeDocumentBridge.toString() +
+      ")(" +
+      JSON.stringify(nonce) +
+      "," +
+      JSON.stringify(page).replaceAll("<", "\\u003c") +
+      ");";
+    parsed.head.prepend(bridge);
+    parsed.head.prepend(csp);
+    nativeView.html = "<!doctype html>" + parsed.documentElement.outerHTML;
+    // An intrinsic opaque data origin keeps source fragment links inside the
+    // source document. Opaque srcdoc can resolve them to the outer file URL.
+    // Transfer the large document after a small bootstrap, avoiding URL limits.
+    const bootstrap =
+      "<!doctype html><meta charset=utf-8><script>(" +
+      ((token) => {
+        addEventListener("message", function receive(event) {
+          if (
+            event.source !== parent ||
+            event.data?.vks_native_reader !== token ||
+            event.data.type !== "material" ||
+            typeof event.data.html !== "string"
+          )
+            return;
+          removeEventListener("message", receive);
+          document.open();
+          document.write(event.data.html);
+          document.close();
+        });
+        parent.postMessage(
+          { vks_native_reader: token, type: "bootstrap" },
+          "*",
+        );
+      }).toString() +
+      ")(" +
+      JSON.stringify(nonce) +
+      ");<" +
+      "/script>";
+    frame.src =
+      "data:text/html;charset=utf-8;base64," +
+      btoa(String.fromCharCode(...new TextEncoder().encode(bootstrap)));
+    replace(
+      ui.docScroll,
+      el(
+        "div",
+        { class: "native-document-shell" },
+        el(
+          "div",
+          { class: "native-document-toolbar" },
+          el("span", {}, "原样文档 · 内容只读"),
+          el("div", { class: "spacer" }),
+          button("标准阅读", () => {
+            standardNativeDocuments.add(state.doc);
+            renderDocument();
+          }),
+        ),
+        frame,
+      ),
+    );
+    return true;
+  }
+  function handleNativeDocumentMessage(event) {
+    const message = event.data;
+    if (
+      !nativeView ||
+      event.source !== nativeView.frame.contentWindow ||
+      message?.vks_native_reader !== nativeView.nonce
+    )
+      return;
+    const doc = documentMap.get(state.doc);
+    if (message.type === "bootstrap" && nativeView.html) {
+      const html = nativeView.html;
+      nativeView.html = null;
+      nativeView.frame.contentWindow.postMessage(
+        { vks_native_reader: nativeView.nonce, type: "material", html },
+        "*",
+      );
+      return;
+    }
+    if (message.type === "ready") {
+      nativeView.ready = true;
+      if (doc?.native?.package_id === nativeView.packageId)
+        revealNativeDocument(doc);
+      return;
+    }
+    if (state.view !== "documents") return;
+    if (!["navigate", "changed"].includes(message.type)) return;
+    const path = message.payload?.path;
+    let anchor = text(message.payload?.anchor).slice(0, 2000);
+    try {
+      anchor = decodeURIComponent(anchor);
+    } catch {}
+    if (typeof path !== "string") return;
+    const candidates = data.documents.filter(
+      (item) =>
+        item.native?.package_id === nativeView.packageId &&
+        item.native.page === path,
+    );
+    const destination =
+      candidates.find(
+        (item) =>
+          item.native.document_anchor === anchor ||
+          item.native.sections.some((section) => section.anchor === anchor),
+      ) || (candidates.length === 1 ? candidates[0] : null);
+    if (!destination) return;
+    if (message.type === "navigate") {
+      openDocument(destination.id);
+      const section = destination.native.sections.find(
+        (item) => item.anchor === anchor,
+      );
+      if (section) openSection(section.revision_id);
+      return;
+    }
+    state.doc = destination.id;
+    state.section =
+      destination.native.sections.find((item) => item.anchor === anchor)
+        ?.revision_id || "";
+    followDocument(state.doc);
+    renderNavigation();
+    renderDocList();
+    history.replaceState(
+      null,
+      "",
+      "#" +
+        new URLSearchParams(
+          state.section ? { section: state.section } : { doc: state.doc },
+        ),
+    );
+    if (state.assistant) renderAssistant();
   }
   function renderDocument() {
     const doc = documentMap.get(state.doc);
+    if (handbookView && !doc) {
+      handbookView.renderCover();
+      return;
+    }
+    const original =
+      doc?.native &&
+      !standardNativeDocuments.has(doc.id) &&
+      (data.native_documents || []).find(
+        (item) => item.id === doc.native.package_id,
+      );
+    ui.docsView.classList.toggle("native-document-mode", !!original);
+    if (original && renderNativeDocument(doc, original)) return;
+    nativeView = null;
     if (!doc) {
       replace(ui.docScroll, empty("此版本没有文档", "当前内容已固定。"));
       return;
@@ -1407,6 +1975,26 @@
       el("div", { class: "doc-meta" }, `${data.project.name} / 知识文档`),
       el("h1", {}, doc.title),
     );
+    if (doc.native)
+      article.prepend(
+        button(
+          "原样阅读",
+          () => {
+            standardNativeDocuments.delete(doc.id);
+            revealNativeSelection = true;
+            renderDocument();
+          },
+          "native-reader-return",
+        ),
+      );
+    else if (data.original_requested || doc.native_fallback)
+      article.prepend(
+        el(
+          "p",
+          { class: "native-fallback-note", role: "status" },
+          "此文档的原 HTML 未完整纳入可导出范围、正文已修改或交互尚未适配，当前显示准确项目正文。",
+        ),
+      );
     if (doc.partial)
       article.append(
         el(
@@ -1488,6 +2076,7 @@
     );
     replace(ui.docScroll, article, renderDocumentPagination(doc.id));
     ui.docScroll.scrollTop = 0;
+    handbookView?.renderArticle();
   }
   function openSection(id, updateHash = true) {
     const section = sectionMap.get(id);
@@ -1495,6 +2084,7 @@
     $(".search-backdrop")?.remove();
     state.doc = section.document_id;
     state.section = id;
+    revealNativeSelection = true;
     followDocument(state.doc);
     chapterTree(state.doc);
     for (const ancestor of chapterAncestors.get(id) || [])
@@ -1656,12 +2246,36 @@
         node.getClientRects().length &&
         getComputedStyle(node).visibility !== "hidden"
       );
+    const fieldLabel = (node) => {
+      const label = node.labels?.[0];
+      if (!label) return "";
+      const value = (child) =>
+        child.nodeType === 3
+          ? child.nodeValue
+          : child.nodeType === 1 &&
+              child.matches("input,select,textarea,script,style")
+            ? ""
+            : Array.from(child.childNodes).map(value).join("");
+      return value(label).trim();
+    };
     const label = (node) =>
       (
         node.getAttribute("aria-label") ||
         node.getAttribute("title") ||
+        (node.matches("input,select,textarea") ? fieldLabel(node) : "") ||
         node.getAttribute("placeholder") ||
-        node.textContent ||
+        (!node.matches("input,select,textarea")
+          ? node.textContent?.trim()
+          : "") ||
+        (node.matches(
+          'input[type="submit"],input[type="button"],input[type="reset"]',
+        )
+          ? node.value
+          : "") ||
+        (node.matches("input,select,textarea") ? node.name : "") ||
+        (node.matches(".el-switch,.el-radio,.el-checkbox")
+          ? node.parentElement?.textContent?.trim()
+          : "") ||
         node.tagName
       )
         .trim()
@@ -2169,6 +2783,10 @@
     return node;
   }
   function renderAssistant() {
+    if (assistantGesture) {
+      deferredAssistantRender = true;
+      return;
+    }
     clearTimeout(explanationTimer);
     const previous = ui.assistant,
       scrollTop =
@@ -2278,6 +2896,7 @@
     dragHandle.setAttribute("aria-label", "移动知识助手");
     dragHandle.title = "拖动移动 · Alt + 方向键微调";
     draggableAssistant(dragHandle, "panel");
+    resizeAssistant();
     if (!state.layout.panel && state.layout.launcher) {
       const anchor = state.layout.launcher,
         size = getComputedStyle(ui.launch),
@@ -2323,6 +2942,21 @@
               "div",
               { class: "knowledge-summary" },
               markdown(binding.summary, refs),
+            ),
+          );
+        if (refs.length)
+          card.append(
+            el(
+              "details",
+              { class: "knowledge-source-preview", open: true },
+              el("summary", {}, "原文内容"),
+              refs.map((ref) =>
+                el(
+                  "div",
+                  {},
+                  markdown(ref.content, undefined, ref.document_id),
+                ),
+              ),
             ),
           );
         for (const ref of refs)
@@ -2720,6 +3354,10 @@
       state.models = [];
       state.config.model = "";
       state.customModel = false;
+      state.modelQuery = "";
+      state.allModels = false;
+      state.modelPage = 0;
+      modelSearch.value = "";
       updateModelChoices();
       replace(status);
       fetchModels.disabled = false;
@@ -2830,11 +3468,82 @@
         if (state.customModel) model.focus();
       },
     });
+    const modelSearch = el("input", {
+      type: "search",
+      value: state.modelQuery,
+      "aria-label": "搜索模型",
+      placeholder: "搜索全部模型…",
+      oninput: (event) => {
+        state.modelQuery = event.target.value;
+        state.modelPage = 0;
+        updateModelChoices();
+      },
+    });
+    const expandModels = button(
+      "查看全部模型",
+      () => {
+        state.allModels = !(state.allModels || state.modelQuery.trim());
+        state.modelQuery = "";
+        modelSearch.value = "";
+        state.modelPage = 0;
+        updateModelChoices();
+      },
+      "subtle-button",
+    );
+    const previousModels = button(
+        "上一页",
+        () => {
+          state.modelPage--;
+          updateModelChoices();
+        },
+        "subtle-button",
+      ),
+      nextModels = button(
+        "下一页",
+        () => {
+          state.modelPage++;
+          updateModelChoices();
+        },
+        "subtle-button",
+      ),
+      modelPage = el("small", {}),
+      modelPagination = el(
+        "div",
+        { class: "reader-model-pagination" },
+        previousModels,
+        modelPage,
+        nextModels,
+      ),
+      modelControls = el(
+        "div",
+        { class: "reader-model-controls" },
+        expandModels,
+        modelPagination,
+      );
     function updateModelChoices() {
       const custom =
-        state.customModel ||
-        !state.models.length ||
-        (!!state.config.model && !state.models.includes(state.config.model));
+          state.customModel ||
+          !state.models.length ||
+          (!!state.config.model && !state.models.includes(state.config.model)),
+        expanded = state.allModels || !!state.modelQuery.trim(),
+        all = state.models.map((id) => ({ id })),
+        filtered = (
+          expanded
+            ? all
+            : globalThis.VKSAssistant.preferredAnswerModels(
+                all,
+                6,
+                state.config.provider,
+              )
+        ).filter((item) =>
+          item.id.toLowerCase().includes(state.modelQuery.trim().toLowerCase()),
+        ),
+        pages = Math.max(1, Math.ceil(filtered.length / 20));
+      state.modelPage = Math.max(0, Math.min(pages - 1, state.modelPage));
+      const choices = filtered.slice(
+        state.modelPage * 20,
+        state.modelPage * 20 + 20,
+      );
       replace(
         modelList,
         el(
@@ -2842,15 +3551,29 @@
           { value: "", disabled: true },
           state.models.length ? "请选择可用模型" : "获取模型后可下拉选择",
         ),
-        ...state.models.map((name) => el("option", { value: name }, name)),
+        state.config.model &&
+          state.models.includes(state.config.model) &&
+          !choices.some((item) => item.id === state.config.model)
+          ? el(
+              "option",
+              { value: state.config.model },
+              state.config.model + " · 当前选择",
+            )
+          : null,
+        ...choices.map((item) => el("option", { value: item.id }, item.id)),
         el("option", { value: "", "data-custom": "true" }, "手动输入模型 ID…"),
       );
-      // Use the option's identity for the manual action, so every server model
-      // ID remains an exact value without reserved aliases or sentinel strings.
       if (custom) modelList.selectedIndex = modelList.options.length - 1;
       else modelList.value = state.config.model;
       model.value = state.config.model;
       customModel.classList.toggle("hidden", !custom);
+      expandModels.textContent = expanded
+        ? "收起其他模型"
+        : `查看全部模型（${state.models.length}）`;
+      modelPagination.hidden = !expanded || pages === 1;
+      modelPage.textContent = `${state.modelPage + 1} / ${pages}`;
+      previousModels.disabled = state.modelPage === 0;
+      nextModels.disabled = state.modelPage === pages - 1;
     }
     updateModelChoices();
     ui.updateModelChoices = updateModelChoices;
@@ -2880,6 +3603,7 @@
           const response = await request("models", null, controller.signal);
           const result = await responseJson(response);
           if (generation !== state.modelEpoch) return;
+          state.modelPage = 0;
           const entries = result.data || result.models || [];
           state.models = [
             ...new Set(
@@ -2990,7 +3714,9 @@
           "div",
           { class: "field" },
           el("label", { for: "vks-answer-model" }, "回答模型"),
+          modelSearch,
           el("div", { class: "field-row" }, modelList, fetchModels),
+          modelControls,
           customModel,
           el(
             "span",
@@ -3256,6 +3982,7 @@
   }
   async function submitQuestion(kind = "chat") {
     if (state.busy) return;
+    const generation = contentGeneration;
     const explaining = kind === "explain",
       context = state.view === "prototype" ? state.context : null,
       packageId = state.prototype,
@@ -3396,6 +4123,7 @@
           if (!timer)
             timer = setTimeout(() => {
               timer = null;
+              if (generation !== contentGeneration) return;
               if (explaining) updateExplanation(answer, key);
               else if (state.assistant && state.tab === "chat")
                 updateChatMessages();
@@ -3421,10 +4149,12 @@
     } finally {
       if (timer) clearTimeout(timer);
       answer.finished = true;
-      state.busy = false;
-      state.controller = null;
-      state.activity = null;
-      if (state.assistant) renderAssistant();
+      if (generation === contentGeneration && state.controller === controller) {
+        state.busy = false;
+        state.controller = null;
+        state.activity = null;
+        if (state.assistant) renderAssistant();
+      }
     }
   }
   function showInfo() {

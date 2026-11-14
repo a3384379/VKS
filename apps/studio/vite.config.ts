@@ -51,6 +51,24 @@ export default defineConfig(({ mode }) => ({
           next();
         });
       },
+      configurePreviewServer(server) {
+        // Opaque diagram frames load public build chunks with Origin: null.
+        // Keep this header off proxied APIs and all private project resources.
+        server.middlewares.use((request, response, next) => {
+          try {
+            const path = posix.normalize(
+              decodeURIComponent(
+                new URL(request.url || "/", "http://vks.invalid").pathname,
+              ),
+            );
+            if (path.startsWith("/assets/"))
+              response.setHeader("Access-Control-Allow-Origin", "*");
+          } catch {
+            // The normal router handles malformed paths.
+          }
+          next();
+        });
+      },
     },
   ],
   optimizeDeps: { include: ["lowlight", "mermaid", "@plantuml/core"] },

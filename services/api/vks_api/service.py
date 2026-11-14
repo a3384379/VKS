@@ -47,6 +47,7 @@ JOB_SCOPES = {
     "import": "source:import",
     "import_preview": "source:import",
     "material_migrate": "knowledge:edit",
+    "associate_all": "knowledge:edit",
     "index": "analysis:run",
     "generate_documents": "analysis:run",
     "suggest_links": "analysis:run",
@@ -118,6 +119,10 @@ class Service:
             modules,
             project_profile,
             materials,
+            document_presentation,
+            bulk_association,
+            prototype_scan,
+            scan_pipeline,
         )
 
         self.data_dir = Path(data_dir or os.getenv("VKS_DATA_DIR", ".vks")).resolve()
@@ -179,6 +184,9 @@ class Service:
         self.lock = RLock()
         self.stop = Event()
         self.thread = None
+        self.pipeline_lock = RLock()
+        self.pipeline_executor = None
+        self.pipeline_futures = {}
         self.bootstrap_token = self._private_setting(
             "bootstrap-token", lambda: os.getenv("VKS_BOOTSTRAP_TOKEN") or secrets.token_urlsafe(32)
         )
@@ -236,6 +244,15 @@ class Service:
         self.stop.set()
         if self.thread:
             self.thread.join(timeout=5)
+        with self.pipeline_lock:
+            executor = self.pipeline_executor
+            self.pipeline_executor = None
+        if executor:
+            # Drain in-flight model requests before the database is disposed.
+            # Unstarted futures leave their durable jobs queued for next boot.
+            executor.shutdown(wait=True, cancel_futures=True)
+        with self.pipeline_lock:
+            self.pipeline_futures.clear()
 
     def audit(self, s, actor, pid, action, rid, outcome="succeeded", metadata=None):
         s.add(
@@ -1333,7 +1350,7 @@ class Service:
             if r.from_revision_id in selected and r.to_revision_id in selected
         ]
         relations.sort(key=lambda x: x["id"])
-        return {
+        manifest = {
             "schema_version": "1.0",
             "analysis_set_id": a.id,
             "project_id": a.project_id,
@@ -1344,6 +1361,12 @@ class Service:
             "runtime_alignment": a.runtime_alignment,
             "ruleset_version": a.ruleset_version,
         }
+        from .document_presentation import DocumentPresentation, KEY
+
+        presentation = s.get(DocumentPresentation, a.id)
+        if presentation:
+            manifest[KEY] = dict(presentation.settings)
+        return manifest
 
     def releases(self, actor, pid):
         with self.db() as s:
@@ -1787,6 +1810,8 @@ class Service:
                 raise DomainError("VKS_NOT_FOUND", "未找到发布版", 404)
             if payload["format"] not in ("markdown_bundle", "pdf", "vksbundle", "readonly_html"):
                 raise DomainError("VKS_INVALID_INPUT", "不支持的导出格式")
+            if payload.get("document_mode", "project") not in {"project", "original"}:
+                raise DomainError("VKS_INVALID_INPUT", "不支持的文档导出方式")
             if payload.get("include_source"):
                 self.require(s, actor, pid, "source:read")
             return self.idem(

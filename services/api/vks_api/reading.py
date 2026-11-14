@@ -1242,7 +1242,7 @@ class ReadingService:
 
     def job_dto(self, s, actor, job):
         dto = self.service.job_dto(job)
-        if job.kind == "material_migrate" and not all(
+        if job.kind in ("material_migrate", "associate_all") and not all(
             self.service._can(s, actor, job.project_id, scope) for scope in ("source:read", "trace:read")
         ):
             dto.pop("result", None)

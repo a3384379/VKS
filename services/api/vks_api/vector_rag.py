@@ -16,7 +16,7 @@ import weakref
 from array import array
 from base64 import b64encode
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -31,6 +31,10 @@ from .model_connections import ModelConnection
 from .prototype_contracts import PrototypeEnvelope
 from .prototype_edit import Input, Ref
 from .service import Actor, DomainError, canonical, sha
+
+_BUILD_LEASE_SECONDS = 30
+_BUILD_HEARTBEAT_SECONDS = 5
+_BUILD_POLL_SECONDS = 0.1
 
 
 class RagSettings(Input):
@@ -91,6 +95,7 @@ class VectorStore:
                 CREATE INDEX IF NOT EXISTS chunks_scope ON chunks(project,space,revision);
                 CREATE TABLE IF NOT EXISTS queries(project TEXT, space TEXT, id TEXT, embedding BLOB, PRIMARY KEY(project,space,id));
                 CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY,project TEXT,day TEXT,model TEXT,reserved INTEGER,used INTEGER,state TEXT);
+                CREATE TABLE IF NOT EXISTS index_build(project TEXT, space TEXT, token TEXT NOT NULL, lease_until REAL NOT NULL, PRIMARY KEY(project,space));
             """)
         os.chmod(self.path, 0o600)
 
@@ -112,7 +117,29 @@ class VectorStore:
             if data is not None:
                 db.execute("INSERT OR REPLACE INTO status VALUES (?,?)", (pid, canonical(data)))
             row = db.execute("SELECT data FROM status WHERE project=?", (pid,)).fetchone()
-            return json.loads(row[0]) if row else {"state": "empty", "completed": 0, "total": 0, "error": ""}
+            result = json.loads(row[0]) if row else {"state": "empty", "completed": 0, "total": 0, "error": ""}
+            result.pop("_index_writer", None)
+            return result
+
+    def index_state(self, pid, data, token, *, space=None):
+        """A late failed owner cannot replace a newer builder's ready status."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if space is not None:
+                self.index_owner(db, pid, space, token)
+            else:
+                row = db.execute("SELECT data FROM status WHERE project=?", (pid,)).fetchone()
+                if not row or json.loads(row[0]).get("_index_writer") != token:
+                    return
+            db.execute("INSERT OR REPLACE INTO status VALUES (?,?)", (pid, canonical({**data, "_index_writer": token})))
+
+    @staticmethod
+    def index_owner(db, pid, space, token):
+        row = db.execute(
+            "SELECT token,lease_until FROM index_build WHERE project=? AND space=?", (pid, space)
+        ).fetchone()
+        if not row or row[0] != token or row[1] <= time.time():
+            failure("VKS_CANCELLED", "文档索引执行资格已失效，请重试", 409)
 
     def reserve(self, pid, settings, bound):
         from .models import uid
@@ -144,6 +171,72 @@ class VectorStore:
                 (pid, space),
             ).fetchone()
 
+    @contextmanager
+    def index_build(self, pid, space, validate):
+        """Lease cold-index ownership without holding a transaction over I/O.
+
+        The small token-fenced record also coordinates separate Service/Celery
+        processes sharing this rebuildable vector store. A dead owner expires;
+        a delayed old response must still prove its token before committing.
+        """
+        from .models import uid
+
+        token, stopped, lost = uid(), threading.Event(), threading.Event()
+        while True:
+            validate()
+            current = time.time()
+            with self.db() as db:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute(
+                    "INSERT INTO index_build VALUES (?,?,?,?) ON CONFLICT(project,space) DO UPDATE SET "
+                    "token=excluded.token,lease_until=excluded.lease_until WHERE index_build.lease_until<=?",
+                    (pid, space, token, current + _BUILD_LEASE_SECONDS, current),
+                )
+                row = db.execute("SELECT token FROM index_build WHERE project=? AND space=?", (pid, space)).fetchone()
+            if row and row[0] == token:
+                break
+            stopped.wait(_BUILD_POLL_SECONDS)
+
+        def held():
+            with self.db() as db:
+                self.index_owner(db, pid, space, token)
+            if lost.is_set():
+                failure("VKS_CANCELLED", "文档索引执行资格已失效，请重试", 409)
+
+        def renew():
+            while not stopped.wait(_BUILD_HEARTBEAT_SECONDS):
+                try:
+                    with self.db() as db:
+                        current = time.time()
+                        changed = db.execute(
+                            "UPDATE index_build SET lease_until=? WHERE project=? AND space=? AND token=? "
+                            "AND lease_until>?",
+                            (current + _BUILD_LEASE_SECONDS, pid, space, token, current),
+                        ).rowcount
+                    if not changed:
+                        lost.set()
+                        return
+                except sqlite3.Error:
+                    lost.set()
+                    return
+
+        thread = threading.Thread(target=renew, name="vks-vector-index-lease", daemon=True)
+        thread.start()
+        try:
+            held()
+            validate()
+            yield held, token
+        finally:
+            stopped.set()
+            thread.join(timeout=1)
+            try:
+                with self.db() as db:
+                    db.execute("DELETE FROM index_build WHERE project=? AND space=? AND token=?", (pid, space, token))
+            except sqlite3.Error:
+                # A failed cleanup cannot make a new owner unsafe: this token
+                # expires, and the next owner always rechecks current scope.
+                pass
+
 
 def split(chapters):
     for row in chapters:
@@ -166,10 +259,29 @@ class VectorRag:
     def __init__(self, service, assistant):
         self.service, self.assistant = service, assistant
         self.store = VectorStore(service.data_dir)
-        self.lock = threading.RLock()
+        # Each page job creates its own assistant. Share only synchronization
+        # facts on the Service, never authorization, source data or results.
+        with service.lock:
+            shared = getattr(service, "_rag_index_sync", None)
+            if shared is None:
+                shared = (threading.RLock(), weakref.WeakValueDictionary())
+                service._rag_index_sync = shared
+        self.lock, self.export_locks = shared
         self.running = {}
         self.query_locks = weakref.WeakValueDictionary()
-        self.export_locks = weakref.WeakValueDictionary()
+
+    @contextmanager
+    def _index_build_lock(self, pid, space, validate):
+        with self.lock:
+            lock = self.export_locks.setdefault((pid, space), threading.Lock())
+        while not lock.acquire(timeout=_BUILD_POLL_SECONDS):
+            validate()
+        try:
+            validate()
+            with self.store.index_build(pid, space, validate) as ownership:
+                yield ownership
+        finally:
+            lock.release()
 
     def document_scope(
         self,
@@ -314,14 +426,16 @@ class VectorRag:
         since ContextVars do not propagate into the embedding thread pool.
         """
         state = {"state": "building", "phase": "文档章节向量", "completed": 0, "total": 0, "error": ""}
+        status_token = None
         if job_id is not None:
             state.update(job_id=job_id, job_attempt=job_attempt)
 
-        def progress(completed, total):
+        def progress(completed, total, token):
+            nonlocal status_token
+            status_token = token
             state.update(completed=completed, total=total)
-            self.store.state(pid, state)
+            self.store.index_state(pid, state, token, space=space)
 
-        self.store.state(pid, state)
         try:
             _, baseline, _ = self.document_scope(
                 actor, pid, analysis_set_id=analysis_set_id, permission="knowledge:edit"
@@ -352,18 +466,21 @@ class VectorRag:
                         failure("VKS_VERSION_CONFLICT", "模块查询预热期间资料范围已变化", 412)
 
                 state.update(phase="预热模块查询")
-                self.store.state(pid, state)
+                if status_token:
+                    self.store.index_state(pid, state, status_token)
                 self._prewarm_modules(actor, pid, form, settings, config, space, prepared[2], module_unchanged)
             unchanged()
             state.update(state="ready", phase="文档向量检索可用")
-            self.store.state(pid, state)
+            if status_token:
+                self.store.index_state(pid, state, status_token)
             return result["coverage"]
         except Exception as e:
             state.update(
                 state="failed",
                 error=e.message if isinstance(e, DomainError) else "文档索引构建中断，可重试",
             )
-            self.store.state(pid, state)
+            if status_token:
+                self.store.index_state(pid, state, status_token)
             raise
 
     def _document_index(
@@ -390,7 +507,7 @@ class VectorRag:
         chapters, baseline, provenance = self.document_scope(actor, pid, **scope)
         chunks = list(split(chapters))
         settings = self.store.settings(pid)
-        embeddings, space, config = {}, None, None
+        embeddings, space, config, claim_check = {}, None, None, None
         try:
             settings, config, space = self.config(actor, pid)
         except DomainError:
@@ -400,6 +517,8 @@ class VectorRag:
             failure("VKS_STATE_CONFLICT", "请先启用向量检索，再导出含向量库的成品", 409)
 
         def unchanged():
+            if claim_check:
+                claim_check()
             if validate_scope:
                 validate_scope()
             now = self.document_scope(actor, pid, **scope)
@@ -411,13 +530,16 @@ class VectorRag:
                     failure("VKS_VERSION_CONFLICT", "导出期间嵌入配置已变化，请重试", 412)
 
         if space:
-            with self.lock:
-                lock = self.export_locks.setdefault((pid, space), threading.Lock())
-            with lock:
+            # A no-build projection reads the current WAL snapshot immediately;
+            # it neither changes the vector store nor waits for model I/O.
+            guard = self._index_build_lock(pid, space, unchanged) if ensure else nullcontext((None, None))
+            with guard as (held, token):
+                claim_check = held
+                unchanged()
                 embeddings = self._export_vectors(pid, space, chunks, settings.dimensions)
                 pending = [row for row in chunks if row["id"] not in embeddings]
                 if progress:
-                    progress(len(embeddings), len(chunks))
+                    progress(len(embeddings), len(chunks), token)
                 if ensure and pending:
                     for row in pending:
                         policy = provenance[row["revision"]]["policy"]
@@ -431,6 +553,11 @@ class VectorRag:
                         values = self.embed(actor, pid, settings, config, [r["input"] for r in rows])
                         unchanged()
                         with self.store.db() as db:
+                            # Lease ownership and vector writes share this
+                            # short transaction; a new process cannot take over
+                            # between the token check and this batch's commit.
+                            db.execute("BEGIN IMMEDIATE")
+                            self.store.index_owner(db, pid, space, token)
                             db.executemany(
                                 "INSERT OR REPLACE INTO chunks VALUES (?,?,?,?,?,?,?)",
                                 [
@@ -447,12 +574,14 @@ class VectorRag:
                             for future in as_completed(futures):
                                 completed += future.result()
                                 if progress:
-                                    progress(completed, len(chunks))
+                                    progress(completed, len(chunks), token)
                         except Exception:
                             for future in futures:
                                 future.cancel()
                             raise
                     embeddings = self._export_vectors(pid, space, chunks, settings.dimensions)
+                unchanged()
+                claim_check = None
         unchanged()
         complete = len(embeddings) == len(chunks)
         if ensure and not complete:

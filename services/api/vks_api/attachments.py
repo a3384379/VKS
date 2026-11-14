@@ -2,6 +2,7 @@
 
 import mimetypes
 import posixpath
+import unicodedata
 from hashlib import sha256
 from io import BytesIO
 from typing import Annotated
@@ -34,7 +35,9 @@ def document_origin(s, revision):
 def attachment_path(s, revision, path):
     if not isinstance(path, str) or len(path) > 2048:
         raise DomainError("VKS_INVALID_INPUT", "附件路径过长")
-    target = unquote(path)
+    # File imports use canonical NFC paths. Preserve Markdown verbatim while
+    # matching canonically equivalent macOS references to that exact asset.
+    target = unicodedata.normalize("NFC", unquote(path))
     try:
         url = urlsplit(target)
     except ValueError:

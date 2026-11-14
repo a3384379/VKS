@@ -771,7 +771,10 @@ class MaterialService:
                     markdown = current.content
                     preserved_manual = True
                 prior = current or prior
-            if prior and prior.content == markdown and document_path(prior) == path:
+            if (
+                prior and prior.content == markdown and document_path(prior) == path
+                and (not parsed.get("document_names", {}).get(path) or parsed["document_names"][path] == prior.name)
+            ):
                 members.extend(
                     [prior.id, *[c.id for c in self.docs._sections(s, s.get(Entity, prior.entity_id), prior)]]
                 )
@@ -835,6 +838,7 @@ class MaterialService:
                 (section["title"] for section in sections if section["headingEndLine"] > 0),
                 sections[0]["title"] if sections else PurePosixPath(path).stem,
             )
+            title = parsed.get("document_names", {}).get(path) or title
             document = self.docs._revision(
                 s,
                 doc_entity,
@@ -861,6 +865,7 @@ class MaterialService:
             "entry": parsed["entry"],
             "members": members,
             "targets": parsed["targets"],
+            "inventory": parsed.get("inventory", {}),
             "warnings": parsed["warnings"],
             "input_fingerprint": fingerprint,
             "upload_fingerprint": self._input_fingerprint(form, files),
@@ -872,6 +877,7 @@ class MaterialService:
             "section_count": len(members) - len(parsed["documents"]),
             "attachment_artifact_ids": [a.id for a in attachments],
             "document_navigation": parsed.get("navigation", {"order": [], "categories": []}),
+            **({"document_template": parsed["template"]} if parsed.get("template") else {}),
             "base_revision_id": active_base,
             "changes": counts,
             "prepared_for": analysis.id,
@@ -1028,6 +1034,15 @@ class MaterialService:
             raise DomainError("VKS_INVALID_INPUT", "当前原型必须属于已启用的原型包", 422)
         chosen = chosen if chosen in prototypes else next(iter(prototypes), None)
         self._composition(s, analysis, chosen)
+        from .document_presentation import DocumentPresentation, PresentationSettings
+
+        if not s.get(DocumentPresentation, analysis.id) and any(
+            r.metadata_json[ROOT].get("document_template", {}).get("template_id") == "handbook"
+            for r in desired.values()
+        ):
+            s.add(DocumentPresentation(
+                analysis_set_id=analysis.id, settings=PresentationSettings(mode="handbook").model_dump()
+            ))
         report, targets, issues = self._migrate_graph(s, actor, pid, analysis, old, desired, selected_before)
         sources = list(analysis.sources)
         recorded_sources = {row.get("source_snapshot_id") for row in sources}

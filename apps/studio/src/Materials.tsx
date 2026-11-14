@@ -166,6 +166,7 @@ export function Materials({
     [replaceAll, setReplaceAll] = useState(false);
   const [busy, setBusy] = useState(""),
     [snapshotName, setSnapshotName] = useState("");
+  const [exportDocumentMode, setExportDocumentMode] = useState("project");
   const fileInput = useRef<HTMLInputElement>(null);
   const customName = useRef(false);
   const mounted = useRef(true),
@@ -479,6 +480,7 @@ export function Materials({
             release_id: fixed,
             format: "readonly_html",
             include_source: canReadSource,
+            document_mode: exportDocumentMode,
           }),
         ),
       );
@@ -567,6 +569,21 @@ export function Materials({
           HTML。离线可阅读、检索和跳转；联网问答由使用者自行填写 API Key。请先在
           AI 设置中启用嵌入模型。
         </p>
+        <label className="export-document-mode">
+          导出文档呈现
+          <select
+            aria-label="导出文档呈现"
+            value={exportDocumentMode}
+            disabled={!!busy}
+            onChange={(e) => setExportDocumentMode(e.target.value)}
+          >
+            <option value="project">跟随项目阅读方式</option>
+            <option value="original">保留导入原文档</option>
+          </select>
+          <small>
+            原样模式保留可兼容的样式与目录；正文与原件不同、权限不完整或无法保证只读时会明确回退。成品不含发布者密钥。
+          </small>
+        </label>
         <button
           disabled={
             !!busy ||
@@ -619,6 +636,15 @@ export function Materials({
             <div className="management-panel-title">
               <UploadCloud size={19} />
               <h2>导入资料包</h2>
+              <a
+                className="handbook-template-download"
+                href="/api/v3/document-templates/handbook/download"
+                download
+                title="本地整理 Markdown 后保存 HTML，再作为知识文档导入"
+              >
+                <Download size={15} />
+                下载手册模板（可选）
+              </a>
             </div>
             <form
               onSubmit={(e) => {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from threading import Event, Thread
 
@@ -33,6 +34,7 @@ class Checkpoint(Identified, Base):
 
 def current_actor(service, actor_id, pid, session=None, *, job=None):
     from dataclasses import replace
+
     from .identity import UserIdentity, ensure_owner, human_scopes
     from .service import Actor, DomainError
 
@@ -154,13 +156,55 @@ def reconcile(service):
 
 def run_pending(service):
     reconcile(service)
+    from .scan_pipeline import reconcile as reconcile_pipeline
+
+    reconcile_pipeline(service)
     if dispatch_mode() == "external":
         return
     if dispatch_mode() == "celery":
         dispatch_pending(service)
         return
+    # Browser-produced page jobs must not block the dispatcher while a model
+    # responds. Keep a bounded local pool; the database claim still fences
+    # duplicate workers and enforces the per-run limit in every dispatch mode.
+    with service.pipeline_lock:
+        if service.stop.is_set():
+            return
+        service.pipeline_futures = {
+            jid: future for jid, future in service.pipeline_futures.items() if not future.done()
+        }
+        capacity = 3 - len(service.pipeline_futures)
+        if capacity:
+            with service.db() as s:
+                pipeline_ids = list(
+                    s.scalars(
+                        select(Job.id)
+                        .where(
+                            Job.state == "queued",
+                            Job.kind == "associate_all",
+                            Job.input_json["scan_pipeline"].as_boolean().is_(True),
+                            Job.id.not_in(list(service.pipeline_futures)),
+                        )
+                        .order_by(Job.created_at, Job.id)
+                        .limit(capacity)
+                    )
+                )
+            if pipeline_ids and service.pipeline_executor is None:
+                service.pipeline_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="vks-page-association")
+            for jid in pipeline_ids:
+                service.pipeline_futures[jid] = service.pipeline_executor.submit(execute_job, service, jid)
     with service.db() as s:
-        ids = list(s.scalars(select(Job.id).where(Job.state == "queued").order_by(Job.created_at).limit(1)))
+        ids = list(
+            s.scalars(
+                select(Job.id)
+                .where(
+                    Job.state == "queued",
+                    (Job.kind != "associate_all") | Job.input_json["scan_pipeline"].as_boolean().is_not(True),
+                )
+                .order_by(Job.created_at)
+                .limit(1)
+            )
+        )
     for jid in ids:
         execute_job(service, jid)
 
@@ -173,7 +217,7 @@ def publish_job(job_id, kind):
         "vks-browser"
         if kind == "capture"
         else "vks-model"
-        if kind in ("generate_documents", "knowledge_task", "material_migrate")
+        if kind in ("generate_documents", "knowledge_task", "material_migrate", "associate_all")
         else "vks-index"
     )
     celery.send_task("vks.execute_job", args=[job_id], queue=queue, serializer="json", retry=False)
@@ -386,6 +430,11 @@ def execute_job(service, jid):
         job = s.scalar(select(Job).where(Job.id == jid).with_for_update())
         if not job or job.state != "queued":
             return
+        if job.input_json.get("scan_pipeline"):
+            from .scan_pipeline import claim
+
+            if not claim(service, s, job):
+                return
         job.attempt += 1
         attempt = job.attempt
         try:
@@ -424,7 +473,12 @@ def execute_job(service, jid):
         input_hash = sha(canonical(payload))
 
     def processing_cancelled():
-        with service.db() as session:
+        from .reading import ReadingService
+
+        # Source inflation can checkpoint inside an export projection. This is
+        # a current permission/cancellation read, so taking a second SQLite
+        # writer transaction here would deadlock the outer projection.
+        with ReadingService(service).db() as session:
             active = session.get(Job, jid)
             if not active or active.attempt != attempt or active.state not in ("running", "cancelling"):
                 raise DomainError("VKS_CANCELLED", "任务 attempt 已失效，停止解析", 409)
@@ -438,6 +492,7 @@ def execute_job(service, jid):
 
     from packages.analyzers.cancellation import cancellation_scope
     from packages.analyzers.syntax_cache import cache_scope
+
     from .source_cache import SourceUnitCache
 
     try:
@@ -457,6 +512,10 @@ def execute_job(service, jid):
                     from .materials import migrate_job
 
                     material_output = migrate_job(service, jid)
+                if kind == "associate_all":
+                    from .bulk_association import run_batch
+
+                    association_output = run_batch(service, jid)
                 if kind == "export" and payload["format"] == "readonly_html":
                     from .readonly_export import prepare_job
 
@@ -551,6 +610,8 @@ def execute_job(service, jid):
                     result = KnowledgeTaskService(service).finalize(s, job, task_output)
                 elif kind == "material_migrate":
                     result = material_output
+                elif kind == "associate_all":
+                    result = association_output
                 elif kind == "export":
                     result = (
                         service._perform_export(s, job, readonly_output)
@@ -597,6 +658,18 @@ def execute_job(service, jid):
                     job.updated_at = now()
                     service.audit(s, owner, pid, "job.paused", jid, metadata={"stage": job.stage})
             return
+        if not isinstance(e, DomainError):
+            # Keep unexpected failures diagnosable without logging exception
+            # messages, source/model payloads, credentials, or local variables.
+            import logging
+            import traceback
+            from pathlib import Path
+
+            frames = ">".join(
+                f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+                for frame in traceback.extract_tb(e.__traceback__)
+            )
+            logging.getLogger(__name__).error("Job %s failed (%s) at %s", jid, type(e).__name__, frames)
         error = (
             e
             if isinstance(e, DomainError)

@@ -496,7 +496,16 @@ def test_static_site_responsive_images_and_asset_fragments_resolve_offline(runti
             expect(source.locator("#responsive")).to_be_visible()
             source.locator("#responsive").evaluate("image=>image.decode()")
             source.locator("#inline").evaluate("image=>image.decode()")
-            assert source.locator("#responsive").evaluate("image=>image.naturalWidth") == 24
+            resource = source.locator("#responsive").evaluate("""async image => {
+              const original=new Image();original.src=image.currentSrc;await original.decode();
+              return {width:original.naturalWidth,height:original.naturalHeight,
+                renderedWidth:image.naturalWidth,currentSrc:image.currentSrc};
+            }""")
+            assert resource["width"] == 24 and resource["height"] == 16
+            assert resource["currentSrc"].startswith("blob:")
+            # Chromium may choose a cached 2x candidate even at a 1x device
+            # scale; naturalWidth is density-corrected, unlike decoded pixels.
+            assert resource["width"] / resource["renderedWidth"] in (1, 2)
             assert source.locator("source").get_attribute("srcset").count("blob:") == 2
             assert source.locator("#inline").get_attribute("srcset").startswith(inline + " 1x, blob:")
             assert source.locator("#symbol").get_attribute("href").startswith("blob:")

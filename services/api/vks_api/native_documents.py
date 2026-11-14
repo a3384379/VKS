@@ -6,6 +6,8 @@ import re
 import threading
 import weakref
 from collections import OrderedDict
+from functools import lru_cache
+from html.parser import HTMLParser
 from pathlib import PurePosixPath
 
 from bs4 import BeautifulSoup, SoupStrainer
@@ -288,6 +290,7 @@ def index_modified(s, pid, row):
     return artifact.kind != "markdown" or sha(row.content) != artifact.sha256
 
 
+@lru_cache(maxsize=8192)
 def _plain(value):
     rendered = MarkdownIt("commonmark").renderInline(value)
     return " ".join(BeautifulSoup(rendered, "html.parser").get_text().split())
@@ -301,7 +304,82 @@ def _structural_selector(node):
     return " > ".join(parts)
 
 
+class _AnchoredHeadings(HTMLParser):
+    """Read the usual unique-id outline without materializing large SVG trees.
+
+    Structural/ambiguous headings still use the full parser below. This fast
+    path stores immutable source facts only and grants no package visibility.
+    """
+
+    inert = frozenset({"script", "style", "noscript", "iframe", "object", "embed", "template"})
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.ids = {}
+        self.headings = []
+        self.active = None
+        self.skipping = []
+        self.ambiguous = False
+
+    def handle_starttag(self, tag, attrs):
+        if self.skipping:
+            if tag in self.inert and tag != "embed":
+                self.skipping.append(tag)
+            return
+        if tag in self.inert:
+            if tag != "embed":
+                self.skipping.append(tag)
+            return
+        anchor = dict(attrs).get("id", "")
+        if anchor:
+            self.ids[anchor] = self.ids.get(anchor, 0) + 1
+        if re.fullmatch(r"h[1-6]", tag):
+            if self.active:
+                self.ambiguous = True
+            self.active = {"tag": tag, "anchor": anchor, "text": []}
+            self.headings.append(self.active)
+
+    def handle_endtag(self, tag):
+        if self.skipping:
+            if tag in self.skipping:
+                self.skipping = self.skipping[: self.skipping.index(tag)]
+            return
+        if re.fullmatch(r"h[1-6]", tag):
+            if not self.active or self.active["tag"] != tag:
+                self.ambiguous = True
+            self.active = None
+
+    def handle_data(self, value):
+        if self.active and not self.skipping:
+            self.active["text"].append(value)
+
+    def result(self):
+        if (
+            self.active
+            or self.ambiguous
+            or any(not node["anchor"] or self.ids.get(node["anchor"]) != 1 for node in self.headings)
+        ):
+            return None
+        return [
+            {
+                "anchor": node["anchor"],
+                "selector": "[id=" + json.dumps(node["anchor"], ensure_ascii=False) + "]",
+                "heading": " ".join("".join(node["text"]).split()),
+                "heading_level": int(node["tag"][1:]),
+                "heading_ordinal": index,
+            }
+            for index, node in enumerate(self.headings)
+        ]
+
+
 def _headings(raw, *, article_id=""):
+    if not article_id:
+        outline = _AnchoredHeadings()
+        outline.feed(raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw)
+        outline.close()
+        result = outline.result()
+        if result is not None:
+            return result
     soup = BeautifulSoup(raw, "html.parser")
     root = soup.find(id=article_id) if article_id else soup
     if not root:
@@ -436,16 +514,21 @@ def _source_cache(service, artifact, fmt, path):
         return sources
 
 
-def describe(service, s, actor, pid, choices, row, chapters, packages):
+def describe(service, s, actor, pid, choices, row, chapters, packages, *, package_membership=None):
     """Return a verifiable source version/location only for an authorized package."""
     from .materials import ROOT, roots
 
-    candidates = []
-    for package in roots(s, pid, choices):
-        if package.metadata_json[ROOT].get("kind") != "documents":
-            continue
-        if row.entity_id in package_documents(s, pid, package):
-            candidates.append(package)
+    if package_membership is not None:
+        # Immutable facts supplied only by the current export projection, after
+        # its authorized package closure. Never retain grants across requests.
+        candidates = package_membership.get(row.entity_id, [])
+    else:
+        candidates = []
+        for package in roots(s, pid, choices):
+            if package.metadata_json[ROOT].get("kind") != "documents":
+                continue
+            if row.entity_id in package_documents(s, pid, package):
+                candidates.append(package)
     selected = candidates[0] if len(candidates) == 1 else None
     available = {package["id"]: package for package in packages if package["kind"] == "handbook"}
     if selected:

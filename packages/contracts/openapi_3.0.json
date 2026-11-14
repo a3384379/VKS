@@ -5,6 +5,24 @@
     "version": "3.0-dev"
   },
   "paths": {
+    "/api/v3/document-templates/handbook/download": {
+      "get": {
+        "summary": "Download Handbook Template",
+        "operationId": "download_handbook_template_api_v3_document_templates_handbook_download_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/projects/{pid}/prototype/settings": {
       "put": {
         "summary": "Settings",
@@ -2406,6 +2424,920 @@
           }
         }
       }
+    },
+    "/api/v3/projects/{pid}/associations/inventory": {
+      "get": {
+        "summary": "Inventory Status",
+        "operationId": "inventory_status_api_v3_projects__pid__associations_inventory_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Set Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Save Inventory",
+        "operationId": "save_inventory_api_v3_projects__pid__associations_inventory_put",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 96,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryPageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/associations/batch/items": {
+      "get": {
+        "summary": "Details",
+        "operationId": "details_api_v3_projects__pid__associations_batch_items_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/associations/batch": {
+      "get": {
+        "summary": "Status",
+        "operationId": "status_api_v3_projects__pid__associations_batch_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Set Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Enqueue",
+        "operationId": "enqueue_api_v3_projects__pid__associations_batch_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 96,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchAssociationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/document-presentation": {
+      "get": {
+        "summary": "Get",
+        "operationId": "get_api_v3_projects__pid__document_presentation_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PresentationOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update",
+        "operationId": "update_api_v3_projects__pid__document_presentation_put",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 96,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresentationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PresentationOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/document-presentation/search": {
+      "post": {
+        "summary": "Search",
+        "operationId": "search_api_v3_projects__pid__document_presentation_search_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresentationSearchInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_list_PresentationSearchResult__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/associations/scans": {
+      "get": {
+        "summary": "Status",
+        "operationId": "status_api_v3_projects__pid__associations_scans_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Set Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Start",
+        "operationId": "start_api_v3_projects__pid__associations_scans_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 96,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/associations/scans/{run_id}/resume": {
+      "post": {
+        "summary": "Resume",
+        "operationId": "resume_api_v3_projects__pid__associations_scans__run_id__resume_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 96,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanClient"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/associations/scans/{run_id}/heartbeat": {
+      "post": {
+        "summary": "Heartbeat",
+        "operationId": "heartbeat_api_v3_projects__pid__associations_scans__run_id__heartbeat_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanHeartbeat"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/associations/scans/{run_id}/retry-ai": {
+      "post": {
+        "summary": "Retry Ai",
+        "operationId": "retry_ai_api_v3_projects__pid__associations_scans__run_id__retry_ai_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 96,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/associations/scans/{run_id}/pause": {
+      "post": {
+        "summary": "Pause",
+        "operationId": "pause_api_v3_projects__pid__associations_scans__run_id__pause_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanClient"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/associations/scans/{run_id}/cancel": {
+      "post": {
+        "summary": "Cancel",
+        "operationId": "cancel_api_v3_projects__pid__associations_scans__run_id__cancel_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanClient"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2757,6 +3689,70 @@
           "selection_version"
         ],
         "title": "AssistanceOutput"
+      },
+      "BatchAssociationInput": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "changed",
+              "all"
+            ],
+            "title": "Mode",
+            "default": "missing"
+          },
+          "resume_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Job Id"
+          },
+          "concurrency": {
+            "type": "integer",
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Concurrency",
+            "default": 3
+          },
+          "scan_run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Run Id"
+          },
+          "allow_partial": {
+            "type": "boolean",
+            "title": "Allow Partial",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id"
+        ],
+        "title": "BatchAssociationInput"
       },
       "BatchConfirmation": {
         "properties": {
@@ -3418,6 +4414,11 @@
             "type": "integer",
             "title": "Selection Version"
           },
+          "source_fingerprint": {
+            "type": "string",
+            "title": "Source Fingerprint",
+            "default": ""
+          },
           "editable": {
             "type": "boolean",
             "title": "Editable"
@@ -3451,6 +4452,9 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Navigation"
+          },
+          "presentation": {
+            "$ref": "#/components/schemas/PresentationSettings"
           }
         },
         "additionalProperties": false,
@@ -3685,9 +4689,16 @@
             "title": "Release Id"
           },
           "package_id": {
-            "type": "string",
-            "maxLength": 96,
-            "minLength": 1,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Package Id"
           },
           "target": {
@@ -3710,6 +4721,19 @@
             "title": "Refresh",
             "default": false
           },
+          "document_revision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Revision Id"
+          },
           "question": {
             "type": "string",
             "maxLength": 2000,
@@ -3729,7 +4753,6 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "package_id",
           "target",
           "question"
         ],
@@ -3767,6 +4790,125 @@
           "selection_version"
         ],
         "title": "InteractiveSelection"
+      },
+      "InventoryPageInput": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "package_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Package Id"
+          },
+          "artifact_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Artifact Sha256"
+          },
+          "composition": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Composition"
+          },
+          "route": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^/",
+            "title": "Route"
+          },
+          "frame_path": {
+            "items": {
+              "type": "string",
+              "maxLength": 160,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Frame Path"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/DOMTarget"
+            },
+            "type": "array",
+            "maxItems": 1500,
+            "title": "Targets"
+          },
+          "observed": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Observed"
+          },
+          "truncated": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Truncated"
+          },
+          "unverified_frames": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Unverified Frames",
+            "default": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "captured",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "scan_run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Run Id"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 8,
+                "pattern": "^[A-Za-z0-9._:-]+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "package_id",
+          "artifact_sha256",
+          "composition",
+          "route",
+          "frame_path",
+          "observed",
+          "truncated",
+          "status"
+        ],
+        "title": "InventoryPageInput"
       },
       "JobOutput": {
         "properties": {
@@ -4112,6 +5254,176 @@
           "artifact_ids"
         ],
         "title": "PrepareMaterial"
+      },
+      "PresentationInput": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "standard",
+              "handbook",
+              "original"
+            ],
+            "title": "Mode",
+            "default": "auto"
+          },
+          "template_id": {
+            "type": "string",
+            "const": "handbook",
+            "title": "Template Id",
+            "default": "handbook"
+          },
+          "template_version": {
+            "type": "string",
+            "const": "1.0.0",
+            "title": "Template Version",
+            "default": "1.0.0"
+          },
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id"
+        ],
+        "title": "PresentationInput"
+      },
+      "PresentationOutput": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "title": "Analysis Set Id"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          },
+          "editable": {
+            "type": "boolean",
+            "title": "Editable"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/PresentationSettings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "selection_version",
+          "editable",
+          "settings"
+        ],
+        "title": "PresentationOutput"
+      },
+      "PresentationSearchInput": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 2,
+            "title": "Query"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "PresentationSearchInput"
+      },
+      "PresentationSearchResult": {
+        "properties": {
+          "document": {
+            "type": "string",
+            "title": "Document"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "snippet": {
+            "type": "string",
+            "title": "Snippet"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "document",
+          "title",
+          "snippet"
+        ],
+        "title": "PresentationSearchResult"
+      },
+      "PresentationSettings": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "standard",
+              "handbook",
+              "original"
+            ],
+            "title": "Mode",
+            "default": "auto"
+          },
+          "template_id": {
+            "type": "string",
+            "const": "handbook",
+            "title": "Template Id",
+            "default": "handbook"
+          },
+          "template_version": {
+            "type": "string",
+            "const": "1.0.0",
+            "title": "Template Version",
+            "default": "1.0.0"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PresentationSettings"
       },
       "PreviewInput": {
         "properties": {
@@ -4470,6 +5782,24 @@
         ],
         "title": "PrototypeEnvelope[JobOutput]"
       },
+      "PrototypeEnvelope_PresentationOutput_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PresentationOutput"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PresentationOutput]"
+      },
       "PrototypeEnvelope_PrototypeAnchorsResult_": {
         "properties": {
           "data": {
@@ -4655,6 +5985,28 @@
           "meta"
         ],
         "title": "PrototypeEnvelope[list[InteractiveBindingOutput]]"
+      },
+      "PrototypeEnvelope_list_PresentationSearchResult__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PresentationSearchResult"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[list[PresentationSearchResult]]"
       },
       "PrototypeMenu": {
         "properties": {
@@ -5321,6 +6673,140 @@
           "name"
         ],
         "title": "SaveMaterialVersion"
+      },
+      "ScanClient": {
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Client Id"
+          },
+          "pipeline": {
+            "type": "boolean",
+            "title": "Pipeline",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "client_id"
+        ],
+        "title": "ScanClient"
+      },
+      "ScanHeartbeat": {
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Client Id"
+          },
+          "pipeline": {
+            "type": "boolean",
+            "title": "Pipeline",
+            "default": false
+          },
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScanPage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "client_id"
+        ],
+        "title": "ScanHeartbeat"
+      },
+      "ScanInput": {
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Client Id"
+          },
+          "pipeline": {
+            "type": "boolean",
+            "title": "Pipeline",
+            "default": true
+          },
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "changed",
+              "all"
+            ],
+            "title": "Mode",
+            "default": "missing"
+          },
+          "concurrency": {
+            "type": "integer",
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Concurrency",
+            "default": 3
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "client_id",
+          "analysis_set_id"
+        ],
+        "title": "ScanInput"
+      },
+      "ScanPage": {
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Package Id"
+          },
+          "route": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Route"
+          },
+          "frame_path": {
+            "items": {
+              "type": "string",
+              "maxLength": 160,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Frame Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "route",
+          "frame_path"
+        ],
+        "title": "ScanPage"
       },
       "SettingsEdit": {
         "properties": {

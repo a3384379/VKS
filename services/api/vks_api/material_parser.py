@@ -1,6 +1,7 @@
 """Data-only readers for installable prototype and documentation packages."""
 
 import json
+from collections import Counter
 from html import escape
 from io import BytesIO
 from pathlib import PurePosixPath
@@ -29,15 +30,36 @@ def text(raw):
         fail("资料需要使用 UTF-8 编码")
 
 
-def selector(el):
-    if el.get("id"):
-        # CSS.escape-compatible attribute selector avoids assuming ASCII IDs.
-        return "[id=" + json.dumps(el["id"], ensure_ascii=False) + "]"
-    for key in ("data-vks-id", "data-testid", "data-key"):
-        if el.get(key):
-            return "[" + key + "=" + json.dumps(el[key], ensure_ascii=False) + "]"
+def selector(el, id_counts=None):
+    document = el
+    while document.parent:
+        document = document.parent
+    if id_counts is None:
+        id_counts = Counter(node["id"] for node in document.select("[id]"))
+
+    def escaped(value):
+        out = []
+        for i, char in enumerate(value):
+            code = ord(char)
+            if code == 0:
+                out.append("\ufffd")
+            elif (
+                code < 32 or code == 127 or char.isascii() and char.isdigit() and (i == 0 or i == 1 and value[0] == "-")
+            ):
+                out.append("\\" + format(code, "x") + " ")
+            elif char == "-" and len(value) == 1:
+                out.append("\\-")
+            elif code >= 128 or char in "-_" or char.isascii() and char.isalnum():
+                out.append(char)
+            else:
+                out.append("\\" + char)
+        return "".join(out)
+
     parts = []
     while el and el.name not in ("html", "[document]"):
+        if el.get("id") and id_counts[el["id"]] == 1:
+            parts.insert(0, "#" + escaped(el["id"]))
+            break
         peers = el.find_previous_siblings(el.name)
         parts.insert(0, f"{el.name}:nth-of-type({len(peers) + 1})")
         el = el.parent
@@ -45,10 +67,16 @@ def selector(el):
 
 
 def inventory(html, route="/", frame_path=None):
+    return inventory_report(html, route, frame_path)["targets"]
+
+
+def inventory_report(html, route="/", frame_path=None):
+    """Describe only source-declared controls, including omitted inventory counts."""
     soup = BeautifulSoup(html, "html.parser")
-    title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    id_counts = Counter(node["id"] for node in soup.select("[id]"))
+    title = soup.title.get_text().strip() if soup.title else ""
     heading = soup.find(["h1", "h2"])
-    title = (title or (heading.get_text(" ", strip=True) if heading else "") or route)[:160]
+    title = " ".join((title or (heading.get_text().strip() if heading else "") or route).split())[:160]
     rows = [
         {
             "route": route,
@@ -59,24 +87,72 @@ def inventory(html, route="/", frame_path=None):
             "open_steps": [],
         }
     ]
-    for el in soup.select('button,a,[role="button"],[onclick],input[type="submit"]')[:1500]:
+    operations, discovered = {}, 1
+
+    def label_text(node):
+        return "".join(
+            str(t)
+            for t in node.find_all(string=True)
+            if not t.find_parent(["input", "select", "textarea", "script", "style"])
+        )
+
+    labels = {node.get("for"): label_text(node) for node in soup.select("label[for]")}
+    for el in soup.select('button,a,[role="button"],[role="tab"],[onclick],input,select,textarea'):
+        if el.name == "input" and el.get("type", "text").lower() == "hidden":
+            continue
+        discovered += 1
         label = " ".join(
-            (el.get("aria-label") or el.get("title") or el.get_text(" ", strip=True) or el.get("value") or "").split()
+            (
+                el.get("aria-label")
+                or el.get("title")
+                or labels.get(el.get("id"))
+                or (label_text(el.find_parent("label")) if el.find_parent("label") else "")
+                or el.get("placeholder")
+                or (el.get_text().strip() if el.name not in {"select", "textarea", "input"} else "")
+                or (el.get("value") if el.get("type", "").lower() in {"submit", "button", "reset"} else "")
+                or el.get("name")
+                or (el.name.upper() if el.name in {"input", "select", "textarea"} else "")
+            ).split()
         )[:160]
         if not label:
             continue
+        if len(rows) >= 1501:
+            continue
         dialog = el.find_parent(attrs={"role": "dialog"})
+        row_selector = selector(el, id_counts)
         rows.append(
             {
                 "route": route,
                 "frame_path": frame_path or [],
-                "selector": selector(el),
+                "selector": row_selector,
                 "label": label,
-                "state": selector(dialog) if dialog else "",
+                "state": selector(dialog, id_counts) if dialog else "",
                 "open_steps": [],
             }
         )
-    return rows
+        table = el.find_parent("table")
+        if table and el.find_parent("tr"):
+            # Group only same action in one exact table/state/page. Each row
+            # keeps its own selector and saved binding; only inference is reused.
+            operations[row_selector] = [
+                selector(table, id_counts),
+                el.name,
+                el.get("type", ""),
+                label,
+                selector(dialog, id_counts) if dialog else "",
+            ]
+    dynamic = any(
+        node.get("src") or node.get_text(strip=True)
+        for node in soup.find_all("script")
+        if node.get("type", "").lower() not in {"application/json", "application/octet-stream", "application/ld+json"}
+    )
+    return {
+        "targets": rows,
+        "discovered": discovered,
+        "truncated": discovered - len(rows),
+        "row_operations": operations,
+        "dynamic": dynamic,
+    }
 
 
 def html_markdown(raw, name):
@@ -165,9 +241,26 @@ def parse(kind, files, entry=""):
     if len(names) != len(set(names)):
         fail("资料含重复文件路径")
     documents, targets, warnings = [], [], []
+    authored, embedded_files = None, []
     original = b""
     fmt = "markdown"
     if kind == "prototype":
+        inventory_stats = {"discovered": 0, "truncated": 0, "row_operations": {}, "dynamic": False, "pages": 0}
+
+        def collect(source, route, frame_path):
+            report = inventory_report(source, route, frame_path)
+            retained = report["targets"][: max(0, 10000 - len(targets))]
+            targets.extend(retained)
+            inventory_stats["discovered"] += report["discovered"]
+            inventory_stats["truncated"] += report["discovered"] - len(retained)
+            inventory_stats["dynamic"] = inventory_stats["dynamic"] or report["dynamic"]
+            inventory_stats["pages"] += 1
+            for item in retained:
+                if item["selector"] in report["row_operations"]:
+                    inventory_stats["row_operations"][json.dumps([route, frame_path, item["selector"]])] = report[
+                        "row_operations"
+                    ][item["selector"]]
+
         candidates = [(name, raw) for name, raw in expanded if name.lower().endswith((".html", ".htm"))]
         if not candidates:
             fail("原型包需要 HTML 入口")
@@ -192,16 +285,19 @@ def parse(kind, files, entry=""):
                 fmt = "charge-prototype"
                 for path, page in packed.get("pages", {}).items():
                     if isinstance(page, dict) and isinstance(page.get("html"), str):
-                        targets.extend(inventory(page["html"], "/" + path.lstrip("/"), ["actualPage"]))
+                        collect(page["html"], "/" + path.lstrip("/"), ["actualPage"])
         except (BundleError, ValueError, KeyError):
             fail("离线原型结构或摘要校验失败")
-        targets = targets or inventory(
-            text(original), "/" + entry if fmt == "static-site" else "/", ["actualPage"] if fmt == "static-site" else []
-        )
+        if not targets:
+            collect(
+                text(original),
+                "/" + entry if fmt == "static-site" else "/",
+                ["actualPage"] if fmt == "static-site" else [],
+            )
         if fmt == "static-site":
             for path, raw in candidates:
                 if path != entry:
-                    targets.extend(inventory(text(raw), "/" + path, ["actualPage"]))
+                    collect(text(raw), "/" + path, ["actualPage"])
         return {
             "format": fmt,
             "entry": entry,
@@ -210,6 +306,7 @@ def parse(kind, files, entry=""):
             "targets": targets[:10000],
             "files": expanded if fmt == "static-site" else [],
             "warnings": warnings,
+            "inventory": inventory_stats,
         }
     document_files = [
         name
@@ -223,6 +320,19 @@ def parse(kind, files, entry=""):
             documents.append((name, text(raw)))
         elif suffix in {".html", ".htm"}:
             try:
+                from .template_ingest import read_authoring
+
+                source = read_authoring(raw)
+                if source is not None:
+                    if len(expanded) != 1 or original:
+                        fail("本地知识手册请作为单个 HTML 独立导入")
+                    if not source["documents"]:
+                        fail("本地知识手册目前为空，请先在模板中导入 Markdown 再保存")
+                    documents.extend(source["documents"])
+                    embedded_files.extend(source["files"])
+                    authored = source
+                    original, fmt, entry = raw, "handbook-authoring", name
+                    continue
                 adapted = offline_bundle(raw, "validation", "validation")
                 if adapted and adapted[1].get("format") == "charge-handbook":
                     with ZipFile(BytesIO(adapted[0])) as archive:
@@ -244,7 +354,7 @@ def parse(kind, files, entry=""):
         fail("没有可索引的文档；当前支持 Markdown、文本及 HTML 手册")
     if len(documents) > 5000 or len({p for p, _ in documents}) != len(documents):
         fail("文档路径重复或数量超过限制")
-    if fmt != "charge-handbook" and html_files:
+    if fmt not in {"charge-handbook", "handbook-authoring"} and html_files:
         chosen = (
             next(((name, raw) for name, raw in html_files if name == entry), None)
             if entry
@@ -275,7 +385,8 @@ def parse(kind, files, entry=""):
         "original": original,
         "documents": documents,
         "targets": [],
-        "files": expanded,
+        "files": expanded + embedded_files,
         "warnings": warnings,
         "navigation": navigation,
+        **({"template": authored["template"], "document_names": authored["document_names"]} if authored else {}),
     }

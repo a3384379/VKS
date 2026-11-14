@@ -1173,6 +1173,9 @@ class KnowledgeService:
                 )
                 s.add(target)
                 s.flush()
+                from .document_presentation import clone_presentation
+
+                clone_presentation(s, old, target)
                 for choice in s.scalars(select(Selection).where(Selection.analysis_set_id == aid)):
                     s.add(
                         Selection(

@@ -325,6 +325,7 @@ def test_real_export_worker_does_not_reenter_transaction_fence_and_honors_postpa
     materials, monkeypatch, cancel_after_parse
 ):
     from vks_api import document_navigation
+    from vks_api.reading import ReadingService
 
     from packages.analyzers import cancellation
 
@@ -348,9 +349,10 @@ def test_real_export_worker_does_not_reenter_transaction_fence_and_honors_postpa
     job = service.export(
         owner, pid, {"release_id": frozen["id"], "format": "readonly_html", "include_source": True}, uid()
     )
-    original_scope, original_db, original_parse = (
+    original_scope, original_db, original_read_db, original_parse = (
         cancellation.cancellation_scope,
         service.db,
+        ReadingService.db,
         document_navigation.handbook_navigation,
     )
     local = threading.local()
@@ -371,18 +373,15 @@ def test_real_export_worker_does_not_reenter_transaction_fence_and_honors_postpa
         parsed.append(True)
         return result
 
-    @contextmanager
-    def guarded_db():
-        if getattr(local, "depth", 0):
-            reentered.append(True)
-            raise AssertionError("Job fence re-entered the open document transaction")
-        local.depth = 1
-        try:
-            with original_db() as db:
-                yield db
-        finally:
-            local.depth = 0
-        if cancel_after_parse and parsed and not cancelled and threading.get_ident() == main_thread:
+    def cancel_at_read_boundary():
+        if (
+            cancel_after_parse
+            and parsed
+            and not cancelled
+            and not getattr(local, "depth", 0)
+            and not getattr(local, "read_depth", 0)
+            and threading.get_ident() == main_thread
+        ):
             # Cancellation becomes durable immediately after the source read
             # transaction exits, before the worker may send any embedding call.
             cancelled.append(True)
@@ -390,9 +389,33 @@ def test_real_export_worker_does_not_reenter_transaction_fence_and_honors_postpa
                 current = db.get(Job, job["id"])
                 current.cancel_requested = True
 
+    @contextmanager
+    def guarded_db():
+        if getattr(local, "depth", 0) or getattr(local, "read_depth", 0):
+            reentered.append(True)
+            raise AssertionError("Job writer fence re-entered the open document transaction")
+        local.depth = 1
+        try:
+            with original_db() as db:
+                yield db
+        finally:
+            local.depth = 0
+        cancel_at_read_boundary()
+
+    @contextmanager
+    def guarded_read_db(reading):
+        local.read_depth = getattr(local, "read_depth", 0) + 1
+        try:
+            with original_read_db(reading) as db:
+                yield db
+        finally:
+            local.read_depth -= 1
+        cancel_at_read_boundary()
+
     monkeypatch.setattr(cancellation, "cancellation_scope", forced_scope)
     monkeypatch.setattr(document_navigation, "handbook_navigation", parse_source)
     monkeypatch.setattr(service, "db", guarded_db)
+    monkeypatch.setattr(ReadingService, "db", guarded_read_db)
     service.process_job(job["id"])
     outcome = service.get_job(owner, job["id"])
     assert parsed and not reentered
