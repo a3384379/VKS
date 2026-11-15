@@ -1,5 +1,11 @@
 # VKS 3.0 验证记录
 
+## GitHub CI 分片调整 · 2026-11-15
+
+首次推送 `9028f11` 后，Windows、PostgreSQL/消息队列及 UI 检查通过；原 `core` 分片到 20 分钟时只完成约 64%，被时限取消，不能记作通过。交互回归集中在 `tests/interactive/`，原先均归入 core，现单独按仓库相对文件路径的 SHA-256 稳定分为两组，文件内测试与 fixture 保持同组。
+
+实际完整 collection 与四个分片逐项比对：共 **1,252 项**，core **796**、interactive-a **188**、interactive-b **139**、ui **129**；并集与完整集合一致、交集为空。未指定分片时行为不变，未减少测试、取消断言或增加跳过。前端测试/构建/依赖审计仍由 core 执行，Windows 和 PostgreSQL/队列专项保持原配置。远端结果以 PR 当前 head 的 Actions 为准；本地分片清单位于忽略目录 `.vks/studio-preview/checks/github-public-delivery-20261115/`。
+
 ## 逐项结果筛选、跳页与独立原手册模板 · 2026-11-15
 
 行为与兼容见[补修记录](RESULT_FILTER_AND_STANDALONE_TEMPLATE_2026-11-15.md)。完整 `make check`：Python **1,233 通过、16 项环境条件跳过**，978.44 秒；前端 **70 通过**，Reader、Web、Studio 生产构建通过。全量检查期间发现旧进度回归没有计入新增 `processed` 字段，补齐断言后重新执行并通过；未将中断的运行记为通过。
