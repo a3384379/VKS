@@ -493,3 +493,57 @@ def test_migration_diagnostics_restrict_names_and_counts_after_permission_change
     assert response.status_code == 200, response.text
     info = response.json()["data"]
     assert info["diagnostics_restricted"] and "result" not in info and "issue_count" not in info
+
+
+@pytest.mark.parametrize("change", ["import_scope", "source_policy"])
+def test_prepare_rechecks_access_after_parsing_before_creating_revisions(materials, monkeypatch, change):
+    from sqlalchemy import func, select
+    from vks_api import material_parser
+    from vks_api.models import Artifact, Credential, Revision
+    from vks_api.service import DomainError
+
+    _web, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    current = stage(service, owner, manager, pid, aid, "documents", "# Original\n\nOriginal body.")
+    activate(service, owner, manager, pid, aid, [current])
+    token = service.create_token(
+        owner, pid, {"name": "Importer", "scopes": ["knowledge:read", "knowledge:edit", "source:import"]}
+    )
+    importer = service.authenticate(token["token"], "token")
+    upload = _upload(service, importer, pid, b"# Replacement\n\nNew body.", "replacement.md")
+    initial = selected(service, owner, pid, aid)["selection_version"]
+    with service.db() as db:
+        before = db.scalar(select(func.count()).select_from(Revision))
+    parse = material_parser.parse
+
+    def change_after_parse(*args, **kwargs):
+        result = parse(*args, **kwargs)
+        with service.db() as db:
+            if change == "import_scope":
+                credential = db.get(Credential, importer.credential_id)
+                credential.scopes = [scope for scope in credential.scopes if scope != "source:import"]
+            else:
+                package = db.get(Revision, current["revision_id"])
+                artifact = db.get(Artifact, package.artifact_id)
+                artifact.sensitivity = "confidential"
+        return result
+
+    monkeypatch.setattr(material_parser, "parse", change_after_parse)
+    with pytest.raises(DomainError) as error:
+        manager.prepare(
+            importer,
+            pid,
+            PrepareMaterial(
+                analysis_set_id=aid,
+                kind="documents",
+                name="Replacement",
+                artifact_ids=[upload],
+                package_id=current["package_id"],
+            ),
+            str(initial),
+            uid(),
+        )
+    assert error.value.code in {"VKS_FORBIDDEN", "VKS_NOT_FOUND"}
+    with service.db() as db:
+        assert db.scalar(select(func.count()).select_from(Revision)) == before
+        assert db.get(Analysis, aid).selection_version == initial

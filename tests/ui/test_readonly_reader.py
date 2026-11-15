@@ -181,7 +181,7 @@ def test_recipient_model_dropdown_stream_citations_and_no_key_persistence(reader
             browser.close()
 
 
-def test_response_stream_truncation_is_reported_and_context_does_not_trigger_model(reader_file):
+def test_automatic_explanation_reports_response_stream_truncation(reader_file):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=chromium_path(playwright), headless=True)
         page = browser.new_page()
@@ -207,14 +207,13 @@ def test_response_stream_truncation_is_reported_and_context_does_not_trigger_mod
             configure(page)
             page.get_by_role("button", name="连接设置", exact=True).click()
             page.get_by_label("接口协议", exact=True).select_option("responses")
+            page.get_by_label("自定义模型 ID", exact=True).fill("fixture-chat")
             page.get_by_role("button", name="应用并开始提问", exact=True).click()
             frame = page.frame_locator("iframe.prototype-frame")
             frame.get_by_role("button", name="创建任务", exact=True).click(button="right")
             page.get_by_role("button", name="AI 讲解这个功能", exact=False).click()
-            assert not [call for call in calls if call.endswith("/responses")]
-            page.get_by_role("button", name="发送", exact=True).click()
-            expect(page.locator(".chat-message .error")).to_have_text("连接提前结束，回答可能不完整，请重试。")
-            expect(page.locator(".answer").last).to_have_text("部分回答")
+            expect(page.locator(".explanation-current .error")).to_have_text("连接提前结束，回答可能不完整，请重试。")
+            expect(page.locator(".explanation-current .answer")).to_have_text("部分回答")
             assert len([call for call in calls if call.endswith("/responses")]) == 1
         finally:
             browser.close()
@@ -330,6 +329,7 @@ def test_responses_fragmented_crlf_and_utf8_with_citation_validation(reader_file
             configure(page)
             page.get_by_role("button", name="连接设置", exact=True).click()
             page.get_by_label("接口协议", exact=True).select_option("responses")
+            page.get_by_label("自定义模型 ID", exact=True).fill("fixture-chat")
             page.get_by_role("button", name="应用并开始提问", exact=True).click()
             page.get_by_label("向 AI 提问", exact=True).fill("创建任务的要求是什么？")
             page.get_by_role("button", name="发送", exact=True).click()

@@ -164,6 +164,13 @@ class DocumentService:
     def _mapped_sections(cls, s, document, artifact_id, ids):
         if not isinstance(ids, list) or any(not isinstance(rid, str) for rid in ids) or len(ids) != len(set(ids)):
             cls._section_gap("invalid_mapping")
+        # Keep the exact revisions and their identities alive for this transaction;
+        # SQLAlchemy's weak identity map otherwise turns each check into another SELECT.
+        from .reading import ReadingService
+
+        retained = s.info.setdefault("vks_prefetched", {})
+        missing = [rid for rid in ids if (Revision, rid) not in retained]
+        retained.update({(Revision, row.id): row for row in ReadingService(None).revision_rows(s, missing)})
         rows = [s.get(Revision, rid) for rid in ids]
         identities = set()
         for row in rows:

@@ -82,6 +82,7 @@ def test_project_import_replace_and_complete_rollback_in_studio(materials, tmp_p
                     expect(page.get_by_role("button", name="导入项目资料", exact=True)).to_be_visible()
                     page.get_by_role("button", name="导入项目资料", exact=True).click()
                     picker = page.get_by_label("选择资料文件", exact=True)
+                    page.get_by_label("导入方式", exact=True).select_option("")
                     picker.set_input_files(
                         {
                             "name": "收费原型.html",
@@ -92,6 +93,7 @@ def test_project_import_replace_and_complete_rollback_in_studio(materials, tmp_p
                     page.get_by_role("button", name="解析并预览", exact=True).click()
                     expect(page.locator(".material-staging")).to_contain_text("收费原型")
                     page.get_by_label("资料类型", exact=True).select_option("documents")
+                    page.get_by_label("导入方式", exact=True).select_option("")
                     picker.set_input_files(
                         {
                             "name": "收费指南.md",

@@ -22,6 +22,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_original_interaction_links_refresh_and_runtime_isolation(interactive, workspace, tmp_path, monkeypatch):
+    from vks_api.model_connections import ConnectionService
+
+    monkeypatch.setattr(
+        ConnectionService,
+        "_request",
+        lambda *args: {"data": [{"id": "gpt-6.1-terra", "name": "Display name from service"}]},
+    )
     monkeypatch.delenv("VKS_MODEL_API_KEY", raising=False)
     monkeypatch.setenv("VKS_RUNTIME_DATA_DIR", str(tmp_path / "runtime-private"))
     _, _, _, pid, aid, _, _, _, _ = interactive
@@ -164,6 +171,9 @@ def test_original_interaction_links_refresh_and_runtime_isolation(interactive, w
                         expect(page.get_by_label("回答模型", exact=True)).to_have_value("gpt-6.1-terra")
                         page.reload()
                         expect(page.get_by_label("回答模型", exact=True)).to_have_value("gpt-6.1-terra")
+                        expect(
+                            page.locator('#ai-model-select optgroup option')
+                        ).to_have_text(["gpt-6.1-terra"])
                         page.locator(".ai-provider-pills").get_by_role("button", name="DeepSeek", exact=True).click()
                         expect(page.get_by_role("button", name="保存并使用", exact=True)).to_be_disabled()
                         expect(key_field).to_have_value("")

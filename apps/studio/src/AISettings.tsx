@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api, mutation } from "../../web/src/api";
 import { RAGSettings } from "./RAGSettings";
+import { preferredAnswerModels } from "../../web/src/modelChoices";
 
 type Model = { id: string; name: string; description: string };
 type Provider = {
@@ -33,7 +34,6 @@ type Form = {
   model_id: string;
   api_key: string;
   max_output_tokens: number;
-  daily_token_limit: number;
   enabled: boolean;
   allow_external: boolean;
 };
@@ -54,7 +54,6 @@ type Catalog = {
     protocol: string;
     model_id: string;
     max_output_tokens: number;
-    daily_token_limit: number;
     enabled: boolean;
     allow_external: boolean;
   };
@@ -81,6 +80,8 @@ export function AISettings({
     [configured, setConfigured] = useState(false),
     [models, setModels] = useState<Model[] | null>(null),
     [query, setQuery] = useState(""),
+    [showAllModels, setShowAllModels] = useState(false),
+    [modelPage, setModelPage] = useState(0),
     [custom, setCustom] = useState(false),
     [advancedAddress, setAdvancedAddress] = useState(false),
     [busy, setBusy] = useState(""),
@@ -89,6 +90,7 @@ export function AISettings({
     [test, setTest] = useState<{ ok: boolean; text: string } | null>(null),
     [dirty, setDirty] = useState(false);
   const epoch = useRef(0),
+    saving = useRef(false),
     base = "/projects/" + project + "/model-connections";
   const provider = catalog?.providers.find((p) => p.id === form?.provider);
   function openProfile(c: Catalog, p: Profile) {
@@ -103,13 +105,14 @@ export function AISettings({
       model_id: p.settings.model_id,
       api_key: "",
       max_output_tokens: p.settings.max_output_tokens,
-      daily_token_limit: p.settings.daily_token_limit,
       enabled: p.settings.enabled,
       allow_external: p.settings.allow_external,
     });
     setConfigured(p.configured);
     setModels(null);
     setQuery("");
+    setShowAllModels(false);
+    setModelPage(0);
     setCustom(false);
     setAdvancedAddress(
       p.provider === "custom" || p.settings.endpoint !== preset.endpoint,
@@ -140,13 +143,14 @@ export function AISettings({
         prior && c.policy.model_id ? c.policy.model_id : p.models[0]?.id || "",
       api_key: "",
       max_output_tokens: prior ? c.policy.max_output_tokens : 2500,
-      daily_token_limit: prior ? c.policy.daily_token_limit : 100000,
       enabled: true,
       allow_external: true,
     });
     setConfigured(legacy);
     setModels(null);
     setQuery("");
+    setShowAllModels(false);
+    setModelPage(0);
     setCustom(false);
     setAdvancedAddress(p.id === "custom");
     setTest(null);
@@ -182,8 +186,13 @@ export function AISettings({
       epoch.current++;
     };
   }, [base]);
+  useEffect(() => {
+    // Discover saved connections without inference or sending project content.
+    // Never query a partially entered key or an unsaved edited endpoint.
+    if (configured && form && !dirty && !form.api_key.trim()) void discover();
+  }, [base, form?.connection_id, form?.endpoint, configured]);
   function change(patch: Partial<Form>) {
-    if (!form) return;
+    if (!form || saving.current) return;
     epoch.current++;
     setForm({ ...form, ...patch });
     setDirty(true);
@@ -197,6 +206,8 @@ export function AISettings({
     ) {
       setModels(null);
       setQuery("");
+      setShowAllModels(false);
+      setModelPage(0);
     }
     if (patch.endpoint !== undefined) {
       setConfigured(false);
@@ -225,6 +236,8 @@ export function AISettings({
       if (current !== epoch.current) return;
       setModels(response.models);
       setQuery("");
+      setShowAllModels(false);
+      setModelPage(0);
       setNotice(`已获取当前 Key 可见的 ${response.models.length} 个模型`);
     } catch (e) {
       if (current === epoch.current) setError(message(e));
@@ -256,7 +269,8 @@ export function AISettings({
   }
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    if (!catalog) return;
+    if (!catalog || saving.current) return;
+    saving.current = true;
     const current = ++epoch.current;
     setBusy("save");
     setError("");
@@ -274,6 +288,7 @@ export function AISettings({
     } catch (e) {
       if (current === epoch.current) setError(message(e));
     } finally {
+      saving.current = false;
       if (current === epoch.current) setBusy("");
     }
   }
@@ -293,11 +308,20 @@ export function AISettings({
   const selected =
     (models || provider?.models || []).find((m) => m.id === form.model_id) ||
     provider?.models.find((m) => m.id === form.model_id);
-  const filtered = (models || provider?.models || []).filter((m) =>
+  const allModels = models || provider?.models || [];
+  const expandedModels = showAllModels || !!query.trim();
+  const filtered = (
+    expandedModels
+      ? allModels
+      : preferredAnswerModels(allModels, 6, form.provider)
+  ).filter((m) =>
     (m.id + " " + m.name).toLowerCase().includes(query.toLowerCase()),
   );
+  const pages = Math.max(1, Math.ceil(filtered.length / 20)),
+    page = Math.min(modelPage, pages - 1);
+  const choices = filtered.slice(page * 20, page * 20 + 20);
   const missingSelected =
-    form.model_id && !filtered.some((m) => m.id === form.model_id);
+    form.model_id && !choices.some((m) => m.id === form.model_id);
   const canConnect =
     !!form.endpoint.trim() && (configured || !!form.api_key.trim());
   return (
@@ -321,6 +345,7 @@ export function AISettings({
               type="button"
               className="icon"
               aria-label="新增连接"
+              disabled={busy === "save"}
               onClick={() =>
                 chooseProvider(catalog, catalog.providers[0], true)
               }
@@ -336,6 +361,7 @@ export function AISettings({
                 "connection-item " +
                 (form.connection_id === c.id ? "selected" : "")
               }
+              disabled={busy === "save"}
               onClick={() => openProfile(catalog, c)}
             >
               <span className={"provider-mark " + c.provider}>
@@ -363,6 +389,7 @@ export function AISettings({
               type="button"
               key={p.id}
               className="provider-shortcut"
+              disabled={busy === "save"}
               onClick={() => chooseProvider(catalog, p)}
             >
               <span className={"provider-mark small " + p.id}>
@@ -378,317 +405,361 @@ export function AISettings({
           </div>
         </aside>
         <form className="ai-connection-form" onSubmit={save}>
-          <label className="mobile-connection-picker">
-            切换连接
-            <select
-              aria-label="切换已保存连接"
-              value={form.connection_id || ""}
-              onChange={(e) => {
-                const profile = catalog.connections.find(
-                  (c) => c.id === e.target.value,
-                );
-                if (profile) openProfile(catalog, profile);
-                else
-                  chooseProvider(
-                    catalog,
-                    provider || catalog.providers[0],
-                    true,
+          <fieldset className="connection-fields" disabled={busy === "save"}>
+            <label className="mobile-connection-picker">
+              切换连接
+              <select
+                aria-label="切换已保存连接"
+                value={form.connection_id || ""}
+                onChange={(e) => {
+                  const profile = catalog.connections.find(
+                    (c) => c.id === e.target.value,
                   );
-              }}
-            >
-              <option value="">＋ 新建连接</option>
-              {catalog.connections.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} · {c.settings.model_id}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="connection-form-top">
-            <span className={"provider-mark large " + form.provider}>
-              {initials[form.provider]}
-            </span>
-            <div>
-              <h2>{provider?.name}</h2>
-              <p>{provider?.description}</p>
-            </div>
-            {configured && (
-              <span className="key-kept">
-                <CheckCircle2 size={14} />
-                已保留密钥
-              </span>
-            )}
-          </div>
-          <div className="ai-provider-pills" aria-label="选择模型服务商">
-            {catalog.providers.map((p) => (
-              <button
-                type="button"
-                key={p.id}
-                className={p.id === form.provider ? "chosen" : ""}
-                onClick={() => {
-                  if (p.id !== form.provider) chooseProvider(catalog, p);
+                  if (profile) openProfile(catalog, profile);
+                  else
+                    chooseProvider(
+                      catalog,
+                      provider || catalog.providers[0],
+                      true,
+                    );
                 }}
               >
-                {p.name}
-              </button>
-            ))}
-          </div>
-          {error && (
-            <div className="settings-message error" role="alert">
-              <X size={15} />
-              {error}
-            </div>
-          )}
-          {notice && (
-            <div className="settings-message" role="status">
-              <CheckCircle2 size={15} />
-              {notice}
-            </div>
-          )}
-          <div className="ai-field-block">
-            <div className="field-heading">
-              <label htmlFor="ai-provider-key">API Key</label>
-              <span>
-                {configured
-                  ? "已配置 · 留空则继续使用"
-                  : provider?.name + " 的访问密钥"}
-              </span>
-            </div>
-            <div className="key-input-wrap">
-              <KeyRound size={16} />
-              <input
-                id="ai-provider-key"
-                aria-label="API Key"
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                value={form.api_key}
-                placeholder={
-                  configured ? "更换 Key 时填写" : "粘贴此服务商的 API Key"
-                }
-                onChange={(e) => change({ api_key: e.target.value })}
-              />
-              {configured && !form.api_key && <CheckCircle2 size={16} />}
-            </div>
-          </div>
-          <div className="endpoint-summary">
-            <span>{form.endpoint || "填写自定义服务地址"}</span>
-            <button
-              type="button"
-              onClick={() => setAdvancedAddress(!advancedAddress)}
-            >
-              {advancedAddress ? "收起连接参数" : "修改地址 / 协议"}
-              <ChevronDown size={12} />
-            </button>
-          </div>
-          {advancedAddress && (
-            <div className="connection-advanced">
-              <label>
-                接口地址
-                <input
-                  aria-label="模型接口地址"
-                  placeholder="https://your-provider.example/v1"
-                  value={form.endpoint}
-                  onChange={(e) => change({ endpoint: e.target.value })}
-                />
-              </label>
-              <label>
-                协议
-                <select
-                  aria-label="模型协议"
-                  value={form.protocol}
-                  onChange={(e) => change({ protocol: e.target.value })}
-                >
-                  <option value="responses">Responses API</option>
-                  <option value="chat_completions">
-                    OpenAI 兼容 Chat Completions
-                  </option>
-                </select>
-              </label>
-              <label>
-                连接名称
-                <input
-                  aria-label="连接名称"
-                  value={form.name}
-                  onChange={(e) => change({ name: e.target.value })}
-                />
-              </label>
-            </div>
-          )}
-          <div className="ai-field-block model-field">
-            <div className="field-heading">
-              <label htmlFor="ai-model-select">回答模型</label>
-              <button
-                type="button"
-                className="model-refresh"
-                disabled={!!busy || !canConnect}
-                onClick={() => void discover()}
-              >
-                <RefreshCw
-                  size={13}
-                  className={busy === "models" ? "spinning" : ""}
-                />
-                {busy === "models" ? "正在查询…" : "获取可用模型"}
-              </button>
-            </div>
-            <div className="model-picker-search">
-              <Search size={14} />
-              <input
-                aria-label="搜索模型"
-                placeholder="搜索模型名称…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <span>{models ? "账户模型" : "预置模型"}</span>
-            </div>
-            <select
-              id="ai-model-select"
-              aria-label="回答模型"
-              value={custom ? "__custom__" : form.model_id}
-              onChange={(e) => {
-                if (e.target.value === "__custom__") {
-                  setCustom(true);
-                  change({ model_id: "" });
-                } else {
-                  setCustom(false);
-                  change({ model_id: e.target.value });
-                }
-              }}
-            >
-              {missingSelected && !custom && (
-                <option value={form.model_id}>
-                  {form.model_id} · 当前选择
-                </option>
-              )}
-              {!form.model_id && !custom && (
-                <option value="">请选择模型</option>
-              )}
-              <optgroup
-                label={models ? "当前 Key 可见的模型" : "服务商预置模型"}
-              >
-                {filtered.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                    {m.name !== m.id ? " · " + m.id : ""}
+                <option value="">＋ 新建连接</option>
+                {catalog.connections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} · {c.settings.model_id}
                   </option>
                 ))}
-              </optgroup>
-              <option value="__custom__">＋ 自定义模型 ID…</option>
-            </select>
-            {custom && (
-              <input
-                aria-label="自定义模型 ID"
-                className="custom-model-input"
-                placeholder="填写服务提供的精确模型 ID"
-                value={form.model_id}
-                onChange={(e) => change({ model_id: e.target.value })}
-              />
-            )}
-            <div className="model-description">
-              <Sparkles size={15} />
-              <span>
-                {selected?.description ||
-                  "模型的实际可用性由服务商和此 Key 的权限决定。"}
-              </span>
-            </div>
-            <p className="model-availability">
-              {models
-                ? `已从服务获取 ${models.length} 个模型。可见模型的协议与能力可能不同，可测试当前选择。`
-                : "预置模型可直接选择；点击“获取可用模型”查询此 Key 的实际可见列表。"}
-            </p>
-          </div>
-          <div className="ai-output-row">
-            <label>
-              回答长度
-              <select
-                aria-label="回答长度"
-                value={form.max_output_tokens}
-                onChange={(e) =>
-                  change({ max_output_tokens: Number(e.target.value) })
-                }
-              >
-                {![1500, 2500, 4000, 8000].includes(form.max_output_tokens) && (
-                  <option value={form.max_output_tokens}>
-                    当前设置 · {form.max_output_tokens} tokens
-                  </option>
-                )}
-                <option value={1500}>简洁 · 1,500 tokens</option>
-                <option value={2500}>标准 · 2,500 tokens</option>
-                <option value={4000}>详细 · 4,000 tokens</option>
-                <option value={8000}>深入分析 · 8,000 tokens</option>
               </select>
             </label>
-            <label className="project-ai-toggle">
-              <span>项目 AI</span>
-              <span>
-                <input
-                  aria-label="启用项目 AI"
-                  type="checkbox"
-                  checked={form.enabled}
-                  onChange={(e) => change({ enabled: e.target.checked })}
-                />
-                {form.enabled ? "已启用" : "已关闭"}
+
+            <div className="connection-form-top">
+              <span className={"provider-mark large " + form.provider}>
+                {initials[form.provider]}
               </span>
-            </label>
-          </div>
-          <details className="ai-budget">
-            <summary>更多设置</summary>
-            <label>
-              每日 Token 预算
-              <input
-                type="number"
-                min={1000}
-                max={100000000}
-                value={form.daily_token_limit}
-                onChange={(e) =>
-                  change({ daily_token_limit: Number(e.target.value) })
-                }
-              />
-            </label>
-            <label className="check-line">
-              <input
-                type="checkbox"
-                checked={form.allow_external}
-                onChange={(e) => change({ allow_external: e.target.checked })}
-              />
-              允许 AI 使用本项目获授权的相关内容
-            </label>
-            <p>
-              密钥保存在本机实例的数据目录。点击“保存并使用”将保存当前连接及填写的
-              Key。
-            </p>
-          </details>
-          {test && (
-            <div
-              className={"ai-test-result " + (test.ok ? "success" : "failure")}
-              role="status"
-            >
-              {test.ok ? <CheckCircle2 size={17} /> : <X size={17} />}
-              <span>{test.text}</span>
+              <div>
+                <h2>{provider?.name}</h2>
+                <p>{provider?.description}</p>
+              </div>
+              {configured && (
+                <span className="key-kept">
+                  <CheckCircle2 size={14} />
+                  已保留密钥
+                </span>
+              )}
             </div>
-          )}
-          <footer className="ai-connection-footer">
-            <div>
+            <div className="ai-provider-pills" aria-label="选择模型服务商">
+              {catalog.providers.map((p) => (
+                <button
+                  type="button"
+                  key={p.id}
+                  className={p.id === form.provider ? "chosen" : ""}
+                  onClick={() => {
+                    if (p.id !== form.provider) chooseProvider(catalog, p);
+                  }}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+            {error && (
+              <div className="settings-message error" role="alert">
+                <X size={15} />
+                {error}
+              </div>
+            )}
+            {notice && (
+              <div className="settings-message" role="status">
+                <CheckCircle2 size={15} />
+                {notice}
+              </div>
+            )}
+            <div className="ai-field-block">
+              <div className="field-heading">
+                <label htmlFor="ai-provider-key">API Key</label>
+                <span>
+                  {configured
+                    ? "已配置 · 留空则继续使用"
+                    : provider?.name + " 的访问密钥"}
+                </span>
+              </div>
+              <div className="key-input-wrap">
+                <KeyRound size={16} />
+                <input
+                  id="ai-provider-key"
+                  aria-label="API Key"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={form.api_key}
+                  placeholder={
+                    configured ? "更换 Key 时填写" : "粘贴此服务商的 API Key"
+                  }
+                  onChange={(e) => change({ api_key: e.target.value })}
+                />
+                {configured && !form.api_key && <CheckCircle2 size={16} />}
+              </div>
+            </div>
+            <div className="endpoint-summary">
+              <span>{form.endpoint || "填写自定义服务地址"}</span>
               <button
                 type="button"
-                disabled={!!busy || !canConnect || !form.model_id.trim()}
-                onClick={() => void probe()}
+                onClick={() => setAdvancedAddress(!advancedAddress)}
               >
-                <Wifi size={15} />
-                {busy === "test" ? "正在测试…" : "测试连接"}
+                {advancedAddress ? "收起连接参数" : "修改地址 / 协议"}
+                <ChevronDown size={12} />
               </button>
-              <small>发送一条固定测试消息，产生少量模型用量</small>
             </div>
-            <button
-              className="primary"
-              type="submit"
-              disabled={!!busy || !canConnect || !form.model_id.trim()}
-            >
-              <Save size={15} />
-              {busy === "save" ? "正在保存…" : "保存并使用"}
-            </button>
-          </footer>
+            {advancedAddress && (
+              <div className="connection-advanced">
+                <label>
+                  接口地址
+                  <input
+                    aria-label="模型接口地址"
+                    placeholder="https://your-provider.example/v1"
+                    value={form.endpoint}
+                    onChange={(e) => change({ endpoint: e.target.value })}
+                  />
+                </label>
+                <label>
+                  协议
+                  <select
+                    aria-label="模型协议"
+                    value={form.protocol}
+                    onChange={(e) => change({ protocol: e.target.value })}
+                  >
+                    <option value="responses">Responses API</option>
+                    <option value="chat_completions">
+                      OpenAI 兼容 Chat Completions
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  连接名称
+                  <input
+                    aria-label="连接名称"
+                    value={form.name}
+                    onChange={(e) => change({ name: e.target.value })}
+                  />
+                </label>
+              </div>
+            )}
+            <div className="ai-field-block model-field">
+              <div className="field-heading">
+                <label htmlFor="ai-model-select">回答模型</label>
+                <button
+                  type="button"
+                  className="model-refresh"
+                  disabled={!!busy || !canConnect}
+                  onClick={() => void discover()}
+                >
+                  <RefreshCw
+                    size={13}
+                    className={busy === "models" ? "spinning" : ""}
+                  />
+                  {busy === "models" ? "正在查询…" : "获取可用模型"}
+                </button>
+              </div>
+              <div className="model-picker-search">
+                <Search size={14} />
+                <input
+                  aria-label="搜索模型"
+                  placeholder="搜索模型名称…"
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setModelPage(0);
+                  }}
+                />
+                <span>
+                  {models
+                    ? "账户模型"
+                    : busy === "models"
+                      ? "正在查询"
+                      : "参考模型"}
+                </span>
+              </div>
+              <select
+                id="ai-model-select"
+                aria-label="回答模型"
+                value={custom ? "__custom__" : form.model_id}
+                onChange={(e) => {
+                  if (e.target.value === "__custom__") {
+                    setCustom(true);
+                    change({ model_id: "" });
+                  } else {
+                    setCustom(false);
+                    change({ model_id: e.target.value });
+                  }
+                }}
+              >
+                {missingSelected && !custom && (
+                  <option value={form.model_id}>
+                    {form.model_id} ·{" "}
+                    {models && !allModels.some((m) => m.id === form.model_id)
+                      ? "当前配置（列表未返回）"
+                      : "当前选择"}
+                  </option>
+                )}
+                {!form.model_id && !custom && (
+                  <option value="">请选择模型</option>
+                )}
+                <optgroup
+                  label={
+                    expandedModels
+                      ? "全部模型 · 当前页"
+                      : "常用回答模型 · 版本优先"
+                  }
+                >
+                  {choices.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.id}
+                    </option>
+                  ))}
+                </optgroup>
+                <option value="__custom__">＋ 自定义模型 ID…</option>
+              </select>
+              <div className="model-list-controls">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAllModels(!expandedModels);
+                    setQuery("");
+                    setModelPage(0);
+                  }}
+                >
+                  {expandedModels
+                    ? "收起其他模型"
+                    : `查看全部模型（${allModels.length}）`}
+                </button>
+                {expandedModels && pages > 1 && (
+                  <span>
+                    <button
+                      type="button"
+                      disabled={page === 0}
+                      onClick={() => setModelPage(page - 1)}
+                    >
+                      上一页
+                    </button>
+                    <small>
+                      {page + 1} / {pages}
+                    </small>
+                    <button
+                      type="button"
+                      disabled={page === pages - 1}
+                      onClick={() => setModelPage(page + 1)}
+                    >
+                      下一页
+                    </button>
+                  </span>
+                )}
+              </div>
+              {custom && (
+                <input
+                  aria-label="自定义模型 ID"
+                  className="custom-model-input"
+                  placeholder="填写服务提供的精确模型 ID"
+                  value={form.model_id}
+                  onChange={(e) => change({ model_id: e.target.value })}
+                />
+              )}
+              <div className="model-description">
+                <Sparkles size={15} />
+                <span>
+                  {selected?.description ||
+                    "模型的实际可用性由服务商和此 Key 的权限决定。"}
+                </span>
+              </div>
+              <p className="model-availability">
+                {models
+                  ? `已获取 ${models.length} 个模型，默认精简展示较新回答模型；其他模型可展开或搜索。`
+                  : "以下仅为参考 ID，尚未验证账户权限。获取可用模型后，以服务返回的列表为准。"}
+              </p>
+            </div>
+            <div className="ai-output-row">
+              <label>
+                回答长度
+                <select
+                  aria-label="回答长度"
+                  value={form.max_output_tokens}
+                  onChange={(e) =>
+                    change({ max_output_tokens: Number(e.target.value) })
+                  }
+                >
+                  {![1500, 2500, 4000, 8000].includes(
+                    form.max_output_tokens,
+                  ) && (
+                    <option value={form.max_output_tokens}>
+                      当前设置 · {form.max_output_tokens} tokens
+                    </option>
+                  )}
+                  <option value={1500}>简洁 · 1,500 tokens</option>
+                  <option value={2500}>标准 · 2,500 tokens</option>
+                  <option value={4000}>详细 · 4,000 tokens</option>
+                  <option value={8000}>深入分析 · 8,000 tokens</option>
+                </select>
+              </label>
+              <label className="project-ai-toggle">
+                <span>项目 AI</span>
+                <span>
+                  <input
+                    aria-label="启用项目 AI"
+                    type="checkbox"
+                    checked={form.enabled}
+                    onChange={(e) => change({ enabled: e.target.checked })}
+                  />
+                  {form.enabled ? "已启用" : "已关闭"}
+                </span>
+              </label>
+            </div>
+            <details className="ai-budget">
+              <summary>更多设置</summary>
+              <label className="check-line">
+                <input
+                  type="checkbox"
+                  checked={form.allow_external}
+                  onChange={(e) => change({ allow_external: e.target.checked })}
+                />
+                允许 AI 使用本项目获授权的相关内容
+              </label>
+              <p>
+                密钥保存在本机实例的数据目录。点击“保存并使用”将保存当前连接及填写的
+                Key。
+              </p>
+            </details>
+            {test && (
+              <div
+                className={
+                  "ai-test-result " + (test.ok ? "success" : "failure")
+                }
+                role="status"
+              >
+                {test.ok ? <CheckCircle2 size={17} /> : <X size={17} />}
+                <span>{test.text}</span>
+              </div>
+            )}
+            <footer className="ai-connection-footer">
+              <div>
+                <button
+                  type="button"
+                  disabled={!!busy || !canConnect || !form.model_id.trim()}
+                  onClick={() => void probe()}
+                >
+                  <Wifi size={15} />
+                  {busy === "test" ? "正在测试…" : "测试连接"}
+                </button>
+                <small>发送一条固定测试消息，产生少量模型用量</small>
+              </div>
+              <button
+                className="primary"
+                type="submit"
+                disabled={!!busy || !canConnect || !form.model_id.trim()}
+              >
+                <Save size={15} />
+                {busy === "save" ? "正在保存…" : "保存并使用"}
+              </button>
+            </footer>
+          </fieldset>
         </form>
       </div>
       <RAGSettings project={project} analysis={analysis} release={release} />

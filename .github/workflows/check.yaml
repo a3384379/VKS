@@ -57,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pytest-shard: [core, ui]
+        pytest-shard: [core, interactive-a, interactive-b, ui]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

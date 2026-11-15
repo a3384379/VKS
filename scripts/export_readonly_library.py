@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--release-id")
     parser.add_argument("--analysis-id")
     parser.add_argument("--include-source", action="store_true")
+    parser.add_argument("--document-mode", choices=("project", "original"), default="project")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
@@ -36,7 +37,8 @@ def main():
         job = service.export(
             owner,
             args.project_id,
-            {"release_id": release, "format": "readonly_html", "include_source": args.include_source},
+            {"release_id": release, "format": "readonly_html", "include_source": args.include_source,
+             "document_mode": args.document_mode},
             uid(),
         )
         print(json.dumps({"job_id": job["id"], "release_id": release, "state": "preparing"}), flush=True)

@@ -402,3 +402,38 @@ def test_native_index_modified_legacy_draft_fallback_and_missing_source_fail_clo
             key: value for key, value in artifact.metadata_json.items() if key != "original_artifact_id"
         }
     assert shared.catalog(owner, pid, aid)["documents"][0]["native_index_modified"] is True
+
+
+def test_document_reads_batch_exact_mapping_and_standard_view_skips_native_scan(materials, monkeypatch):
+    from sqlalchemy import event
+
+    _web, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    raw = zip_docs(
+        [(f"guide-{i}.md", f"# Guide {i}\n\n## First\n\nRule one.\n\n## Second\n\nRule two.") for i in range(30)]
+    )
+    package = test_materials.stage(service, owner, manager, pid, aid, "documents", raw, filename="guides.zip")
+    test_materials.activate(service, owner, manager, pid, aid, [package])
+    links = InteractiveKnowledgeService(service)
+    rid = links.catalog(owner, pid, aid)["documents"][0]["revision_id"]
+    queries = []
+
+    def count(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            queries.append(statement)
+
+    event.listen(service.engine, "before_cursor_execute", count)
+    try:
+        full = links.document(owner, pid, rid, aid)
+        assert len(queries) < 100, len(queries)
+        queries.clear()
+
+        def no_package_scan(*args):
+            raise AssertionError("Standard reading must not scan the entire native package")
+
+        monkeypatch.setattr(links, "_packages", no_package_scan)
+        standard = links.document(owner, pid, rid, aid, native=False)
+        assert standard["content"] == full["content"] and standard["sections"] == full["sections"]
+        assert standard["native"] is None and len(queries) < 45
+    finally:
+        event.remove(service.engine, "before_cursor_execute", count)

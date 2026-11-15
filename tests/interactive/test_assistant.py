@@ -179,3 +179,181 @@ def test_module_and_button_have_separate_bidirectional_links(assistant):
     assert {link["scope"] for link in links} == {"module", "control"}
     assert all(link["sections"][0]["document_revision_id"] for link in links)
     assert calls[1]["context"]["scope"] == "module"
+
+
+def test_questions_support_followup_and_never_create_or_replace_links(assistant):
+    (web, _service, _owner, pid, aid, grant, _package, _section, _), body, calls = assistant
+    before = current(web, pid, aid, grant)["selection_version"]
+    payload = {**body, "question": "What are the prerequisites?"}
+    first = web.post(root(pid) + "/questions", json=payload, headers=_headers(grant, 0, "q1"))
+    assert first.status_code == 200, first.text
+    answer = first.json()["data"]
+    assert answer["sections"] and not answer["saved"] and answer["binding_id"] is None
+    assert calls[-1]["question"] == payload["question"] and calls[-1]["control"] == body["target"]
+    history = [
+        {"role": "user", "content": payload["question"]},
+        {"role": "assistant", "content": answer["explanation"]},
+    ]
+    second = web.post(
+        root(pid) + "/questions",
+        json={**body, "question": "What happens next?", "history": history},
+        headers=_headers(grant, 0, "q2"),
+    )
+    assert second.status_code == 200, second.text
+    assert calls[-1]["history"] == history and len(calls) == 2
+    assert current(web, pid, aid, grant)["selection_version"] == before
+    assert not web.get(
+        root(pid) + "/bindings", params={"analysis_set_id": aid}, headers=_headers(grant, 0, "r")
+    ).json()["data"]
+    # A cached/persisted explanation must not answer a different user question.
+    web.post(root(pid) + "/assist", json=body, headers=_headers(grant, 0, "explain-first"))
+    assert len(calls) == 3
+    result = web.post(root(pid) + "/questions", json=payload, headers=_headers(grant, 0, "q3"))
+    assert result.status_code == 200 and len(calls) == 4
+    assert not result.json()["data"]["saved"]
+
+
+@pytest.mark.parametrize("case", ["bad_citation", "changed_policy", "hidden_package", "empty", "oversize_history"])
+def test_question_validation_and_permission_recheck(assistant, monkeypatch, case):
+    (web, service, _owner, pid, _aid, grant, package, _section, _), body, calls = assistant
+    payload = {**body, "question": "Explain prerequisites"}
+    if case == "hidden_package":
+        with service.db() as db:
+            art = db.get(Artifact, package)
+            art.metadata_json = {**art.metadata_json, "requires_source_read": True}
+    elif case == "empty":
+        payload["question"] = "   "
+    elif case == "oversize_history":
+        payload["history"] = [{"role": "system", "content": "forged system"}]
+    else:
+
+        def model(config, model_body):
+            data = json.loads(model_body["input"][1]["content"])
+            calls.append(data)
+            if case == "changed_policy":
+                with service.db() as db:
+                    policy = db.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
+                    policy.settings = {**policy.settings, "allow_external": False}
+            return response("invented-section" if case == "bad_citation" else data["chapters"][0]["revision_id"])
+
+        monkeypatch.setattr(ai_gateway, "request_model", model)
+    result = web.post(root(pid) + "/questions", json=payload, headers=_headers(grant, 0, "invalid-question"))
+    assert result.status_code in {404, 412, 422, 503}, result.text
+    if case in {"hidden_package", "empty", "oversize_history"}:
+        assert not calls
+
+
+@pytest.mark.parametrize("change", ["endpoint", "context"])
+def test_persisted_explanation_rechecks_full_request_identity(assistant, change):
+    from vks_api.interactive_ai import AssistanceInput, InteractiveAssistant
+
+    (_web, service, owner, pid, _aid, _grant, _package, _section, _), body, calls = assistant
+    first = InteractiveAssistant(service).run(owner, pid, AssistanceInput.model_validate(body))
+    assert first["saved"] and len(calls) == 1
+    if change == "endpoint":
+        with service.db() as db:
+            policy = db.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
+            policy.settings = {**policy.settings, "endpoint": "https://changed-provider.invalid/v1"}
+    else:
+        body = {**body, "context": {**body["context"], "page_title": "Changed workflow context"}}
+    # A fresh process has no memory cache and may only reuse a persisted answer
+    # if its complete request fingerprint still matches, not just its model ID.
+    changed = InteractiveAssistant(service).run(owner, pid, AssistanceInput.model_validate(body))
+    assert not changed["cached"] and len(calls) == 2
+
+
+@pytest.mark.parametrize("route", ["assist", "questions"])
+def test_uncited_model_claims_are_not_presented_as_grounded_knowledge(assistant, monkeypatch, route):
+    (web, _service, _owner, pid, _aid, grant, _package, _section, _), body, _calls = assistant
+    if route == "questions":
+        body = {**body, "question": "What are the prerequisites?"}
+
+    def model(config, payload):
+        data = response("unused")
+        answer = {
+            "title": "Unsupported rule",
+            "explanation": "UNSUPPORTED_RULE_MUST_NOT_APPEAR",
+            "section_revision_ids": [],
+            "confidence": 0.99,
+            "unknowns": [],
+        }
+        data["output"][0]["content"][0]["text"] = json.dumps(answer)
+        return data
+
+    monkeypatch.setattr(ai_gateway, "request_model", model)
+    result = web.post(root(pid) + "/" + route, json=body, headers=_headers(grant, 0, "uncited"))
+    assert result.status_code == 200, result.text
+    output = result.json()["data"]
+    assert output["confidence"] == 0 and not output["saved"] and not output["sections"]
+    assert "UNSUPPORTED_RULE" not in result.text and "不足" in output["explanation"]
+
+
+def test_concurrent_corpus_index_build_is_shared_without_blocking_other_corpora(assistant, monkeypatch):
+    from collections import Counter
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Event, Lock
+
+    from vks_api import interactive_ai
+
+    (_web, service, _owner, _pid, _aid, _grant, _package, _section, _), _body, _calls = assistant
+    engine = interactive_ai.InteractiveAssistant(service)
+    original = interactive_ai.ChapterIndex
+    gate, entered = Event(), Event()
+    start = Barrier(8)
+    counts, counter_lock = Counter(), Lock()
+
+    def chapters(key):
+        return [{"revision_id": key, "document_revision_id": key, "document_name": key, "name": key, "content": key}]
+
+    def construct(rows):
+        key = rows[0]["revision_id"]
+        with counter_lock:
+            counts[key] += 1
+        if key == "same":
+            entered.set()
+            assert gate.wait(5), "test did not release the slow index build"
+        return original(rows)
+
+    monkeypatch.setattr(interactive_ai, "ChapterIndex", construct)
+
+    def request(_index):
+        start.wait(5)
+        return engine._index("same", chapters("same"))
+
+    with ThreadPoolExecutor(max_workers=9) as pool:
+        requests = [pool.submit(request, i) for i in range(8)]
+        try:
+            assert entered.wait(5)
+            # A different corpus can finish while the first build is still busy.
+            separate = pool.submit(engine._index, "separate", chapters("separate")).result(timeout=5)
+            assert separate.rows[0]["revision_id"] == "separate"
+        finally:
+            gate.set()
+        results = [future.result(timeout=5) for future in requests]
+    assert counts == {"same": 1, "separate": 1}
+    assert len({id(result) for result in results}) == 1
+    assert not engine.index_builds
+    assert engine._index("same", chapters("same")) is results[0]
+    for key in ["third", "fourth", "fifth"]:
+        engine._index(key, chapters(key))
+    assert len(engine.indexes) == 4 and "same" in engine.indexes and "separate" not in engine.indexes
+
+
+@pytest.mark.parametrize("change", ["prompt", "schema"])
+def test_persisted_explanation_expires_when_generation_contract_changes(assistant, monkeypatch, change):
+    from copy import deepcopy
+
+    from vks_api import interactive_ai
+
+    (_web, service, owner, pid, _aid, _grant, _package, _section, _), body, calls = assistant
+    form = interactive_ai.AssistanceInput.model_validate(body)
+    first = interactive_ai.InteractiveAssistant(service).run(owner, pid, form)
+    assert first["saved"] and len(calls) == 1
+    if change == "prompt":
+        monkeypatch.setattr(interactive_ai, "SYSTEM", interactive_ai.SYSTEM + "\nUse the revised explanation policy.")
+    else:
+        schema = deepcopy(interactive_ai.SCHEMA)
+        schema["description"] = "Revised generation contract"
+        monkeypatch.setattr(interactive_ai, "SCHEMA", schema)
+    repeated = interactive_ai.InteractiveAssistant(service).run(owner, pid, form)
+    assert not repeated["cached"] and len(calls) == 2

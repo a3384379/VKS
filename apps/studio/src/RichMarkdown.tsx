@@ -4,6 +4,7 @@ import {
   createElement,
   isValidElement,
   lazy,
+  memo,
   Suspense,
   useContext,
   useEffect,
@@ -140,7 +141,7 @@ function remoteImage(source: string) {
   }
 }
 
-export function RichMarkdown({
+export const RichMarkdown = memo(function RichMarkdown({
   children,
   documentId,
   revisionId,
@@ -703,4 +704,4 @@ export function RichMarkdown({
       </ReactMarkdown>
     </div>
   );
-}
+});

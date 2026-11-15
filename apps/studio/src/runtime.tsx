@@ -57,6 +57,7 @@ export function OriginalRuntime({
   kind,
   storageScope,
   networkOrigins = [],
+  inventoryOnly = false,
   onEvent,
   handle,
 }: {
@@ -65,6 +66,7 @@ export function OriginalRuntime({
   kind: string;
   storageScope: RuntimeStorageScope;
   networkOrigins?: string[];
+  inventoryOnly?: boolean;
   onEvent: (e: RuntimeEvent) => void;
   handle: { current: RuntimeHandle | null };
 }) {
@@ -257,9 +259,17 @@ export function OriginalRuntime({
       )}
       <iframe
         ref={iframe}
-        title={kind === "prototype" ? "原 HTML 原型" : "原 HTML 手册"}
+        title={
+          inventoryOnly
+            ? "预扫描原型"
+            : kind === "prototype"
+              ? "原 HTML 原型"
+              : "原 HTML 手册"
+        }
+        tabIndex={inventoryOnly ? -1 : undefined}
         sandbox={
-          "allow-scripts allow-same-origin allow-modals allow-downloads" +
+          "allow-scripts allow-same-origin" +
+          (inventoryOnly ? "" : " allow-modals allow-downloads") +
           (kind === "prototype" ? "" : " allow-forms")
         }
       />

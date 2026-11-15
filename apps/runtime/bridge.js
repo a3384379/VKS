@@ -24,10 +24,14 @@
     documentURL = "";
   const registered = new WeakMap();
   const windows = new Map();
+  const ambiguousFrames = new Set();
   const histories = new WeakMap();
   const sourcePaths = new WeakMap();
   let documentNavigating = false,
-    lastDocument = null;
+    lastDocument = null,
+    inventoryGeneration = 0,
+    inventorySpec = null,
+    materialWrapper = null;
   const send = (type, payload = {}, request_id = "") =>
     port?.postMessage({
       protocol_version: 1,
@@ -44,12 +48,31 @@
       el.getClientRects().length &&
       getComputedStyle(el).visibility !== "hidden"
     );
+  const labelText = (child) =>
+    child.nodeType === 3
+      ? child.nodeValue
+      : child.nodeType === 1 &&
+          child.matches("input,select,textarea,script,style,[contenteditable]")
+        ? ""
+        : Array.from(child.childNodes).map(labelText).join("");
+  const fieldLabel = (el) => {
+    const node = el.labels?.[0];
+    if (!node) return "";
+    return labelText(node).trim();
+  };
   const label = (el) =>
     (
       el.getAttribute("aria-label") ||
       el.getAttribute("title") ||
+      (el.matches("input,select,textarea") ? fieldLabel(el) : "") ||
       el.getAttribute("placeholder") ||
-      el.textContent?.trim() ||
+      (!el.matches("input,select,textarea") ? labelText(el).trim() : "") ||
+      (el.matches(
+        'input[type="submit"],input[type="button"],input[type="reset"]',
+      )
+        ? el.value
+        : "") ||
+      (el.matches("input,select,textarea") ? el.name : "") ||
       (el.matches(".el-switch,.el-radio,.el-checkbox")
         ? el.parentElement?.textContent?.trim()
         : "") ||
@@ -213,7 +236,10 @@
     }
     const own = win.__prototypePackPage;
     route = own?.path ? "/" + own.path.replace(/^\//, "") : route;
-    windows.set(path.join("/"), { win, route, path });
+    const windowKey = JSON.stringify(path);
+    if (windows.has(windowKey) && windows.get(windowKey).win !== win)
+      ambiguousFrames.add(windowKey);
+    windows.set(windowKey, { win, route, path });
     if (documentMode) {
       installDocument(win, route);
       for (const child of doc.querySelectorAll("iframe")) {
@@ -659,7 +685,267 @@
   function scan() {
     if (loaded) {
       windows.clear();
+      ambiguousFrames.clear();
       install(frame.contentWindow, [], "/");
+    }
+  }
+  async function inventory(payload, request) {
+    const route = payload?.route;
+    const path = payload?.frame_path;
+    const scanId = payload?.scan_id;
+    if (
+      documentMode ||
+      !loaded ||
+      typeof scanId !== "string" ||
+      scanId.length > 100 ||
+      typeof route !== "string" ||
+      !route.startsWith("/") ||
+      route.length > 1000 ||
+      !Array.isArray(path) ||
+      path.length > 8 ||
+      path.some(
+        (part) => typeof part !== "string" || !part || part.length > 160,
+      ) ||
+      !inventorySpec?.pages.some(
+        (page) =>
+          page.route === route &&
+          JSON.stringify(page.frame_path) === JSON.stringify(path),
+      )
+    )
+      return;
+    const generation = ++inventoryGeneration;
+    ++navigation;
+    picking = false;
+    const started = performance.now();
+    let observed = null,
+      changedAt = started,
+      observing = [],
+      lastFingerprint = "";
+    const samePrefix = (actual) =>
+      path.every((part, index) => part === actual[index]);
+    const activeWindow = (entry) => {
+      try {
+        if (
+          entry.route !== route ||
+          !samePrefix(entry.path) ||
+          entry.path.some((_, index) =>
+            ambiguousFrames.has(JSON.stringify(entry.path.slice(0, index + 1))),
+          ) ||
+          !entry.win.document.body ||
+          entry.win.document.readyState === "loading"
+        )
+          return false;
+        for (let win = entry.win; win !== window; win = win.parent)
+          if (!win.frameElement || !visible(win.frameElement)) return false;
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const candidates = () => Array.from(windows.values()).filter(activeWindow);
+    const shown = (node) => {
+      if (
+        !visible(node) ||
+        !Array.from(node.getClientRects()).some(
+          (rect) => rect.width > 0 && rect.height > 0,
+        )
+      )
+        return false;
+      // Vue keeps a leaving loading mask in the DOM while its opacity is zero.
+      // Such a completed transition is not an active loading state.
+      for (let parent = node; parent; parent = parent.parentElement)
+        if (Number(getComputedStyle(parent).opacity) === 0) return false;
+      return true;
+    };
+    const mountPending = (doc) => {
+      if (doc.readyState !== "complete") return true;
+      if (
+        Array.from(
+          doc.querySelectorAll(
+            '[aria-busy="true"],.el-loading-mask,.ant-spin-spinning,.ant-skeleton,.skeleton,[data-loading="true"]',
+          ),
+        ).some(shown)
+      )
+        return true;
+      for (const root of doc.querySelectorAll("#app,#root,[data-v-app]")) {
+        if (!visible(root)) continue;
+        const text = labelText(root).trim();
+        if (
+          /^(loading[.\s…]*|正在加载[.。\s…]*|加载中[.。\s…]*|请稍候[.。\s…]*)$/i.test(
+            text,
+          )
+        )
+          return true;
+        if (
+          !text &&
+          !root.querySelector(
+            "button,a,input,select,textarea,img,svg,canvas,table,article,h1,h2,h3,p,ul,ol",
+          )
+        )
+          return true;
+      }
+      return false;
+    };
+    const result = (status, targets, count, unverified, message = "") =>
+      send(
+        "inventory.result",
+        {
+          scan_id: scanId,
+          route,
+          frame_path: path,
+          status,
+          targets,
+          observed: count,
+          truncated: Math.max(0, count - targets.length),
+          unverified_frames: unverified,
+          message,
+        },
+        request,
+      );
+    try {
+      scan();
+      // Current pages are observed directly. Cross-page navigation is limited
+      // to a declared page in a recognized wrapper; arbitrary source globals
+      // with the same function name must never become navigation commands.
+      let navigated = false;
+      while (
+        generation === inventoryGeneration &&
+        performance.now() - started < 10000
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (generation !== inventoryGeneration) return;
+        scan();
+        const entries = candidates();
+        if (!entries.length && !navigated) {
+          const pack = Array.from(windows.values()).find((entry) => {
+            const doc = entry.win.document;
+            return (
+              entry.path.length === 0 &&
+              entry.win === frame.contentWindow &&
+              materialWrapper === inventorySpec.format &&
+              doc.querySelector("iframe#actualPage") &&
+              typeof entry.win.__prototypePack?.show === "function"
+            );
+          });
+          if (pack) {
+            navigated = true;
+            pack.win.__prototypePack.show(route.replace(/^\//, ""));
+            continue;
+          }
+        }
+        if (!entries.length) continue;
+        const docs = entries.map((entry) => entry.win.document);
+        if (
+          !observed ||
+          docs.length !== observed.length ||
+          docs.some((doc, index) => doc !== observed[index])
+        ) {
+          observing.forEach((observer) => observer.disconnect());
+          observed = docs;
+          changedAt = performance.now();
+          observing = docs.map((doc) => {
+            const observer = new MutationObserver(() => {
+              changedAt = performance.now();
+            });
+            observer.observe(doc.body, {
+              childList: true,
+              subtree: true,
+              characterData: true,
+              attributes: true,
+            });
+            return observer;
+          });
+        }
+        if (docs.some(mountPending)) {
+          changedAt = performance.now();
+          continue;
+        }
+        const items = [],
+          seen = new Set();
+        let unverified = 0;
+        for (const entry of entries) {
+          const doc = entry.win.document;
+          const module = moduleContext(entry.win, entry.path, route).target;
+          items.push({ ...module, open_steps: [] });
+          for (const node of doc.querySelectorAll(actionable)) {
+            if (
+              !shown(node) ||
+              node.matches("label") ||
+              (editable(node) && node.isContentEditable)
+            )
+              continue;
+            const item = target(node, entry.win, entry.path, route);
+            item.open_steps = [];
+            const key = JSON.stringify([
+              item.frame_path,
+              item.selector,
+              item.state,
+            ]);
+            if (!seen.has(key) && item.selector.length <= 2000) {
+              seen.add(key);
+              items.push(item);
+            }
+          }
+          for (const child of doc.querySelectorAll("iframe")) {
+            if (!visible(child)) continue;
+            if (
+              ambiguousFrames.has(
+                JSON.stringify([
+                  ...entry.path,
+                  child.id || child.title || "frame",
+                ]),
+              )
+            ) {
+              unverified++;
+              continue;
+            }
+            try {
+              if (!child.contentWindow?.document?.body) unverified++;
+            } catch {
+              unverified++;
+            }
+          }
+        }
+        const fingerprint = JSON.stringify(items);
+        if (fingerprint !== lastFingerprint) {
+          changedAt = performance.now();
+          lastFingerprint = fingerprint;
+        }
+        // Empty app mounts need a longer quiet interval than populated pages.
+        const minimum = items.some((item) => item.selector !== "body")
+          ? 700
+          : 2000;
+        if (
+          performance.now() - started < minimum ||
+          performance.now() - changedAt < 500
+        )
+          continue;
+        if (
+          !items.some(
+            (item) =>
+              item.selector === "body" &&
+              JSON.stringify(item.frame_path) === JSON.stringify(path),
+          )
+        ) {
+          result(
+            "failed",
+            [],
+            0,
+            unverified,
+            "声明模块的实际 frame 未能准确加载",
+          );
+          return;
+        }
+        result("captured", items.slice(0, 1500), items.length, unverified);
+        return;
+      }
+      if (generation === inventoryGeneration)
+        result("failed", [], 0, 0, "页面未在时限内稳定或声明页面尚未加载");
+    } catch (error) {
+      if (generation === inventoryGeneration)
+        result("failed", [], 0, 0, error.message || "页面扫描失败");
+    } finally {
+      observing.forEach((observer) => observer.disconnect());
     }
   }
   window.addEventListener("message", (event) => {
@@ -684,6 +970,29 @@
         data.payload?.bytes instanceof ArrayBuffer &&
         data.payload.bytes.byteLength <= 80 * 1024 * 1024
       ) {
+        ++inventoryGeneration;
+        inventorySpec = null;
+        materialWrapper = null;
+        if (!documentMode) {
+          // Bind the wrapper fact to this verified material transfer. Charge
+          // startup removes its inert payload node, so live DOM is insufficient.
+          const parsed = new DOMParser().parseFromString(
+            new TextDecoder().decode(data.payload.bytes),
+            "text/html",
+          );
+          if (
+            parsed.querySelector('script#vks-site[type="application/json"]') &&
+            parsed.querySelector("iframe#actualPage")
+          )
+            materialWrapper = "static-site";
+          else if (
+            parsed.querySelector(
+              'script#prototypePackPayload[type="application/octet-stream"]',
+            ) &&
+            parsed.querySelector("iframe#actualPage")
+          )
+            materialWrapper = "charge-prototype";
+        }
         if (documentMode) {
           // Native submit listeners must run; CSP form-action 'none' still
           // prevents a form from navigating or sending its fields directly.
@@ -698,6 +1007,36 @@
         document.querySelector("#status").hidden = true;
         loaded = true;
         send("material.loaded");
+      } else if (data.type === "inventory.configure") {
+        const p = data.payload;
+        if (
+          !documentMode &&
+          p &&
+          ["html", "static-site", "charge-prototype"].includes(p.format) &&
+          Array.isArray(p.pages) &&
+          p.pages.length <= 10000 &&
+          p.pages.every(
+            (page) =>
+              typeof page.route === "string" &&
+              page.route.startsWith("/") &&
+              page.route.length <= 1000 &&
+              Array.isArray(page.frame_path) &&
+              page.frame_path.length <= 8 &&
+              page.frame_path.every(
+                (part) =>
+                  typeof part === "string" &&
+                  part.length > 0 &&
+                  part.length <= 160,
+              ),
+          )
+        ) {
+          ++inventoryGeneration;
+          inventorySpec = p;
+        }
+      } else if (data.type === "inventory.scan") {
+        await inventory(data.payload, data.request_id);
+      } else if (data.type === "inventory.cancel") {
+        ++inventoryGeneration;
       } else if (data.type === "knowledge.request") {
         if (documentMode) return;
         const c =

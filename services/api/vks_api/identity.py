@@ -111,6 +111,9 @@ def verify_password(password, stored):
 
 
 def ensure_owner(service, session):
+    owner = session.get(UserIdentity, service.owner_id)
+    if owner:
+        return owner
     if service.engine.dialect.name == "postgresql":
         key = int.from_bytes(hashlib.sha256(service.owner_id.encode()).digest()[:8], "big", signed=True)
         session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
@@ -239,36 +242,49 @@ def password_login(service, username, password):
 
 
 def authenticate(service, secret, kind=None):
-    from .service import Actor
+    from .reading import ReadingService
 
     if not secret:
         raise _error("VKS_UNAUTHENTICATED", "请先登录或提供项目访问令牌", 401)
+    # Credential checks are reads. Waiting for the mutation lock here made
+    # every GET queue behind indexing/association writes despite read-only APIs.
+    with ReadingService(service).db() as session:
+        if session.get(UserIdentity, service.owner_id):
+            return _authenticate_credential(service, session, secret, kind)
+    # A pre-team database may still need its one-time owner/token migration.
     with service.db() as session:
         ensure_owner(service, session)
-        credential = session.scalar(select(Credential).where(Credential.token_hash == _digest(secret)))
-        if not credential or credential.revoked or credential.expires_at <= now() or (kind and credential.kind != kind):
+    with ReadingService(service).db() as session:
+        return _authenticate_credential(service, session, secret, kind)
+
+
+def _authenticate_credential(service, session, secret, kind):
+    from .service import Actor
+
+    credential = session.scalar(select(Credential).where(Credential.token_hash == _digest(secret)))
+    if not credential or credential.revoked or credential.expires_at <= now() or (kind and credential.kind != kind):
+        raise _error("VKS_UNAUTHENTICATED", "会话或令牌已失效", 401)
+    if credential.kind == "session":
+        identity = _active_identity(service, session, credential.actor_id)
+        scopes = human_scopes(service, session, identity)
+    else:
+        owner = session.get(MachineOwner, credential.id)
+        # All pre-team tokens were issued by the persisted bootstrap owner.
+        owner_id = owner.user_id if owner else service.owner_id
+        _active_identity(service, session, owner_id)
+        member = session.get(Member, (credential.project_id, owner_id))
+        grants = member_permissions(service, session, member)
+        if not grants:
             raise _error("VKS_UNAUTHENTICATED", "会话或令牌已失效", 401)
-        if credential.kind == "session":
-            identity = _active_identity(service, session, credential.actor_id)
-            scopes = human_scopes(service, session, identity)
-        else:
-            owner = session.get(MachineOwner, credential.id)
-            # All pre-team tokens were issued by the persisted bootstrap owner.
-            owner_id = owner.user_id if owner else service.owner_id
-            _active_identity(service, session, owner_id)
-            member = session.get(Member, (credential.project_id, owner_id))
-            grants = member_permissions(service, session, member)
-            if not grants:
-                raise _error("VKS_UNAUTHENTICATED", "会话或令牌已失效", 401)
-            scopes = set(credential.scopes) & grants
-        return Actor(
-            credential.actor_id,
-            frozenset(scopes),
-            credential.kind == "session",
-            credential.project_id,
-            credential.id,
-            credential.csrf_token,
-        )
+        scopes = set(credential.scopes) & grants
+    return Actor(
+        credential.actor_id,
+        frozenset(scopes),
+        credential.kind == "session",
+        credential.project_id,
+        credential.id,
+        credential.csrf_token,
+    )
 
 
 def authorize_project(service, session, actor, project_id, scope):

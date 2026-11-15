@@ -300,23 +300,180 @@ function diagram(source) {
   return figure;
 }
 function imageDialog(uri, alt) {
+  const openedAt = performance.now();
+  const previous = document.activeElement;
+  document.querySelector(".md-image-dialog")?.close();
   const dialog = element("dialog", {
     class: "md-image-dialog",
     "aria-label": alt || "查看大图",
   });
-  const close = element(
-    "button",
-    { type: "button", "aria-label": "关闭大图" },
-    "关闭",
-  );
-  close.addEventListener("click", () => dialog.close());
-  dialog.addEventListener("close", () => dialog.remove());
-  dialog.addEventListener("click", (event) => {
-    if (event.target === dialog) dialog.close();
+  const image = element("img", {
+    src: uri,
+    alt: alt || "文档图片",
+    draggable: "false",
   });
-  dialog.append(close, element("img", { src: uri, alt: alt || "文档图片" }));
+  const canvas = element("div", {
+    class: "md-image-canvas",
+    tabindex: "0",
+    role: "region",
+    "aria-label": "图片平移缩放画布",
+  });
+  const toolbar = element("div", { class: "md-image-toolbar" });
+  let zoom = 1,
+    x = 0,
+    y = 0,
+    fitWidth = 1,
+    fitHeight = 1,
+    dragging = null;
+  const percent = element(
+    "output",
+    { "aria-live": "polite", "aria-label": "图片缩放比例" },
+    "100%",
+  );
+  function paint() {
+    const maxX = (canvas.clientWidth + fitWidth * zoom) / 2 - 32;
+    const maxY = (canvas.clientHeight + fitHeight * zoom) / 2 - 32;
+    x = Math.max(-maxX, Math.min(maxX, x));
+    y = Math.max(-maxY, Math.min(maxY, y));
+    Object.assign(image.style, {
+      width: fitWidth + "px",
+      height: fitHeight + "px",
+      transform: `translate(-50%, -50%) translate(${x}px, ${y}px) scale(${zoom})`,
+    });
+    percent.textContent = Math.round(zoom * 100) + "%";
+  }
+  function fit() {
+    const ratio = Math.min(
+      1,
+      (canvas.clientWidth - 24) / (image.naturalWidth || 1),
+      (canvas.clientHeight - 24) / (image.naturalHeight || 1),
+    );
+    fitWidth = Math.max(1, (image.naturalWidth || 1) * ratio);
+    fitHeight = Math.max(1, (image.naturalHeight || 1) * ratio);
+    zoom = 1;
+    x = 0;
+    y = 0;
+    paint();
+  }
+  function scale(next, clientX, clientY) {
+    next = Math.max(0.2, Math.min(8, next));
+    const rect = canvas.getBoundingClientRect();
+    const px =
+      (clientX ?? rect.left + rect.width / 2) - rect.left - rect.width / 2;
+    const py =
+      (clientY ?? rect.top + rect.height / 2) - rect.top - rect.height / 2;
+    x = px - ((px - x) * next) / zoom;
+    y = py - ((py - y) * next) / zoom;
+    zoom = next;
+    paint();
+  }
+  const control = (label, text, action) => {
+    const button = element(
+      "button",
+      { type: "button", "aria-label": label },
+      text,
+    );
+    button.addEventListener("click", action);
+    return button;
+  };
+  const close = control("关闭大图", "关闭", () => dialog.close());
+  toolbar.append(
+    control("缩小图片", "−", () => scale(zoom / 1.25)),
+    percent,
+    control("放大图片", "＋", () => scale(zoom * 1.25)),
+    control("复位图片", "复位", fit),
+    close,
+  );
+  image.addEventListener("load", fit);
+  image.addEventListener("dragstart", (event) => event.preventDefault());
+  canvas.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const units =
+        event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? canvas.clientHeight
+            : 1;
+      scale(
+        zoom *
+          Math.exp(
+            -Math.max(-160, Math.min(160, event.deltaY * units)) * 0.0025,
+          ),
+        event.clientX,
+        event.clientY,
+      );
+    },
+    { passive: false },
+  );
+  canvas.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || dragging) return;
+    event.preventDefault();
+    canvas.focus({ preventScroll: true });
+    dragging = {
+      id: event.pointerId,
+      px: event.clientX,
+      py: event.clientY,
+      x,
+      y,
+    };
+    canvas.classList.add("dragging");
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!dragging || event.pointerId !== dragging.id) return;
+    x = dragging.x + event.clientX - dragging.px;
+    y = dragging.y + event.clientY - dragging.py;
+    paint();
+  });
+  const release = (event) => {
+    if (!dragging || event.pointerId !== dragging.id) return;
+    dragging = null;
+    canvas.classList.remove("dragging");
+  };
+  canvas.addEventListener("pointerup", release);
+  canvas.addEventListener("pointercancel", release);
+  canvas.addEventListener("lostpointercapture", release);
+  canvas.addEventListener("dblclick", fit);
+  canvas.addEventListener("keydown", (event) => {
+    const delta = {
+      ArrowLeft: [-40, 0],
+      ArrowRight: [40, 0],
+      ArrowUp: [0, -40],
+      ArrowDown: [0, 40],
+    }[event.key];
+    if (delta) {
+      event.preventDefault();
+      x += delta[0];
+      y += delta[1];
+      paint();
+    } else if (["+", "=", "-", "0", "Home"].includes(event.key)) {
+      event.preventDefault();
+      if (["0", "Home"].includes(event.key)) fit();
+      else scale(event.key === "-" ? zoom / 1.25 : zoom * 1.25);
+    }
+  });
+  const resize = new ResizeObserver(fit);
+  dialog.addEventListener("close", () => {
+    resize.disconnect();
+    dialog.remove();
+    previous?.isConnected && previous.focus?.({ preventScroll: true });
+  });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog && performance.now() - openedAt > 350)
+      dialog.close();
+  });
+  canvas.append(image);
+  dialog.append(
+    toolbar,
+    canvas,
+    element("p", { class: "md-image-help" }, "拖动平移 · 滚轮缩放 · 双击复位"),
+  );
   document.body.append(dialog);
   dialog.showModal();
+  resize.observe(canvas);
+  if (image.complete) fit();
 }
 function math(source, display) {
   const node = element(display ? "div" : "span", {

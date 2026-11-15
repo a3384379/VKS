@@ -153,6 +153,8 @@ def test_native_handbook_home_controls_fake_ai_storage_reader_switch_and_exact_l
             source = source_frame(page)
             expect(source.get_by_text("Original entry home", exact=True)).to_be_in_viewport(timeout=30000)
             expect(source.locator("#first")).not_to_be_in_viewport()
+            expect(page.locator(".document-reader")).to_have_count(0)
+            expect(page.locator(".document-library .markdown")).to_have_count(0)
             assert (
                 source.locator("#cover").evaluate("node=>getComputedStyle(node).backgroundColor") == "rgb(17, 34, 51)"
             )
@@ -163,12 +165,17 @@ def test_native_handbook_home_controls_fake_ai_storage_reader_switch_and_exact_l
             ).click()
             expect(page).to_have_url(re.compile(r"(?:[#&])doc=" + re.escape(document["revision_id"]) + r"(?:&|$)"))
             expect(page).to_have_url(re.compile(r"(?:[#&])section=" + re.escape(exact["revision_id"]) + r"(?:&|$)"))
+            expect(page.locator(".document-reader")).to_have_count(0)
+            expect(page.locator(".document-library .markdown")).to_have_count(0)
             page.get_by_role("button", name="标准阅读", exact=True).click()
             expect(page.locator(".document-reader .chapter-selected")).to_have_attribute(
                 "id", "section-" + exact["revision_id"]
             )
+            expect(page.locator(".document-reader .markdown")).to_be_visible()
             page.get_by_role("button", name="原样文档", exact=True).click()
             expect(source.get_by_role("heading", name="Exact rule", exact=True)).to_be_in_viewport()
+            expect(page.locator(".document-reader")).to_have_count(0)
+            expect(page.locator(".document-library .markdown")).to_have_count(0)
             source.get_by_label("Original search", exact=True).fill("Own directory search")
             source.get_by_role("button", name="Search original", exact=True).click()
             expect(source.locator("#search-output")).to_have_text("Original result: Own directory search")

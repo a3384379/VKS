@@ -184,3 +184,22 @@ def test_failures_are_clear_versions_are_checked_and_foreign_profiles_hidden(sit
     assert web.post(f"/api/v1/projects/{other}/model-connections/models", json=body, headers=headers).status_code == 404
     bad = web.post(base + "/models", json=form("https://secret:password@example.invalid/v1"), headers=headers)
     assert bad.status_code == 422
+
+
+def test_model_catalog_rechecks_project_permission_after_network_response(site, upstream, monkeypatch):
+    from vks_api.model_connections import ConnectionService
+    from vks_api.models import Member
+
+    web, service, owner, pid, headers = site
+    endpoint, _requests, _state = upstream
+
+    def revoked_before_return(*args):
+        with service.db() as db:
+            member = db.get(Member, (pid, owner.id))
+            member.status = "inactive"
+        return {"data": [{"id": "PRIVATE_ACCOUNT_MODEL_MUST_NOT_LEAK"}]}
+
+    monkeypatch.setattr(ConnectionService, "_request", revoked_before_return)
+    result = web.post(f"/api/v1/projects/{pid}/model-connections/models", json=form(endpoint), headers=headers)
+    assert result.status_code in {403, 404}, result.text
+    assert "PRIVATE_ACCOUNT_MODEL_MUST_NOT_LEAK" not in result.text

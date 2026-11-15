@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { build, transform } from "esbuild";
+import "./reader_handbook.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const output = path.join(root, "services/api/vks_api/reader_assets");
@@ -17,6 +18,14 @@ const options = {
   metafile: true,
   legalComments: "eof",
 };
+const assistant = await build({
+  ...options,
+  entryPoints: [path.join(root, "scripts/reader_assistant.mjs")],
+});
+await fs.writeFile(
+  path.join(output, "assistant-runtime.js"),
+  assistant.outputFiles[0].text.replace(/<\/script/gi, "<\\/script"),
+);
 const diagrams = await build({
   ...options,
   entryPoints: [path.join(root, "scripts/reader_diagram.mjs")],

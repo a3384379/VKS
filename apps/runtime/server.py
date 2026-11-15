@@ -11,11 +11,27 @@ import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import RLock
+from time import monotonic
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).parent
 POLICY = "default-src 'none'; script-src 'self' blob: 'unsafe-inline' 'unsafe-eval'; style-src blob: data: 'unsafe-inline'; img-src blob: data:; font-src data: blob:; frame-src 'self' about: blob:; worker-src blob:; connect-src 'none'; form-action 'none'; object-src 'none'; base-uri 'none'"
 REGISTRY_LOCK = RLock()
+MAX_REGISTRATIONS = 2048
+REGISTRATION_TTL = 24 * 60 * 60
+
+
+def registrations(server):
+    """Bound pending/reload capabilities without changing persistent origins."""
+    if not hasattr(server, "runtime_registrations"):
+        server.runtime_registrations = {}
+    rows = server.runtime_registrations
+    cutoff = monotonic() - REGISTRATION_TTL
+    # Insertion order follows the monotonic creation clock. No source page is
+    # retained here, and expiring a token does not erase its origin's storage.
+    while rows and next(iter(rows.values()))["created_at"] <= cutoff:
+        rows.pop(next(iter(rows)))
+    return rows
 
 
 def external_origin(value):
@@ -195,10 +211,17 @@ class RuntimeHandler(BaseHTTPRequestHandler):
                     + ".localhost"
                 )
                 token = secrets.token_urlsafe(32)
-                record = {"host": origin, "hostname": name, "mode": mode, "networkOrigins": origins}
-                if not hasattr(self.server, "runtime_registrations"):
-                    self.server.runtime_registrations = {}
-                self.server.runtime_registrations[token] = record
+                record = {
+                    "host": origin,
+                    "hostname": name,
+                    "mode": mode,
+                    "networkOrigins": origins,
+                    "created_at": monotonic(),
+                }
+                rows = registrations(self.server)
+                while len(rows) >= MAX_REGISTRATIONS:
+                    rows.pop(next(iter(rows)))
+                rows[token] = record
             self.json_response(
                 200, {"origin": f"http://{name}:{self.server.server_port}", "registration": token}, origin
             )
@@ -225,7 +248,7 @@ class RuntimeHandler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             token = params.get("registration", [""])[0]
             with REGISTRY_LOCK:
-                record = getattr(self.server, "runtime_registrations", {}).get(token)
+                record = registrations(self.server).get(token)
             if not record or record["hostname"] != hostname:
                 self.send_error(403)
                 return

@@ -26,7 +26,10 @@ INVALID_USAGE = [
     {"input_tokens": None, "output_tokens": 100},
     {"prompt_tokens": 100, "completion_tokens": -1},
     {"input_tokens": None, "prompt_tokens": 100, "output_tokens": 1},
-    {}, None, [], "untrusted usage",
+    {},
+    None,
+    [],
+    "untrusted usage",
 ]
 
 
@@ -38,15 +41,22 @@ def sent_response(c, monkeypatch, kind, usage, *, protocol="responses", invalid_
     with c.s.db() as s:
         policy = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == c.p))
         policy.settings = dict(
-            policy.settings, protocol=protocol,
-            input_rate_micro_per_million=1000000, output_rate_micro_per_million=2000000,
+            policy.settings,
+            protocol=protocol,
+            input_rate_micro_per_million=1000000,
+            output_rate_micro_per_million=2000000,
         )
 
     def response(config, body):
         sent.append(body)
-        fixture_body = body if protocol == "responses" else {
-            "input": body["messages"], "text": {"format": body["response_format"]["json_schema"]},
-        }
+        fixture_body = (
+            body
+            if protocol == "responses"
+            else {
+                "input": body["messages"],
+                "text": {"format": body["response_format"]["json_schema"]},
+            }
+        )
         result = original(config, fixture_body)
         if invalid_output:
             answer = json.loads(result["output"][0]["content"][0]["text"])
@@ -69,11 +79,17 @@ def charge(c):
         usage = s.scalar(select(ModelUsage).where(ModelUsage.project_id == c.p))
         ledger = s.get(ModelLedger, usage.ledger_id)
         return {
-            "state": usage.state, "error": usage.error_code,
-            "input": usage.input_tokens, "output": usage.output_tokens, "cost": usage.cost_micro,
-            "reservation_tokens": usage.reservation_tokens, "reservation_cost": usage.reservation_cost_micro,
-            "reserved_tokens": ledger.reserved_tokens, "reserved_cost": ledger.reserved_cost_micro,
-            "spent_tokens": ledger.spent_tokens, "spent_cost": ledger.spent_cost_micro,
+            "state": usage.state,
+            "error": usage.error_code,
+            "input": usage.input_tokens,
+            "output": usage.output_tokens,
+            "cost": usage.cost_micro,
+            "reservation_tokens": usage.reservation_tokens,
+            "reservation_cost": usage.reservation_cost_micro,
+            "reserved_tokens": ledger.reserved_tokens,
+            "reserved_cost": ledger.reserved_cost_micro,
+            "spent_tokens": ledger.spent_tokens,
+            "spent_cost": ledger.spent_cost_micro,
         }
 
 
@@ -89,7 +105,10 @@ def assert_no_resend(c, tasks, job, sent):
 @pytest.mark.parametrize("kind", KINDS)
 @pytest.mark.parametrize("usage", INVALID_USAGE)
 def test_invalid_or_missing_sent_usage_settles_full_reservation_and_retains_one_call(
-    audit_store, monkeypatch, kind, usage,
+    audit_store,
+    monkeypatch,
+    kind,
+    usage,
 ):
     c = audit_store
     sent = sent_response(c, monkeypatch, kind, usage)
@@ -109,13 +128,21 @@ def test_invalid_or_missing_sent_usage_settles_full_reservation_and_retains_one_
 
 @pytest.mark.parametrize("kind", KINDS)
 @pytest.mark.parametrize("protocol", ["responses", "chat_completions"])
-@pytest.mark.parametrize("usage,expected", [
-    ({"input_tokens": 321, "output_tokens": 17}, (321, 17)),
-    ({"prompt_tokens": 321, "completion_tokens": 17}, (321, 17)),
-    ({"input_tokens": 0, "output_tokens": 0}, (0, 0)),
-])
+@pytest.mark.parametrize(
+    "usage,expected",
+    [
+        ({"input_tokens": 321, "output_tokens": 17}, (321, 17)),
+        ({"prompt_tokens": 321, "completion_tokens": 17}, (321, 17)),
+        ({"input_tokens": 0, "output_tokens": 0}, (0, 0)),
+    ],
+)
 def test_valid_sent_usage_still_charges_exact_pair_on_invalid_output(
-    audit_store, monkeypatch, kind, protocol, usage, expected,
+    audit_store,
+    monkeypatch,
+    kind,
+    protocol,
+    usage,
+    expected,
 ):
     c = audit_store
     sent = sent_response(c, monkeypatch, kind, usage, protocol=protocol, invalid_output=True)
@@ -133,24 +160,31 @@ def test_valid_sent_usage_still_charges_exact_pair_on_invalid_output(
 
 
 @pytest.mark.parametrize("kind", KINDS)
-@pytest.mark.parametrize("usage", [
-    {"input_tokens": 100001, "output_tokens": 1},
-    {"input_tokens": 321, "output_tokens": 2001},
-    {"input_tokens": 1000000000, "output_tokens": 1},
-])
-def test_complete_bounded_usage_above_task_budget_is_charged_as_known_actual_usage(
-    audit_store, monkeypatch, kind, usage,
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {"input_tokens": 100001, "output_tokens": 1},
+        {"input_tokens": 321, "output_tokens": 2001},
+        {"input_tokens": 1000000000, "output_tokens": 1},
+    ],
+)
+def test_valid_usage_above_retired_limits_is_recorded_without_rejecting_result(
+    audit_store,
+    monkeypatch,
+    kind,
+    usage,
 ):
     c = audit_store
     sent = sent_response(c, monkeypatch, kind, usage)
     tasks, job = make_task(c, kind)
     c.s.process_job(job["id"])
     result = tasks.get(c.owner, job["id"])
-    assert result["state"] == "failed" and result["error"]["code"] == "VKS_LIMIT_EXCEEDED"
+    assert result["state"] == "succeeded", result.get("error")
     settled = charge(c)
     assert (settled["input"], settled["output"]) == (usage["input_tokens"], usage["output_tokens"])
     assert settled["spent_tokens"] == usage["input_tokens"] + usage["output_tokens"]
     assert settled["spent_cost"] == usage["input_tokens"] + 2 * usage["output_tokens"]
-    assert settled["state"] == "failed" and settled["reserved_tokens"] == settled["reserved_cost"] == 0
-    assert_no_resend(c, tasks, job, sent)
+    assert settled["state"] == "succeeded" and settled["reserved_tokens"] == settled["reserved_cost"] == 0
+    c.s.process_job(job["id"])
+    assert len(sent) == 1
     assert charge(c) == settled

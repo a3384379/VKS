@@ -180,14 +180,13 @@ def test_manifest_no_llm_is_enforced_before_any_model_request(system):
     assert result["model_id"] == "none:insufficient-evidence" and not requests
 
 
-def test_unregistered_origin_and_budget_block_before_network(system):
+def test_unregistered_origin_is_blocked_but_legacy_daily_quota_does_not_block_calls(system):
     s, a, p, aid, ai, requests, response, config = system
     with pytest.raises(DomainError):
         ai.set_policy(a, p["id"], {**config, "endpoint": "http://169.254.169.254"}, 2)
     ai.set_policy(a, p["id"], {**config, "daily_token_limit": 1000}, 2)
-    with pytest.raises(DomainError) as e:
-        ai.run(a, p["id"], "规则", analysis_set_id=aid)
-    assert e.value.code == "VKS_LIMIT_EXCEEDED" and not requests
+    result = ai.run(a, p["id"], "规则", analysis_set_id=aid)
+    assert result["model_id"] != "none:insufficient-evidence" and len(requests) == 1
 
 
 def test_policy_revocation_while_in_flight_discards_output(system):
@@ -221,3 +220,23 @@ def test_generated_document_is_immutable_draft_with_real_evidence_and_human_gate
             )
         )
         assert links and all(x.evidence_ids for x in links)
+
+
+def test_usage_recording_ignores_legacy_input_and_cost_quotas(system):
+    service, actor, project, _aid, ai, _requests, _response, config = system
+    settings = dict(
+        config,
+        max_input_tokens=1000,
+        daily_token_limit=1000,
+        per_request_cost_limit_micro=0,
+        daily_cost_limit_micro=0,
+        input_rate_micro_per_million=1000000,
+        output_rate_micro_per_million=1000000,
+    )
+    for _ in range(3):
+        reservation = ai.reserve(actor, project["id"], settings, 100000)
+        ai.settle(reservation, settings, 90000, 3000, "succeeded")
+    with service.db() as db:
+        ledger = db.scalar(select(ModelLedger).where(ModelLedger.project_id == project["id"]))
+        assert ledger.reserved_tokens == ledger.reserved_cost_micro == 0
+        assert ledger.spent_tokens == ledger.spent_cost_micro == 279000

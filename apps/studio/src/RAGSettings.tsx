@@ -6,7 +6,6 @@ type Settings = {
   connection_id: string | null;
   model_id: string;
   dimensions: number;
-  daily_token_limit: number;
 };
 type Status = {
   state: string;
@@ -44,11 +43,15 @@ export function RAGSettings({
   const refresh = async () => {
     if (!payload.current) return;
     const n = epoch.current;
-    const s = await api<Status>(
-      base + "/documents/status",
-      mutation("POST", payload.current),
-    );
-    if (n === epoch.current) setStatus(s);
+    try {
+      const s = await api<Status>(
+        base + "/documents/status",
+        mutation("POST", payload.current),
+      );
+      if (n === epoch.current) setStatus(s);
+    } catch (error) {
+      if (n === epoch.current) throw error;
+    }
   };
   useEffect(() => {
     const n = ++epoch.current;
@@ -194,22 +197,6 @@ export function RAGSettings({
                 </option>
               </select>
             </label>
-            <label>
-              每日嵌入 Token 预算
-              <input
-                aria-label="每日嵌入 Token 预算"
-                type="number"
-                min={10000}
-                max={100000000}
-                value={form.daily_token_limit}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    daily_token_limit: Number(e.target.value),
-                  })
-                }
-              />
-            </label>
           </div>
           <label className="check-line">
             <input
@@ -255,21 +242,25 @@ export function RAGSettings({
             <button
               disabled={busy || building}
               onClick={async () => {
+                const n = epoch.current;
                 setBusy(true);
                 setError("");
                 try {
                   await api(base + "/settings", mutation("POST", form));
+                  if (n !== epoch.current) return;
                   const result = await api<{
                     dimensions: number;
                     elapsed_ms: number;
                   }>(base + "/test", mutation("POST", {}));
+                  if (n !== epoch.current) return;
                   setNotice(
                     `嵌入连接验证成功：${result.dimensions} 维，${Math.round(result.elapsed_ms)} ms`,
                   );
                 } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e));
+                  if (n === epoch.current)
+                    setError(e instanceof Error ? e.message : String(e));
                 } finally {
-                  setBusy(false);
+                  if (n === epoch.current) setBusy(false);
                 }
               }}
             >
@@ -311,7 +302,7 @@ export function RAGSettings({
           <small>
             {release &&
               "当前为只读快照，可查看该版本索引状态；请回到项目当前草稿更新索引。 "}
-            建库会把获授权的文档片段发送到所选嵌入服务，并产生模型用量。向量保存在本机，修改文档后可增量更新；失败后重试会保留已完成的片段。嵌入预算与回答模型分开统计。
+            建库会把获授权的文档片段发送到所选嵌入服务，并产生模型用量。向量保存在本机，修改文档后可增量更新；失败后重试会保留已完成的片段。嵌入与回答模型的调用用量分别记录。
           </small>
         </>
       )}

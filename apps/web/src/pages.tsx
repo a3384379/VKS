@@ -623,7 +623,7 @@ function LegacyWorkbench() {
                         disabled={!w.runtime_status?.model_enabled || busy}
                         onChange={(e) => setUseModel(e.target.checked)}
                       />
-                      本次使用模型辅助（按项目范围与预算发送上下文）
+                      本次使用模型辅助（按项目范围发送上下文）
                     </label>
                     <div className="inline-input">
                       <input
@@ -1787,7 +1787,7 @@ export function Settings({
   const tabs = [
     ...(hasPrototype ? ["项目资料"] : []),
     ...(canManage
-      ? ["接入与权限", hasPrototype ? "来源与存储" : "来源连接", "模型与预算"]
+      ? ["接入与权限", hasPrototype ? "来源与存储" : "来源连接", "AI 模型"]
       : []),
     ...(w.backup_status && hasPrototype ? ["备份与恢复"] : []),
     ...(canManage || session.user?.instance_admin ? ["OAuth 授权"] : []),
@@ -1883,7 +1883,7 @@ export function Settings({
     controlled_browser_runner: "按环境配置的浏览器录制",
     source_snapshots: "正规化不可变来源快照",
     client_readonly_collectors: "目录 / Git / SVN 客户端只读采集",
-    optional_model_gateway: "按预算开放的可选模型辅助",
+    optional_model_gateway: "使用项目模型连接的辅助功能",
   };
   const capabilities = Array.isArray(w.capabilities)
     ? (w.capabilities as string[])
@@ -1906,7 +1906,7 @@ export function Settings({
       {catalogError && <Notice tone="red">{catalogError}</Notice>}
       {activeTab === "OAuth 授权" ? (
         <OAuthSettings />
-      ) : activeTab === "模型与预算" ? (
+      ) : activeTab === "AI 模型" ? (
         <ModelSettings />
       ) : activeTab === "团队与账户" ? (
         <TeamSettings />

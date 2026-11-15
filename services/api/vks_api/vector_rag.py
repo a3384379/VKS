@@ -12,10 +12,11 @@ import sqlite3
 import sys
 import threading
 import time
+import weakref
 from array import array
 from base64 import b64encode
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -31,13 +32,17 @@ from .prototype_contracts import PrototypeEnvelope
 from .prototype_edit import Input, Ref
 from .service import Actor, DomainError, canonical, sha
 
+_BUILD_LEASE_SECONDS = 30
+_BUILD_HEARTBEAT_SECONDS = 5
+_BUILD_POLL_SECONDS = 0.1
+
 
 class RagSettings(Input):
     enabled: bool = True
     connection_id: str | None = Field(default=None, max_length=96)
     model_id: str = Field(default="text-embedding-3-small", min_length=1, max_length=160)
     dimensions: int = Field(default=512, ge=64, le=3072)
-    daily_token_limit: int = Field(default=10000000, ge=10000, le=100000000)
+    daily_token_limit: int = Field(default=10000000, ge=10000, le=100000000, deprecated=True)
 
     @model_validator(mode="after")
     def supported_dimensions(self):
@@ -90,12 +95,15 @@ class VectorStore:
                 CREATE INDEX IF NOT EXISTS chunks_scope ON chunks(project,space,revision);
                 CREATE TABLE IF NOT EXISTS queries(project TEXT, space TEXT, id TEXT, embedding BLOB, PRIMARY KEY(project,space,id));
                 CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY,project TEXT,day TEXT,model TEXT,reserved INTEGER,used INTEGER,state TEXT);
+                CREATE TABLE IF NOT EXISTS index_build(project TEXT, space TEXT, token TEXT NOT NULL, lease_until REAL NOT NULL, PRIMARY KEY(project,space));
             """)
         os.chmod(self.path, 0o600)
 
     @contextmanager
     def db(self):
-        with sqlite3.connect(self.path, timeout=30) as db:
+        # Connection.__exit__ commits/rolls back but does not close the SQLite
+        # connection. Explicit closing keeps frequent lookups from retaining FDs.
+        with closing(sqlite3.connect(self.path, timeout=30)) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             yield db
 
@@ -109,7 +117,29 @@ class VectorStore:
             if data is not None:
                 db.execute("INSERT OR REPLACE INTO status VALUES (?,?)", (pid, canonical(data)))
             row = db.execute("SELECT data FROM status WHERE project=?", (pid,)).fetchone()
-            return json.loads(row[0]) if row else {"state": "empty", "completed": 0, "total": 0, "error": ""}
+            result = json.loads(row[0]) if row else {"state": "empty", "completed": 0, "total": 0, "error": ""}
+            result.pop("_index_writer", None)
+            return result
+
+    def index_state(self, pid, data, token, *, space=None):
+        """A late failed owner cannot replace a newer builder's ready status."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if space is not None:
+                self.index_owner(db, pid, space, token)
+            else:
+                row = db.execute("SELECT data FROM status WHERE project=?", (pid,)).fetchone()
+                if not row or json.loads(row[0]).get("_index_writer") != token:
+                    return
+            db.execute("INSERT OR REPLACE INTO status VALUES (?,?)", (pid, canonical({**data, "_index_writer": token})))
+
+    @staticmethod
+    def index_owner(db, pid, space, token):
+        row = db.execute(
+            "SELECT token,lease_until FROM index_build WHERE project=? AND space=?", (pid, space)
+        ).fetchone()
+        if not row or row[0] != token or row[1] <= time.time():
+            failure("VKS_CANCELLED", "文档索引执行资格已失效，请重试", 409)
 
     def reserve(self, pid, settings, bound):
         from .models import uid
@@ -118,11 +148,6 @@ class VectorStore:
         key = uid()
         with self.lock, self.db() as db:
             db.execute("BEGIN IMMEDIATE")
-            used = db.execute(
-                "SELECT COALESCE(SUM(used+reserved),0) FROM usage WHERE project=? AND day=?", (pid, day)
-            ).fetchone()[0]
-            if used + bound > settings.daily_token_limit:
-                failure("VKS_LIMIT_EXCEEDED", "嵌入模型每日预算已达到上限；可调整预算后继续", 429)
             db.execute(
                 "INSERT INTO usage VALUES (?,?,?,?,?,?,?)", (key, pid, day, settings.model_id, bound, 0, "reserved")
             )
@@ -146,6 +171,72 @@ class VectorStore:
                 (pid, space),
             ).fetchone()
 
+    @contextmanager
+    def index_build(self, pid, space, validate):
+        """Lease cold-index ownership without holding a transaction over I/O.
+
+        The small token-fenced record also coordinates separate Service/Celery
+        processes sharing this rebuildable vector store. A dead owner expires;
+        a delayed old response must still prove its token before committing.
+        """
+        from .models import uid
+
+        token, stopped, lost = uid(), threading.Event(), threading.Event()
+        while True:
+            validate()
+            current = time.time()
+            with self.db() as db:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute(
+                    "INSERT INTO index_build VALUES (?,?,?,?) ON CONFLICT(project,space) DO UPDATE SET "
+                    "token=excluded.token,lease_until=excluded.lease_until WHERE index_build.lease_until<=?",
+                    (pid, space, token, current + _BUILD_LEASE_SECONDS, current),
+                )
+                row = db.execute("SELECT token FROM index_build WHERE project=? AND space=?", (pid, space)).fetchone()
+            if row and row[0] == token:
+                break
+            stopped.wait(_BUILD_POLL_SECONDS)
+
+        def held():
+            with self.db() as db:
+                self.index_owner(db, pid, space, token)
+            if lost.is_set():
+                failure("VKS_CANCELLED", "文档索引执行资格已失效，请重试", 409)
+
+        def renew():
+            while not stopped.wait(_BUILD_HEARTBEAT_SECONDS):
+                try:
+                    with self.db() as db:
+                        current = time.time()
+                        changed = db.execute(
+                            "UPDATE index_build SET lease_until=? WHERE project=? AND space=? AND token=? "
+                            "AND lease_until>?",
+                            (current + _BUILD_LEASE_SECONDS, pid, space, token, current),
+                        ).rowcount
+                    if not changed:
+                        lost.set()
+                        return
+                except sqlite3.Error:
+                    lost.set()
+                    return
+
+        thread = threading.Thread(target=renew, name="vks-vector-index-lease", daemon=True)
+        thread.start()
+        try:
+            held()
+            validate()
+            yield held, token
+        finally:
+            stopped.set()
+            thread.join(timeout=1)
+            try:
+                with self.db() as db:
+                    db.execute("DELETE FROM index_build WHERE project=? AND space=? AND token=?", (pid, space, token))
+            except sqlite3.Error:
+                # A failed cleanup cannot make a new owner unsafe: this token
+                # expires, and the next owner always rechecks current scope.
+                pass
+
 
 def split(chapters):
     for row in chapters:
@@ -168,10 +259,29 @@ class VectorRag:
     def __init__(self, service, assistant):
         self.service, self.assistant = service, assistant
         self.store = VectorStore(service.data_dir)
-        self.lock = threading.RLock()
+        # Each page job creates its own assistant. Share only synchronization
+        # facts on the Service, never authorization, source data or results.
+        with service.lock:
+            shared = getattr(service, "_rag_index_sync", None)
+            if shared is None:
+                shared = (threading.RLock(), weakref.WeakValueDictionary())
+                service._rag_index_sync = shared
+        self.lock, self.export_locks = shared
         self.running = {}
-        self.query_locks = {}
-        self.export_locks = {}
+        self.query_locks = weakref.WeakValueDictionary()
+
+    @contextmanager
+    def _index_build_lock(self, pid, space, validate):
+        with self.lock:
+            lock = self.export_locks.setdefault((pid, space), threading.Lock())
+        while not lock.acquire(timeout=_BUILD_POLL_SECONDS):
+            validate()
+        try:
+            validate()
+            with self.store.index_build(pid, space, validate) as ownership:
+                yield ownership
+        finally:
+            lock.release()
 
     def document_scope(
         self,
@@ -193,7 +303,7 @@ class VectorRag:
         from .reading import artifact_policy
 
         requested = None if section_revision_ids is None else set(section_revision_ids)
-        with self.service.db() as s:
+        with self.assistant.links.reader.reading.db() as s:
             self.service.require(s, actor, pid, permission)
             analysis, release, choices, _ = self.assistant.links.reader.scope(
                 s, actor, pid, analysis_set_id, release_id
@@ -316,14 +426,16 @@ class VectorRag:
         since ContextVars do not propagate into the embedding thread pool.
         """
         state = {"state": "building", "phase": "文档章节向量", "completed": 0, "total": 0, "error": ""}
+        status_token = None
         if job_id is not None:
             state.update(job_id=job_id, job_attempt=job_attempt)
 
-        def progress(completed, total):
+        def progress(completed, total, token):
+            nonlocal status_token
+            status_token = token
             state.update(completed=completed, total=total)
-            self.store.state(pid, state)
+            self.store.index_state(pid, state, token, space=space)
 
-        self.store.state(pid, state)
         try:
             _, baseline, _ = self.document_scope(
                 actor, pid, analysis_set_id=analysis_set_id, permission="knowledge:edit"
@@ -354,18 +466,21 @@ class VectorRag:
                         failure("VKS_VERSION_CONFLICT", "模块查询预热期间资料范围已变化", 412)
 
                 state.update(phase="预热模块查询")
-                self.store.state(pid, state)
+                if status_token:
+                    self.store.index_state(pid, state, status_token)
                 self._prewarm_modules(actor, pid, form, settings, config, space, prepared[2], module_unchanged)
             unchanged()
             state.update(state="ready", phase="文档向量检索可用")
-            self.store.state(pid, state)
+            if status_token:
+                self.store.index_state(pid, state, status_token)
             return result["coverage"]
         except Exception as e:
             state.update(
                 state="failed",
                 error=e.message if isinstance(e, DomainError) else "文档索引构建中断，可重试",
             )
-            self.store.state(pid, state)
+            if status_token:
+                self.store.index_state(pid, state, status_token)
             raise
 
     def _document_index(
@@ -392,7 +507,7 @@ class VectorRag:
         chapters, baseline, provenance = self.document_scope(actor, pid, **scope)
         chunks = list(split(chapters))
         settings = self.store.settings(pid)
-        embeddings, space, config = {}, None, None
+        embeddings, space, config, claim_check = {}, None, None, None
         try:
             settings, config, space = self.config(actor, pid)
         except DomainError:
@@ -402,6 +517,8 @@ class VectorRag:
             failure("VKS_STATE_CONFLICT", "请先启用向量检索，再导出含向量库的成品", 409)
 
         def unchanged():
+            if claim_check:
+                claim_check()
             if validate_scope:
                 validate_scope()
             now = self.document_scope(actor, pid, **scope)
@@ -413,13 +530,16 @@ class VectorRag:
                     failure("VKS_VERSION_CONFLICT", "导出期间嵌入配置已变化，请重试", 412)
 
         if space:
-            with self.lock:
-                lock = self.export_locks.setdefault((pid, space), threading.Lock())
-            with lock:
+            # A no-build projection reads the current WAL snapshot immediately;
+            # it neither changes the vector store nor waits for model I/O.
+            guard = self._index_build_lock(pid, space, unchanged) if ensure else nullcontext((None, None))
+            with guard as (held, token):
+                claim_check = held
+                unchanged()
                 embeddings = self._export_vectors(pid, space, chunks, settings.dimensions)
                 pending = [row for row in chunks if row["id"] not in embeddings]
                 if progress:
-                    progress(len(embeddings), len(chunks))
+                    progress(len(embeddings), len(chunks), token)
                 if ensure and pending:
                     for row in pending:
                         policy = provenance[row["revision"]]["policy"]
@@ -433,6 +553,11 @@ class VectorRag:
                         values = self.embed(actor, pid, settings, config, [r["input"] for r in rows])
                         unchanged()
                         with self.store.db() as db:
+                            # Lease ownership and vector writes share this
+                            # short transaction; a new process cannot take over
+                            # between the token check and this batch's commit.
+                            db.execute("BEGIN IMMEDIATE")
+                            self.store.index_owner(db, pid, space, token)
                             db.executemany(
                                 "INSERT OR REPLACE INTO chunks VALUES (?,?,?,?,?,?,?)",
                                 [
@@ -449,12 +574,14 @@ class VectorRag:
                             for future in as_completed(futures):
                                 completed += future.result()
                                 if progress:
-                                    progress(completed, len(chunks))
+                                    progress(completed, len(chunks), token)
                         except Exception:
                             for future in futures:
                                 future.cancel()
                             raise
                     embeddings = self._export_vectors(pid, space, chunks, settings.dimensions)
+                unchanged()
+                claim_check = None
         unchanged()
         complete = len(embeddings) == len(chunks)
         if ensure and not complete:
@@ -487,7 +614,7 @@ class VectorRag:
         }
 
     def config(self, actor, pid):
-        with self.service.db() as s:
+        with self.assistant.links.reader.reading.db() as s:
             self.service.require(s, actor, pid)
             policy = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
             if not policy or not policy.settings.get("enabled") or not policy.settings.get("allow_external"):
@@ -932,7 +1059,23 @@ class VectorRag:
             + "\n上下文："
             + form.context.section_title
         )
-        key = f"module:{corpus}:{form.package_id}:{form.target.route}" if form.context.scope == "module" else sha(text)
+        question = getattr(form, "question", None)
+        if question:
+            text = (
+                "问题："
+                + question
+                + "\n对话："
+                + " ".join(m.content for m in form.history if m.role == "user")[-4000:]
+                + "\n"
+                + form.context.page_title
+                + "\n"
+                + text
+            )
+        key = (
+            f"module:{corpus}:{form.package_id}:{form.target.route}"
+            if form.context.scope == "module" and not question
+            else sha(text)
+        )
         with self.lock:
             lock = self.query_locks.setdefault((pid, space, key), threading.Lock())
         with lock:
@@ -940,21 +1083,36 @@ class VectorRag:
                 row = db.execute(
                     "SELECT embedding FROM queries WHERE project=? AND space=? AND id=?", (pid, space, key)
                 ).fetchone()
-            if row:
-                query = row[0]
+            query = row[0] if row else None
+            if isinstance(query, bytes) and len(query) == settings.dimensions * 4:
+                length = math.hypot(*vector(query))
+                if not math.isfinite(length) or not 0.999 <= length <= 1.001:
+                    query = None
             else:
+                query = None
+            if query is None:
                 query = self.embed(actor, pid, settings, config, [text])[0]
                 with self.store.db() as db:
                     db.execute("INSERT OR REPLACE INTO queries VALUES (?,?,?,?)", (pid, space, key, query))
         q = vector(query)
         lookup = {c["revision_id"]: c for c in chapters}
+
+        def similarity(blob):
+            if not isinstance(blob, bytes) or len(blob) != len(q) * 4:
+                return -2.0
+            try:
+                score = math.sumprod(vector(blob), q)
+            except (ValueError, OverflowError):
+                return -2.0
+            return score if math.isfinite(score) and -1.001 <= score <= 1.001 else -2.0
+
         with self.store.db() as db:
             # Filter current authorized revisions BEFORE computing nearest matches.
             db.execute("CREATE TEMP TABLE allowed(id TEXT PRIMARY KEY)")
             db.executemany("INSERT OR IGNORE INTO allowed VALUES (?)", ((rid,) for rid in lookup))
-            db.create_function("vks_dot", 1, lambda blob: math.sumprod(vector(blob), q))
+            db.create_function("vks_dot", 1, similarity)
             matches = db.execute(
-                "SELECT revision,content,vks_dot(embedding) AS score FROM chunks WHERE project=? AND space=? AND revision IN (SELECT id FROM allowed) ORDER BY score DESC LIMIT 36",
+                "SELECT id,revision,start,content,vks_dot(embedding) AS score FROM chunks WHERE project=? AND space=? AND revision IN (SELECT id FROM allowed) ORDER BY score DESC LIMIT 36",
                 (pid, space),
             ).fetchall()
         scores = {}
@@ -962,8 +1120,19 @@ class VectorRag:
         seen = set()
         for rank, row in enumerate(lexical):
             scores[row["revision_id"]] = 1 / (60 + rank)
-        for rid, content, score in matches:
+        for cid, rid, start, content, score in matches:
             if rid in seen or score < 0.15:
+                continue
+            chapter = lookup[rid]
+            if (
+                not isinstance(start, int)
+                or start < 0
+                or start % 780
+                or chapter["content"][start : start + 900] != content
+            ):
+                continue
+            expected = chapter["document_name"][:160] + "\n" + chapter["name"][:160] + "\n" + content
+            if cid != sha(canonical([rid, start, expected])):
                 continue
             seen.add(rid)
             scores[rid] = scores.get(rid, 0) + 1.15 / (60 + len(seen))
@@ -1039,27 +1208,43 @@ def install_rag(app, service, actor, envelope, assistant, AssistanceInput, Relat
     @app.post("/api/v3/projects/{pid}/interactive/semantic", response_model=PrototypeEnvelope[RelatedOutput])
     def semantic(pid: str, payload: AssistanceInput, a: ActorDep, request: Request):
         started = time.perf_counter()
-        state = assistant.prepare(a, pid, payload)
-        current = assistant._binding(a, pid, payload)
+        with assistant.links.reader.reading.db() as session:
+            state = assistant.prepare(a, pid, payload, session=session)
+            current = assistant._binding(a, pid, payload, session=session)
         if current and current["excluded"]:
             failure("VKS_STATE_CONFLICT", "此关联已移除", 409)
-        if current:
-            return envelope(request, assistant.related(a, pid, payload))
+        if assistant._has_current_binding(current):
+            return envelope(request, assistant._related_result(a, pid, payload, state, current, started))
         available = rag.available(a, pid, state[1])
         if not available:
-            return envelope(request, assistant.related(a, pid, payload))
+            return envelope(
+                request, assistant._related_result(a, pid, payload, state, current, started, vector_available=False)
+            )
         lexical = assistant._index(state[2], state[1]).search(payload.target, payload.context, set())
         sections = rag.hybrid(a, pid, payload, state[1], state[2], lexical)
-        assistant._unchanged(a, pid, payload, state[3], None, None)
+        # Semantic retrieval may call the embedding service. Recheck inputs and
+        # an explicit removal together in a fresh snapshot after that boundary.
+        with assistant.links.reader.reading.db() as session:
+            latest = assistant.prepare(a, pid, payload, session=session)
+            latest_current = assistant._binding(a, pid, payload, session=session)
+        if latest[3] != state[3]:
+            failure("VKS_VERSION_CONFLICT", "资料或模型配置已变化，请重试", 412)
+        if latest_current and latest_current["excluded"]:
+            failure("VKS_STATE_CONFLICT", "此关联已移除", 409)
+        if assistant._has_current_binding(latest_current):
+            return envelope(
+                request,
+                assistant._related_result(a, pid, payload, latest, latest_current, started, vector_available=True),
+            )
         return envelope(
             request,
             {
                 "title": payload.target.label,
                 "sections": sections,
-                "binding_id": current["id"] if current else None,
-                "origin": "binding" if current else "retrieval",
+                "binding_id": latest_current["id"] if latest_current else None,
+                "origin": "retrieval",
                 "model_available": True,
-                "selection_version": state[4],
+                "selection_version": latest[4],
                 "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
                 "retrieval": "hybrid",
                 "vector_available": True,

@@ -1228,6 +1228,18 @@ tbody tr:last-child td {
   grid-template-columns: minmax(0, 1.9fr) minmax(280px, 1fr);
   gap: 20px;
 }
+.import-layout > div {
+  min-width: 0;
+}
+.import-layout .draft-import-target > label {
+  min-width: 0;
+  max-width: 100%;
+}
+.import-layout .draft-import-target select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
 .section-description {
   padding: 0 19px;
   font-size: 13px;
@@ -4774,7 +4786,7 @@ textarea {
     flex-basis: 70%;
   }
   .import-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .import-layout > div:nth-child(2) {
     display: grid;

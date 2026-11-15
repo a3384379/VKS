@@ -20,7 +20,7 @@ let server,
   deterministicRelationTypes,
   flattenModules,
   moduleBaseline;
-let auditQuery, projectProfilePayload;
+let auditQuery, projectProfilePayload, preferredAnswerModels;
 before(async () => {
   testCache = await mkdtemp(join(tmpdir(), "vks-web-test-"));
   server = await createServer({
@@ -32,6 +32,9 @@ before(async () => {
   });
   ({ policyPayload, ModelSettings } = await server.ssrLoadModule(
     "/src/ModelSettings.tsx",
+  ));
+  ({ preferredAnswerModels } = await server.ssrLoadModule(
+    "/src/modelChoices.ts",
   ));
   ({ publicJwks, OAuthSettings } = await server.ssrLoadModule(
     "/src/OAuthSettings.tsx",
@@ -52,7 +55,7 @@ after(async () => {
   if (testCache) await rm(testCache, { recursive: true, force: true });
 });
 
-test("model policy update strips GET-only metadata and preserves explicit budgets and data consents", () => {
+test("model policy update strips metadata and retired quotas while preserving data consents", () => {
   const policy = {
     enabled: false,
     protocol: "responses",
@@ -81,7 +84,12 @@ test("model policy update strips GET-only metadata and preserves explicit budget
   assert.equal(result.allow_external, false);
   assert.equal(result.allow_source, false);
   assert.equal(result.input_rate_micro_per_million, 0);
-  assert.equal(result.daily_cost_limit_micro, 10000000);
+  for (const key of [
+    "daily_token_limit",
+    "daily_cost_limit_micro",
+    "per_request_cost_limit_micro",
+  ])
+    assert.equal(Object.hasOwn(result, key), false);
   assert.equal(Object.hasOwn(result, "row_version"), false);
   assert.equal(Object.hasOwn(result, "configured_secret"), false);
   assert.equal(Object.hasOwn(result, "secret"), false);
@@ -321,5 +329,48 @@ test("project profile update excludes response metadata and always retains membe
       visibility: "project_members",
       default_analysis_language: "mixed",
     },
+  );
+});
+
+test("compact model choices prefer newer answer aliases and preserve actual IDs", () => {
+  const ids = [
+    "gpt-5",
+    "gpt-5-2025-08-07",
+    "gpt-6-luna",
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6.1-sol",
+    "gpt-6.1-terra",
+    "gpt-6.1-sol-2026-11-01",
+    "gpt-image-2",
+    "gpt-audio",
+    "text-embedding-3-small",
+    "o3-mini",
+  ];
+  const choices = preferredAnswerModels(
+    ids.map((id) => ({ id })),
+    6,
+    "openai",
+  ).map((m) => m.id);
+  assert.deepEqual(choices, [
+    "gpt-6.1-sol",
+    "gpt-6.1-terra",
+    "gpt-6-astra",
+    "gpt-6-luna",
+    "gpt-6-sol",
+  ]);
+  assert(choices.every((id) => ids.includes(id)));
+  assert.deepEqual(
+    preferredAnswerModels([{ id: "gpt-7-2027-01-01" }], 6, "openai"),
+    [{ id: "gpt-7-2027-01-01" }],
+  );
+  assert.deepEqual(preferredAnswerModels([]), []);
+  assert.deepEqual(
+    preferredAnswerModels([
+      { id: "text-model-a" },
+      { id: "text-model-b" },
+      { id: "text-model-a" },
+    ]).map((m) => m.id),
+    ["text-model-a", "text-model-b"],
   );
 });

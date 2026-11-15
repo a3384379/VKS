@@ -209,3 +209,104 @@ def test_module_query_cache_isolated_between_prototypes_with_same_route(assistan
     engine.rag.hybrid(owner, pid, second, second_state[1], second_state[2], [])
     assert len(calls) == before + 1
     assert calls[-1] == "模块：Another module"
+
+
+def test_questions_use_distinct_query_vectors_and_keep_module_context(assistant, monkeypatch):
+    from vks_api.interactive_ai import InteractiveQuestionInput
+
+    (_web, service, owner, pid, _aid, _grant, _package, _section, _), body, _calls = assistant
+    queries = []
+
+    def embeddings(config, payload):
+        assert config["protocol"] == "embeddings"
+        queries.extend(payload["input"])
+        return {
+            "data": [{"index": i, "embedding": [1.0] + [0.0] * 63} for i, _ in enumerate(payload["input"])],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setattr(ai_gateway, "request_model", embeddings)
+    engine = InteractiveAssistant(service)
+    engine.rag.save(owner, pid, RagSettings(enabled=True, dimensions=64))
+    engine.rag._build(owner, pid, AssistanceInput.model_validate(body))
+    for question in ["前提是什么", "后续流程是什么"]:
+        form = InteractiveQuestionInput.model_validate(
+            {**body, "question": question, "context": {"scope": "module", "page_title": "当前收费模块"}}
+        )
+        state = engine.prepare(owner, pid, form)
+        before = len(queries)
+        assert engine.rag.hybrid(owner, pid, form, state[1], state[2], [])
+        assert len(queries) == before + 1
+        assert question in queries[-1] and "当前收费模块" in queries[-1]
+        assert engine.rag.hybrid(owner, pid, form, state[1], state[2], [])
+        assert len(queries) == before + 1
+    # A distinct free-form question must not retain a permanent thread lock.
+    assert not engine.rag.query_locks
+
+
+def test_vector_store_closes_connections_and_rolls_back_failed_transactions(tmp_path):
+    import sqlite3
+
+    import pytest
+    from vks_api.vector_rag import VectorStore
+
+    store = VectorStore(tmp_path)
+    with store.db() as closed:
+        assert closed.execute("SELECT 1").fetchone()[0] == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        closed.execute("SELECT 1")
+    with pytest.raises(RuntimeError), store.db() as failed:
+        failed.execute("INSERT INTO status VALUES (?,?)", ("failed-project", "{}"))
+        raise RuntimeError("rollback")
+    with pytest.raises(sqlite3.ProgrammingError):
+        failed.execute("SELECT 1")
+    with store.db() as db:
+        assert not db.execute("SELECT project FROM status WHERE project=?", ("failed-project",)).fetchone()
+
+
+def test_hybrid_repairs_bad_query_vectors_and_rejects_corrupt_cached_excerpts(assistant, monkeypatch):
+    (_web, service, owner, pid, _aid, _grant, _package, _section, _), body, _calls = assistant
+    queries = []
+
+    def embeddings(config, payload):
+        queries.extend(payload["input"])
+        return {
+            "data": [{"index": i, "embedding": [1.0] + [0.0] * 63} for i, _ in enumerate(payload["input"])],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setattr(ai_gateway, "request_model", embeddings)
+    engine = InteractiveAssistant(service)
+    engine.rag.save(owner, pid, RagSettings(enabled=True, dimensions=64))
+    form = AssistanceInput.model_validate(body)
+    engine.rag._build(owner, pid, form)
+    state = engine.prepare(owner, pid, form)
+    original = engine.rag.hybrid(owner, pid, form, state[1], state[2], [])
+    assert original
+    before = len(queries)
+    with engine.rag.store.db() as db:
+        db.execute("UPDATE queries SET embedding=? WHERE project=?", (b"bad-vector", pid))
+    assert engine.rag.hybrid(owner, pid, form, state[1], state[2], [])
+    assert len(queries) == before + 1
+    with engine.rag.store.db() as db:
+        db.execute("UPDATE chunks SET content=? WHERE project=?", ("CACHE_CONTENT_NOT_IN_SOURCE", pid))
+    assert not engine.rag.hybrid(owner, pid, form, state[1], state[2], [])
+    with engine.rag.store.db() as db:
+        db.execute("UPDATE chunks SET embedding=? WHERE project=?", (b"bad-vector", pid))
+    # Invalid cache data cannot break a query or replace authoritative excerpts.
+    assert not engine.rag.hybrid(owner, pid, form, state[1], state[2], [])
+
+
+def test_embedding_usage_is_recorded_without_daily_token_quota(tmp_path):
+    from vks_api.vector_rag import VectorStore, RagSettings
+
+    store = VectorStore(tmp_path)
+    settings = RagSettings(daily_token_limit=10000)
+    first = store.reserve("project", settings, 30000)
+    store.settle(first, 25000, "succeeded")
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        keys = list(pool.map(lambda _: store.reserve("project", settings, 20000), range(3)))
+    for key in keys:
+        store.settle(key, 18000, "succeeded")
+    with store.db() as db:
+        assert db.execute("SELECT SUM(used),SUM(reserved) FROM usage").fetchone() == (79000, 0)

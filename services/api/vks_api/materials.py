@@ -47,6 +47,24 @@ class StudioWorkspace(Base):
     __mapper_args__: ClassVar[dict] = {"version_id_col": row_version}
 
 
+class MaterialTrash(Base):
+    """Project library removals are independent of immutable source history."""
+
+    __tablename__ = "material_trash"
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), primary_key=True)
+    kind: Mapped[str] = mapped_column(primary_key=True)
+    target_id: Mapped[str] = mapped_column(primary_key=True)
+    deleted_by: Mapped[str]
+    deleted_at: Mapped[str] = mapped_column(default=now)
+
+
+class TrashMaterial(Input):
+    analysis_set_id: Ref
+    kind: Literal["package", "version"]
+    target_id: Ref
+    deleted: bool = True
+
+
 class OpenWorkspace(Input):
     analysis_set_id: Ref | None = None
 
@@ -81,6 +99,10 @@ class RestoreMaterialVersion(Input):
 
 
 def roots(s, pid, choices=None):
+    key = (pid, frozenset(choices.items())) if s.info.get("vks_read_only") and isinstance(choices, dict) else None
+    cache = s.info.setdefault("vks_material_roots", {})
+    if key is not None and key in cache:
+        return list(cache[key])
     query = (
         select(Revision)
         .join(Entity, Revision.entity_id == Entity.id)
@@ -95,7 +117,16 @@ def roots(s, pid, choices=None):
             if isinstance(choices, str)
             else query.where(Revision.id.in_(list(choices.values())))
         )
-    return [r for r in s.scalars(query) if ROOT in r.metadata_json]
+    result = [r for r in s.scalars(query) if ROOT in r.metadata_json]
+    if key is not None:
+        cache[key] = tuple(result)
+        # Keep the small package roots alive so later descriptor/navigation
+        # reads do not decode their large target/member metadata again.
+        from .reading import ReadingService
+
+        ReadingService(None).preload(s, result)
+        s.info.setdefault("vks_prefetched", {}).update({(Revision, row.id): row for row in result})
+    return result
 
 
 def root(s, pid, rid):
@@ -119,7 +150,14 @@ def readable(service, s, actor, pid, row):
     if complete:
         found = set()
         for batch in chunks(members):
-            found.update(s.scalars(select(Revision.id).where(Revision.project_id == pid, Revision.id.in_(batch))))
+            # Fetch by exact primary keys, then reject other-project members.
+            # The project predicate otherwise selects a repeated project scan
+            # on SQLite for every member batch.
+            found.update(
+                rid
+                for rid, owner in s.execute(select(Revision.id, Revision.project_id).where(Revision.id.in_(batch)))
+                if owner == pid
+            )
         result = found == set(members)
     else:
         result = all(
@@ -131,10 +169,23 @@ def readable(service, s, actor, pid, row):
 
 
 def primary(s, pid, choices):
-    for rid in choices.values():
-        row = s.get(Revision, rid)
-        if row and row.project_id == pid and COMPOSITION in row.metadata_json:
-            return row.metadata_json[COMPOSITION].get("primary_package_id")
+    from .reading import chunks
+
+    # Most choices are chapters. Inspect only the tiny composition JSON value,
+    # preserving selection order without materializing every revision body.
+    for batch in chunks(choices.values()):
+        rows = {
+            rid: value
+            for rid, project, value in s.execute(
+                select(Revision.id, Revision.project_id, Revision.metadata_json[COMPOSITION]).where(
+                    Revision.id.in_(batch)
+                )
+            )
+            if project == pid
+        }
+        for rid in batch:
+            if isinstance(rows.get(rid), dict):
+                return rows[rid].get("primary_package_id")
     return None
 
 
@@ -175,8 +226,24 @@ class MaterialService:
     def _complete_access(self, s, actor, pid, analysis):
         if self.service._can(s, actor, pid, "source:read") and self.service._can(s, actor, pid, "trace:read"):
             return
-        if any(not self.service._visible_revision(s, actor, pid, r) for r in self.service._revisions(s, analysis.id)):
+        from .reading import ReadingService
+
+        rows = self.service._revisions(s, analysis.id)
+        ReadingService(self.service).preload(s, rows)
+        if any(not self.service._visible_revision(s, actor, pid, r) for r in rows):
             raise DomainError("VKS_FORBIDDEN", "管理完整资料组合需要读取其中全部资料的权限", 403)
+
+    def _prepare_access(self, s, actor, pid, analysis, form):
+        self.service.require(s, actor, pid, "source:import")
+        self._complete_access(s, actor, pid, analysis)
+        if form.package_id:
+            if s.get(MaterialTrash, (pid, "package", form.package_id)):
+                raise DomainError("VKS_STATE_CONFLICT", "请先从回收站恢复资料包，再更新。", 409)
+            candidates = [r for r in roots(s, pid) if r.entity_id == form.package_id]
+            if not candidates or any(not readable(self.service, s, actor, pid, r) for r in candidates):
+                raise missing()
+            if any(r.metadata_json[ROOT]["kind"] != form.kind for r in candidates):
+                raise DomainError("VKS_INVALID_INPUT", "更新资料包不能改变原型/文档类型", 422)
 
     def _revision(self, s, pid, kind, key, art, name, content, meta, locator=None):
         entity = _identity(s, pid, kind, key) or _new_entity(s, pid, kind, key)
@@ -349,14 +416,55 @@ class MaterialService:
                 "editable": analysis.state != "frozen",
             }
 
-    def library(self, actor, pid, aid):
-        with self.service.db() as s:
+    def _versions(self, s, actor, pid, trash):
+        versions, removed = [], []
+        for release in s.scalars(select(Release).where(Release.project_id == pid).order_by(Release.created_at.desc())):
+            try:
+                self.service._saved_snapshot(s, actor, release)
+            except DomainError:
+                continue
+            row = {
+                "id": release.id,
+                "name": release.change_note,
+                "version": release.release_no,
+                "created_at": release.created_at,
+                "analysis_set_id": release.analysis_set_id,
+            }
+            if ("version", release.id) in trash:
+                removed.append({**row, "kind": "version", "deleted_at": trash[("version", release.id)].deleted_at})
+            else:
+                versions.append(row)
+        return {"versions": versions, "trash": removed}
+
+    def history(self, actor, pid, aid):
+        from .reading import ReadingService
+
+        with ReadingService(self.service).db() as s:
             self.service.require(s, actor, pid)
             analysis = s.get(Analysis, aid)
             if not analysis or analysis.project_id != pid:
                 raise missing()
-            choices = {r.entity_id: r.id for r in self.service._revisions(s, aid)}
+            trash = {
+                (r.kind, r.target_id): r
+                for r in s.scalars(select(MaterialTrash).where(MaterialTrash.project_id == pid))
+            }
+            return self._versions(s, actor, pid, trash)
+
+    def library(self, actor, pid, aid, include_versions=True):
+        from .reading import ReadingService
+
+        reading = ReadingService(self.service)
+        with reading.db() as s:
+            self.service.require(s, actor, pid)
+            analysis = s.get(Analysis, aid)
+            if not analysis or analysis.project_id != pid:
+                raise missing()
+            choices, _ = reading.selections(s, analysis, None)
             active = set(choices.values())
+            trash = {
+                (r.kind, r.target_id): r
+                for r in s.scalars(select(MaterialTrash).where(MaterialTrash.project_id == pid))
+            }
             library = {}
             for rev in roots(s, pid):
                 if not readable(self.service, s, actor, pid, rev):
@@ -378,28 +486,25 @@ class MaterialService:
                     group["name"] = rev.name
             for group in library.values():
                 group["versions"].sort(key=lambda r: (r["created_at"], r["revision_id"]), reverse=True)
-            versions = []
-            for release in s.scalars(
-                select(Release).where(Release.project_id == pid).order_by(Release.created_at.desc())
-            ):
-                try:
-                    self.service._saved_snapshot(s, actor, release)
-                except DomainError:
-                    continue
-                versions.append(
-                    {
-                        "id": release.id,
-                        "name": release.change_note,
-                        "version": release.release_no,
-                        "created_at": release.created_at,
-                        "analysis_set_id": release.analysis_set_id,
-                    }
-                )
+            removed = [
+                {
+                    "id": p["id"],
+                    "name": p["name"],
+                    "kind": "package",
+                    "deleted_at": trash[("package", p["id"])].deleted_at,
+                }
+                for p in library.values()
+                if ("package", p["id"]) in trash and not p["active_revision_id"]
+            ]
+            history = self._versions(s, actor, pid, trash) if include_versions else {"versions": [], "trash": []}
             visible_artifacts = {r["artifact_id"] for p in library.values() for r in p["versions"]}
-            from .reading import ReadingService
-
+            composition = self.composition_digest(s, pid, aid)
             jobs = [
-                ReadingService(self.service).job_dto(s, actor, j)
+                {
+                    **reading.job_dto(s, actor, j),
+                    "current_scope": j.input_json.get("analysis_set_id") == aid
+                    and j.input_json.get("composition") == composition,
+                }
                 for j in s.scalars(
                     select(Job)
                     .where(Job.project_id == pid, Job.kind == "material_migrate")
@@ -413,11 +518,57 @@ class MaterialService:
                 "analysis_set_id": aid,
                 "selection_version": analysis.selection_version,
                 "editable": analysis.state != "frozen" and self.service._can(s, actor, pid, "knowledge:edit"),
-                "packages": list(library.values()),
-                "versions": versions,
+                "packages": [
+                    p for p in library.values() if ("package", p["id"]) not in trash or p["active_revision_id"]
+                ],
+                "versions": history["versions"],
+                "trash": [*removed, *history["trash"]],
                 "primary_package_id": primary(s, pid, choices),
                 "jobs": jobs,
             }
+
+    def trash(self, actor, pid, form, expected, key):
+        with self.service.db() as s:
+            analysis = self._draft(s, actor, pid, form.analysis_set_id)
+            version(analysis.selection_version, expected)
+            if form.kind == "package":
+                self.service.require(s, actor, pid, "source:import")
+                candidates = [r for r in roots(s, pid) if r.entity_id == form.target_id]
+                if not candidates or any(not readable(self.service, s, actor, pid, r) for r in candidates):
+                    raise missing()
+                current = s.get(StudioWorkspace, pid)
+                aids = {analysis.id, current.analysis_set_id} if current else {analysis.id}
+                if form.deleted and s.scalar(
+                    select(Selection.entity_id)
+                    .where(Selection.analysis_set_id.in_(aids), Selection.entity_id == form.target_id)
+                    .limit(1)
+                ):
+                    raise DomainError("VKS_STATE_CONFLICT", "请先停用该资料包，再删除；停用前会保存完整版本。", 409)
+            else:
+                release = s.get(Release, form.target_id)
+                if not release or release.project_id != pid:
+                    raise missing()
+                self.service._saved_snapshot(s, actor, release)
+
+            def apply():
+                row = s.get(MaterialTrash, (pid, form.kind, form.target_id))
+                if form.deleted and not row:
+                    s.add(MaterialTrash(project_id=pid, kind=form.kind, target_id=form.target_id, deleted_by=actor.id))
+                elif not form.deleted and row:
+                    s.delete(row)
+                self.service.audit(
+                    s,
+                    actor,
+                    pid,
+                    "material.delete" if form.deleted else "material.undelete",
+                    form.target_id,
+                    metadata={"kind": form.kind},
+                )
+                return {"id": form.target_id, "kind": form.kind, "deleted": form.deleted}
+
+            return self.service.idem(
+                s, actor, pid, "material.trash", key, {**form.model_dump(), "expected": expected}, apply
+            )
 
     def prepare(self, actor, pid, form, expected, key):
         from .material_parser import parse
@@ -426,21 +577,21 @@ class MaterialService:
             self.service.require(s, actor, pid, "source:import")
             analysis = self._draft(s, actor, pid, form.analysis_set_id)
             version(analysis.selection_version, expected)
-            self._complete_access(s, actor, pid, analysis)
+            self._prepare_access(s, actor, pid, analysis, form)
             files = []
             for artifact_id in form.artifact_ids:
                 raw, upload = self.service._upload_data(s, actor, pid, artifact_id)
                 files.append((upload.filename, raw))
-            if form.package_id:
-                candidates = [r for r in roots(s, pid) if r.entity_id == form.package_id]
-                if not candidates or any(not readable(self.service, s, actor, pid, r) for r in candidates):
-                    raise missing()
-                if any(r.metadata_json[ROOT]["kind"] != form.kind for r in candidates):
-                    raise DomainError("VKS_INVALID_INPUT", "更新资料包不能改变原型/文档类型", 422)
+            duplicate = self._duplicate_input(s, actor, pid, analysis, form, files)
+            if duplicate:
+                return self.service.idem(s, actor, pid, "material.prepare", key, form.model_dump(), lambda: duplicate)
         parsed = parse(form.kind, files, form.entry)
         with self.service.db() as s:
             analysis = self._draft(s, actor, pid, form.analysis_set_id)
             version(analysis.selection_version, expected)
+            # Parsing is intentionally outside the transaction. Recheck every
+            # grant and source closure before committing derived revisions.
+            self._prepare_access(s, actor, pid, analysis, form)
             return self.service.idem(
                 s,
                 actor,
@@ -451,7 +602,54 @@ class MaterialService:
                 lambda: self._prepare(s, actor, pid, analysis, form, parsed, files),
             )
 
+    @staticmethod
+    def _input_fingerprint(form, files):
+        return sha(
+            canonical({"kind": form.kind, "entry": form.entry, "files": [(name, sha(raw)) for name, raw in files]})
+        )
+
+    def _duplicate_input(self, s, actor, pid, analysis, form, files):
+        fingerprint = self._input_fingerprint(form, files)
+        single_sha = (
+            sha(files[0][1])
+            if len(files) == 1 and files[0][0].lower().endswith((".html", ".htm", ".md", ".markdown", ".txt"))
+            else None
+        )
+        original_sha = (
+            sha(files[0][1])
+            if len(files) == 1 and files[0][0].lower().endswith((".html", ".htm")) and not form.entry
+            else None
+        )
+        for candidate in roots(s, pid):
+            meta = candidate.metadata_json[ROOT]
+            if meta["kind"] != form.kind or form.package_id and candidate.entity_id != form.package_id:
+                continue
+            same = meta.get("upload_fingerprint") == fingerprint or bool(
+                single_sha
+                and meta.get("single_input_sha256") == single_sha
+                and meta.get("import_entry", "") == form.entry
+            )
+            if not same and original_sha and (artifact := s.get(Artifact, candidate.artifact_id)):
+                same = artifact.sha256 == original_sha
+            if not same or not readable(self.service, s, actor, pid, candidate):
+                continue
+            if not form.package_id:
+                raise DomainError(
+                    "VKS_DUPLICATE_MATERIAL",
+                    f"相同资料已存在于“{candidate.name}”，请使用已有包或在回收站恢复；更新内容请选择“更新已有资料包”。",
+                    409,
+                )
+            choice = s.get(Selection, (analysis.id, candidate.entity_id))
+            if choice and choice.entity_revision_id == candidate.id and candidate.name == form.name:
+                return {**descriptor(s, candidate), "unchanged": True, "selection_version": analysis.selection_version}
+        return None
+
     def _prepare(self, s, actor, pid, analysis, form, parsed, files):
+        duplicate = self._duplicate_input(s, actor, pid, analysis, form, files)
+        if duplicate:
+            return duplicate
+        if form.kind == "documents" and not form.package_id:
+            self._check_document_overlap(s, actor, pid, analysis.id, parsed)
         package = (
             s.get(Entity, form.package_id) if form.package_id else _new_entity(s, pid, "page", "material." + uid())
         )
@@ -519,25 +717,49 @@ class MaterialService:
             s, pid, snapshot.id, "runtime/" + sha(original) + ".html", original, metadata=runtime_meta
         )
         members, counts = [], {"added": 0, "updated": 0, "reused": 0, "removed": 0}
-        old_docs = {
-            r.metadata_json.get("material_path"): r
-            for rid in previous_meta.get("members", [])
-            if (r := s.get(Revision, rid)) and s.get(Entity, r.entity_id).type == "document"
-        }
+        from .reading import ReadingService
+
+        previous_rows = ReadingService(self.service).revision_rows(s, previous_meta.get("members", []))
+        s.info.setdefault("vks_prefetched", {}).update({(Revision, row.id): row for row in previous_rows})
+
+        def document_path(revision):
+            if path := revision.metadata_json.get("material_path"):
+                return path
+            # Adopted imports predate material_path. Preserve their exact logical
+            # documents, including manual drafts pointing back to their source.
+            artifact = s.get(Artifact, revision.metadata_json.get("imported_artifact_id") or revision.artifact_id)
+            return artifact.relative_path if artifact and artifact.project_id == pid else None
+
+        old_docs = {}
+        for previous_row in previous_rows:
+            if s.get(Entity, previous_row.entity_id).type != "document":
+                continue
+            path = document_path(previous_row)
+            if path in old_docs and old_docs[path].entity_id != previous_row.entity_id:
+                raise DomainError("VKS_INTEGRITY_ERROR", "旧资料包存在重复文档路径，无法唯一更新。", 409)
+            old_docs[path] = previous_row
         consumed = set()
         for path, markdown in parsed["documents"]:
             source_body_sha256 = sha(markdown)
             preserved_manual = False
             prior = old_docs.get(path)
             if not prior:
-                matches = [r for r in old_docs.values() if r.content == markdown and r.entity_id not in consumed]
+                matches = [
+                    r
+                    for r in old_docs.values()
+                    if (r.content == markdown or r.metadata_json.get("source_body_sha256") == source_body_sha256)
+                    and r.entity_id not in consumed
+                ]
                 prior = matches[0] if len(matches) == 1 else None
             if prior:
                 consumed.add(prior.entity_id)
                 current_choice = s.get(Selection, (analysis.id, prior.entity_id))
                 current = s.get(Revision, current_choice.entity_revision_id) if current_choice else prior
-                if current and current.id != prior.id and prior.content == markdown:
-                    if current.metadata_json.get("material_path") == path:
+                source_unchanged = (
+                    prior.content == markdown or prior.metadata_json.get("source_body_sha256") == source_body_sha256
+                )
+                if current and source_unchanged and (current.id != prior.id or current.content != markdown):
+                    if document_path(current) == path:
                         members.extend(
                             [
                                 current.id,
@@ -549,7 +771,10 @@ class MaterialService:
                     markdown = current.content
                     preserved_manual = True
                 prior = current or prior
-            if prior and prior.content == markdown and prior.metadata_json.get("material_path") == path:
+            if (
+                prior and prior.content == markdown and document_path(prior) == path
+                and (not parsed.get("document_names", {}).get(path) or parsed["document_names"][path] == prior.name)
+            ):
                 members.extend(
                     [prior.id, *[c.id for c in self.docs._sections(s, s.get(Entity, prior.entity_id), prior)]]
                 )
@@ -613,6 +838,7 @@ class MaterialService:
                 (section["title"] for section in sections if section["headingEndLine"] > 0),
                 sections[0]["title"] if sections else PurePosixPath(path).stem,
             )
+            title = parsed.get("document_names", {}).get(path) or title
             document = self.docs._revision(
                 s,
                 doc_entity,
@@ -639,12 +865,19 @@ class MaterialService:
             "entry": parsed["entry"],
             "members": members,
             "targets": parsed["targets"],
+            "inventory": parsed.get("inventory", {}),
             "warnings": parsed["warnings"],
             "input_fingerprint": fingerprint,
+            "upload_fingerprint": self._input_fingerprint(form, files),
+            "import_entry": form.entry,
+            "single_input_sha256": sha(files[0][1])
+            if len(files) == 1 and files[0][0].lower().endswith((".html", ".htm", ".md", ".markdown", ".txt"))
+            else None,
             "document_count": len(parsed["documents"]),
             "section_count": len(members) - len(parsed["documents"]),
             "attachment_artifact_ids": [a.id for a in attachments],
             "document_navigation": parsed.get("navigation", {"order": [], "categories": []}),
+            **({"document_template": parsed["template"]} if parsed.get("template") else {}),
             "base_revision_id": active_base,
             "changes": counts,
             "prepared_for": analysis.id,
@@ -654,6 +887,33 @@ class MaterialService:
         )
         self.service.audit(s, actor, pid, "material.prepare", rev.id)
         return {**descriptor(s, rev), "changes": counts, "selection_version": analysis.selection_version}
+
+    def _check_document_overlap(self, s, actor, pid, aid, parsed):
+        from .reading import chunks
+
+        incoming = {path for path, _ in parsed["documents"]}
+        for package in roots(s, pid, aid):
+            if package.metadata_json[ROOT]["kind"] != "documents" or not readable(self.service, s, actor, pid, package):
+                continue
+            paths = set()
+            for batch in chunks(package.metadata_json[ROOT]["members"]):
+                paths.update(
+                    metadata.get("material_path") or path
+                    for metadata, path in s.execute(
+                        select(Revision.metadata_json, Artifact.relative_path)
+                        .join(Entity, Entity.id == Revision.entity_id)
+                        .join(Artifact, Artifact.id == Revision.artifact_id)
+                        .where(Revision.id.in_(batch), Revision.project_id == pid, Entity.type == "document")
+                    )
+                )
+            overlap = len(paths & incoming)
+            if overlap >= 5 and overlap >= 0.7 * min(len(paths), len(incoming)):
+                raise DomainError(
+                    "VKS_MATERIAL_UPDATE_REQUIRED",
+                    f"这份资料与“{package.name}”有 {overlap} 篇相同路径的文档，请更新已有资料包，避免生成两份文档。",
+                    409,
+                    {"package_id": package.entity_id, "name": package.name},
+                )
 
     def checkpoint(self, actor, pid, aid, name, key):
         # Copy first, so saving a version never freezes the live editable workspace.
@@ -678,7 +938,10 @@ class MaterialService:
             )
             if not existing_result:
                 version(analysis.selection_version, expected)
-            has_content = bool(self.service._revisions(s, analysis.id))
+            has_content = (
+                s.scalar(select(Selection.entity_id).where(Selection.analysis_set_id == analysis.id).limit(1))
+                is not None
+            )
         checkpoint = None
         if has_content and not existing_result:
             checkpoint = self.checkpoint(actor, pid, form.analysis_set_id, "替换前自动保存", "before." + key)["id"]
@@ -698,6 +961,8 @@ class MaterialService:
         version(analysis.selection_version, expected)
         old = {r.entity_id: r for r in roots(s, pid, analysis.id)}
         incoming = [root(s, pid, rid) for rid in form.revision_ids]
+        if any(s.get(MaterialTrash, (pid, "package", r.entity_id)) for r in incoming):
+            raise DomainError("VKS_STATE_CONFLICT", "请先从回收站恢复资料包，再启用。", 409)
         if len({r.entity_id for r in incoming}) != len(incoming):
             raise DomainError("VKS_INVALID_INPUT", "同一资料包不能同时启用两个版本", 422)
         if form.prepared:
@@ -714,6 +979,9 @@ class MaterialService:
         desired = {} if form.replace_all else {k: r for k, r in old.items() if k not in form.remove_package_ids}
         desired.update({r.entity_id: r for r in incoming})
         selected_before = {r.entity_id: r for r in self.service._revisions(s, analysis.id)}
+        from .reading import ReadingService
+
+        ReadingService(self.service).preload(s, selected_before.values())
         old_members = {eid: self._members(s, r, selected_before) for eid, r in old.items()}
         desired_members = {
             eid: self._members(s, r, selected_before if eid in old and old[eid].id == r.id else {})
@@ -736,14 +1004,18 @@ class MaterialService:
                         previous.locator,
                         meta,
                     )
-        for choice in list(s.scalars(select(Selection).where(Selection.analysis_set_id == analysis.id))):
-            if choice.entity_id in old or choice.entity_id in owned - wanted:
+        choices = {c.entity_id: c for c in s.scalars(select(Selection).where(Selection.analysis_set_id == analysis.id))}
+        for choice in list(choices.values()):
+            if choice.entity_id in old.keys() - desired.keys() or choice.entity_id in owned - wanted:
                 s.delete(choice)
-        s.flush()
-        for eid, rev in desired.items():
-            _select(s, analysis, rev)
-            for member in desired_members[eid].values():
-                _select(s, analysis, member)
+                del choices[choice.entity_id]
+        updates = {r.entity_id: r for r in desired.values()}
+        updates.update({eid: r for members in desired_members.values() for eid, r in members.items()})
+        for eid, revision in updates.items():
+            if choice := choices.get(eid):
+                choice.entity_revision_id = revision.id
+            else:
+                s.add(Selection(analysis_set_id=analysis.id, entity_id=eid, entity_revision_id=revision.id))
         s.flush()
         active_artifacts = {r.artifact_id for r in desired.values() if r.metadata_json[ROOT]["kind"] == "prototype"}
         for edge in s.scalars(
@@ -762,6 +1034,15 @@ class MaterialService:
             raise DomainError("VKS_INVALID_INPUT", "当前原型必须属于已启用的原型包", 422)
         chosen = chosen if chosen in prototypes else next(iter(prototypes), None)
         self._composition(s, analysis, chosen)
+        from .document_presentation import DocumentPresentation, PresentationSettings
+
+        if not s.get(DocumentPresentation, analysis.id) and any(
+            r.metadata_json[ROOT].get("document_template", {}).get("template_id") == "handbook"
+            for r in desired.values()
+        ):
+            s.add(DocumentPresentation(
+                analysis_set_id=analysis.id, settings=PresentationSettings(mode="handbook").model_dump()
+            ))
         report, targets, issues = self._migrate_graph(s, actor, pid, analysis, old, desired, selected_before)
         sources = list(analysis.sources)
         recorded_sources = {row.get("source_snapshot_id") for row in sources}
@@ -837,22 +1118,27 @@ class MaterialService:
         return sha(canonical(sorted(r.id for r in roots(s, pid, aid))))
 
     def _members(self, s, package, selected):
+        from .reading import ReadingService
+
+        retained = s.info.setdefault("vks_prefetched", {})
+        ids = package.metadata_json[ROOT]["members"]
+        missing_ids = [rid for rid in ids if (Revision, rid) not in retained]
+        retained.update({(Revision, r.id): r for r in ReadingService(self.service).revision_rows(s, missing_ids)})
         result = {}
-        for rid in package.metadata_json[ROOT]["members"]:
+        doc_keys = {}
+        for rid in ids:
             base = s.get(Revision, rid)
             if not base or base.project_id != package.project_id:
                 raise DomainError("VKS_INTEGRITY_ERROR", "资料包成员不完整", 409)
             current = selected.get(base.entity_id, base)
             result[current.entity_id] = current
             if s.get(Entity, current.entity_id).type == "document":
-                for chapter in self.docs._sections(s, s.get(Entity, current.entity_id), current):
+                document = s.get(Entity, current.entity_id)
+                chapters = self.docs._sections(s, document, current)
+                doc_keys[document.stable_key] = {chapter.id for chapter in chapters}
+                for chapter in chapters:
                     result[chapter.entity_id] = chapter
         # A manual edit can remove or add sections beyond the imported member list.
-        documents = {r.entity_id: r for r in result.values() if s.get(Entity, r.entity_id).type == "document"}
-        doc_keys = {
-            s.get(Entity, eid).stable_key: {c.id for c in self.docs._sections(s, s.get(Entity, eid), r)}
-            for eid, r in documents.items()
-        }
         return {
             eid: r
             for eid, r in result.items()
@@ -981,7 +1267,7 @@ class MaterialService:
             analysis = self._draft(s, actor, pid, form.analysis_set_id)
             version(analysis.selection_version, expected)
             release = s.get(Release, form.release_id)
-            if not release or release.project_id != pid:
+            if not release or release.project_id != pid or s.get(MaterialTrash, (pid, "version", release.id)):
                 raise missing()
             self.service._saved_snapshot(s, actor, release)
             aid = release.analysis_set_id
@@ -992,6 +1278,9 @@ class MaterialService:
             version(current.selection_version, expected)
 
             def restore_pointer():
+                for package in roots(s, pid, clone["id"]):
+                    if removed := s.get(MaterialTrash, (pid, "package", package.entity_id)):
+                        s.delete(removed)
                 state = s.get(StudioWorkspace, pid)
                 if state and state.analysis_set_id != form.analysis_set_id:
                     raise DomainError("VKS_VERSION_CONFLICT", "项目工作区已切换，请刷新后再回退", 409)
@@ -1008,9 +1297,43 @@ class MaterialService:
     def retry_migration(self, actor, pid, aid, expected, key):
         with self.service.db() as s:
             analysis = self._draft(s, actor, pid, aid)
-            version(analysis.selection_version, expected)
             self._complete_access(s, actor, pid, analysis)
-            selected = {r.entity_id: r for r in self.service._revisions(s, aid)}
+            composition = self.composition_digest(s, pid, aid)
+            active = [
+                job
+                for job in s.scalars(
+                    select(Job).where(
+                        Job.project_id == pid,
+                        Job.kind == "material_migrate",
+                        Job.created_by == actor.id,
+                        Job.state.in_(("queued", "running", "retry_wait")),
+                        Job.cancel_requested == False,
+                    )
+                )
+                if job.input_json.get("analysis_set_id") == aid and job.input_json.get("composition") == composition
+            ]
+            if active:
+                job = max(active, key=lambda j: (j.progress, j.state == "running", j.created_at))
+                return self.service.idem(
+                    s,
+                    actor,
+                    pid,
+                    "material.migrate",
+                    key,
+                    {"analysis_set_id": aid, "expected": expected},
+                    lambda: self.service.job_dto(job),
+                )
+            version(analysis.selection_version, expected)
+            selected = {
+                r.entity_id: r
+                for r in s.scalars(
+                    select(Revision)
+                    .join(Selection, Selection.entity_revision_id == Revision.id)
+                    .join(Entity, Entity.id == Revision.entity_id)
+                    .where(Selection.analysis_set_id == aid, Entity.type == "action")
+                )
+            }
+            package_artifacts = {r.artifact_id for r in roots(s, pid, aid)}
             targets = []
             for edge in s.scalars(
                 select(Relation).where(
@@ -1022,11 +1345,7 @@ class MaterialService:
             ):
                 action = s.get(Revision, edge.from_revision_id)
                 anchor = action.metadata_json.get("interactive_anchor")
-                if (
-                    selected.get(action.entity_id) is action
-                    and anchor
-                    and any(r.artifact_id == anchor["package_id"] for r in roots(s, pid, aid))
-                ):
+                if selected.get(action.entity_id) is action and anchor and anchor["package_id"] in package_artifacts:
                     targets.append(
                         {
                             "package_id": anchor["package_id"],
@@ -1055,7 +1374,7 @@ class MaterialService:
                         {
                             "analysis_set_id": aid,
                             "targets": targets,
-                            "composition": self.composition_digest(s, pid, aid),
+                            "composition": composition,
                         },
                     )
                 ),
@@ -1244,8 +1563,23 @@ def install_materials(app, service, actor, envelope):
         return envelope(request, shared.open(a, pid, payload.analysis_set_id))
 
     @app.get(prefix, response_model=PrototypeEnvelope[dict])
-    def library(pid: str, analysis_set_id: str, a: ActorDep, request: Request):
-        return envelope(request, shared.library(a, pid, analysis_set_id))
+    def library(pid: str, analysis_set_id: str, a: ActorDep, request: Request, include_versions: bool = True):
+        return envelope(request, shared.library(a, pid, analysis_set_id, include_versions))
+
+    @app.get(prefix + "/versions", response_model=PrototypeEnvelope[dict])
+    def history(pid: str, analysis_set_id: str, a: ActorDep, request: Request):
+        return envelope(request, shared.history(a, pid, analysis_set_id))
+
+    @app.post(prefix + "/trash", response_model=PrototypeEnvelope[dict])
+    def trash(
+        pid: str,
+        payload: TrashMaterial,
+        a: ActorDep,
+        request: Request,
+        if_match: str = Header(...),
+        idempotency_key: str = Header(..., max_length=100),
+    ):
+        return envelope(request, shared.trash(a, pid, payload, if_match, idempotency_key))
 
     @app.post(prefix + "/prepare", response_model=PrototypeEnvelope[dict])
     def prepare(

@@ -3,3 +3,8 @@ docs/design/** -text
 fixtures/** -text
 *.png -text
 *.zip -text
+# The generated highlighter contains significant whitespace in grammar literals.
+services/api/vks_api/reader_assets/markdown-vendor.js whitespace=-blank-at-eol
+# Original handbook bundles retain whitespace inside vendor grammar/template literals.
+packages/handbook-template/standalone/assistant.js whitespace=-blank-at-eol
+packages/handbook-template/standalone/mermaid.js whitespace=-blank-at-eol,-space-before-tab

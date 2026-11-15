@@ -424,3 +424,91 @@ def test_native_document_submit_handlers_run_while_default_form_writes_and_proto
             assert len(received) == 1
         finally:
             browser.close()
+
+
+def test_registration_capabilities_expire_and_registry_stays_bounded(runtime_sites, monkeypatch):
+    from apps.runtime import server
+
+    host_url, runtime, _tmp = runtime_sites
+    clock = [1000.0]
+    monkeypatch.setattr(server, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(server, "MAX_REGISTRATIONS", 2)
+    monkeypatch.setattr(server, "REGISTRATION_TTL", 20)
+    url = f"http://127.0.0.1:{runtime.server_port}"
+    with httpx.Client(trust_env=False) as client:
+        first = register(client, host_url, runtime).json()
+        clock[0] += 1
+        second = register(client, host_url, runtime).json()
+        clock[0] += 1
+        third = register(client, host_url, runtime).json()
+        assert first["origin"] == second["origin"] == third["origin"]
+        assert len(runtime.runtime_registrations) == 2
+
+        def load(record):
+            return client.get(
+                url + "/?registration=" + record["registration"], headers={"Host": urlsplit(record["origin"]).netloc}
+            )
+
+        assert load(first).status_code == 403
+        assert load(second).status_code == load(third).status_code == 200
+        clock[0] += 21
+        assert load(third).status_code == 403
+        assert not runtime.runtime_registrations
+        renewed = register(client, host_url, runtime).json()
+        assert renewed["origin"] == first["origin"]
+        assert load(renewed).status_code == 200
+
+
+def test_static_site_responsive_images_and_asset_fragments_resolve_offline(runtime_sites):
+    from io import BytesIO
+
+    from PIL import Image
+
+    host_url, runtime, _tmp = runtime_sites
+    stream = BytesIO()
+    Image.new("RGB", (24, 16), "green").save(stream, format="PNG")
+    image = stream.getvalue()
+    from base64 import b64encode
+
+    inline = "data:image/png;base64," + b64encode(image).decode()
+    html = f'''<!doctype html><title>Responsive images</title>
+    <picture><source srcset="assets/flow.png 1x, assets/flow.png 2x"><img id="responsive" src="assets/flow.png"></picture>
+    <img id="inline" srcset="{inline} 1x, assets/flow.png 2x">
+    <svg><use id="symbol" href="assets/icons.svg#rule"></use></svg>'''
+    static = site_html(
+        "index.html",
+        [
+            ("index.html", html.encode()),
+            ("assets/flow.png", image),
+            (
+                "assets/icons.svg",
+                b'<svg xmlns="http://www.w3.org/2000/svg"><symbol id="rule"><rect width="10" height="10"/></symbol></svg>',
+            ),
+        ],
+    ).decode()
+    with sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
+        page = browser.new_page(viewport={"width": 1200, "height": 1000})
+        try:
+            page.goto(host_url)
+            page.evaluate("options=>openMaterial(options)", registration_options(runtime, static))
+            source = page.frame_locator("#runtime").frame_locator("#material").frame_locator("#actualPage")
+            expect(source.locator("#responsive")).to_be_visible()
+            source.locator("#responsive").evaluate("image=>image.decode()")
+            source.locator("#inline").evaluate("image=>image.decode()")
+            resource = source.locator("#responsive").evaluate("""async image => {
+              const original=new Image();original.src=image.currentSrc;await original.decode();
+              return {width:original.naturalWidth,height:original.naturalHeight,
+                renderedWidth:image.naturalWidth,currentSrc:image.currentSrc};
+            }""")
+            assert resource["width"] == 24 and resource["height"] == 16
+            assert resource["currentSrc"].startswith("blob:")
+            # Chromium may choose a cached 2x candidate even at a 1x device
+            # scale; naturalWidth is density-corrected, unlike decoded pixels.
+            assert resource["width"] / resource["renderedWidth"] in (1, 2)
+            assert source.locator("source").get_attribute("srcset").count("blob:") == 2
+            assert source.locator("#inline").get_attribute("srcset").startswith(inline + " 1x, blob:")
+            assert source.locator("#symbol").get_attribute("href").startswith("blob:")
+            assert source.locator("#symbol").get_attribute("href").endswith("#rule")
+        finally:
+            browser.close()

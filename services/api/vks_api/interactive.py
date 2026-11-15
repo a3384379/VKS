@@ -5,13 +5,16 @@ P0 stores the immutable DOM locator in an Action revision, using the same knowle
 and citation records as the raster editor. No private material is served statically.
 """
 
+from contextlib import nullcontext
 from typing import Annotated
 
 from fastapi import Depends, Header, Request
 from fastapi.responses import Response
 from pydantic import Field
 from sqlalchemy import select
+from sqlalchemy.orm import load_only
 
+from .document_presentation import PresentationSettings, presentation_for_analysis, presentation_for_release
 from .documents import DocumentService
 from .knowledge import SourceSnapshot
 from .models import Artifact, Entity, Evidence, Relation, Revision
@@ -91,11 +94,13 @@ class InteractiveCatalog(Input):
     analysis_set_id: str
     release_id: str | None
     selection_version: int
+    source_fingerprint: str = ""
     editable: bool
     packages: list[RuntimePackage]
     documents: list[InteractiveDocumentInfo]
     primary_package_id: str | None = None
     navigation: dict = Field(default_factory=lambda: {"packages": []})
+    presentation: PresentationSettings = Field(default_factory=PresentationSettings)
 
 
 class InteractiveChapter(Input):
@@ -180,17 +185,43 @@ class InteractiveKnowledgeService:
         self.documents = DocumentService(service)
         self.editor = PrototypeEditor(service)
 
-    def _rows(self, s, actor, pid, choices):
+    @staticmethod
+    def _read_key(s, actor, pid, choices):
+        # Only reuse within an immutable read snapshot. Write-side validation
+        # must see changes made earlier in its own transaction.
+        if not s.info.get("vks_read_only"):
+            return None
+        return (actor, pid, frozenset(choices.items()))
+
+    def _rows(self, s, actor, pid, choices, *, types=None, revision_ids=None):
+        wanted = frozenset(types) if types is not None else None
+        requested = frozenset(revision_ids) if revision_ids is not None else None
+        base = self._read_key(s, actor, pid, choices)
+        key = (base, wanted, requested) if base is not None else None
+        cache = s.info.setdefault("vks_interactive_rows", {})
+        if key is not None and key in cache:
+            return list(cache[key])
+        candidates = choices.items()
+        if requested is not None:
+            candidates = [(eid, rid) for eid, rid in candidates if rid in requested]
+        if wanted is not None:
+            from .reading import chunks
+
+            kinds = {}
+            for batch in chunks([eid for eid, _ in candidates]):
+                kinds.update(s.execute(select(Entity.id, Entity.type).where(Entity.id.in_(batch))).all())
+            candidates = [(eid, rid) for eid, rid in candidates if kinds.get(eid) in wanted]
+        candidates = list(candidates)
         # Batch and retain immutable identities for this transaction. A fully
         # authorized reader need not recompute the same source/trace policy for
         # every chapter; project and entity/artifact ownership still apply.
         retained = s.info.setdefault("vks_prefetched", {})
-        missing = [rid for rid in choices.values() if (Revision, rid) not in retained]
+        missing = [rid for _, rid in candidates if (Revision, rid) not in retained]
         revisions = self.reader.reading.revision_rows(s, missing)
         retained.update({(Revision, r.id): r for r in revisions})
         complete = self.service._can(s, actor, pid, "source:read") and self.service._can(s, actor, pid, "trace:read")
         result = []
-        for eid, rid in choices.items():
+        for eid, rid in candidates:
             row = retained.get((Revision, rid))
             entity = s.get(Entity, eid)
             if (
@@ -207,16 +238,40 @@ class InteractiveKnowledgeService:
                 continue
             if complete or self.service._visible_revision(s, actor, pid, row):
                 result.append((entity, row))
+        if key is not None:
+            cache[key] = tuple(result)
         return result
 
-    def _packages(self, s, actor, pid, choices):
+    def _packages(self, s, actor, pid, choices, *, kind=None, package_id=None):
+        base = self._read_key(s, actor, pid, choices)
+        key = (base, kind, package_id) if base is not None else None
+        cache = s.info.setdefault("vks_interactive_packages", {})
+        if key is None:
+            return self._build_packages(s, actor, pid, choices, kind=kind, package_id=package_id)
+        if key not in cache:
+            cache[key] = tuple(self._build_packages(s, actor, pid, choices, kind=kind, package_id=package_id))
+        return [dict(package) for package in cache[key]]
+
+    def _build_packages(self, s, actor, pid, choices, *, kind=None, package_id=None):
         from .materials import COMPOSITION, ROOT, readable, roots
         from .native_documents import complete_selection, package_documents
 
         installed = roots(s, pid, choices)
-        if installed or any(COMPOSITION in r.metadata_json for _, r in self._rows(s, actor, pid, choices)):
+        projection = None if installed else self._package_scope(s, actor, pid, choices)
+        fallback = None
+        if not installed and projection is None:
+            fallback = self._rows(s, actor, pid, choices)
+        has_composition = (
+            projection[0] if projection is not None else any(COMPOSITION in r.metadata_json for _, r in fallback or [])
+        )
+        if installed or has_composition:
             result = []
             for row in installed:
+                if package_id is not None and row.artifact_id != package_id:
+                    continue
+                package_kind = "prototype" if row.metadata_json[ROOT]["kind"] == "prototype" else "handbook"
+                if kind is not None and kind != package_kind:
+                    continue
                 if not readable(self.service, s, actor, pid, row):
                     continue
                 art = s.get(Artifact, row.artifact_id)
@@ -241,20 +296,24 @@ class InteractiveKnowledgeService:
                     }
                 )
             return result
-        snapshots = {
-            s.get(Artifact, r.artifact_id).snapshot_id for _, r in self._rows(s, actor, pid, choices) if r.artifact_id
-        }
+        snapshots = (
+            projection[1]
+            if projection is not None
+            else {s.get(Artifact, r.artifact_id).snapshot_id for _, r in fallback or [] if r.artifact_id}
+        )
         rows = []
         for art in s.scalars(
             select(Artifact).where(Artifact.project_id == pid, Artifact.relative_path == "offline/original.html")
         ):
+            if package_id is not None and art.id != package_id:
+                continue
             if art.snapshot_id not in snapshots:
                 continue
             snapshot = s.get(SourceSnapshot, art.snapshot_id)
-            kind = {"charge-offline-prototype": "prototype", "charge-offline-handbook": "handbook"}.get(
+            package_kind = {"charge-offline-prototype": "prototype", "charge-offline-handbook": "handbook"}.get(
                 snapshot.source_key if snapshot else ""
             )
-            if not kind:
+            if not package_kind or (kind is not None and kind != package_kind):
                 continue
             policy = artifact_policy(s, art)
             if policy.get("offline_archive_invalid") or any(
@@ -262,7 +321,7 @@ class InteractiveKnowledgeService:
                 for key, cap in (("requires_source_read", "source:read"), ("requires_trace_read", "trace:read"))
             ):
                 continue
-            if kind == "handbook":
+            if package_kind == "handbook":
                 document_ids = list(
                     s.scalars(
                         select(Revision.entity_id)
@@ -282,20 +341,123 @@ class InteractiveKnowledgeService:
             rows.append(
                 {
                     "id": art.id,
-                    "kind": kind,
+                    "kind": package_kind,
                     "sha256": art.sha256,
                     "size_bytes": art.size_bytes,
-                    "name": "云收费原型" if kind == "prototype" else "云收费知识手册",
+                    "name": "云收费原型" if package_kind == "prototype" else "云收费知识手册",
                     "adapter_version": "charge-dom-1",
-                    "format": "charge-prototype" if kind == "prototype" else "charge-handbook",
+                    "format": "charge-prototype" if package_kind == "prototype" else "charge-handbook",
                 }
             )
         return rows
 
+    def _package_scope(self, s, actor, pid, choices):
+        """Whole-source readers need ownership/selection facts, not every body."""
+        if not s.info.get("vks_read_only") or not (
+            self.service._can(s, actor, pid, "source:read") and self.service._can(s, actor, pid, "trace:read")
+        ):
+            return None
+        from .materials import COMPOSITION
+        from .reading import chunks
+
+        snapshots, composition = set(), False
+        for batch in chunks(choices.values()):
+            query = (
+                select(
+                    Revision.id,
+                    Revision.entity_id,
+                    Revision.project_id,
+                    Revision.artifact_id,
+                    Revision.metadata_json,
+                    Entity.project_id,
+                    Entity.type,
+                    Artifact.project_id,
+                    Artifact.snapshot_id,
+                )
+                .join(Entity, Entity.id == Revision.entity_id)
+                .outerjoin(Artifact, Artifact.id == Revision.artifact_id)
+                .where(Revision.id.in_(batch))
+            )
+            for rid, eid, rpid, artifact_id, metadata, epid, kind, apid, snapshot in s.execute(query):
+                if (
+                    choices.get(eid) != rid
+                    or rpid != pid
+                    or epid != pid
+                    or kind not in {"page", "action", "document", "section", "business_point"}
+                    or (artifact_id and apid != pid)
+                ):
+                    continue
+                composition = composition or COMPOSITION in metadata
+                if artifact_id:
+                    snapshots.add(snapshot)
+        return composition, snapshots
+
+    def _source_fingerprint(self, s, actor, pid, choices, documents, packages):
+        """Chat source identity excludes binding counters and never reads chapter bodies."""
+        from .reading import chunks
+
+        mapped = {}
+        legacy = set()
+        for entity, revision in documents:
+            ids = revision.metadata_json.get("section_revision_ids")
+            if isinstance(ids, list):
+                for rid in ids:
+                    if isinstance(rid, str):
+                        mapped.setdefault(rid, set()).add((revision.artifact_id, entity.stable_key))
+            else:
+                legacy.add((revision.artifact_id, entity.stable_key))
+        chapters = []
+        for batch in chunks(choices.values()):
+            rows = list(
+                s.scalars(
+                    select(Revision)
+                    .join(Entity, Entity.id == Revision.entity_id)
+                    .where(
+                        Revision.id.in_(batch),
+                        Revision.project_id == pid,
+                        Entity.project_id == pid,
+                        Entity.type == "section",
+                    )
+                    .options(
+                        load_only(
+                            Revision.id,
+                            Revision.entity_id,
+                            Revision.project_id,
+                            Revision.artifact_id,
+                            Revision.metadata_json,
+                            Revision.content_sha256,
+                        )
+                    )
+                )
+            )
+            self.reader.reading.preload(s, rows)
+            for row in rows:
+                membership = (row.artifact_id, row.metadata_json.get("document_key"))
+                if (
+                    choices.get(row.entity_id) != row.id
+                    or membership not in mapped.get(row.id, set()) | legacy
+                    or not self.service._visible_revision(s, actor, pid, row)
+                ):
+                    continue
+                # _visible_revision retains the existing complete-reader fast path
+                # while still checking entity/artifact ownership for every chapter.
+                chapters.append((row.id, row.content_sha256))
+        return sha(
+            canonical(
+                {
+                    "documents": sorted(
+                        (entity.id, revision.id, revision.content_sha256) for entity, revision in documents
+                    ),
+                    "chapters": sorted(chapters),
+                    "packages": sorted((p["id"], p["kind"], p.get("revision_id", ""), p["sha256"]) for p in packages),
+                }
+            )
+        )
+
     def catalog(self, actor, pid, aid=None, release_id=None):
-        with self.service.db() as s:
+        with self.reader.reading.db() as s:
             analysis, release, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
-            rows = self._rows(s, actor, pid, choices)
+            rows = self._rows(s, actor, pid, choices, types={"document"})
             from .document_navigation import build_navigation
             from .materials import primary
             from .native_documents import catalog_locations, index_modified
@@ -312,9 +474,13 @@ class InteractiveKnowledgeService:
 
             return {
                 "analysis_set_id": analysis.id,
+                "presentation": presentation_for_release(s, release)
+                if release
+                else presentation_for_analysis(s, analysis),
                 "primary_package_id": primary(s, pid, choices),
                 "release_id": release.id if release else None,
                 "selection_version": analysis.selection_version,
+                "source_fingerprint": self._source_fingerprint(s, actor, pid, choices, rows, packages),
                 "editable": not release
                 and analysis.state != "frozen"
                 and self.service._can(s, actor, pid, "knowledge:edit"),
@@ -347,7 +513,9 @@ class InteractiveKnowledgeService:
     def content(self, actor, pid, package_id, aid=None, release_id=None):
         with self.service.db() as s:
             _, _, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
-            if not any(row["id"] == package_id for row in self._packages(s, actor, pid, choices)):
+            if not any(
+                row["id"] == package_id for row in self._packages(s, actor, pid, choices, package_id=package_id)
+            ):
                 raise missing()
             artifact = s.get(Artifact, package_id)
             raw = (self.service.data_dir / "objects" / artifact.object_key).read_bytes()
@@ -356,8 +524,8 @@ class InteractiveKnowledgeService:
             self.service.audit(s, actor, pid, "interactive.package.read", artifact.id)
             return raw
 
-    def document(self, actor, pid, rid, aid=None, release_id=None):
-        with self.service.db() as s:
+    def document(self, actor, pid, rid, aid=None, release_id=None, *, native=True):
+        with self.reader.reading.db() as s:
             _, _, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
             entity, row = selected_id(s, self.service, actor, pid, choices, rid, "document")
             chapters = self.documents._sections(s, entity, row)
@@ -375,27 +543,91 @@ class InteractiveKnowledgeService:
                 "name": row.name,
                 **readable_document(row, chapters, visible),
                 "native": describe(
-                    self.service, s, actor, pid, choices, row, chapters, self._packages(s, actor, pid, choices)
-                ),
+                    self.service,
+                    s,
+                    actor,
+                    pid,
+                    choices,
+                    row,
+                    chapters,
+                    self._packages(s, actor, pid, choices, kind="handbook"),
+                )
+                if native
+                else None,
             }
 
-    def bindings(self, actor, pid, aid=None, release_id=None):
-        with self.service.db() as s:
+    def bindings(self, actor, pid, aid=None, release_id=None, *, session=None):
+        from .reading import chunks
+
+        with nullcontext(session) if session is not None else self.reader.reading.db() as s:
             analysis, release, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
-            rows = {r.id: (e, r) for e, r in self._rows(s, actor, pid, choices)}
-            relations = self.service._relations(s, analysis, release)
+            relations = [
+                edge
+                for edge in self.service._relations(s, analysis, release)
+                if edge["relation_type"] in {"has_business_point", "supported_by_section"}
+            ]
+            relation_ids = {rid for edge in relations for rid in (edge["from_revision_id"], edge["to_revision_id"])}
+            rows = {r.id: (e, r) for e, r in self._rows(s, actor, pid, choices, revision_ids=relation_ids)}
+            document_keys = {r.metadata_json.get("document_key") for e, r in rows.values() if e.type == "section"}
+            document_ids = set()
+            for batch in chunks(document_keys):
+                for eid in s.scalars(
+                    select(Entity.id).where(
+                        Entity.project_id == pid, Entity.type == "document", Entity.stable_key.in_(batch)
+                    )
+                ):
+                    if eid in choices:
+                        document_ids.add(choices[eid])
+            rows.update({r.id: (e, r) for e, r in self._rows(s, actor, pid, choices, revision_ids=document_ids)})
+            evidence_ids = {eid for edge in relations for eid in edge.get("evidence_ids", [])}
+            evidence = []
+            retained = s.info.setdefault("vks_prefetched", {})
+            for batch in chunks(evidence_ids):
+                evidence.extend(s.scalars(select(Evidence).where(Evidence.id.in_(batch))))
+            retained.update({(Evidence, row.id): row for row in evidence})
+            self.reader.reading.preload(s, evidence=evidence)
+            full_access = self.service._can(s, actor, pid, "source:read") and self.service._can(
+                s, actor, pid, "trace:read"
+            )
+
+            def evidence_visible(eid):
+                row = s.get(Evidence, eid)
+                if not full_access:
+                    return bool(row and self.service._visible_evidence(s, actor, pid, row))
+                art = s.get(Artifact, row.artifact_id) if row else None
+                return bool(row and row.project_id == pid and art and art.project_id == pid)
+
             visible = [
                 edge
                 for edge in relations
                 if edge["from_revision_id"] in rows
                 and edge["to_revision_id"] in rows
-                and self.service._visible_relation(s, actor, pid, edge)
-                and all(
-                    (ev := s.get(Evidence, eid)) and self.service._visible_evidence(s, actor, pid, ev)
-                    for eid in edge.get("evidence_ids", [])
-                )
+                and (full_access or self.service._visible_relation(s, actor, pid, edge))
+                and all(evidence_visible(eid) for eid in edge.get("evidence_ids", []))
             ]
-            package_ids = {p["id"] for p in self._packages(s, actor, pid, choices)}
+            missing_points = set()
+            for edge in relations:
+                if (
+                    edge["from_revision_id"] in rows
+                    and edge["to_revision_id"] not in rows
+                    and edge["relation_type"] == "supported_by_section"
+                    and not edge["excluded"]
+                    and (full_access or self.service._visible_relation(s, actor, pid, edge))
+                    and all(evidence_visible(eid) for eid in edge.get("evidence_ids", []))
+                    and self.service._visible_revision(s, actor, pid, s.get(Revision, edge["to_revision_id"]))
+                ):
+                    missing_points.add(edge["from_revision_id"])
+            package_ids = {p["id"] for p in self._packages(s, actor, pid, choices, kind="prototype")}
+            # Index once rather than scanning all relations and documents for
+            # every binding. A selected orphan chapter is not a citation to the
+            # current document merely because its logical document key matches.
+            section_edges = {}
+            for edge in visible:
+                if edge["relation_type"] == "supported_by_section" and not edge["excluded"]:
+                    section_edges.setdefault(edge["from_revision_id"], []).append(edge)
+            documents = self._citation_documents(
+                s, rows, {edge["to_revision_id"] for edges in section_edges.values() for edge in edges}
+            )
             out = []
             for edge in visible:
                 action = rows[edge["from_revision_id"]][1]
@@ -404,37 +636,30 @@ class InteractiveKnowledgeService:
                     continue
                 point = rows[edge["to_revision_id"]][1]
                 citations = []
-                for citation in visible:
-                    if (
-                        citation["from_revision_id"] == point.id
-                        and citation["relation_type"] == "supported_by_section"
-                        and not citation["excluded"]
-                    ):
-                        section = rows[citation["to_revision_id"]][1]
-                        document = next(
-                            (
-                                (e, r)
-                                for e, r in rows.values()
-                                if e.type == "document" and e.stable_key == section.metadata_json.get("document_key")
-                            ),
-                            None,
+                missing_citation = point.id in missing_points or not section_edges.get(point.id)
+                for citation in section_edges.get(point.id, []):
+                    section = rows[citation["to_revision_id"]][1]
+                    document = documents.get(section.id)
+                    if document:
+                        citations.append(
+                            {
+                                "revision_id": section.id,
+                                "name": section.name,
+                                "content": section.content,
+                                "document_revision_id": document[1].id,
+                                "document_name": document[1].name,
+                            }
                         )
-                        if document:
-                            citations.append(
-                                {
-                                    "revision_id": section.id,
-                                    "name": section.name,
-                                    "content": section.content,
-                                    "document_revision_id": document[1].id,
-                                    "document_name": document[1].name,
-                                }
-                            )
+                    else:
+                        missing_citation = True
                 out.append(
                     {
                         "id": edge["id"],
                         "binding_version": edge["row_version"],
                         "excluded": edge["excluded"],
-                        "validity_status": edge["validity_status"],
+                        "validity_status": "outdated"
+                        if missing_citation and edge["validity_status"] == "valid"
+                        else edge["validity_status"],
                         "point_revision_id": point.id,
                         "title": point.name,
                         "summary": point.content,
@@ -447,6 +672,21 @@ class InteractiveKnowledgeService:
                     }
                 )
             return out
+
+    def _citation_documents(self, s, rows, section_ids):
+        by_key = {r.metadata_json.get("document_key") for _, r in rows.values() if r.id in section_ids}
+        result = {}
+        for entity, document in rows.values():
+            if entity.type != "document" or entity.stable_key not in by_key:
+                continue
+            try:
+                chapters = self.documents._sections(s, entity, document)
+            except DomainError:
+                continue
+            for chapter in chapters:
+                if chapter.id in section_ids:
+                    result[chapter.id] = (entity, document)
+        return result
 
     def save(self, actor, pid, form, expected, key, *, generation=None, validate=None):
         service = self.service
@@ -502,6 +742,11 @@ class InteractiveKnowledgeService:
                     selected_id(s, service, actor, pid, choices, rid, "section")[1]
                     for rid in dict.fromkeys(form.section_revision_ids)
                 ]
+                members = self._citation_documents(
+                    s, {r.id: (e, r) for e, r in self._rows(s, actor, pid, choices)}, {r.id for r in refs}
+                )
+                if any(r.id not in members for r in refs):
+                    raise missing()
                 action = prior_action
                 if not action:
                     action_entity_new = action_entity or _new_entity(s, pid, "action", action_key)
@@ -616,8 +861,9 @@ def install_interactive(app, service, actor, envelope):
         a: ActorDep,
         analysis_set_id: str | None = None,
         release_id: str | None = None,
+        native: bool = True,
     ):
-        return envelope(request, shared.document(a, pid, rid, analysis_set_id, release_id))
+        return envelope(request, shared.document(a, pid, rid, analysis_set_id, release_id, native=native))
 
     @app.get(prefix + "/bindings", response_model=PrototypeEnvelope[list[InteractiveBindingOutput]])
     def bindings(

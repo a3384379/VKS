@@ -47,6 +47,7 @@ JOB_SCOPES = {
     "import": "source:import",
     "import_preview": "source:import",
     "material_migrate": "knowledge:edit",
+    "associate_all": "knowledge:edit",
     "index": "analysis:run",
     "generate_documents": "analysis:run",
     "suggest_links": "analysis:run",
@@ -118,6 +119,10 @@ class Service:
             modules,
             project_profile,
             materials,
+            document_presentation,
+            bulk_association,
+            prototype_scan,
+            scan_pipeline,
         )
 
         self.data_dir = Path(data_dir or os.getenv("VKS_DATA_DIR", ".vks")).resolve()
@@ -179,6 +184,9 @@ class Service:
         self.lock = RLock()
         self.stop = Event()
         self.thread = None
+        self.pipeline_lock = RLock()
+        self.pipeline_executor = None
+        self.pipeline_futures = {}
         self.bootstrap_token = self._private_setting(
             "bootstrap-token", lambda: os.getenv("VKS_BOOTSTRAP_TOKEN") or secrets.token_urlsafe(32)
         )
@@ -236,6 +244,15 @@ class Service:
         self.stop.set()
         if self.thread:
             self.thread.join(timeout=5)
+        with self.pipeline_lock:
+            executor = self.pipeline_executor
+            self.pipeline_executor = None
+        if executor:
+            # Drain in-flight model requests before the database is disposed.
+            # Unstarted futures leave their durable jobs queued for next boot.
+            executor.shutdown(wait=True, cancel_futures=True)
+        with self.pipeline_lock:
+            self.pipeline_futures.clear()
 
     def audit(self, s, actor, pid, action, rid, outcome="succeeded", metadata=None):
         s.add(
@@ -469,6 +486,8 @@ class Service:
     def _visible_sources(self, s, actor, pid, sources):
         from .reading import artifact_policy
 
+        source_allowed = self._can(s, actor, pid, "source:read")
+        trace_allowed = self._can(s, actor, pid, "trace:read")
         visible = []
         for source in sources:
             rows = list(
@@ -480,20 +499,17 @@ class Service:
             )
             if not rows:
                 continue
-            if any(
+            if not source_allowed and any(
                 (
                     art.kind == "source"
                     or art.sensitivity == "confidential"
                     or artifact_policy(s, art).get("requires_source_read")
                 )
-                and not self._can(s, actor, pid, "source:read")
                 for art in rows
             ):
                 continue
-            if any(
-                (art.kind in ("trace", "capture") or artifact_policy(s, art).get("requires_trace_read"))
-                and not self._can(s, actor, pid, "trace:read")
-                for art in rows
+            if not trace_allowed and any(
+                (art.kind in ("trace", "capture") or artifact_policy(s, art).get("requires_trace_read")) for art in rows
             ):
                 continue
             visible.append(source)
@@ -661,12 +677,13 @@ class Service:
         art = s.get(Artifact, r.artifact_id) if r.artifact_id else None
         if r.artifact_id and (not art or art.project_id != pid):
             return False
-        policy = artifact_policy(s, art) if art else {}
+        complete = self._can(s, actor, pid, "source:read") and self._can(s, actor, pid, "trace:read")
+        policy = artifact_policy(s, art) if art and not complete else {}
         source_restricted = entity.type in SOURCE_TYPES or (
             art and (art.kind == "source" or art.sensitivity == "confidential" or policy.get("requires_source_read"))
         )
         trace_restricted = art and (art.kind in ("trace", "capture") or policy.get("requires_trace_read"))
-        if entity.type == "scenario" and scenario_trace_required(r.metadata_json):
+        if not complete and entity.type == "scenario" and scenario_trace_required(r.metadata_json):
             trace_restricted = True
             source_restricted = source_restricted or scenario_source_required(s, pid, r.metadata_json)
         if (source_restricted and not self._can(s, actor, pid, "source:read")) or (
@@ -1173,6 +1190,8 @@ class Service:
             j.progress = 0
             j.stage = "VALIDATE"
             j.updated_at = now()
+            if j.kind == "associate_all":
+                j.result_json = {**j.result_json, "processing_epoch": j.attempt + 1}
             self.audit(s, actor, j.project_id, "job.retry", jid)
             return self.job_dto(j)
 
@@ -1333,7 +1352,7 @@ class Service:
             if r.from_revision_id in selected and r.to_revision_id in selected
         ]
         relations.sort(key=lambda x: x["id"])
-        return {
+        manifest = {
             "schema_version": "1.0",
             "analysis_set_id": a.id,
             "project_id": a.project_id,
@@ -1344,6 +1363,12 @@ class Service:
             "runtime_alignment": a.runtime_alignment,
             "ruleset_version": a.ruleset_version,
         }
+        from .document_presentation import DocumentPresentation, KEY
+
+        presentation = s.get(DocumentPresentation, a.id)
+        if presentation:
+            manifest[KEY] = dict(presentation.settings)
+        return manifest
 
     def releases(self, actor, pid):
         with self.db() as s:
@@ -1663,6 +1688,36 @@ class Service:
 
     def _check_snapshot_access(self, s, actor, pid, manifest):
         """Authorize the exact immutable payload against current source policies."""
+        from .reading import ReadingService, chunks
+
+        # Keep exact facts alive for this transaction. The weak ORM identity map
+        # otherwise reloads each revision, entity and artifact for every version
+        # in the materials library (and again while saving a checkpoint).
+        retained = s.info.setdefault("vks_prefetched", {})
+        revision_ids = {row["entity_revision_id"] for row in manifest["selections"]}
+        evidence_ids = set()
+        relation_ids = set()
+        for row in manifest["relations"]:
+            relation_ids.add(row["id"])
+            revision_ids.update((row["from_revision_id"], row["to_revision_id"]))
+            evidence_ids.update(row["evidence_ids"])
+        reading = ReadingService(self)
+        missing = revision_ids - {key[1] for key in retained if key[0] is Revision}
+        retained.update({(Revision, row.id): row for row in reading.revision_rows(s, missing)})
+        for model, ids in ((Relation, relation_ids), (Evidence, evidence_ids)):
+            for batch in chunks(rid for rid in ids if (model, rid) not in retained):
+                retained.update({(model, row.id): row for row in s.scalars(select(model).where(model.id.in_(batch)))})
+        reading.preload(s, evidence=[retained[(Evidence, rid)] for rid in evidence_ids if (Evidence, rid) in retained])
+        # Only read transactions may reuse authorization results: a write
+        # transaction can change source policy between two validations.
+        checked = s.info.setdefault("vks_snapshot_visibility", {}) if s.info.get("vks_read_only") else {}
+
+        def revision_visible(revision):
+            key = (actor, pid, revision.id)
+            if key not in checked:
+                checked[key] = self._visible_revision(s, actor, pid, revision)
+            return checked[key]
+
         visible = len(self._visible_sources(s, actor, pid, manifest["sources"])) == len(manifest["sources"])
         for selected in manifest["selections"]:
             revision = s.get(Revision, selected["entity_revision_id"])
@@ -1671,7 +1726,7 @@ class Service:
                 and revision.project_id == pid
                 and revision.entity_id == selected["entity_id"]
                 and revision.content_sha256 == selected["content_sha256"]
-                and self._visible_revision(s, actor, pid, revision)
+                and revision_visible(revision)
             )
         for item in manifest["relations"]:
             relation = s.get(Relation, item["id"])
@@ -1683,9 +1738,7 @@ class Service:
             )
             for key in ("from_revision_id", "to_revision_id"):
                 revision = s.get(Revision, item[key])
-                visible = visible and bool(
-                    revision and revision.project_id == pid and self._visible_revision(s, actor, pid, revision)
-                )
+                visible = visible and bool(revision and revision.project_id == pid and revision_visible(revision))
             for eid in item["evidence_ids"]:
                 evidence = s.get(Evidence, eid)
                 visible = visible and bool(
@@ -1759,6 +1812,8 @@ class Service:
                 raise DomainError("VKS_NOT_FOUND", "未找到发布版", 404)
             if payload["format"] not in ("markdown_bundle", "pdf", "vksbundle", "readonly_html"):
                 raise DomainError("VKS_INVALID_INPUT", "不支持的导出格式")
+            if payload.get("document_mode", "project") not in {"project", "original"}:
+                raise DomainError("VKS_INVALID_INPUT", "不支持的文档导出方式")
             if payload.get("include_source"):
                 self.require(s, actor, pid, "source:read")
             return self.idem(
