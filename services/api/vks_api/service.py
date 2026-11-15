@@ -1190,6 +1190,8 @@ class Service:
             j.progress = 0
             j.stage = "VALIDATE"
             j.updated_at = now()
+            if j.kind == "associate_all":
+                j.result_json = {**j.result_json, "processing_epoch": j.attempt + 1}
             self.audit(s, actor, j.project_id, "job.retry", jid)
             return self.job_dto(j)
 

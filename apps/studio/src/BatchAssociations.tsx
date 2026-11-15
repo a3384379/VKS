@@ -6,6 +6,7 @@ import {
   type InventoryManifest,
 } from "./PrototypeInventoryScanner";
 import { mergeScanSnapshot, type ScanReceipt } from "./inventoryProtocol";
+import { BatchResultList } from "./BatchResultList";
 
 type Mode = "missing" | "changed" | "all";
 type Outcome = { id?: string; label: string; status: string; message: string };
@@ -32,6 +33,7 @@ type Job = {
   current_scope?: boolean;
   scan_run_id?: string;
   scan_pipeline?: boolean;
+  concurrency?: number;
   error?: { message: string };
   result?: {
     processed?: number;
@@ -46,6 +48,7 @@ type Status = {
   analysis_set_id: string;
   selection_version: number;
   editable: boolean;
+  composition: string;
   coverage: Coverage;
   jobs: Job[];
 };
@@ -67,6 +70,7 @@ type ScanRun = {
   concurrency?: number;
   pipeline?: boolean;
   ai?: {
+    processed?: number;
     queued: number;
     running: number;
     completed: number;
@@ -126,13 +130,7 @@ export function BatchAssociations({
     scanCurrent = useRef<ScanRun["current"]>(null);
   const [data, setData] = useState<Status | null>(null),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [details, setDetails] = useState<{
-      job: string;
-      items: Outcome[];
-      hasMore: boolean;
-    } | null>(null),
-    [detailsBusy, setDetailsBusy] = useState(false);
+    [error, setError] = useState("");
   const [scanSession, setScanSession] = useState<{
     run: ScanRun;
     manifest: InventoryManifest;
@@ -144,14 +142,15 @@ export function BatchAssociations({
     prior = useRef(new Map<string, string>()),
     epoch = useRef(0),
     readSerial = useRef(0),
-    detailSerial = useRef(0),
     notification = useRef<{
       timer?: ReturnType<typeof setTimeout>;
       active: boolean;
       again: boolean;
     }>({ active: false, again: false }),
     savedSeen = useRef(new Map<string, number>()),
+    stopPending = useRef(new Set<string>()),
     changed = useRef(onChanged);
+  const [stoppingJob, setStoppingJob] = useState("");
   changed.current = onChanged;
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -256,9 +255,6 @@ export function BatchAssociations({
     setData(null);
     setError("");
     setBusy(false);
-    setDetails(null);
-    detailSerial.current++;
-    setDetailsBusy(false);
     setScanSession(null);
     setScanRun(null);
     setStoredProgress(null);
@@ -375,15 +371,13 @@ export function BatchAssociations({
     resume?: string,
     restoreScan?: ScanRun,
     allowPartial = false,
+    analysisOnly = false,
   ) {
     if (pending.current || !data) return;
     const n = epoch.current;
     pending.current = true;
     setBusy(true);
     setError("");
-    setDetails(null);
-    setDetailsBusy(false);
-    detailSerial.current++;
     try {
       let expected = data.selection_version;
       let scanId: string | undefined;
@@ -400,13 +394,18 @@ export function BatchAssociations({
                 mutation(
                   "POST",
                   restoreScan
-                    ? { client_id: clientId, pipeline: true }
+                    ? {
+                        client_id: clientId,
+                        pipeline: !analysisOnly,
+                        concurrency: parallelism,
+                      }
                     : {
                         analysis_set_id: analysis,
                         mode,
                         client_id: clientId,
-                        concurrency: scanConcurrency,
-                        pipeline: true,
+                        concurrency: parallelism,
+                        pipeline: !analysisOnly,
+                        composition: data.composition,
                       },
                   restoreScan
                     ? (restoreScan.source_selection_version ??
@@ -436,7 +435,7 @@ export function BatchAssociations({
             scanPending.current = { reject };
             setScanSession({ run: selected, manifest, resolve, reject });
           });
-        if (selected.pipeline) {
+        if (selected.pipeline || analysisOnly) {
           ownedRun.current = null;
           await load(undefined, n);
           await loadScan(undefined, n);
@@ -451,7 +450,7 @@ export function BatchAssociations({
           {
             analysis_set_id: analysis,
             mode,
-            concurrency: 3,
+            concurrency: parallelism,
             ...(resume ? { resume_job_id: resume } : {}),
             ...(scanId ? { scan_run_id: scanId } : {}),
             ...(allowPartial ? { allow_partial: true } : {}),
@@ -523,7 +522,7 @@ export function BatchAssociations({
         `${scanBase}/${scanRun.id}/retry-ai`,
         mutation(
           "POST",
-          {},
+          { concurrency: parallelism },
           scanRun.source_selection_version ??
             scanRun.manifest.source_selection_version ??
             scanRun.manifest.selection_version,
@@ -544,10 +543,10 @@ export function BatchAssociations({
     }
   }
   async function stop(job: Job) {
-    if (pending.current) return;
+    if (stopPending.current.has(job.id)) return;
     const n = epoch.current;
-    pending.current = true;
-    setBusy(true);
+    stopPending.current.add(job.id);
+    setStoppingJob(job.id);
     setError("");
     try {
       await api(`/jobs/${job.id}/cancel`, mutation("POST", {}));
@@ -555,34 +554,8 @@ export function BatchAssociations({
     } catch (e) {
       if (n === epoch.current) setError((e as Error).message);
     } finally {
-      if (n === epoch.current) {
-        pending.current = false;
-        setBusy(false);
-      }
-    }
-  }
-  async function loadDetails(job: Job) {
-    if (detailsBusy || active(job)) return;
-    const n = epoch.current;
-    const sequence = ++detailSerial.current;
-    const previous = details?.job === job.id ? details.items : [];
-    setDetailsBusy(true);
-    try {
-      const page = await api<{ items: Outcome[]; has_more: boolean }>(
-        `${base}/items?job_id=${encodeURIComponent(job.id)}&offset=${previous.length}&limit=100`,
-      );
-      if (n === epoch.current && sequence === detailSerial.current)
-        setDetails({
-          job: job.id,
-          items: [...previous, ...page.items],
-          hasMore: page.has_more,
-        });
-    } catch (e) {
-      if (n === epoch.current && sequence === detailSerial.current)
-        setError((e as Error).message);
-    } finally {
-      if (n === epoch.current && sequence === detailSerial.current)
-        setDetailsBusy(false);
+      stopPending.current.delete(job.id);
+      if (n === epoch.current) setStoppingJob("");
     }
   }
   const pipelineJobs =
@@ -597,6 +570,21 @@ export function BatchAssociations({
       (scanRun.ai?.pending_admission || 0) >
       0;
   const coverage = data?.coverage;
+  const legacyInPipeline =
+    !!scanRun?.pipeline && current?.id === scanRun.batch_job_id;
+  const aiProcessed = scanRun?.ai
+    ? (scanRun.ai.processed ?? scanRun.ai.completed + scanRun.ai.failed)
+    : 0;
+  const parallelism =
+    scanSession?.run.concurrency ??
+    (current && active(current)
+      ? (current.concurrency ?? 3)
+      : aiActive
+        ? (scanRun?.concurrency ?? 3)
+        : scanConcurrency);
+  const scanning =
+    !!scanSession || (!!scanRun?.current_scope && scanRun.state === "running");
+  const analysisDisabled = !editable || !data?.editable || busy || scanning;
   const disabled =
     !editable ||
     !data?.editable ||
@@ -612,17 +600,24 @@ export function BatchAssociations({
         <div>
           <b>AI 预关联</b>
           <p>
-            页面并行采集，已采集内容立即交给 AI
-            整理文档与讲解。补齐和变更复用已保存页面；全量会重新采集。未打开的弹窗仍可在操作时补查。
+            扫描与关联独立运行，可在后台关联时继续分析页面。全量 AI
+            任务会逐页整理文档与讲解；补齐和变更复用已保存页面，未打开的弹窗可在操作时补查。
           </p>
         </div>
         <div className="batch-actions">
           <label>
-            页面采集
+            并行路数
             <select
-              aria-label="页面采集并发"
-              value={scanConcurrency}
-              disabled={disabled}
+              aria-label="分析与关联并发"
+              value={parallelism}
+              disabled={
+                !editable ||
+                !data?.editable ||
+                busy ||
+                scanning ||
+                aiActive ||
+                (!!current && active(current))
+              }
               onChange={(event) =>
                 setScanConcurrency(Number(event.target.value))
               }
@@ -633,14 +628,35 @@ export function BatchAssociations({
                 </option>
               ))}
             </select>
+            <small>
+              扫描 {parallelism} 路 · 关联 {parallelism} 路（最多{" "}
+              {parallelism * 2} 路）
+            </small>
           </label>
           <button disabled={disabled} onClick={() => void run("missing")}>
             <Play size={14} />
             补齐未关联
           </button>
-          <button disabled={disabled} onClick={() => void run("changed")}>
+          <button
+            disabled={analysisDisabled}
+            onClick={() =>
+              void run(
+                scanRun?.current_scope && scanRun.manifest.pages_total
+                  ? scanRun.mode
+                  : "changed",
+                undefined,
+                scanRun?.current_scope && scanRun.manifest.pages_total
+                  ? scanRun
+                  : undefined,
+                false,
+                true,
+              )
+            }
+          >
             <RefreshCw size={14} />
-            分析变更项
+            {scanRun?.current_scope && scanRun.manifest.pages_total
+              ? "继续扫描分析"
+              : "分析变更项"}
           </button>
           <button
             disabled={disabled}
@@ -733,7 +749,6 @@ export function BatchAssociations({
             <small>{scanRun.current.label || scanRun.current.route}</small>
           )}
           {scanRun.current_scope &&
-            !scanRun.batch_job_id &&
             (!scanRun.pipeline || scanRun.manifest.pages_total > 0) &&
             ["running", "interrupted", "partial", "completed"].includes(
               scanRun.state,
@@ -750,6 +765,7 @@ export function BatchAssociations({
                       : "恢复预扫描"}
                 </button>
                 {!scanRun.pipeline &&
+                  !scanRun.batch_job_id &&
                   (scanRun.state === "partial" || scanRun.pages_failed > 0) &&
                   scanRun.pages_completed > 0 && (
                     <button
@@ -793,7 +809,7 @@ export function BatchAssociations({
                       : "本次 AI 处理已结束"}
             </b>
             <span>
-              已处理 {scanRun.ai.completed} / {scanRun.ai.targets} 项
+              已处理 {aiProcessed} / {scanRun.ai.targets} 项
             </span>
           </div>
           <progress
@@ -801,7 +817,7 @@ export function BatchAssociations({
               1,
               scanRun.ai.targets + (scanRun.ai.pending_admission ? 1 : 0),
             )}
-            value={scanRun.ai.completed}
+            value={aiProcessed}
           />
           <small>
             已保存 {scanRun.ai.saved} 项 · 排队 {scanRun.ai.queued} · 处理中{" "}
@@ -811,7 +827,20 @@ export function BatchAssociations({
           </small>
           {scanRun.ai.error && <p>{scanRun.ai.error}</p>}
           <div className="batch-actions">
-            {!!scanRun.ai.failed &&
+            {legacyInPipeline && current && active(current) && (
+              <button
+                disabled={
+                  !editable ||
+                  stoppingJob === current.id ||
+                  current.state === "cancelling"
+                }
+                onClick={() => void stop(current)}
+              >
+                <Square size={13} />
+                停止当前关联
+              </button>
+            )}
+            {!!(scanRun.ai.failed || scanRun.ai.cancelled) &&
               scanRun.current_scope &&
               !["cancelled", "invalidated"].includes(scanRun.state) && (
                 <button
@@ -827,10 +856,17 @@ export function BatchAssociations({
               </button>
             )}
           </div>
+          {legacyInPipeline && current?.result?.completed && (
+            <BatchResultList
+              base={base}
+              job={current}
+              key={`${base}:${analysis}:${accountId}:${current.id}`}
+            />
+          )}
           {!!pipelineJobs.length && (
             <details>
               <summary>查看逐页处理结果（{pipelineJobs.length}）</summary>
-              <ul>
+              <ul className="batch-job-results" aria-label="逐页处理结果">
                 {pipelineJobs.map((job) => (
                   <li key={job.id}>
                     <b>
@@ -845,30 +881,11 @@ export function BatchAssociations({
                     · 已保存 {job.result?.saved || 0} 项
                     {job.error?.message ? ` · ${job.error.message}` : ""}
                     {!!job.result?.completed && (
-                      <details>
-                        <summary>查看逐项结果</summary>
-                        <ul>
-                          {(details?.job === job.id
-                            ? details.items
-                            : Object.values(job.result.completed)
-                          ).map((item, i) => (
-                            <li key={item.id || i}>
-                              {item.label} · {item.message}
-                            </li>
-                          ))}
-                        </ul>
-                        {job.result.details_truncated &&
-                          (!details ||
-                            details.job !== job.id ||
-                            details.hasMore) && (
-                            <button
-                              disabled={detailsBusy || active(job)}
-                              onClick={() => void loadDetails(job)}
-                            >
-                              加载更多结果
-                            </button>
-                          )}
-                      </details>
+                      <BatchResultList
+                        key={`${base}:${analysis}:${accountId}:${job.id}`}
+                        base={base}
+                        job={job}
+                      />
                     )}
                   </li>
                 ))}
@@ -944,7 +961,7 @@ export function BatchAssociations({
           </ul>
         </details>
       )}
-      {current && (
+      {current && !legacyInPipeline && (
         <div className="batch-current" role="status">
           <div>
             <b>
@@ -976,7 +993,11 @@ export function BatchAssociations({
           <div className="batch-actions">
             {active(current) ? (
               <button
-                disabled={busy || current.state === "cancelling"}
+                disabled={
+                  !editable ||
+                  stoppingJob === current.id ||
+                  current.state === "cancelling"
+                }
                 onClick={() => void stop(current)}
               >
                 <Square size={13} />
@@ -992,32 +1013,11 @@ export function BatchAssociations({
             ) : null}
           </div>
           {!!current.result?.completed && (
-            <details>
-              <summary>查看逐项结果</summary>
-              <ul>
-                {(details?.job === current.id
-                  ? details.items
-                  : Object.values(current.result.completed)
-                ).map((item, i) => (
-                  <li key={item.id || i}>
-                    <b>{item.label}</b> · {item.message}
-                  </li>
-                ))}
-              </ul>
-              {current.result.details_truncated &&
-                (!details || details.job !== current.id || details.hasMore) && (
-                  <button
-                    disabled={detailsBusy || active(current)}
-                    onClick={() => void loadDetails(current)}
-                  >
-                    {detailsBusy
-                      ? "正在读取…"
-                      : details?.job === current.id
-                        ? "加载更多结果"
-                        : "查看全部结果"}
-                  </button>
-                )}
-            </details>
+            <BatchResultList
+              key={`${base}:${analysis}:${accountId}:${current.id}`}
+              base={base}
+              job={current}
+            />
           )}
         </div>
       )}

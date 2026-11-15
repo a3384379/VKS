@@ -169,7 +169,7 @@ def test_cancel_prescan_stops_queued_ai_and_next_run_reuses_captured_pages(mater
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("页面采集并发", exact=True).select_option("1")
+            page.get_by_label("分析与关联并发", exact=True).select_option("1")
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"
@@ -206,7 +206,7 @@ def test_navigation_keeps_scan_and_does_not_restart_completed_pages(materials, t
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("页面采集并发", exact=True).select_option("1")
+            page.get_by_label("分析与关联并发", exact=True).select_option("1")
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"
@@ -259,7 +259,7 @@ def test_refresh_keeps_persisted_progress_and_requires_explicit_resume(materials
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("页面采集并发", exact=True).select_option("1")
+            page.get_by_label("分析与关联并发", exact=True).select_option("1")
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"

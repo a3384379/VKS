@@ -66,7 +66,7 @@ def test_three_independent_lanes_overlap_and_match_serial_results(materials, tmp
             for lanes in (1, 3):
                 captures.clear()
                 page.evaluate("window.scanStarts=[]")
-                page.get_by_label("页面采集并发", exact=True).select_option(str(lanes))
+                page.get_by_label("分析与关联并发", exact=True).select_option(str(lanes))
                 began = time.monotonic()
                 page.get_by_role("button", name="全量 AI 关联", exact=True).click()
                 expect(page.get_by_label("动态原型预扫描", exact=True)).to_be_visible()

@@ -186,9 +186,15 @@ def test_cancel_resume_preserves_completed_targets_without_automatic_resend(mate
     stopped = service.get_job(owner, job["id"])
     assert stopped["state"] == "cancelled", stopped
     assert stopped["result"]["processed"] == 1
+    with service.db() as s:
+        planned = json.loads(json.dumps(s.get(Job, job["id"]).input_json))
     monkeypatch.setattr(ai_gateway, "request_model", model)
-    resumed = enqueue(manager, owner, pid, aid, resume=job["id"])
+    resumed = enqueue(manager, owner, pid, aid, resume=job["id"], concurrency=3)
     assert resumed["id"] == job["id"]
+    with service.db() as s:
+        updated = s.get(Job, job["id"]).input_json
+        assert updated["concurrency"] == 3 and planned["concurrency"] == 1
+        assert updated["items"] == planned["items"] and updated["groups"] == planned["groups"]
     service.process_job(job["id"])
     done = service.get_job(owner, job["id"])
     assert done["state"] == "succeeded" and done["result"]["saved"] == 3, done

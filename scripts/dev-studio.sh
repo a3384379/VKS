@@ -24,7 +24,11 @@ PY
 VKS_STUDIO_API_PID=$!
 uv run python apps/runtime/server.py --port "$VKS_RUNTIME_PORT" &
 VKS_STUDIO_RUNTIME_PID=$!
-cleanup(){ kill "$VKS_STUDIO_API_PID" "$VKS_STUDIO_RUNTIME_PID" 2>/dev/null || true; }
+VKS_STUDIO_PREVIEW_SNAPSHOT=""
+cleanup(){
+  kill "$VKS_STUDIO_API_PID" "$VKS_STUDIO_RUNTIME_PID" 2>/dev/null || true
+  if [[ -n "$VKS_STUDIO_PREVIEW_SNAPSHOT" ]]; then rm -rf "$VKS_STUDIO_PREVIEW_SNAPSHOT"; fi
+}
 trap cleanup EXIT INT TERM
 uv run python - "$VKS_API_PORT" <<'PY'
 import sys,time,urllib.request
@@ -41,7 +45,10 @@ if [[ "${VKS_STUDIO_PREVIEW:-0}" == "1" ]]; then
     printf '请先运行 npm run build --workspace apps/studio，再启动固定构建预览。\n' >&2
     exit 1
   fi
-  npm run preview --workspace apps/studio -- --port "$VKS_STUDIO_PORT"
+  # Keep this API and its frontend together while later checks rebuild dist.
+  VKS_STUDIO_PREVIEW_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/vks-studio-preview.XXXXXX")"
+  cp -R apps/studio/dist/. "$VKS_STUDIO_PREVIEW_SNAPSHOT/"
+  npm run preview --workspace apps/studio -- --port "$VKS_STUDIO_PORT" --outDir "$VKS_STUDIO_PREVIEW_SNAPSHOT"
 else
   npm run dev --workspace apps/studio -- --port "$VKS_STUDIO_PORT"
 fi

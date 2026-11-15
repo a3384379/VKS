@@ -55,7 +55,7 @@ def test_three_route_pipeline_survives_navigation_and_refresh_without_duplicate_
             page.on("request", observe)
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("页面采集并发", exact=True).select_option("1")
+            page.get_by_label("分析与关联并发", exact=True).select_option("1")
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"
@@ -202,7 +202,7 @@ def test_three_parallel_workers_have_distinct_storage_origins_and_stop_before_la
             login(page, url, pid, aid)
             page.evaluate("localStorage.setItem('audit-worker-isolation','USER')")
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("页面采集并发", exact=True).select_option("3")
+            page.get_by_label("分析与关联并发", exact=True).select_option("3")
             page.get_by_role("button", name="全量 AI 关联", exact=True).click()
             frames = page.locator('iframe[title="预扫描原型"]')
             expect(frames).to_have_count(3)

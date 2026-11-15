@@ -38,6 +38,35 @@ def source_version(run):
     return run.plan.get("source_selection_version", run.plan["selection_version"])
 
 
+def set_parallelism(service, s, actor, run, requested):
+    """Change scheduling on explicit continuation, without changing target snapshots."""
+    if service.engine.dialect.name == "postgresql":
+        s.execute(text("SELECT pg_advisory_xact_lock(851392741)"))
+    previous = run.plan.get("concurrency", 3)
+    legacy = s.get(Job, run.batch_job_id) if run.batch_job_id else None
+    live_legacy = legacy and legacy.state in ACTIVE
+    lanes = requested if requested is not None else legacy.input_json.get("concurrency", 3) if live_legacy else previous
+    if live_legacy and lanes != legacy.input_json.get("concurrency", 3):
+        raise DomainError("VKS_STATE_CONFLICT", "请先停止关联阶段并等待在途请求退出，再调整并行路数", 409)
+    if lanes != previous:
+        running = s.scalar(
+            select(Job.id)
+            .where(
+                Job.input_json["scan_run_id"].as_string() == run.id,
+                Job.input_json["scan_pipeline"].as_boolean().is_(True),
+                Job.state.in_(("running", "cancelling")),
+            )
+            .limit(1)
+        )
+        if running:
+            raise DomainError("VKS_STATE_CONFLICT", "请等待在途关联退出后再调整并行路数", 409)
+        run.plan = {**run.plan, "concurrency": lanes}
+        service.audit(
+            s, actor, run.project_id, "prototype.scan.parallelism", run.id, metadata={"from": previous, "to": lanes}
+        )
+    return lanes
+
+
 def check_version(run, expected):
     from .prototype_edit import version
 
@@ -68,6 +97,16 @@ def summary(s, run):
     # Polling must not deserialize every target, model input and explanation.
     # Detailed outcomes are available separately through the paged job API.
     target = PrototypeScanTarget
+    legacy_scope = target.job_id == run.batch_job_id if run.batch_job_id else False
+    legacy_conditions = {
+        "targets": target.target_id.is_not(None),
+        "completed": target.state == "complete",
+        "failed": target.state == "failed",
+        "saved": target.outcome["saved"].as_boolean().is_(True),
+        "queued": (target.state == "queued") & Job.state.in_(("queued", "retry_wait")),
+        "running": (target.state == "queued") & Job.state.in_(("running", "cancelling")),
+        "cancelled": target.state == "cancelled",
+    }
 
     def count(condition, name):
         return func.coalesce(func.sum(case((condition, 1), else_=0)), 0).label(name)
@@ -85,6 +124,7 @@ def summary(s, run):
                 count((target.state == "queued") & Job.state.in_(("running", "cancelling")), "running"),
                 count(target.state == "cancelled", "cancelled"),
                 func.count(func.distinct(Job.id)).label("jobs"),
+                *(count(condition & legacy_scope, "legacy_" + name) for name, condition in legacy_conditions.items()),
             )
             .select_from(target)
             .outerjoin(Job, Job.id == target.job_id)
@@ -93,6 +133,43 @@ def summary(s, run):
         .one()
         ._mapping
     )
+    legacy_counts = {name: result.pop("legacy_" + name) for name in legacy_conditions}
+    if run.batch_job_id and legacy_counts["targets"]:
+        # The local dispatcher may still be inside this long legacy batch.
+        # Read its durable counters directly; marker reconciliation need not wait.
+        legacy = s.execute(
+            select(
+                Job.state,
+                Job.input_json["concurrency"].as_integer().label("lanes"),
+                Job.result_json["processed"].as_integer().label("processed"),
+                Job.result_json["pending"].as_integer().label("pending"),
+                Job.result_json["saved"].as_integer().label("saved"),
+                Job.result_json["total"].as_integer().label("total"),
+            ).where(Job.id == run.batch_job_id)
+        ).first()
+        if legacy and (legacy.state in ACTIVE or legacy.total is None or legacy.total == legacy_counts["targets"]):
+            total = legacy_counts["targets"]
+            processed = min(
+                total,
+                legacy.processed
+                if legacy.processed is not None
+                else legacy_counts["completed"] + legacy_counts["failed"],
+            )
+            failed = min(processed, legacy.pending if legacy.pending is not None else legacy_counts["failed"])
+            remaining = total - processed
+            running = min(remaining, legacy.lanes or 3) if legacy.state in ("running", "cancelling") else 0
+            adjusted = {
+                "targets": total,
+                "completed": processed - failed,
+                "failed": failed,
+                "saved": legacy.saved if legacy.saved is not None else legacy_counts["saved"],
+                "running": running,
+                "queued": remaining - running if legacy.state in ACTIVE else 0,
+                "cancelled": remaining if legacy.state == "cancelled" else 0,
+            }
+            for name, value in adjusted.items():
+                result[name] += value - legacy_counts[name]
+    result["processed"] = result["completed"] + result["failed"]
     error = s.scalar(
         select(target.outcome["message"].as_string())
         .where(target.run_id == run.id, target.state == "failed")
@@ -112,7 +189,7 @@ def _sync(s, run, group):
     jobs = {j.id: j for j in s.scalars(select(Job).where(Job.id.in_(ids)))} if ids else {}
     for row in rows:
         job = jobs.get(row.job_id)
-        if row.state != "queued" or not job or job.state not in TERMINAL:
+        if row.state != "queued" or not job:
             continue
         checkpoint = s.scalar(
             select(Checkpoint).where(
@@ -122,6 +199,15 @@ def _sync(s, run, group):
                 Checkpoint.input_hash == row.target_id,
             )
         )
+        if (
+            checkpoint
+            and job.state in ACTIVE
+            and checkpoint.result_json.get("attempt", 1) < job.result_json.get("processing_epoch", 1)
+            and checkpoint.result_json.get("status") not in {"linked", "reused", "manual", "excluded", "skipped"}
+        ):
+            checkpoint = None
+        if not checkpoint and job.state not in TERMINAL:
+            continue
         outcome = (
             deepcopy(checkpoint.result_json)
             if checkpoint
@@ -141,6 +227,41 @@ def _sync(s, run, group):
         )
         row.updated_at = now()
     return rows, jobs
+
+
+def adopt_legacy(s, run):
+    """Keep an already running fixed batch; never enqueue its targets twice."""
+    from .bulk_association import target_id
+
+    if not run.batch_job_id or run.plan.get("_adopted_batch") == run.batch_job_id:
+        return
+    job = s.get(Job, run.batch_job_id)
+    if (
+        not job
+        or job.kind != "associate_all"
+        or job.project_id != run.project_id
+        or job.created_by != run.created_by
+        or job.input_json.get("analysis_set_id") != run.analysis_set_id
+        or job.input_json.get("composition") != run.composition
+    ):
+        raise DomainError("VKS_INTEGRITY_ERROR", "原关联任务与扫描范围不一致", 409)
+    existing = set(s.scalars(select(PrototypeScanTarget.target_id).where(PrototypeScanTarget.run_id == run.id)))
+    for item in job.input_json["items"]:
+        if item["id"] != target_id(item["package_id"], item["target"]):
+            raise DomainError("VKS_INTEGRITY_ERROR", "原关联任务的目标身份不一致", 409)
+        if item["id"] not in existing:
+            s.add(
+                PrototypeScanTarget(
+                    run_id=run.id,
+                    target_id=item["id"],
+                    group_key=item.get("operation_group", item["id"]),
+                    item=deepcopy(item),
+                    job_id=job.id,
+                    state="queued",
+                )
+            )
+    run.plan = {**run.plan, "_adopted_batch": job.id}
+    s.flush()
 
 
 def _schedule(service, s, actor, run, group, coverage=None):
@@ -186,6 +307,7 @@ def _schedule(service, s, actor, run, group, coverage=None):
         "needs_model": needs_model,
         "scan_pipeline": True,
         "scan_run_id": run.id,
+        "pipeline_concurrency": run.plan.get("concurrency", 3),
         "pipeline_group_key": group,
     }
     if canonical_row:
@@ -203,6 +325,7 @@ def produce(service, s, actor, run, *, targets=None, admission_limit=None):
 
     if not enabled(run) or run.state == "cancelled":
         return
+    adopt_legacy(s, run)
     wanted = {target_id(package, target) for package, target in targets} if targets is not None else None
     _, digest, items, _groups, coverage = BulkAssociationService(service).scan(
         s, actor, run.project_id, run.analysis_set_id, target_keys=wanted
@@ -241,7 +364,8 @@ def produce(service, s, actor, run, *, targets=None, admission_limit=None):
 
 def reconcile(service):
     """Bounded terminal-job drain; no network and no scanning waits."""
-    from .jobs import current_actor
+    from .bulk_association import PROCESSOR
+    from .jobs import Checkpoint, current_actor
     from .prototype_scan import PrototypeScanRun, PrototypeScanService
 
     with service.db() as s:
@@ -251,7 +375,19 @@ def reconcile(service):
                 .outerjoin(Job, Job.id == PrototypeScanTarget.job_id)
                 .where(
                     PrototypeScanTarget.state.in_(("queued", "waiting")),
-                    (Job.state.in_(TERMINAL)) | (PrototypeScanTarget.job_id.is_(None)),
+                    (Job.state.in_(TERMINAL))
+                    | (PrototypeScanTarget.job_id.is_(None))
+                    | (
+                        Job.state.in_(("running", "cancelling"))
+                        & select(Checkpoint.id)
+                        .where(
+                            Checkpoint.job_id == PrototypeScanTarget.job_id,
+                            Checkpoint.input_hash == PrototypeScanTarget.target_id,
+                            Checkpoint.stage == "ASSOCIATE",
+                            Checkpoint.processor_version == PROCESSOR,
+                        )
+                        .exists()
+                    ),
                 )
                 .distinct()
                 .limit(8)
@@ -295,7 +431,9 @@ def retry(service, s, actor, run):
         _sync(s, run, group)
     groups = set()
     for row in s.scalars(
-        select(PrototypeScanTarget).where(PrototypeScanTarget.run_id == run.id, PrototypeScanTarget.state == "failed")
+        select(PrototypeScanTarget).where(
+            PrototypeScanTarget.run_id == run.id, PrototypeScanTarget.state.in_(("failed", "cancelled"))
+        )
     ):
         row.state, row.job_id, row.outcome = "waiting", None, {}
         groups.add(row.group_key)
@@ -345,17 +483,28 @@ def claim(service, s, job):
         job.state, job.stage = "failed", "SCOPE_CHANGED"
         job.error_json = {"code": "VKS_VERSION_CONFLICT", "message": "流水线资料版本已变化", "retryable": False}
         return False
-    active = s.scalar(
-        select(func.count())
-        .select_from(Job)
-        .where(
-            Job.kind == "associate_all",
-            Job.state.in_(("running", "cancelling")),
-            Job.lease_until > now(),
-            Job.input_json["scan_pipeline"].as_boolean().is_(True),
+    active = list(
+        s.execute(
+            select(
+                Job.id,
+                Job.input_json["scan_pipeline"].as_boolean(),
+                Job.input_json["concurrency"].as_integer(),
+                Job.input_json["scan_run_id"].as_string(),
+            ).where(
+                Job.kind == "associate_all",
+                Job.state.in_(("running", "cancelling")),
+                Job.lease_until > now(),
+            )
         )
     )
-    if active >= 3:
+    total_used, run_used = 0, 0
+    for jid, pipeline, lanes, run_id in active:
+        used = 1 if pipeline else min(4, max(1, lanes or 3))
+        total_used += used
+        if run_id == run.id or jid == run.batch_job_id:
+            run_used += used
+    limit = min(4, max(1, run.plan.get("concurrency", 3)))
+    if total_used >= 4 or run_used >= limit:
         out = s.scalar(select(Outbox).where(Outbox.job_id == job.id))
         if out:
             out.dispatched = False

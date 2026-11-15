@@ -158,7 +158,7 @@ class BulkAssociationService:
         return list(latest.values())
 
     def inventory_status(self, actor, pid, aid, *, session=None):
-        with (nullcontext(session) if session is not None else ReadingService(self.service).db()) as s:
+        with nullcontext(session) if session is not None else ReadingService(self.service).db() as s:
             analysis, _, choices, _ = self.links.reader.scope(s, actor, pid, aid, None)
             digest = composition(s, pid, analysis.id)
             packages = self.links._packages(s, actor, pid, choices, kind="prototype")
@@ -489,6 +489,7 @@ class BulkAssociationService:
                         "mode": job.input_json["mode"],
                         "scan_run_id": job.input_json.get("scan_run_id"),
                         "scan_pipeline": bool(job.input_json.get("scan_pipeline")),
+                        "concurrency": job.input_json.get("concurrency", 3),
                         "current_scope": job.input_json["analysis_set_id"] == aid
                         and job.input_json["composition"] == digest,
                     }
@@ -636,18 +637,28 @@ class BulkAssociationService:
                         raise DomainError("VKS_VERSION_CONFLICT", "资料版本已变化，请开始当前版本的新任务", 409)
                     if old.state not in ("failed", "cancelled", "succeeded"):
                         raise DomainError("VKS_STATE_CONFLICT", "此任务当前不能继续", 409)
+                    previous_concurrency = old.input_json.get("concurrency", 3)
+                    old.input_json = {**old.input_json, "concurrency": form.concurrency}
                     old.state, old.stage, old.cancel_requested, old.error_json = "queued", "RESUME", False, {}
                     old.updated_at = now()
                     # Failed/insufficient targets are retried only after this explicit request.
                     old.result_json = {
                         **old.result_json,
+                        "processing_epoch": old.attempt + 1,
                         "completed": {
                             k: v
                             for k, v in old.result_json.get("completed", {}).items()
                             if v.get("status") in ("linked", "reused", "manual", "excluded")
                         },
                     }
-                    self.service.audit(s, actor, pid, "associations.resume", old.id)
+                    self.service.audit(
+                        s,
+                        actor,
+                        pid,
+                        "associations.resume",
+                        old.id,
+                        metadata={"concurrency_from": previous_concurrency, "concurrency_to": form.concurrency},
+                    )
                     return self.service.job_dto(old)
                 if not items:
                     raise DomainError("VKS_INVALID_INPUT", "当前版本没有可扫描的原型控件", 422)
@@ -714,7 +725,7 @@ class BulkAssociationService:
             return {"items": [r.result_json for r in rows[:limit]], "offset": offset, "has_more": len(rows) > limit}
 
 
-def run_batch(service, jid):
+def run_batch(service, jid, *, preserve_processed=False):
     from packages.analyzers.cancellation import checkpoint
 
     from .jobs import Checkpoint, current_actor
@@ -723,6 +734,7 @@ def run_batch(service, jid):
     with service.db() as s:
         job = s.get(Job, jid)
         payload, attempt, pid = deepcopy(job.input_json), job.attempt, job.project_id
+        processing_epoch = job.result_json.get("processing_epoch", 1)
         completed = {
             r.input_hash: deepcopy(r.result_json)
             for r in s.scalars(
@@ -730,7 +742,8 @@ def run_batch(service, jid):
                     Checkpoint.job_id == jid, Checkpoint.stage == "ASSOCIATE", Checkpoint.processor_version == PROCESSOR
                 )
             )
-            if r.result_json.get("status") in ("linked", "reused", "manual", "excluded", "skipped")
+            if (preserve_processed and r.result_json.get("attempt", 1) >= processing_epoch)
+            or r.result_json.get("status") in ("linked", "reused", "manual", "excluded", "skipped")
         }
     completed_lock = RLock()
     counters = Counter(v["status"] for v in completed.values())
@@ -786,6 +799,7 @@ def run_batch(service, jid):
                 {"label": "其他待处理项", "message": f"另有 {pending - len(issues)} 项待处理，完整结果可分页查看。"}
             )
         return {
+            "processing_epoch": processing_epoch,
             "completed": {v["id"]: v for v in values},
             "processed": len(completed),
             "total": len(items),

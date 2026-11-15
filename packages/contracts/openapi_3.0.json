@@ -3069,7 +3069,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScanClient"
+                "$ref": "#/components/schemas/ScanResume"
               }
             }
           }
@@ -3199,6 +3199,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ScanParallelism"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Form"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -6764,6 +6781,18 @@
             "minimum": 1.0,
             "title": "Concurrency",
             "default": 3
+          },
+          "composition": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Composition"
           }
         },
         "additionalProperties": false,
@@ -6807,6 +6836,61 @@
           "frame_path"
         ],
         "title": "ScanPage"
+      },
+      "ScanParallelism": {
+        "properties": {
+          "concurrency": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concurrency"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ScanParallelism"
+      },
+      "ScanResume": {
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Client Id"
+          },
+          "pipeline": {
+            "type": "boolean",
+            "title": "Pipeline",
+            "default": false
+          },
+          "concurrency": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concurrency"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "client_id"
+        ],
+        "title": "ScanResume"
       },
       "SettingsEdit": {
         "properties": {

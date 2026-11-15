@@ -108,3 +108,19 @@ def test_external_and_broker_modes_do_not_start_local_models(setup, monkeypatch)
     monkeypatch.setattr(jobs, "dispatch_pending", lambda _service: published.append(True))
     jobs.run_pending(service)
     assert published == [True] and service.pipeline_executor is None
+
+
+@pytest.mark.parametrize("lanes", [1, 4])
+def test_pipeline_pool_uses_the_configured_shared_lane_count(setup, lanes):
+    service, page_jobs, ordinary, started, _, calls, peak = setup
+    with service.db() as session:
+        for jid in page_jobs:
+            row = session.get(Job, jid)
+            row.input_json = {**row.input_json, "pipeline_concurrency": lanes}
+    jobs.run_pending(service)
+    for jid in page_jobs[:lanes]:
+        assert started[jid].wait(2)
+    assert not any(started[jid].is_set() for jid in page_jobs[lanes:])
+    assert max(peak) == lanes and started[ordinary].is_set()
+    jobs.run_pending(service)
+    assert len(calls) == lanes + 1

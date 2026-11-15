@@ -42,11 +42,20 @@ class ScanClient(Input):
     pipeline: bool = Field(default=False, strict=True)
 
 
+class ScanParallelism(Input):
+    concurrency: int | None = Field(default=None, ge=1, le=4, strict=True)
+
+
+class ScanResume(ScanClient):
+    concurrency: int | None = Field(default=None, ge=1, le=4, strict=True)
+
+
 class ScanInput(ScanClient):
     analysis_set_id: Ref
     mode: Literal["missing", "changed", "all"] = "missing"
     concurrency: int = Field(default=3, ge=1, le=4, strict=True)
     pipeline: bool = Field(default=True, strict=True)
+    composition: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class ScanPage(Input):
@@ -249,6 +258,7 @@ class PrototypeScanService:
             return {"run": self.dto(s, actor, pid, row)}
 
     def start(self, actor, pid, form, expected, key):
+        from .bulk_association import composition
         from .scan_pipeline import produce
 
         current = self._manifest(actor, pid, form.analysis_set_id)
@@ -256,8 +266,11 @@ class PrototypeScanService:
             analysis = MaterialService(self.service)._draft(s, actor, pid, form.analysis_set_id)
 
             def create():
-                version(analysis.selection_version, expected)
-                if current["selection_version"] != analysis.selection_version:
+                if form.composition is None:
+                    version(analysis.selection_version, expected)
+                elif form.composition != current["composition"]:
+                    raise DomainError("VKS_VERSION_CONFLICT", "资料版本已变化，请重新扫描", 412)
+                if composition(s, pid, analysis.id) != current["composition"]:
                     raise DomainError("VKS_VERSION_CONFLICT", "资料版本已变化，请重新扫描", 412)
                 workspace = s.get(StudioWorkspace, pid)
                 if workspace and workspace.analysis_set_id != analysis.id:
@@ -270,7 +283,6 @@ class PrototypeScanService:
                         PrototypeScanRun.created_by == actor.id,
                         PrototypeScanRun.composition == current["composition"],
                         PrototypeScanRun.state == "running",
-                        PrototypeScanRun.batch_job_id.is_(None),
                     )
                     .order_by(PrototypeScanRun.created_at.desc())
                     .with_for_update()
@@ -364,9 +376,12 @@ class PrototypeScanService:
                 )
                 if other:
                     raise DomainError("VKS_STATE_CONFLICT", "另有正在运行的扫描，请先停止或继续当前扫描", 409)
-                if row.state == "cancelled" or row.batch_job_id:
-                    raise DomainError("VKS_STATE_CONFLICT", "已取消或已启动关联的扫描不能继续，请新建任务", 409)
+                if row.state == "cancelled":
+                    raise DomainError("VKS_STATE_CONFLICT", "已取消的扫描不能继续，请新建任务", 409)
                 self._restore_legacy_attempts(s, actor, row)
+                from .scan_pipeline import set_parallelism
+
+                lanes = set_parallelism(self.service, s, actor, row, getattr(form, "concurrency", None))
                 total = sum(len(p["pages"]) for p in row.plan["packages"])
                 captured = {k for k, v in row.completed.items() if v["status"] == "captured"}
                 row.plan = {
@@ -376,7 +391,7 @@ class PrototypeScanService:
                         scope for scope in actor.scopes if self.service._can(s, actor, pid, scope)
                     ),
                     "source_selection_version": row.plan.get("source_selection_version", row.plan["selection_version"]),
-                    "concurrency": row.plan.get("concurrency", 3),
+                    "concurrency": lanes,
                     "_round_pending": [
                         page_key(p["package_id"], page)
                         for p in row.plan["packages"]
@@ -446,8 +461,8 @@ class PrototypeScanService:
             row = self._get(s, actor, pid, run_id)
             MaterialService(self.service)._draft(s, actor, pid, row.analysis_set_id)
             s.refresh(row, with_for_update=True)
-            if row.client_id != client_id or row.batch_job_id:
-                raise DomainError("VKS_STATE_CONFLICT", "任务已被接管或已进入模型关联，请刷新任务状态", 409)
+            if row.client_id != client_id:
+                raise DomainError("VKS_STATE_CONFLICT", "任务已被接管，请刷新任务状态", 409)
             self._scope(s, actor, pid, row)
             if row.state == "interrupted":
                 self._restore_legacy_attempts(s, actor, row)
@@ -482,8 +497,8 @@ class PrototypeScanService:
             self.service.audit(s, actor, pid, "prototype.scan.cancel", row.id)
             return self.dto(s, actor, pid, row)
 
-    def retry_ai(self, actor, pid, run_id, expected, key):
-        from .scan_pipeline import check_version, enabled, retry
+    def retry_ai(self, actor, pid, run_id, expected, key, *, concurrency=None):
+        from .scan_pipeline import check_version, enabled, retry, set_parallelism
 
         with self.service.db() as s:
             row = self._get(s, actor, pid, run_id)
@@ -495,11 +510,18 @@ class PrototypeScanService:
                 check_version(row, expected)
                 if not enabled(row):
                     raise DomainError("VKS_STATE_CONFLICT", "请明确继续扫描并启用逐页关联", 409)
+                set_parallelism(self.service, s, actor, row, concurrency)
                 retry(self.service, s, actor, row)
                 return {"id": row.id}
 
             self.service.idem(
-                s, actor, pid, "prototype.scan.retry-ai", key, {"id": run_id, "expected": expected}, apply
+                s,
+                actor,
+                pid,
+                "prototype.scan.retry-ai",
+                key,
+                {"id": run_id, "expected": expected, "concurrency": concurrency},
+                apply,
             )
             return self.dto(s, actor, pid, row)
 
@@ -528,7 +550,7 @@ def install_prototype_scan(app, service, actor, envelope):
     def resume(
         pid: str,
         run_id: str,
-        form: ScanClient,
+        form: ScanResume,
         request: Request,
         a: ActorDep,
         if_match: str = Header(...),
@@ -546,10 +568,14 @@ def install_prototype_scan(app, service, actor, envelope):
         run_id: str,
         request: Request,
         a: ActorDep,
+        form: ScanParallelism | None = None,
         if_match: str = Header(...),
         idempotency_key: str = Header(..., max_length=96),
     ):
-        return envelope(request, shared.retry_ai(a, pid, run_id, if_match, idempotency_key))
+        return envelope(
+            request,
+            shared.retry_ai(a, pid, run_id, if_match, idempotency_key, concurrency=form.concurrency if form else None),
+        )
 
     @app.post(prefix + "/{run_id}/pause", response_model=PrototypeEnvelope[dict])
     def pause(pid: str, run_id: str, form: ScanClient, request: Request, a: ActorDep):

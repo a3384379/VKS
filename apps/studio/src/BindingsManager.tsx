@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowUpRight, FileText, Link2, Search } from "lucide-react";
 
 type ManagedBinding = {
@@ -58,7 +58,9 @@ export function BindingsManager<T extends ManagedBinding>({
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState<Filter>("current"),
     [module, setModule] = useState(""),
-    [selected, setSelected] = useState("");
+    [selected, setSelected] = useState(""),
+    [page, setPage] = useState(0),
+    [pageSize, setPageSize] = useState(10);
   const modules = useMemo(() => {
     const names = new Map<string, string>();
     for (const b of bindings) {
@@ -100,7 +102,25 @@ export function BindingsManager<T extends ManagedBinding>({
             .includes(needle)),
     );
   }, [bindings, filter, module, query, modules]);
-  const current = visible.find((b) => b.id === selected) || visible[0];
+  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageBindings = visible.slice(
+    currentPage * pageSize,
+    (currentPage + 1) * pageSize,
+  );
+  const current =
+    pageBindings.find((b) => b.id === selected) || pageBindings[0];
+  useEffect(() => {
+    if (ready) setPage((value) => Math.min(value, pageCount - 1));
+  }, [pageCount, ready]);
+  function navigate(next: number) {
+    setPage(next);
+    setSelected("");
+  }
+  function resetPage() {
+    setPage(0);
+    setSelected("");
+  }
   return (
     <section className="binding-manager" aria-label="关联管理">
       <header className="binding-management-heading">
@@ -127,7 +147,10 @@ export function BindingsManager<T extends ManagedBinding>({
             <button
               key={key}
               aria-pressed={filter === key}
-              onClick={() => setFilter(key)}
+              onClick={() => {
+                setFilter(key);
+                resetPage();
+              }}
             >
               {label}
               <span>{counts[key]}</span>
@@ -140,13 +163,19 @@ export function BindingsManager<T extends ManagedBinding>({
             aria-label="搜索关联"
             placeholder="搜索模块、控件或说明…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              resetPage();
+            }}
           />
         </div>
         <select
           aria-label="筛选关联模块"
           value={module}
-          onChange={(e) => setModule(e.target.value)}
+          onChange={(e) => {
+            setModule(e.target.value);
+            resetPage();
+          }}
         >
           <option value="">全部模块</option>
           {[...modules].map(([key, name]) => (
@@ -172,8 +201,12 @@ export function BindingsManager<T extends ManagedBinding>({
       ) : (
         <div className="binding-workspace">
           <div className="binding-list-panel">
-            <div className="binding-list-caption">{visible.length} 条关联</div>
-            <div className="binding-table-scroll">
+            <div className="binding-list-caption">
+              {visible.length} 条关联
+              {!!visible.length &&
+                ` · 当前 ${currentPage * pageSize + 1}–${Math.min((currentPage + 1) * pageSize, visible.length)} 条`}
+            </div>
+            <div className="binding-table-wrap">
               <table className="binding-table">
                 <thead>
                   <tr>
@@ -183,7 +216,7 @@ export function BindingsManager<T extends ManagedBinding>({
                   </tr>
                 </thead>
                 <tbody>
-                  {visible.map((b) => (
+                  {pageBindings.map((b) => (
                     <tr
                       key={b.id}
                       className={current?.id === b.id ? "selected" : ""}
@@ -221,6 +254,53 @@ export function BindingsManager<T extends ManagedBinding>({
               <p className="management-empty">
                 没有符合条件的关联，可调整筛选或搜索内容。
               </p>
+            )}
+            {ready && !!visible.length && (
+              <nav className="binding-pagination" aria-label="关联列表分页">
+                <span aria-live="polite">
+                  第 {currentPage + 1} / {pageCount} 页
+                </span>
+                <select
+                  aria-label="每页关联条数"
+                  value={pageSize}
+                  onChange={(event) => {
+                    setPageSize(Number(event.target.value));
+                    resetPage();
+                  }}
+                >
+                  {[10, 20, 50].map((size) => (
+                    <option key={size} value={size}>
+                      每页 {size} 条
+                    </option>
+                  ))}
+                </select>
+                <div className="binding-pagination-controls">
+                  <button
+                    disabled={currentPage === 0}
+                    onClick={() => navigate(0)}
+                  >
+                    首页
+                  </button>
+                  <button
+                    disabled={currentPage === 0}
+                    onClick={() => navigate(currentPage - 1)}
+                  >
+                    上一页
+                  </button>
+                  <button
+                    disabled={currentPage + 1 >= pageCount}
+                    onClick={() => navigate(currentPage + 1)}
+                  >
+                    下一页
+                  </button>
+                  <button
+                    disabled={currentPage + 1 >= pageCount}
+                    onClick={() => navigate(pageCount - 1)}
+                  >
+                    末页
+                  </button>
+                </div>
+              </nav>
             )}
           </div>
           <article className="binding-detail-panel" aria-label="关联详情">

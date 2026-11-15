@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from threading import Event, Thread
 
-from sqlalchemy import JSON, ForeignKey, Integer, String, UniqueConstraint, select
+from sqlalchemy import JSON, ForeignKey, Integer, String, UniqueConstraint, func, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .models import Base, Credential, Identified, Job, Outbox, now, uid
@@ -167,18 +167,26 @@ def run_pending(service):
     # Browser-produced page jobs must not block the dispatcher while a model
     # responds. Keep a bounded local pool; the database claim still fences
     # duplicate workers and enforces the per-run limit in every dispatch mode.
+    from .prototype_scan import PrototypeScanRun
+
     with service.pipeline_lock:
         if service.stop.is_set():
             return
         service.pipeline_futures = {
             jid: future for jid, future in service.pipeline_futures.items() if not future.done()
         }
-        capacity = 3 - len(service.pipeline_futures)
-        if capacity:
+        if len(service.pipeline_futures) < 4:
             with service.db() as s:
-                pipeline_ids = list(
-                    s.scalars(
-                        select(Job.id)
+                candidates = list(
+                    s.execute(
+                        select(
+                            Job.id,
+                            func.coalesce(
+                                PrototypeScanRun.plan["concurrency"].as_integer(),
+                                Job.input_json["pipeline_concurrency"].as_integer(),
+                            ),
+                        )
+                        .outerjoin(PrototypeScanRun, PrototypeScanRun.id == Job.input_json["scan_run_id"].as_string())
                         .where(
                             Job.state == "queued",
                             Job.kind == "associate_all",
@@ -186,11 +194,14 @@ def run_pending(service):
                             Job.id.not_in(list(service.pipeline_futures)),
                         )
                         .order_by(Job.created_at, Job.id)
-                        .limit(capacity)
+                        .limit(4)
                     )
                 )
+            configured = max((min(4, max(1, lanes or 3)) for _, lanes in candidates), default=3)
+            capacity = max(0, configured - len(service.pipeline_futures))
+            pipeline_ids = [jid for jid, _ in candidates[:capacity]]
             if pipeline_ids and service.pipeline_executor is None:
-                service.pipeline_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="vks-page-association")
+                service.pipeline_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vks-page-association")
             for jid in pipeline_ids:
                 service.pipeline_futures[jid] = service.pipeline_executor.submit(execute_job, service, jid)
     with service.db() as s:
@@ -446,6 +457,7 @@ def execute_job(service, jid):
             job.error_json = {"code": error.code, "message": error.message, "retryable": False}
             job.updated_at = now()
             return
+        recovered = job.stage == "RECOVERED"
         job.state = "running"
         job.stage = "PARSE"
         job.lease_until = future(60)
@@ -515,7 +527,7 @@ def execute_job(service, jid):
                 if kind == "associate_all":
                     from .bulk_association import run_batch
 
-                    association_output = run_batch(service, jid)
+                    association_output = run_batch(service, jid, preserve_processed=recovered)
                 if kind == "export" and payload["format"] == "readonly_html":
                     from .readonly_export import prepare_job
 
