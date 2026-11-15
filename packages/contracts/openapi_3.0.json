@@ -2581,6 +2581,36 @@
               "default": 100,
               "title": "Limit"
             }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "linked",
+                "insufficient",
+                "failed",
+                "manual",
+                "excluded",
+                "skipped"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Status"
+            }
           }
         ],
         "responses": {

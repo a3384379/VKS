@@ -24,7 +24,7 @@ def _id(namespace, *parts):
     return "nav-" + sha256(raw).hexdigest()[:24]
 
 
-def handbook_navigation(raw):
+def handbook_navigation(raw, *, prefix="handbook/"):
     """Read a supported handbook's declared TOC as data; execute nothing."""
     envelope = _scripts(raw, {HANDBOOK: "application/octet-stream", "fh-pack-meta": "application/json"})
     if HANDBOOK in envelope:
@@ -45,7 +45,7 @@ def handbook_navigation(raw):
     paths = {}
     for key, document in documents.items():
         if isinstance(document, dict) and isinstance(document.get("path"), str):
-            paths[key] = "handbook/" + safe_path(document["path"])
+            paths[key] = prefix + safe_path(document["path"])
     soup = BeautifulSoup(raw.decode("utf-8-sig"), "html.parser", parse_only=SoupStrainer("nav"))
     categories, ordered, seen = [], [], set()
     for group in soup.select("nav.toc .toc-group[data-name]"):
@@ -91,12 +91,14 @@ def _generic_navigation(raw, filename):
 def _source_plan(service, s, package, metadata):
     plan = metadata.get("document_navigation")
     if isinstance(plan, dict):
-        if metadata.get("format") == "charge-handbook":
+        if metadata.get("format") in {"charge-handbook", "standalone-handbook"}:
             return {**plan, "categories": [{**category, "flat": True} for category in plan.get("categories", [])]}
         return plan
     art = s.get(Artifact, package.artifact_id)
     if metadata.get("format") == "charge-handbook":
         return _cached(service, art, handbook_navigation)
+    if metadata.get("format") == "standalone-handbook":
+        return _cached(service, art, lambda raw: handbook_navigation(raw, prefix=""))
     inputs = []
     for aid in art.metadata_json.get("prototype_input_artifact_ids", []):
         source = s.get(Artifact, aid)

@@ -8,7 +8,7 @@ from io import BytesIO
 from bs4 import BeautifulSoup
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
-from vks_api.handbook_authoring import template_html
+from vks_api.handbook_authoring import legacy_template_html as template_html
 from vks_api.interactive import InteractiveKnowledgeService
 from vks_api.readonly_export import html_library
 from vks_api.template_ingest import read_authoring

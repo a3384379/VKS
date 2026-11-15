@@ -165,7 +165,9 @@ def _handbook_page(raw):
     # The source UI's network, vector editing and document updater are replaced
     # by the recipient's outer, read-only assistant. Retain reader/search/diagram
     # scripts and original article markup; no source content is rewritten.
-    for node in soup.select("#fh-ai-root,#fh-ai-runtime,#fh-ai-manifest,#fh-ai-corpus,#fh-ai-index,#fh-pack-template"):
+    for node in soup.select(
+        "#fh-ai-root,#fh-ai-runtime,#fh-ai-manifest,#fh-ai-corpus,#fh-ai-index,#fh-pack-template,#handbook-template-integration,#template-document-update,#vks-template-data"
+    ):
         node.decompose()
     for node in soup.select('[id^="fh-update-"],input[type="file"],[contenteditable]'):
         if node.name in {"input", "button", "select", "textarea"}:
@@ -181,7 +183,11 @@ def _render_pages(service, artifact, raw, fmt, path):
     key = (artifact.id, artifact.sha256, fmt, path if fmt == "html-document" else "")
     with guard:
         if key not in cache:
-            cache[key] = _handbook_page(raw) if fmt == "charge-handbook" else _static_pages(raw, fmt, path)
+            cache[key] = (
+                _handbook_page(raw)
+                if fmt in {"charge-handbook", "standalone-handbook"}
+                else _static_pages(raw, fmt, path)
+            )
         cache.move_to_end(key)
         while len(cache) > 2:
             cache.popitem(last=False)
@@ -210,7 +216,7 @@ def project_originals(service, s, actor, pid, choices, links, rows, documents, c
     bundles, warnings, covered = [], [], set()
     for package in available:
         fmt = package.get("format")
-        if fmt not in {"charge-handbook", "html-document", "static-site"}:
+        if fmt not in {"charge-handbook", "standalone-handbook", "html-document", "static-site"}:
             continue
         artifact = s.get(Artifact, package["id"])
         root = selected_roots.get(package["id"])
@@ -269,7 +275,7 @@ def project_originals(service, s, actor, pid, choices, links, rows, documents, c
         )
         for rid, location in native.items():
             location = {key: location[key] for key in ("package_id", "path", "document_anchor", "sections")}
-            location["page"] = "__handbook__" if fmt == "charge-handbook" else location["path"]
+            location["page"] = "__handbook__" if fmt in {"charge-handbook", "standalone-handbook"} else location["path"]
             document_payloads[rid]["native"] = location
             covered.add(rid)
     if warn_missing and len(covered) != len(documents):

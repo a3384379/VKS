@@ -119,6 +119,10 @@ def test_association_pagination_filters_and_background_refresh_preserve_current_
             nav.get_by_role("button", name="末页", exact=True).click()
             expect(rows).to_have_count(6)
             expect(nav.get_by_role("button", name="下一页", exact=True)).to_be_disabled()
+            nav.get_by_label("跳转关联页", exact=True).fill("2")
+            nav.get_by_role("button", name="跳转", exact=True).click()
+            expect(nav).to_contain_text("第 2 / 3 页")
+            expect(rows).to_have_count(10)
             panel.get_by_label("搜索关联", exact=True).fill("示例关联02")
             expect(rows).to_have_count(1)
             expect(nav).to_contain_text("第 1 / 1 页")
@@ -135,5 +139,95 @@ def test_association_pagination_filters_and_background_refresh_preserve_current_
             page.set_viewport_size({"width": 390, "height": 720})
             assert panel.locator(".binding-table-wrap").evaluate("el=>el.scrollHeight<=el.clientHeight+1")
             assert not errors
+        finally:
+            browser.close()
+
+
+def test_result_totals_jump_and_global_search_with_status_filter(materials, tmp_path, monkeypatch):
+    web, _, _, _, projects = materials
+    pid, aid = projects[0]
+    outcomes = [
+        {
+            "id": f"result-{index}",
+            "label": f"控件{index:03}",
+            "status": "insufficient" if index % 3 == 0 else "linked",
+            "message": "文档依据不足" if index % 3 == 0 else "关联已保存",
+        }
+        for index in range(1, 236)
+    ]
+    requests = []
+    with native_studio(web.app, tmp_path, monkeypatch) as url, sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+
+        def batch(route):
+            response = route.fetch()
+            payload = response.json()
+            payload["data"]["jobs"] = [
+                {
+                    "id": "results-fixture",
+                    "state": "succeeded",
+                    "stage": "ASSOCIATE",
+                    "current_scope": True,
+                    "result": {
+                        "total": 235,
+                        "processed": 235,
+                        "saved": 157,
+                        "details_truncated": True,
+                        "completed": {item["id"]: item for item in outcomes[-200:]},
+                    },
+                }
+            ]
+            route.fulfill(response=response, json=payload)
+
+        def items(route):
+            from urllib.parse import parse_qs, urlsplit
+
+            query = parse_qs(urlsplit(route.request.url).query)
+            needle = query.get("q", [""])[0]
+            status = query.get("status", ["all"])[0]
+            offset = int(query["offset"][0])
+            selected = [
+                item
+                for item in outcomes
+                if (status == "all" or item["status"] == status) and needle in (item["label"] + item["message"])
+            ]
+            requests.append(query)
+            route.fulfill(
+                json={
+                    "data": {
+                        "items": selected[offset : offset + 10],
+                        "total": len(selected),
+                        "has_more": offset + 10 < len(selected),
+                    }
+                }
+            )
+
+        page.route("**/associations/batch?*", batch)
+        page.route("**/associations/batch/items?*", items)
+        try:
+            login(page, url, pid, aid)
+            page.get_by_role("button", name="关联管理", exact=True).click()
+            page.get_by_text("查看逐项结果", exact=True).click()
+            nav = page.get_by_role("navigation", name="逐项结果分页", exact=True)
+            rows = page.locator(".batch-result-list li")
+            expect(nav).to_contain_text("共 235 条 · 第 1 / 24 页")
+            expect(rows).to_have_count(10)
+            nav.get_by_label("跳转结果页", exact=True).fill("24")
+            nav.get_by_role("button", name="跳转", exact=True).click()
+            expect(nav).to_contain_text("第 24 / 24 页")
+            expect(rows).to_have_count(5)
+            expect(nav.get_by_role("button", name="下一页", exact=True)).to_be_disabled()
+            page.get_by_label("搜索逐项结果", exact=True).fill("控件235")
+            expect(nav).to_contain_text("共 1 条 · 第 1 / 1 页")
+            expect(rows).to_have_count(1)
+            expect(rows).to_contain_text("控件235")
+            page.get_by_label("搜索逐项结果", exact=True).fill("")
+            page.get_by_label("筛选处理结果", exact=True).select_option("insufficient")
+            expect(nav).to_contain_text("共 78 条 · 第 1 / 8 页")
+            expect(rows).to_have_count(10)
+            assert page.locator(".batch-result-viewport").evaluate("el=>el.scrollHeight<=el.clientHeight+1")
+            assert any(request.get("offset") == ["230"] for request in requests)
+            assert any(request.get("q") == ["控件235"] for request in requests)
         finally:
             browser.close()

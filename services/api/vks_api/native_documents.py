@@ -246,7 +246,7 @@ def catalog_locations(s, pid, choices, rows, packages):
         package = candidates[0]
         fmt = package.get("format", "")
         path = row.metadata_json.get("material_path") or s.get(Artifact, row.artifact_id).relative_path
-        if fmt == "charge-handbook" or (
+        if fmt in {"charge-handbook", "standalone-handbook"} or (
             fmt in {"html-document", "static-site"} and PurePosixPath(path).suffix.lower() in {".html", ".htm"}
         ):
             output[entity.id] = package["id"]
@@ -411,7 +411,7 @@ def _headings(raw, *, article_id=""):
 
 def _sources(raw, fmt, default_path):
     """Parse immutable source bytes; never call or infer source script functions."""
-    if fmt == "charge-handbook":
+    if fmt in {"charge-handbook", "standalone-handbook"}:
         envelope = _scripts(raw, {HANDBOOK: "application/octet-stream", "fh-pack-meta": "application/json"})
         if HANDBOOK in envelope:
             raw = _inflate(envelope[HANDBOOK])
@@ -424,7 +424,7 @@ def _sources(raw, fmt, default_path):
         soup = BeautifulSoup(raw.decode("utf-8-sig"), "html.parser", parse_only=SoupStrainer("article"))
         output = {}
         for article_id, source in sources.items():
-            path = "handbook/" + safe_path(source["path"])
+            path = ("" if fmt == "standalone-handbook" else "handbook/") + safe_path(source["path"])
             content = base64.b64decode(source["base64"], validate=True)
             if sha(content) != source["sha256"] or path in output:
                 raise ValueError("Invalid handbook source")
@@ -550,7 +550,7 @@ def describe(service, s, actor, pid, choices, row, chapters, packages, *, packag
         if len(matches) != 1:
             return None
         descriptor, fmt = matches[0], "charge-handbook"
-    if fmt not in {"charge-handbook", "html-document", "static-site"}:
+    if fmt not in {"charge-handbook", "standalone-handbook", "html-document", "static-site"}:
         return None
     artifact = s.get(Artifact, descriptor["id"])
     origin = s.get(Artifact, row.artifact_id)

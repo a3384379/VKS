@@ -60,6 +60,7 @@ export function BindingsManager<T extends ManagedBinding>({
     [module, setModule] = useState(""),
     [selected, setSelected] = useState(""),
     [page, setPage] = useState(0),
+    [jump, setJump] = useState(""),
     [pageSize, setPageSize] = useState(10);
   const modules = useMemo(() => {
     const names = new Map<string, string>();
@@ -116,10 +117,12 @@ export function BindingsManager<T extends ManagedBinding>({
   function navigate(next: number) {
     setPage(next);
     setSelected("");
+    setJump("");
   }
   function resetPage() {
     setPage(0);
     setSelected("");
+    setJump("");
   }
   return (
     <section className="binding-manager" aria-label="关联管理">
@@ -300,6 +303,35 @@ export function BindingsManager<T extends ManagedBinding>({
                     末页
                   </button>
                 </div>
+                <form
+                  className="batch-result-jump"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const value = Number(jump);
+                    if (
+                      Number.isInteger(value) &&
+                      value >= 1 &&
+                      value <= pageCount
+                    )
+                      navigate(value - 1);
+                  }}
+                >
+                  <label>
+                    跳至
+                    <input
+                      aria-label="跳转关联页"
+                      type="number"
+                      min={1}
+                      max={pageCount}
+                      step={1}
+                      value={jump}
+                      placeholder={`1–${pageCount}`}
+                      onChange={(event) => setJump(event.target.value)}
+                    />
+                    页
+                  </label>
+                  <button disabled={!jump}>跳转</button>
+                </form>
               </nav>
             )}
           </div>

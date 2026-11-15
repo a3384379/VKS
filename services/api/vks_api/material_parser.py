@@ -331,7 +331,12 @@ def parse(kind, files, entry=""):
                     documents.extend(source["documents"])
                     embedded_files.extend(source["files"])
                     authored = source
-                    original, fmt, entry = raw, "handbook-authoring", name
+                    fmt = (
+                        "standalone-handbook"
+                        if source["template"]["template_version"] == "2.0.0"
+                        else "handbook-authoring"
+                    )
+                    original, entry = raw, name
                     continue
                 adapted = offline_bundle(raw, "validation", "validation")
                 if adapted and adapted[1].get("format") == "charge-handbook":
@@ -354,7 +359,7 @@ def parse(kind, files, entry=""):
         fail("没有可索引的文档；当前支持 Markdown、文本及 HTML 手册")
     if len(documents) > 5000 or len({p for p, _ in documents}) != len(documents):
         fail("文档路径重复或数量超过限制")
-    if fmt not in {"charge-handbook", "handbook-authoring"} and html_files:
+    if fmt not in {"charge-handbook", "handbook-authoring", "standalone-handbook"} and html_files:
         chosen = (
             next(((name, raw) for name, raw in html_files if name == entry), None)
             if entry
@@ -375,10 +380,10 @@ def parse(kind, files, entry=""):
             + "".join(f"<article><h2>{escape(p)}</h2><pre>{escape(v)}</pre></article>" for p, v in documents)
         ).encode()
     navigation = {"order": [path for path, _ in documents], "categories": []}
-    if fmt == "charge-handbook":
+    if fmt in {"charge-handbook", "standalone-handbook"}:
         from .document_navigation import handbook_navigation
 
-        navigation = handbook_navigation(original)
+        navigation = handbook_navigation(original, prefix="" if fmt == "standalone-handbook" else "handbook/")
     return {
         "format": fmt,
         "entry": entry,

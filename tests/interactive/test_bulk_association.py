@@ -103,6 +103,29 @@ def test_unlinked_modules_fields_and_repeated_row_actions_are_preassociated(mate
     assert service.get_job(owner, reused["id"])["result"]["reused"] == 7
 
 
+@pytest.mark.parametrize("state", ["running", "cancelled", "succeeded"])
+def test_recent_page_jobs_do_not_evict_whole_batch_results(materials, monkeypatch, state):
+    service, owner, _, pid, aid, _, _, calls, _ = setup(materials, monkeypatch)
+    manager = BulkAssociationService(service)
+    original = enqueue(manager, owner, pid, aid)
+    service.process_job(original["id"])
+    with service.db() as s:
+        whole = s.get(Job, original["id"])
+        whole.state, whole.created_at = state, "2020-01-01T00:00:00Z"
+        for _ in range(10):
+            child = service._new_job(s, owner, pid, "associate_all", {**whole.input_json, "scan_pipeline": True})
+            child.state = "cancelled"
+    before = len(calls)
+    status = manager.status(owner, pid, aid)
+    assert len(status["jobs"]) == 9
+    assert len([j for j in status["jobs"] if j["scan_pipeline"]]) == 8
+    whole = next(j for j in status["jobs"] if j["id"] == original["id"])
+    assert whole["state"] == state and whole["current_scope"]
+    assert whole["result"]["processed"] == 7 and whole["result"]["saved"] == 7
+    assert manager.details(owner, pid, original["id"])["total"] == 7
+    assert len(calls) == before
+
+
 def test_reusing_all_valid_links_does_not_require_embedding_or_model_access(materials, monkeypatch):
     from vks_api.vector_rag import RagSettings, VectorRag, VectorStore
 
@@ -240,6 +263,8 @@ def test_source_revocation_before_commit_and_diagnostics_do_not_leak(materials, 
     service.process_job(job["id"])
     read = service.get_job(actor, job["id"])
     assert "result" not in read and read["diagnostics_restricted"] is True
+    details = manager.details(actor, pid, job["id"], q="收费", status="linked")
+    assert details["total"] == 0 and not details["items"] and details["diagnostics_restricted"]
     assert manager.status(actor, pid, aid)["coverage"]["discovered"] == 0
     assert not InteractiveKnowledgeService(service).bindings(owner, pid, aid)
 
@@ -278,6 +303,7 @@ def test_bounded_parallel_generation_commits_distinct_targets(materials, monkeyp
     first = manager.details(owner, pid, job["id"], limit=3)
     second = manager.details(owner, pid, job["id"], offset=3, limit=4)
     assert len(first["items"]) == 3 and first["has_more"]
+    assert first["total"] == second["total"] == 7
     assert len(second["items"]) == 4 and not second["has_more"]
     assert len({row["id"] for row in first["items"] + second["items"]}) == 7
 
@@ -367,3 +393,8 @@ def test_large_batch_checkpoints_bound_job_json_and_keep_earlier_failures_partia
     for offset in (0, 100, 200):
         all_rows.extend(manager.details(owner, pid, job["id"], offset=offset)["items"])
     assert len(all_rows) == 211 and sum(r["status"] == "insufficient" for r in all_rows) == 1
+    skipped = manager.details(owner, pid, job["id"], limit=10, status="skipped")
+    assert skipped["total"] == 210 and len(skipped["items"]) == 10 and skipped["has_more"]
+    last = manager.details(owner, pid, job["id"], q="操作209", status="skipped", limit=10)
+    assert last["total"] == 1 and last["items"][0]["label"] == "收费项操作209"
+    assert manager.details(owner, pid, job["id"], q="%_")["total"] == 0

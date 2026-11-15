@@ -1,13 +1,14 @@
 """Read the standalone handbook author's inert document envelope, never scripts."""
 
 import base64
+from hashlib import sha256
 from pathlib import PurePosixPath
 from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import Field, ValidationError
 
-from packages.analyzers.offline_prototype import _scripts
+from packages.analyzers.offline_prototype import HANDBOOK, _inflate, _scripts
 from packages.analyzers.vks_ingest import BundleError, _json, safe_path
 
 from .attachments import raster_media
@@ -45,7 +46,7 @@ class TemplateImage(Input):
 class TemplateEnvelope(Input):
     schema_version: Literal[SCHEMA] = Field(alias="schema")
     template_id: Literal["handbook"]
-    template_version: Literal["1.0.0"]
+    template_version: Literal["1.0.0", "2.0.0"]
     documents: list[TemplateDocument] = Field(max_length=MAX_DOCUMENTS)
     images: list[TemplateImage] = Field(default_factory=list, max_length=MAX_FILES)
 
@@ -73,12 +74,28 @@ def member_path(value):
 
 def read_authoring(raw):
     """Return normalized MD/assets, or None for an unrelated source HTML."""
-    if NODE.encode() not in raw:
+    if NODE.encode() not in raw and SCHEMA.encode() not in raw:
         return None
     if len(raw) > MAX_HTML:
         invalid("本地知识手册 HTML 超过 80 MiB")
     try:
-        scripts = _scripts(raw, {NODE: "application/json"})
+        scripts = _scripts(
+            raw, {NODE: "application/json", HANDBOOK: "application/octet-stream", "fh-pack-meta": "application/json"}
+        )
+        if NODE not in scripts and "fh-pack-meta" in scripts:
+            meta = _json(scripts["fh-pack-meta"].encode())
+            if meta.get("authoring") != SCHEMA:
+                return None
+            decoded = _inflate(scripts.get(HANDBOOK, ""))
+            if (
+                meta.get("format") != "fh-gzip-html-1"
+                or len(decoded) != meta.get("bytes")
+                or sha256(decoded).hexdigest() != meta.get("sha256")
+            ):
+                invalid("本地知识手册解压后的字节与清单不一致")
+            if len(decoded) > MAX_HTML:
+                invalid("本地知识手册解压后超过 80 MiB")
+            scripts = _scripts(decoded, {NODE: "application/json"})
         if NODE not in scripts:
             return None
         envelope = TemplateEnvelope.model_validate(_json(scripts[NODE].encode()))

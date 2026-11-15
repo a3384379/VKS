@@ -4020,6 +4020,36 @@ p {
 .batch-result-details > summary {
   cursor: pointer;
 }
+.batch-result-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.batch-result-filters input {
+  flex: 1;
+  min-width: 180px;
+}
+.batch-result-filters select {
+  width: auto;
+}
+.batch-result-filters :is(input, select) {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.batch-result-jump,
+.batch-result-jump label {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+.batch-result-jump input {
+  width: 76px;
+  padding: 6px;
+  font-size: 12px;
+}
 .batch-result-viewport {
   margin-top: 10px;
   border: 1px solid #e6eee9;

@@ -15,9 +15,9 @@ from pathlib import PurePosixPath
 from threading import RLock
 from typing import Annotated, Literal
 
-from fastapi import Depends, Header, Request
+from fastapi import Depends, Header, Query, Request
 from pydantic import Field, ValidationError
-from sqlalchemy import JSON, ForeignKey, String, select
+from sqlalchemy import JSON, ForeignKey, String, func, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .ai_gateway import ModelPolicy
@@ -477,12 +477,32 @@ class BulkAssociationService:
         with ReadingService(self.service).db() as s:
             analysis, digest, _items, _groups, coverage = self.scan(s, actor, pid, aid)
             jobs = []
-            for job in s.scalars(
+            recent = list(
+                s.scalars(
+                    select(Job)
+                    .where(Job.project_id == pid, Job.kind == "associate_all", Job.created_by == actor.id)
+                    .order_by(Job.created_at.desc())
+                    .limit(8)
+                )
+            )
+            # Per-page jobs must not evict the current whole-batch result and
+            # its controls merely because they were created more recently.
+            whole_batch = s.scalar(
                 select(Job)
-                .where(Job.project_id == pid, Job.kind == "associate_all", Job.created_by == actor.id)
+                .where(
+                    Job.project_id == pid,
+                    Job.kind == "associate_all",
+                    Job.created_by == actor.id,
+                    Job.input_json["analysis_set_id"].as_string() == aid,
+                    Job.input_json["composition"].as_string() == digest,
+                    func.coalesce(Job.input_json["scan_pipeline"].as_boolean(), False).is_(False),
+                )
                 .order_by(Job.created_at.desc())
-                .limit(8)
-            ):
+                .limit(1)
+            )
+            if whole_batch and all(job.id != whole_batch.id for job in recent):
+                recent.append(whole_batch)
+            for job in recent:
                 jobs.append(
                     {
                         **ReadingService(self.service).job_dto(s, actor, job),
@@ -698,7 +718,7 @@ class BulkAssociationService:
 
             return self.service.idem(s, actor, pid, "associations.batch", key, request, create)
 
-    def details(self, actor, pid, jid, offset=0, limit=100):
+    def details(self, actor, pid, jid, offset=0, limit=100, *, q="", status="all"):
         from .jobs import Checkpoint
 
         with ReadingService(self.service).db() as s:
@@ -708,21 +728,55 @@ class BulkAssociationService:
                 raise DomainError("VKS_NOT_FOUND", "未找到预关联任务", 404)
             dto = ReadingService(self.service).job_dto(s, actor, job)
             if dto.get("diagnostics_restricted"):
-                return {"items": [], "offset": offset, "has_more": False, "diagnostics_restricted": True}
+                return {"items": [], "offset": offset, "total": 0, "has_more": False, "diagnostics_restricted": True}
+            filters = {
+                "all": (),
+                "linked": ("linked", "reused"),
+                "insufficient": ("insufficient",),
+                "failed": ("failed",),
+                "manual": ("manual",),
+                "excluded": ("excluded",),
+                "skipped": ("skipped",),
+            }
+            if status not in filters or len(q) > 200:
+                raise DomainError("VKS_INVALID_INPUT", "结果筛选条件无效", 422)
+            result_status = Checkpoint.result_json["status"].as_string()
+            conditions = [
+                Checkpoint.job_id == jid,
+                Checkpoint.stage == "ASSOCIATE",
+                Checkpoint.processor_version == PROCESSOR,
+                (
+                    func.coalesce(Checkpoint.result_json["attempt"].as_integer(), 1)
+                    >= job.result_json.get("processing_epoch", 1)
+                )
+                | result_status.in_(("linked", "reused", "manual", "excluded", "skipped")),
+            ]
+            if filters[status]:
+                conditions.append(result_status.in_(filters[status]))
+            if q.strip():
+                normalize = func.vks_casefold if self.service.engine.dialect.name == "sqlite" else func.lower
+                searchable = (
+                    func.coalesce(Checkpoint.result_json["label"].as_string(), "")
+                    + " "
+                    + func.coalesce(Checkpoint.result_json["message"].as_string(), "")
+                )
+                conditions.append(normalize(searchable).contains(q.strip().casefold(), autoescape=True))
+            total = s.scalar(select(func.count()).select_from(Checkpoint).where(*conditions))
             rows = list(
                 s.scalars(
                     select(Checkpoint)
-                    .where(
-                        Checkpoint.job_id == jid,
-                        Checkpoint.stage == "ASSOCIATE",
-                        Checkpoint.processor_version == PROCESSOR,
-                    )
+                    .where(*conditions)
                     .order_by(Checkpoint.created_at, Checkpoint.id)
                     .offset(offset)
-                    .limit(limit + 1)
+                    .limit(limit)
                 )
             )
-            return {"items": [r.result_json for r in rows[:limit]], "offset": offset, "has_more": len(rows) > limit}
+            return {
+                "items": [r.result_json for r in rows],
+                "offset": offset,
+                "total": total,
+                "has_more": offset + len(rows) < total,
+            }
 
 
 def run_batch(service, jid, *, preserve_processed=False):
@@ -1084,10 +1138,19 @@ def install_bulk_association(app, service, actor, envelope):
         return envelope(request, shared.save_inventory(a, pid, payload, if_match, idempotency_key))
 
     @app.get(prefix + "/items", response_model=PrototypeEnvelope[dict])
-    def details(pid: str, job_id: str, request: Request, a: ActorDep, offset: int = 0, limit: int = 100):
+    def details(
+        pid: str,
+        job_id: str,
+        request: Request,
+        a: ActorDep,
+        offset: int = 0,
+        limit: int = 100,
+        q: str = Query(default="", max_length=200),
+        status: Literal["all", "linked", "insufficient", "failed", "manual", "excluded", "skipped"] = "all",
+    ):
         if offset < 0 or not 1 <= limit <= 200:
             raise DomainError("VKS_INVALID_INPUT", "分页范围无效", 422)
-        return envelope(request, shared.details(a, pid, job_id, offset, limit))
+        return envelope(request, shared.details(a, pid, job_id, offset, limit, q=q, status=status))
 
     @app.get(prefix, response_model=PrototypeEnvelope[dict])
     def status(pid: str, analysis_set_id: str, request: Request, a: ActorDep):

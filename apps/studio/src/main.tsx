@@ -1701,9 +1701,12 @@ function App() {
     catalog?.packages.filter(
       (p) =>
         p.kind === "handbook" &&
-        ["charge-handbook", "html-document", "static-site"].includes(
-          p.format || "",
-        ),
+        [
+          "charge-handbook",
+          "standalone-handbook",
+          "html-document",
+          "static-site",
+        ].includes(p.format || ""),
     ) || [];
   function openProject(id: string) {
     navigate({

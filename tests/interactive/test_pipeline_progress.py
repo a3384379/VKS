@@ -46,6 +46,7 @@ def test_progress_counts_states_and_keeps_heavy_payloads_out_of_session(material
             "targets": 200,
             "completed": 25,
             "failed": 25,
+            "processed": 50,
             "saved": 25,
             "waiting": 25,
             "pending_admission": 25,

@@ -962,7 +962,8 @@ export function BatchAssociations({
         </details>
       )}
       {current && !legacyInPipeline && (
-        <div className="batch-current" role="status">
+        <div className="batch-current" role="status" aria-label="整批关联进度">
+          {scanRun?.pipeline && <small>此前的整批关联任务</small>}
           <div>
             <b>
               {active(current)
