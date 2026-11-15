@@ -1,14 +1,14 @@
 """Real page regression with isolated API, Vite cache, data and browser profile."""
 
-from contextlib import contextmanager
-from hashlib import sha256
-from pathlib import Path
 import os
 import shutil
 import socket
 import subprocess
-from threading import Thread
 import time
+from contextlib import contextmanager
+from hashlib import sha256
+from pathlib import Path
+from threading import Thread
 
 import httpx
 import pytest
@@ -106,11 +106,6 @@ def site(tmp_path_factory):
     _, owner = service.login(service.bootstrap_token)
     project = service.create_project(owner, {"key": "charge-demo", "name": "Browser regression"}, "project")
     empty = service.create_project(owner, {"key": "empty", "name": "Empty regression"}, "empty")
-    # Module fixtures run before the function-level legacy manual baseline.
-    # Persist this fixture's intended mode before importing review candidates.
-    pass
-
-    pass
     job = service.demo_import(owner, project["id"], "fixture")
     service.process_job(job["id"])
     workspace = service.workspace(owner, project["id"])
@@ -375,6 +370,9 @@ def test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_na
             assert saved.ok, saved.text()
             page.goto(url + f"/#view=documents&project={pid}&entity={doc}")
             page.reload()  # Reload the revision saved through the fixture API.
+            # Establish the fresh document before inspecting its render job;
+            # cold browser/module startup is separate from diagram timeout.
+            expect(page.get_by_role("heading", name="Isolated timeout", level=1, exact=True)).to_be_visible(timeout=15000)
             expect(page.locator(".document-reader .diagram-block")).to_have_count(1)
             first = page.locator(".document-reader .diagram-block").nth(0)
             first.scroll_into_view_if_needed()
