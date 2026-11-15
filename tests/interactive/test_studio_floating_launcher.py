@@ -12,8 +12,8 @@ from tests.ui.test_frontend_browser import chromium_path
 materials = test_materials.materials
 
 
-@pytest.mark.parametrize("touch", [False, True])
-def test_launcher_drag_persists_and_click_opens_separately(materials, tmp_path, monkeypatch, touch):
+@pytest.mark.parametrize("touch,capture_fails", [(False, False), (True, False), (False, True)])
+def test_launcher_drag_persists_and_click_opens_separately(materials, tmp_path, monkeypatch, touch, capture_fails):
     web, service, owner, manager, projects = materials
     pid, aid = projects[0]
     package = test_materials.stage(
@@ -29,18 +29,25 @@ def test_launcher_drag_persists_and_click_opens_separately(materials, tmp_path, 
             page.get_by_role("button", name="原型", exact=True).click()
             launcher = page.get_by_role("button", name="打开知识助手", exact=True)
             expect(launcher).to_be_visible(timeout=15000)
+            if capture_fails:
+                launcher.evaluate("button => { button.setPointerCapture = () => { throw new DOMException('Capture unavailable'); }; }")
             box = launcher.bounding_box()
             x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
             if touch:
                 cdp = page.context.new_cdp_session(page)
                 cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+                expect(page.locator(".assistant-drag-shield")).to_have_count(1)
                 cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": 250, "y": 260}]})
                 cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
             else:
                 page.mouse.move(x, y)
                 page.mouse.down()
+                # Cover the iframe before the first movement: capture can be
+                # unavailable while a newly selected prototype is navigating.
+                expect(page.locator(".assistant-drag-shield")).to_have_count(1)
                 page.mouse.move(250, 260, steps=10)
                 page.mouse.up()
+            expect(page.locator(".assistant-drag-shield")).to_have_count(0)
             expect(page.get_by_role("complementary", name="知识助手")).to_have_count(0)
             page.wait_for_function(
                 "() => { const b=document.querySelector('.assistant-launcher').getBoundingClientRect(); return b.x>200 && b.x<260 && b.y>200 && b.y<280; }"
@@ -53,6 +60,11 @@ def test_launcher_drag_persists_and_click_opens_separately(materials, tmp_path, 
             expect(launcher).to_be_visible(timeout=15000)
             restored = launcher.bounding_box()
             assert abs(restored["x"] - stored["left"]) < 3 and abs(restored["y"] - stored["top"]) < 3
+            launcher.click()
+            expect(page.get_by_role("complementary", name="知识助手")).to_be_visible()
+            page.locator(".assistant-launcher").click()
+            expect(page.get_by_role("complementary", name="知识助手")).to_have_count(0)
+            expect(page.locator(".assistant-drag-shield")).to_have_count(0)
             page.set_viewport_size({"width": 220, "height": 230})
             expect(launcher).to_be_visible()
             page.wait_for_function(
