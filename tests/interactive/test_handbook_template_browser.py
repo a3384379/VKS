@@ -151,6 +151,10 @@ def test_handbook_mobile_directory_and_keyboard_search(tmp_path):
             expect(dialog).not_to_be_visible()
             page.keyboard.press("Control+k")
             expect(dialog).to_be_visible()
+            # The previous native close event may arrive after a new opening.
+            # Reproduce that ordering rather than relying on runner timing.
+            dialog.evaluate("element => element.dispatchEvent(new Event('close'))")
+            expect(dialog).to_be_visible()
             page.keyboard.press("Escape")
             expect(dialog).not_to_be_visible()
         finally:

@@ -804,7 +804,11 @@ export function HandbookTemplate({
         className="hb-search-dialog"
         aria-label="手册全文搜索"
         onCancel={() => setSearchOpen(false)}
-        onClose={() => setSearchOpen(false)}
+        onClose={(event) => {
+          // Native close events are queued. A previous close must not dismiss
+          // a search dialog that the user has already opened again.
+          if (!event.currentTarget.open) setSearchOpen(false);
+        }}
       >
         <div className="hb-search-header">
           <label htmlFor={inputId}>

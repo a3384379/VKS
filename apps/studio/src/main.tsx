@@ -1756,8 +1756,17 @@ function App() {
       y = e.clientY,
       pointer = e.pointerId;
     let next = { left: rect.left, top: rect.top };
-    let shield: HTMLDivElement | undefined;
-    button.setPointerCapture(pointer);
+    // Cover the prototype before the first move, including while its iframe
+    // is navigating. Keep a parent-document fallback if capture is unavailable.
+    const shield = document.createElement("div");
+    shield.className = "assistant-drag-shield";
+    shield.setAttribute("aria-hidden", "true");
+    document.body.append(shield);
+    try {
+      button.setPointerCapture(pointer);
+    } catch {
+      /* The shield and global listeners still receive the drag. */
+    }
     const move = (event: PointerEvent) => {
       if (
         event.pointerId !== pointer ||
@@ -1765,12 +1774,6 @@ function App() {
           !launcherMoved.current)
       )
         return;
-      if (!launcherMoved.current) {
-        shield = document.createElement("div");
-        shield.className = "assistant-drag-shield";
-        shield.setAttribute("aria-hidden", "true");
-        document.body.append(shield);
-      }
       event.preventDefault();
       launcherMoved.current = true;
       setLauncherDragging(true);
@@ -1791,7 +1794,7 @@ function App() {
       window.removeEventListener("pointerup", end, true);
       window.removeEventListener("pointercancel", end, true);
       window.removeEventListener("blur", end);
-      shield?.remove();
+      shield.remove();
       launcherCleanup.current = null;
     };
     const end = (event: Event) => {
