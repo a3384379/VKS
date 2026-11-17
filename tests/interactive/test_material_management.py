@@ -381,3 +381,130 @@ def test_retry_migration_reuses_the_active_job_and_projects_current_scope(materi
     test_materials.activate(service, owner, manager, pid, aid, remove=[package["package_id"]])
     after = manager.library(owner, pid, aid, False)
     assert next(j for j in after["jobs"] if j["id"] == first["id"])["current_scope"] is False
+
+
+def test_purge_recycle_entries_preserves_facts_and_allows_reimport(materials):
+    from vks_api.materials import PurgeMaterials
+    from vks_api.models import Release
+
+    _, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    raw = "# Purge sample\n\nExact immutable content."
+    package = test_materials.stage(service, owner, manager, pid, aid, "documents", raw)
+    test_materials.activate(service, owner, manager, pid, aid, [package])
+    saved = manager.checkpoint(owner, pid, aid, "Keep original facts", uid())
+    manifest = deepcopy(saved["manifest"])
+    test_materials.activate(service, owner, manager, pid, aid, remove=[package["package_id"]])
+    expected = str(version(service, owner, pid, aid))
+    targets = [{"kind": "package", "target_id": package["package_id"]}, {"kind": "version", "target_id": saved["id"]}]
+    for item in targets:
+        manager.trash(owner, pid, form(aid, item["kind"], item["target_id"]), expected, uid())
+    with service.db() as db:
+        facts = {table: db.scalar(select(func.count()).select_from(table)) for table in (Artifact, Revision, Release)}
+    request = PurgeMaterials(analysis_set_id=aid, targets=targets)
+    key = uid()
+    assert manager.purge_trash(owner, pid, request, expected, key) == {"purged": 2}
+    assert manager.purge_trash(owner, pid, request, expected, key) == {"purged": 2}
+    assert not manager.library(owner, pid, aid)["trash"]
+    assert not manager.library(owner, pid, aid)["packages"]
+    assert saved["id"] not in {r["id"] for r in manager.history(owner, pid, aid)["versions"]}
+    with pytest.raises(DomainError, match="无法"):
+        manager.trash(owner, pid, form(aid, "package", package["package_id"], False), expected, uid())
+    with service.db() as db:
+        assert all(db.scalar(select(func.count()).select_from(table)) == count for table, count in facts.items())
+        assert db.get(Release, saved["id"]).manifest_json == manifest
+    imported = test_materials.stage(service, owner, manager, pid, aid, "documents", raw)
+    assert imported["package_id"] != package["package_id"]
+
+
+def test_purge_is_atomic_and_requires_recycle_membership_and_permissions(materials):
+    from vks_api.materials import PurgeMaterials
+
+    _, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    a = test_materials.stage(service, owner, manager, pid, aid, "documents", "# One")
+    b = test_materials.stage(service, owner, manager, pid, aid, "documents", "# Two")
+    expected = str(version(service, owner, pid, aid))
+    manager.trash(owner, pid, form(aid, "package", a["package_id"]), expected, uid())
+    request = PurgeMaterials(
+        analysis_set_id=aid, targets=[{"kind": "package", "target_id": p["package_id"]} for p in (a, b)]
+    )
+    with pytest.raises(DomainError):
+        manager.purge_trash(owner, pid, request, expected, uid())
+    assert manager.library(owner, pid, aid)["trash"][0]["id"] == a["package_id"]
+    token = service.create_token(owner, pid, {"name": "Reader", "scopes": ["knowledge:read"]})
+    reader = service.authenticate(token["token"], "token")
+    with pytest.raises(DomainError):
+        manager.purge_trash(reader, pid, request, expected, uid())
+    with pytest.raises(DomainError) as error:
+        manager.purge_trash(owner, pid, request, "0", uid())
+    assert error.value.code == "VKS_VERSION_CONFLICT"
+
+
+def test_purge_checks_current_workspace_even_when_request_uses_another_draft(materials):
+    from vks_api.materials import PurgeMaterials, StudioWorkspace
+
+    _, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    package = test_materials.stage(service, owner, manager, pid, aid, "documents", "# Current workspace")
+    test_materials.activate(service, owner, manager, pid, aid, [package])
+    saved = manager.checkpoint(owner, pid, aid, "Read-only original", uid())
+    frozen = saved["analysis_set_id"]
+    with pytest.raises(DomainError, match="此版本已保存"):
+        manager.purge_trash(
+            owner,
+            pid,
+            PurgeMaterials(analysis_set_id=frozen, targets=[{"kind": "package", "target_id": package["package_id"]}]),
+            str(version(service, owner, pid, frozen)),
+            uid(),
+        )
+    other = service.create_analysis(owner, pid, {"name": "Other editable draft"}, uid())
+    with service.db() as db:
+        assert db.get(StudioWorkspace, pid).analysis_set_id == aid
+        # A retained recycle record must never allow another draft to hide a
+        # package now used by the project's current workspace.
+        db.add(MaterialTrash(project_id=pid, kind="package", target_id=package["package_id"], deleted_by=owner.id))
+    request = PurgeMaterials(
+        analysis_set_id=other["id"], targets=[{"kind": "package", "target_id": package["package_id"]}]
+    )
+    with pytest.raises(DomainError, match="正在使用"):
+        manager.purge_trash(owner, pid, request, str(other["selection_version"]), uid())
+    with service.db() as db:
+        assert db.get(MaterialTrash, (pid, "purged_package", package["package_id"])) is None
+        assert db.get(StudioWorkspace, pid).analysis_set_id == aid
+    assert manager.library(owner, pid, aid)["packages"][0]["active_revision_id"] == package["revision_id"]
+
+
+def test_full_access_version_directory_reads_metadata_without_manifests(materials, monkeypatch):
+    _, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    package = test_materials.stage(
+        service,
+        owner,
+        manager,
+        pid,
+        aid,
+        "documents",
+        "# Catalog\n\n" + "\n\n".join(f"## Rule {i}\n\nExact fact {i}." for i in range(600)),
+    )
+    test_materials.activate(service, owner, manager, pid, aid, [package])
+    saved = [manager.checkpoint(owner, pid, aid, f"Large version {i}", uid()) for i in range(6)]
+    statements = []
+
+    def capture(_conn, _cursor, sql, *_args):
+        statements.append(sql)
+
+    monkeypatch.setattr(
+        service,
+        "_saved_snapshot",
+        lambda *_args: pytest.fail("Metadata directory must defer full snapshot verification"),
+    )
+    event.listen(service.engine, "before_cursor_execute", capture)
+    try:
+        history = manager.history(owner, pid, aid)
+    finally:
+        event.remove(service.engine, "before_cursor_execute", capture)
+    assert {v["id"] for v in history["versions"]} == {v["id"] for v in saved}
+    assert not any("manifest_json" in sql for sql in statements)
+    assert not any("entity_revision.content" in sql for sql in statements)
+    assert len(statements) < 15

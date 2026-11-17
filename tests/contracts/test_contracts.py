@@ -33,8 +33,8 @@ def test_mcp_contracts_are_self_contained_and_do_not_approve():
     original = json.loads((ROOT / "packages/contracts/mcp_tools.json").read_text())
     assert len(original["tools"]) == 18
     assert {t["name"] for t in original["tools"]} <= {t["name"] for t in catalog["tools"]}
-    assert len(catalog["tools"]) == 25
-    assert len({t["name"] for t in catalog["tools"]}) == 25
+    assert len(catalog["tools"]) == 30
+    assert len({t["name"] for t in catalog["tools"]}) == 30
     for tool in catalog["tools"]:
         Draft202012Validator.check_schema(tool["inputSchema"])
         Draft202012Validator.check_schema(tool["outputSchema"])

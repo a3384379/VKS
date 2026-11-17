@@ -110,21 +110,19 @@
     }
     return parts.join(" > ");
   }
+  const dialogs =
+    '[role="dialog"],.el-dialog,.el-drawer,.el-message-box,.ant-modal,.modal,.drawer,.offline-modal,.demo-modal,.prototype-modal,.vks-modal';
   const stateOf = (doc) => {
-    const candidates = Array.from(
-      doc.querySelectorAll(
-        '[role="dialog"],.el-dialog,.el-drawer,.el-message-box,.ant-modal,.modal,.drawer,.offline-modal,.demo-modal,.prototype-modal,.vks-modal',
-      ),
-    );
+    const candidates = Array.from(doc.querySelectorAll(dialogs));
     return candidates.filter(visible).map(selector).join(" | ").slice(0, 500);
   };
-  function target(el, win, path, route) {
+  function target(el, win, path, route, state = stateOf(win.document)) {
     return {
       route,
       frame_path: path,
       selector: selector(el),
       label: label(el),
-      state: stateOf(win.document),
+      state,
       open_steps: histories.get(win) || [],
     };
   }
@@ -181,11 +179,9 @@
       context: context(el, win.document),
     };
   }
-  function moduleContext(win, path, route) {
+  function moduleTarget(win, path, route) {
     const doc = win.document;
-    const t = target(doc.body, win, path, route);
-    t.selector = "body";
-    t.label = (
+    const name = (
       doc.title ||
       doc.querySelector("h1,h2,.page-title")?.textContent ||
       route
@@ -197,10 +193,19 @@
       .trim()
       .replace(/\s+/g, " ")
       .slice(0, 160);
-    t.state = "";
-    t.open_steps = [];
     return {
-      target: t,
+      route,
+      frame_path: path,
+      selector: "body",
+      label: name,
+      state: "",
+      open_steps: [],
+    };
+  }
+  function moduleContext(win, path, route) {
+    const doc = win.document;
+    return {
+      target: moduleTarget(win, path, route),
       context: { ...context(doc.body, doc), scope: "module" },
     };
   }
@@ -304,10 +309,39 @@
             event.target?.closest?.(
               'button,a,input,select,textarea,[role="button"],[role="menuitem"],[role="tab"],[onclick],[tabindex]:not([tabindex="-1"]),label,.el-switch,.el-checkbox,.el-radio,.el-menu-item,.el-submenu__title',
             ) || (picking ? event.target : null);
-          if (!el || !visible(el)) return;
           const currentRoute = win.__prototypePackPage?.path
             ? "/" + win.__prototypePackPage.path.replace(/^\//, "")
             : route;
+          const portal =
+            !win.__prototypePackPage?.path &&
+            (win.__prototypePack || doc.getElementById("prototypePackPayload"));
+          if (
+            !picking &&
+            portal &&
+            (!el ||
+              el.matches(
+                '[role="menuitem"],[role="tab"],[data-page],[data-tab],a[data-vks-page]',
+              ))
+          ) {
+            pointed = null;
+            // Same-route navigation can be a no-op in the original portal.
+            // Resolve after its handler without reloading or selecting the menu.
+            setTimeout(() => scan(true), 0);
+            return;
+          }
+          if (!el) {
+            pointed = null;
+            // Blank list/page clicks return to the visible business module.
+            // The surrounding portal/menu must not replace its active iframe.
+            const module =
+              path.length === 0 && currentModule
+                ? currentModule
+                : moduleContext(win, path, currentRoute);
+            currentModule = module;
+            send("control.activated", module);
+            return;
+          }
+          if (!visible(el)) return;
           const selected = target(el, win, path, currentRoute);
           const selectedControl = {
             target: selected,
@@ -414,6 +448,15 @@
     const position = documentPosition(win, route);
     if (registered.get(doc) === doc.documentElement) return;
     registered.set(doc, doc.documentElement);
+    // Native handbook viewers refit when their viewport is resized. Automatic
+    // scrollbars can alternately consume/release space at fractional scales,
+    // feeding that observer and painting two alternating diagram positions.
+    // Reserve both scroll axes; do not replace the original SVG or listeners.
+    const diagramStyle = doc.createElement("style");
+    diagramStyle.dataset.vksDiagramViewport = "stable";
+    diagramStyle.textContent =
+      "#diagram-dialog #diagram-viewport{overflow:scroll!important;scrollbar-gutter:stable!important}#fh-ai-root,#fh-ai-top{display:none!important}";
+    (doc.head || doc.documentElement).append(diagramStyle);
     const changed = () => {
       // Only position observation: original navigation, clicks and context menus
       // retain all of their own listeners and browser default behavior.
@@ -428,6 +471,59 @@
         send("document.changed", next);
     };
     win.addEventListener("hashchange", changed);
+    let selectionMenuOpen = false;
+    const dismissSelectionMenu = () => {
+      if (!selectionMenuOpen) return;
+      selectionMenuOpen = false;
+      send("document.selection_dismiss");
+    };
+    doc.addEventListener("pointerdown", dismissSelectionMenu, true);
+    doc.addEventListener("scroll", dismissSelectionMenu, true);
+    doc.addEventListener(
+      "contextmenu",
+      (event) => {
+        dismissSelectionMenu();
+        if (
+          event.target?.closest?.(
+            "#fh-ai-root,input,textarea,[contenteditable]",
+          )
+        )
+          return;
+        const selection = win.getSelection();
+        if (
+          selection?.anchorNode?.parentElement?.closest(
+            "#fh-ai-root,input,textarea,[contenteditable]",
+          )
+        )
+          return;
+        const text = selection?.toString().trim().slice(0, 4000);
+        if (!text) return;
+        event.preventDefault();
+        const anchor = selection.rangeCount
+          ? selection.getRangeAt(0).getBoundingClientRect()
+          : null;
+        let x = event.clientX,
+          y = event.clientY,
+          current = win;
+        if (
+          !Number.isFinite(x) ||
+          !Number.isFinite(y) ||
+          (x === 0 && y === 0)
+        ) {
+          x = anchor?.left || 8;
+          y = anchor?.bottom || 8;
+        }
+        while (current !== window && current.frameElement) {
+          const rect = current.frameElement.getBoundingClientRect();
+          x += rect.left;
+          y += rect.top;
+          current = current.parent;
+        }
+        selectionMenuOpen = true;
+        send("document.selection_menu", { text, x, y });
+      },
+      true,
+    );
     doc.addEventListener("load", scan, true);
     if (position) {
       const previous = lastDocument;
@@ -682,11 +778,35 @@
         request,
       );
   }
-  function scan() {
+  function scan(activateModule = false) {
     if (loaded) {
       windows.clear();
       ambiguousFrames.clear();
       install(frame.contentWindow, [], "/");
+      if (activateModule === true) {
+        let active = null;
+        for (const { win, path, route } of windows.values()) {
+          let shown = true;
+          for (
+            let child = win;
+            child !== frame.contentWindow && shown;
+            child = child.parent
+          )
+            shown = !!child.frameElement && visible(child.frameElement);
+          if (
+            shown &&
+            (path.length === 0 || path.includes("actualPage")) &&
+            ((!win.__prototypePack &&
+              !win.document.getElementById("prototypePackPayload")) ||
+              win.__prototypePackPage?.path)
+          )
+            active = moduleContext(win, path, route);
+        }
+        if (active) {
+          currentModule = active;
+          send("control.activated", active);
+        }
+      }
     }
   }
   async function inventory(payload, request) {
@@ -720,7 +840,12 @@
     let observed = null,
       changedAt = started,
       observing = [],
+      dirty = true,
+      captured = null,
       lastFingerprint = "";
+    const invalidate = () => {
+      dirty = true;
+    };
     const samePrefix = (actual) =>
       path.every((part, index) => part === actual[index]);
     const activeWindow = (entry) => {
@@ -781,8 +906,19 @@
           !root.querySelector(
             "button,a,input,select,textarea,img,svg,canvas,table,article,h1,h2,h3,p,ul,ol",
           )
-        )
-          return true;
+        ) {
+          // Vue/React dialogs can render through a portal outside their empty
+          // mount root. Observe that rendered UI rather than treating the
+          // unused placeholder as a permanently loading application. A blank
+          // root with only a surrounding toolbar still remains pending.
+          const portalReady = Array.from(doc.querySelectorAll(dialogs)).some(
+            (dialog) =>
+              !root.contains(dialog) &&
+              shown(dialog) &&
+              Array.from(dialog.querySelectorAll(actionable)).some(shown),
+          );
+          if (!portalReady) return true;
+        }
       }
       return false;
     };
@@ -843,21 +979,54 @@
           observing.forEach((observer) => observer.disconnect());
           observed = docs;
           changedAt = performance.now();
+          dirty = true;
+          captured = null;
           observing = docs.map((doc) => {
-            const observer = new MutationObserver(() => {
-              changedAt = performance.now();
-            });
-            observer.observe(doc.body, {
+            const observer = new MutationObserver(invalidate);
+            // Head changes include a late title or stylesheet. A mutation marks
+            // observations dirty; only changed targets/readiness reset quiet
+            // time, so an unrelated ticking clock cannot starve the scan.
+            observer.observe(doc.documentElement, {
               childList: true,
               subtree: true,
               characterData: true,
               attributes: true,
             });
-            return observer;
+            const events = [
+              "load",
+              "resize",
+              "transitionrun",
+              "transitionend",
+              "animationstart",
+              "animationend",
+            ];
+            for (const event of events)
+              doc.addEventListener(event, invalidate, true);
+            doc.defaultView?.addEventListener("resize", invalidate);
+            return {
+              disconnect() {
+                observer.disconnect();
+                for (const event of events)
+                  doc.removeEventListener(event, invalidate, true);
+                doc.defaultView?.removeEventListener("resize", invalidate);
+              },
+            };
           });
         }
+        // Stable pages keep their last extraction. Recheck layout/readiness at
+        // the final quiet boundary, including CSS-only visibility changes.
+        const minimum = captured?.items.some((item) => item.selector !== "body")
+          ? 700
+          : 2000;
+        const finishing =
+          captured &&
+          performance.now() - started >= minimum &&
+          performance.now() - changedAt >= 500;
+        if (!dirty && captured && !finishing) continue;
+        dirty = false;
         if (docs.some(mountPending)) {
           changedAt = performance.now();
+          dirty = true;
           continue;
         }
         const items = [],
@@ -865,8 +1034,9 @@
         let unverified = 0;
         for (const entry of entries) {
           const doc = entry.win.document;
-          const module = moduleContext(entry.win, entry.path, route).target;
-          items.push({ ...module, open_steps: [] });
+          const module = moduleTarget(entry.win, entry.path, route);
+          items.push(module);
+          const state = stateOf(doc);
           for (const node of doc.querySelectorAll(actionable)) {
             if (
               !shown(node) ||
@@ -874,7 +1044,7 @@
               (editable(node) && node.isContentEditable)
             )
               continue;
-            const item = target(node, entry.win, entry.path, route);
+            const item = target(node, entry.win, entry.path, route, state);
             item.open_steps = [];
             const key = JSON.stringify([
               item.frame_path,
@@ -906,17 +1076,18 @@
             }
           }
         }
-        const fingerprint = JSON.stringify(items);
+        const fingerprint = JSON.stringify([items, unverified]);
+        captured = { items, unverified };
         if (fingerprint !== lastFingerprint) {
           changedAt = performance.now();
           lastFingerprint = fingerprint;
         }
         // Empty app mounts need a longer quiet interval than populated pages.
-        const minimum = items.some((item) => item.selector !== "body")
+        const observedMinimum = items.some((item) => item.selector !== "body")
           ? 700
           : 2000;
         if (
-          performance.now() - started < minimum ||
+          performance.now() - started < observedMinimum ||
           performance.now() - changedAt < 500
         )
           continue;

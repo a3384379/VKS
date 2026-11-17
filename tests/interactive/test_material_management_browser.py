@@ -38,6 +38,9 @@ def test_materials_progressive_loading_deduplication_and_recycle_ui(materials, t
             expect(card).to_be_visible(timeout=10000)
             assert history
             expect(page.get_by_text("正在读取历史版本，可先管理资料包…", exact=True)).to_be_visible()
+            history_frame = page.get_by_role("region", name="完整版本列表", exact=True)
+            loading_height = history_frame.bounding_box()["height"]
+            assert loading_height >= 240
             expect(card.get_by_role("button", name="更新资料", exact=True)).to_be_enabled()
             expect(card.get_by_role("button", name="删除", exact=True)).to_be_disabled()
             assert all("include_versions=false" in request for request in gets)
@@ -46,6 +49,7 @@ def test_materials_progressive_loading_deduplication_and_recycle_ui(materials, t
             page.unroute("**/materials/versions?*")
             row = page.locator(".material-history article").filter(has_text="Saved original")
             expect(row).to_be_visible()
+            assert abs(history_frame.bounding_box()["height"] - loading_height) < 1
             row.get_by_role("button", name="删除", exact=False).click()
             expect(row).to_have_count(0)
             recycle = page.locator("details").filter(has=page.locator("summary").filter(has_text="回收站"))
@@ -167,5 +171,84 @@ def test_current_migration_and_disabled_retry_are_separate_from_history(material
             expect(history.locator(".material-job")).not_to_be_visible()
             history.locator("summary").click()
             expect(history).to_contain_text("旧资料版本")
+        finally:
+            browser.close()
+
+
+def test_recycle_delete_cancel_clear_and_restore_preserve_original_facts(materials, tmp_path, monkeypatch):
+    from sqlalchemy import select
+    from vks_api.models import Artifact, Release, Revision
+
+    web, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    current = test_materials.stage(service, owner, manager, pid, aid, "documents", "# Current", name="Current")
+    test_materials.activate(service, owner, manager, pid, aid, [current])
+    manager.checkpoint(owner, pid, aid, "Recycle version", "recycle-browser-version")
+    for name in ("Delete sample", "Restore sample", "Clear sample"):
+        test_materials.stage(service, owner, manager, pid, aid, "documents", "# " + name, name=name)
+
+    def immutable_facts():
+        with service.db() as db:
+            return {
+                table.__tablename__: sorted(
+                    (row.id, tuple(str(getattr(row, c.name)) for c in table.__table__.columns))
+                    for row in db.scalars(select(table))
+                )
+                for table in (Artifact, Revision, Release)
+            }
+
+    before = immutable_facts()
+    with native_studio(web.app, tmp_path, monkeypatch) as url, sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
+        try:
+            page = browser.new_page(viewport={"width": 1440, "height": 1100})
+            page.add_init_script("if(window===window.top)localStorage.setItem('vks.studio.auto-associate','off')")
+            errors, purges = [], []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "request",
+                lambda r: purges.append(r.post_data_json) if r.url.endswith("/materials/trash/purge") else None,
+            )
+            login(page, url, pid, aid)
+            page.get_by_role("button", name="资料管理", exact=True).click()
+            card = lambda name: page.locator(".material-card").filter(
+                has=page.get_by_role("heading", name=name, exact=True)
+            )
+            expect(card("Current").get_by_role("button", name="删除", exact=True)).to_be_disabled()
+            for name in ("Delete sample", "Restore sample", "Clear sample"):
+                card(name).get_by_role("button", name="删除", exact=True).click()
+                expect(card(name)).to_have_count(0)
+            recycle = page.locator("details").filter(has=page.locator("summary").filter(has_text="回收站"))
+            recycle.locator("summary").click()
+            removed = lambda name: recycle.locator("article").filter(has=page.get_by_text(name, exact=True))
+            expect(removed("Delete sample")).to_be_visible()
+            page.once("dialog", lambda dialog: dialog.dismiss())
+            removed("Delete sample").get_by_role("button", name="删除回收站记录 Delete sample", exact=True).click()
+            expect(removed("Delete sample")).to_be_visible()
+            assert not purges, "Cancelling deletion must not send a mutation"
+            page.once("dialog", lambda dialog: dialog.accept())
+            removed("Delete sample").get_by_role("button", name="删除回收站记录 Delete sample", exact=True).click()
+            expect(removed("Delete sample")).to_have_count(0)
+            assert len(purges) == 1 and len(purges[0]["targets"]) == 1
+            removed("Restore sample").get_by_role("button", name="从回收站恢复 Restore sample", exact=True).click()
+            expect(card("Restore sample")).to_be_visible()
+            expect(removed("Restore sample")).to_have_count(0)
+            card("Restore sample").get_by_role("button", name="删除", exact=True).click()
+            row = page.locator(".material-history article").filter(has_text="Recycle version")
+            expect(row).to_be_visible()
+            row.get_by_role("button", name="删除完整版本 Recycle version", exact=True).click()
+            expect(removed("Recycle version")).to_be_visible()
+            page.once("dialog", lambda dialog: dialog.dismiss())
+            recycle.get_by_role("button", name="清空回收站", exact=True).click()
+            expect(recycle.locator("article")).to_have_count(3)
+            assert len(purges) == 1
+            page.once("dialog", lambda dialog: dialog.accept())
+            recycle.get_by_role("button", name="清空回收站", exact=True).click()
+            expect(recycle.locator("article")).to_have_count(0)
+            expect(recycle.get_by_role("button", name="清空回收站", exact=True)).to_be_disabled()
+            assert len(purges) == 2 and len(purges[-1]["targets"]) == 3
+            expect(card("Current")).to_contain_text("已启用")
+            assert immutable_facts() == before
+            assert not errors
         finally:
             browser.close()

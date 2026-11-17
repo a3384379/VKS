@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, Play, RefreshCw, Square } from "lucide-react";
+import { LoaderCircle, Play, RefreshCw, Settings2, Square } from "lucide-react";
 import { api, mutation } from "../../web/src/api";
 import {
   PrototypeInventoryScanner,
@@ -45,6 +45,7 @@ type Job = {
   };
 };
 type Status = {
+  model_request_limit?: number;
   analysis_set_id: string;
   selection_version: number;
   editable: boolean;
@@ -106,6 +107,8 @@ export function BatchAssociations({
   accountId = "",
   visible = true,
   onChanged,
+  onReview,
+  refreshVersion,
 }: {
   project: string;
   analysis: string;
@@ -113,11 +116,14 @@ export function BatchAssociations({
   accountId?: string;
   visible?: boolean;
   onChanged: () => Promise<unknown>;
+  onReview?: (mode: "missing" | "all") => void;
+  refreshVersion?: number;
 }) {
   const base = `/api/v3/projects/${project}/associations/batch`;
   const scanBase = `/api/v3/projects/${project}/associations/scans`;
   const [clientId] = useState(() => crypto.randomUUID());
   const [scanConcurrency, setScanConcurrency] = useState(3);
+  const [showDetails, setShowDetails] = useState(false);
   const [scanRun, setScanRun] = useState<ScanRun | null>(null);
   const [storedProgress, setStoredProgress] = useState<{
     pages_total: number;
@@ -288,7 +294,7 @@ export function BatchAssociations({
       if (!controller.signal.aborted) setError(error.message);
     });
     return () => controller.abort();
-  }, [visible, load, loadScan]);
+  }, [visible, load, loadScan, refreshVersion]);
   useEffect(() => {
     if (
       !scanSession &&
@@ -585,6 +591,12 @@ export function BatchAssociations({
   const scanning =
     !!scanSession || (!!scanRun?.current_scope && scanRun.state === "running");
   const analysisDisabled = !editable || !data?.editable || busy || scanning;
+  const resumableScan =
+    scanRun?.current_scope &&
+    ["interrupted", "partial"].includes(scanRun.state) &&
+    scanRun.manifest.pages_total
+      ? scanRun
+      : undefined;
   const disabled =
     !editable ||
     !data?.editable ||
@@ -594,77 +606,146 @@ export function BatchAssociations({
     (!!scanRun?.current_scope &&
       !scanRun.batch_job_id &&
       ["running", "interrupted", "partial"].includes(scanRun.state));
+  const taskSummary = (
+    <div
+      className="batch-compact-status"
+      role="status"
+      aria-label="关联任务摘要"
+    >
+      <span>
+        页面{" "}
+        <b>
+          {scanRun?.pages_completed ?? storedProgress?.pages_captured ?? 0} /{" "}
+          {scanRun?.pages_total ?? storedProgress?.pages_total ?? 0}
+        </b>
+      </span>
+      <span>
+        已关联 <b>{coverage?.linked ?? 0}</b>
+      </span>
+      <span>
+        待处理 <b>{coverage?.pending ?? 0}</b>
+      </span>
+      <span className="batch-task-state">
+        {scanning
+          ? "正在扫描页面"
+          : aiActive || (current && active(current))
+            ? "AI 处理中"
+            : "当前无运行任务"}
+      </span>
+    </div>
+  );
   return (
     <section className="batch-associations" aria-label="AI 预关联">
       <div className="batch-heading">
-        <div>
+        <div className="batch-overview">
           <b>AI 预关联</b>
-          <p>
-            扫描与关联独立运行，可在后台关联时继续分析页面。全量 AI
-            任务会逐页整理文档与讲解；补齐和变更复用已保存页面，未打开的弹窗可在操作时补查。
-          </p>
+          {taskSummary}
         </div>
         <div className="batch-actions">
-          <label>
-            并行路数
-            <select
-              aria-label="分析与关联并发"
-              value={parallelism}
-              disabled={
-                !editable ||
-                !data?.editable ||
-                busy ||
-                scanning ||
-                aiActive ||
-                (!!current && active(current))
-              }
-              onChange={(event) =>
-                setScanConcurrency(Number(event.target.value))
+          <details className="batch-settings">
+            <summary>
+              <Settings2 size={14} />
+              扫描设置 <span>{parallelism} 路</span>
+            </summary>
+            <label>
+              并行路数
+              <select
+                aria-label="分析与关联并发"
+                value={parallelism}
+                disabled={
+                  !editable ||
+                  !data?.editable ||
+                  busy ||
+                  scanning ||
+                  aiActive ||
+                  (!!current && active(current))
+                }
+                onChange={(event) =>
+                  setScanConcurrency(Number(event.target.value))
+                }
+              >
+                {[1, 2, 3, 4].map((value) => (
+                  <option key={value} value={value}>
+                    {value} 路并行
+                  </option>
+                ))}
+              </select>
+              <small>
+                扫描 {parallelism} 路 · AI 最多{" "}
+                {parallelism === 1 ? 1 : (data?.model_request_limit ?? 128)}{" "}
+                个并发请求
+              </small>
+            </label>
+          </details>
+          <div
+            className="batch-action-group"
+            role="group"
+            aria-label="页面扫描"
+          >
+            <b>页面扫描</b>
+            <button
+              title="只采集原型页面和控件，不调用 AI"
+              disabled={analysisDisabled}
+              onClick={() =>
+                void run(
+                  resumableScan?.mode || "changed",
+                  undefined,
+                  resumableScan,
+                  false,
+                  true,
+                )
               }
             >
-              {[1, 2, 3, 4].map((value) => (
-                <option key={value} value={value}>
-                  {value} 路并行
-                </option>
-              ))}
-            </select>
-            <small>
-              扫描 {parallelism} 路 · 关联 {parallelism} 路（最多{" "}
-              {parallelism * 2} 路）
-            </small>
-          </label>
-          <button disabled={disabled} onClick={() => void run("missing")}>
-            <Play size={14} />
-            补齐未关联
-          </button>
-          <button
-            disabled={analysisDisabled}
-            onClick={() =>
-              void run(
-                scanRun?.current_scope && scanRun.manifest.pages_total
-                  ? scanRun.mode
-                  : "changed",
-                undefined,
-                scanRun?.current_scope && scanRun.manifest.pages_total
-                  ? scanRun
-                  : undefined,
-                false,
-                true,
-              )
-            }
+              <RefreshCw size={14} />
+              {resumableScan
+                ? "继续扫描页面"
+                : scanRun?.state === "cancelled"
+                  ? "重新扫描页面"
+                  : "扫描页面变更"}
+            </button>
+            <small>只采集页面和控件，不调用 AI。</small>
+          </div>
+          <div
+            className="batch-action-group"
+            role="group"
+            aria-label="AI 关联文档"
           >
-            <RefreshCw size={14} />
-            {scanRun?.current_scope && scanRun.manifest.pages_total
-              ? "继续扫描分析"
-              : "分析变更项"}
-          </button>
-          <button
-            disabled={disabled}
-            onClick={() => void run("all")}
-            className="primary"
-          >
-            全量 AI 关联
-          </button>
+            <b>AI 关联文档</b>
+            <div className="batch-ai-commands">
+              <div>
+                <button
+                  className="primary"
+                  title="为未关联内容生成预览，确认后保存"
+                  disabled={disabled || !onReview}
+                  onClick={() => onReview?.("missing")}
+                >
+                  <Play size={14} />
+                  补齐未关联
+                </button>
+                <small>仅为未关联内容生成预览，确认后保存。</small>
+              </div>
+              <div>
+                <button
+                  title="为当前范围重新生成预览，确认后替换关联"
+                  disabled={disabled || !onReview}
+                  onClick={() => onReview?.("all")}
+                >
+                  重新关联全部
+                </button>
+                <small>先生成预览，确认后再统一替换。</small>
+              </div>
+            </div>
+          </div>
+          <details className="batch-help">
+            <summary>操作说明</summary>
+            <div className="batch-help-content">
+              <p>页面扫描：采集页面与控件，不调用 AI。</p>
+              <p>补齐未关联：为已采集且缺少关联的内容生成预览，确认后保存。</p>
+              <p>
+                重新关联全部：为当前清单生成预览，包括已有 AI 关联，确认后替换。
+              </p>
+            </div>
+          </details>
         </div>
       </div>
       {error && (
@@ -709,319 +790,341 @@ export function BatchAssociations({
           }}
         />
       )}
-      {scanRun && !scanSession && (
-        <div
-          className="batch-current"
-          role="status"
-          aria-label="已保存的预扫描进度"
-        >
-          <div>
-            <b>
-              {scanRun.state === "partial" || scanRun.pages_failed
-                ? "预扫描部分完成"
-                : scanRun.state === "completed"
-                  ? "页面预扫描完成"
-                  : scanRun.state === "cancelled"
-                    ? "任务已停止"
-                    : scanRun.state === "invalidated" || !scanRun.current_scope
-                      ? "预扫描版本已变化"
-                      : "预扫描进度已保存"}
-            </b>
-            <span>
-              已采集 {scanRun.pages_completed} / {scanRun.pages_total} 页 ·{" "}
-              {scanRun.controls} 控件
-            </span>
-          </div>
-          <progress
-            max={Math.max(1, scanRun.pages_total)}
-            value={scanRun.pages_completed}
-          />
-          <small>
-            已尝试{" "}
-            {scanRun.pages_attempted ??
-              scanRun.pages_completed + scanRun.pages_failed}{" "}
-            页
-            {scanRun.pages_failed
-              ? ` · 未完成：${scanRun.pages_failed} 页待重试`
-              : ""}
-          </small>
-          {scanRun.current && (
-            <small>{scanRun.current.label || scanRun.current.route}</small>
-          )}
-          {scanRun.current_scope &&
-            (!scanRun.pipeline || scanRun.manifest.pages_total > 0) &&
-            ["running", "interrupted", "partial", "completed"].includes(
-              scanRun.state,
-            ) && (
-              <div className="batch-actions">
-                <button
-                  disabled={busy || !editable || !data}
-                  onClick={() => void run(scanRun.mode, undefined, scanRun)}
-                >
-                  {scanRun.state === "partial" || scanRun.pages_failed
-                    ? "重试未完成页面"
-                    : scanRun.state === "completed"
-                      ? "开始 AI 关联"
-                      : "恢复预扫描"}
-                </button>
-                {!scanRun.pipeline &&
-                  !scanRun.batch_job_id &&
-                  (scanRun.state === "partial" || scanRun.pages_failed > 0) &&
-                  scanRun.pages_completed > 0 && (
-                    <button
-                      disabled={busy || !editable || !data}
-                      onClick={() =>
-                        void run(scanRun.mode, undefined, scanRun, true)
-                      }
-                    >
-                      仅关联已采集内容
-                    </button>
-                  )}
-                <button
-                  disabled={busy || !editable}
-                  onClick={() => void stopScan()}
-                >
-                  停止任务
-                </button>
-                <small>
-                  恢复后仅继续未完成页面；已提交的 AI 在后台继续处理。
-                </small>
-              </div>
-            )}
-        </div>
-      )}
-      {scanRun?.pipeline && scanRun.ai && (
-        <div
-          className="batch-current"
-          role="status"
-          aria-label="后台 AI 关联进度"
-        >
-          <div>
-            <b>
-              {scanRun.ai.pending_admission
-                ? "正在整理已采集页面"
-                : aiActive
-                  ? "后台 AI 正在关联"
-                  : scanRun.ai.failed
-                    ? "AI 部分内容待重试"
-                    : scanRun.state === "running"
-                      ? "等待页面内容"
-                      : "本次 AI 处理已结束"}
-            </b>
-            <span>
-              已处理 {aiProcessed} / {scanRun.ai.targets} 项
-            </span>
-          </div>
-          <progress
-            max={Math.max(
-              1,
-              scanRun.ai.targets + (scanRun.ai.pending_admission ? 1 : 0),
-            )}
-            value={aiProcessed}
-          />
-          <small>
-            已保存 {scanRun.ai.saved} 项 · 排队 {scanRun.ai.queued} · 处理中{" "}
-            {scanRun.ai.running}
-            {scanRun.ai.waiting ? ` · 待处理 ${scanRun.ai.waiting}` : ""}
-            {scanRun.ai.failed ? ` · 失败 ${scanRun.ai.failed}` : ""}
-          </small>
-          {scanRun.ai.error && <p>{scanRun.ai.error}</p>}
-          <div className="batch-actions">
-            {legacyInPipeline && current && active(current) && (
-              <button
-                disabled={
-                  !editable ||
-                  stoppingJob === current.id ||
-                  current.state === "cancelling"
-                }
-                onClick={() => void stop(current)}
-              >
-                <Square size={13} />
-                停止当前关联
-              </button>
-            )}
-            {!!(scanRun.ai.failed || scanRun.ai.cancelled) &&
-              scanRun.current_scope &&
-              !["cancelled", "invalidated"].includes(scanRun.state) && (
-                <button
-                  disabled={busy || !editable}
-                  onClick={() => void retryAI()}
-                >
-                  重试 AI 未完成项
-                </button>
-              )}
-            {aiActive && !scanSession && (
-              <button disabled={!editable} onClick={() => void stopScan()}>
-                停止任务
-              </button>
-            )}
-          </div>
-          {legacyInPipeline && current?.result?.completed && (
-            <BatchResultList
-              base={base}
-              job={current}
-              key={`${base}:${analysis}:${accountId}:${current.id}`}
-            />
-          )}
-          {!!pipelineJobs.length && (
-            <details>
-              <summary>查看逐页处理结果（{pipelineJobs.length}）</summary>
-              <ul className="batch-job-results" aria-label="逐页处理结果">
-                {pipelineJobs.map((job) => (
-                  <li key={job.id}>
-                    <b>
-                      {job.state === "succeeded"
-                        ? "已处理"
-                        : active(job)
-                          ? "处理中"
-                          : job.state === "cancelled"
-                            ? "已停止"
-                            : "待重试"}
-                    </b>{" "}
-                    · 已保存 {job.result?.saved || 0} 项
-                    {job.error?.message ? ` · ${job.error.message}` : ""}
-                    {!!job.result?.completed && (
-                      <BatchResultList
-                        key={`${base}:${analysis}:${accountId}:${job.id}`}
-                        base={base}
-                        job={job}
-                      />
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </div>
-      )}
-      {!scanRun &&
-        storedProgress &&
-        (storedProgress.pages_captured > 0 ||
-          storedProgress.pages_failed > 0) && (
+      <details
+        className="batch-task-details"
+        open={
+          scanning || aiActive || !!(current && active(current)) || showDetails
+        }
+        onToggle={(event) => {
+          if (!scanning && !aiActive && !(current && active(current)))
+            setShowDetails(event.currentTarget.open);
+        }}
+      >
+        <summary>
+          任务详情 <span>进度、扫描范围与历史结果</span>
+        </summary>
+        {scanRun && !scanSession && (
           <div
             className="batch-current"
             role="status"
-            aria-label="已保存的页面清单"
+            aria-label="已保存的预扫描进度"
           >
-            <b>已保存页面清单</b>
-            <p>
-              已采集 {storedProgress.pages_captured} /{" "}
-              {storedProgress.pages_total} 页 · {storedProgress.controls} 控件
-              {storedProgress.pages_failed
-                ? ` · ${storedProgress.pages_failed} 页待重试`
-                : ""}
-            </p>
+            <div>
+              <b>
+                {scanRun.state === "partial" || scanRun.pages_failed
+                  ? "预扫描部分完成"
+                  : scanRun.state === "completed"
+                    ? "页面预扫描完成"
+                    : scanRun.state === "cancelled"
+                      ? "任务已停止"
+                      : scanRun.state === "invalidated" ||
+                          !scanRun.current_scope
+                        ? "预扫描版本已变化"
+                        : "预扫描进度已保存"}
+              </b>
+              <span>
+                已采集 {scanRun.pages_completed} / {scanRun.pages_total} 页 ·{" "}
+                {scanRun.controls} 控件
+              </span>
+            </div>
+            <progress
+              max={Math.max(1, scanRun.pages_total)}
+              value={scanRun.pages_completed}
+            />
             <small>
-              点击“补齐未关联”继续尚未完成的页面，已有清单会复用；不会自动调用模型。
+              已尝试{" "}
+              {scanRun.pages_attempted ??
+                scanRun.pages_completed + scanRun.pages_failed}{" "}
+              页
+              {scanRun.pages_failed
+                ? ` · 未完成：${scanRun.pages_failed} 页待重试`
+                : ""}
             </small>
+            {scanRun.current && (
+              <small>{scanRun.current.label || scanRun.current.route}</small>
+            )}
+            {scanRun.current_scope &&
+              (!scanRun.pipeline || scanRun.manifest.pages_total > 0) &&
+              ["running", "interrupted", "partial", "completed"].includes(
+                scanRun.state,
+              ) && (
+                <div className="batch-actions">
+                  <button
+                    disabled={busy || !editable || !data}
+                    onClick={() => void run(scanRun.mode, undefined, scanRun)}
+                  >
+                    {scanRun.state === "partial" || scanRun.pages_failed
+                      ? "重试未完成页面"
+                      : scanRun.state === "completed"
+                        ? "开始 AI 关联"
+                        : "恢复预扫描"}
+                  </button>
+                  {!scanRun.pipeline &&
+                    !scanRun.batch_job_id &&
+                    (scanRun.state === "partial" || scanRun.pages_failed > 0) &&
+                    scanRun.pages_completed > 0 && (
+                      <button
+                        disabled={busy || !editable || !data}
+                        onClick={() =>
+                          void run(scanRun.mode, undefined, scanRun, true)
+                        }
+                      >
+                        仅关联已采集内容
+                      </button>
+                    )}
+                  <button
+                    disabled={busy || !editable}
+                    onClick={() => void stopScan()}
+                  >
+                    停止任务
+                  </button>
+                  <small>
+                    恢复后仅继续未完成页面；已提交的 AI 在后台继续处理。
+                  </small>
+                </div>
+              )}
           </div>
         )}
-      {coverage ? (
-        <div className="batch-coverage" aria-label="关联覆盖情况">
-          <span>
-            已发现 <b>{coverage.discovered}</b>
-          </span>
-          <span>
-            模块 <b>{coverage.modules}</b>
-          </span>
-          <span>
-            控件 <b>{coverage.controls}</b>
-          </span>
-          <span>
-            已关联 <b>{coverage.linked}</b>
-          </span>
-          <span>
-            人工维护 <b>{coverage.manual}</b>
-          </span>
-          <span>
-            已移除 <b>{coverage.excluded}</b>
-          </span>
-          <span>
-            待处理 <b>{coverage.pending}</b>
-          </span>
-          {!!coverage.duplicate_controls && (
-            <span>
-              重复行操作 <b>{coverage.duplicate_controls}</b>
-            </span>
-          )}
-        </div>
-      ) : (
-        <p role="status">
-          <LoaderCircle size={14} className="spinning" />
-          正在扫描当前资料中的模块与控件…
-        </p>
-      )}
-      {!!coverage?.limitations?.length && (
-        <details className="batch-limitations">
-          <summary>扫描范围与尚未覆盖的状态</summary>
-          <ul>
-            {coverage.limitations.map((s, i) => (
-              <li key={i}>{typeof s === "string" ? s : s.message}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-      {current && !legacyInPipeline && (
-        <div className="batch-current" role="status" aria-label="整批关联进度">
-          {scanRun?.pipeline && <small>此前的整批关联任务</small>}
-          <div>
-            <b>
-              {active(current)
-                ? current.state === "queued"
-                  ? "等待预关联"
-                  : current.state === "cancelling"
-                    ? "正在停止预关联"
-                    : current.stage === "DOCUMENT_INDEX"
-                      ? "正在建立文档索引"
-                      : "正在预关联"
-                : current.state === "succeeded"
-                  ? "本次处理完成"
-                  : current.state === "cancelled"
-                    ? "预关联已停止"
-                    : "预关联暂未完成"}
-            </b>
-            <span>
-              {current.result?.processed ?? 0} /{" "}
-              {current.result?.total ?? coverage?.discovered ?? 0} 项
-            </span>
-          </div>
-          <progress max={100} value={current.progress} />
-          <small>
-            已保存 {current.result?.saved ?? 0} 项 ·
-            处理完成与有依据的关联覆盖率分别统计
-          </small>
-          {current.error && <p>{current.error.message}</p>}
-          <div className="batch-actions">
-            {active(current) ? (
-              <button
-                disabled={
-                  !editable ||
-                  stoppingJob === current.id ||
-                  current.state === "cancelling"
-                }
-                onClick={() => void stop(current)}
-              >
-                <Square size={13} />
-                停止任务
-              </button>
-            ) : current.state !== "succeeded" || !!current.result?.pending ? (
-              <button
-                disabled={disabled}
-                onClick={() => void run(current.mode || "missing", current.id)}
-              >
-                继续 / 重试未完成项
-              </button>
-            ) : null}
-          </div>
-          {!!current.result?.completed && (
-            <BatchResultList
-              key={`${base}:${analysis}:${accountId}:${current.id}`}
-              base={base}
-              job={current}
+        {scanRun?.pipeline && scanRun.ai && (
+          <div
+            className="batch-current"
+            role="status"
+            aria-label="后台 AI 关联进度"
+          >
+            <div>
+              <b>
+                {scanRun.ai.pending_admission
+                  ? "正在整理已采集页面"
+                  : aiActive
+                    ? "后台 AI 正在关联"
+                    : scanRun.ai.failed
+                      ? "AI 部分内容待重试"
+                      : scanRun.state === "running"
+                        ? "等待页面内容"
+                        : "本次 AI 处理已结束"}
+              </b>
+              <span>
+                已处理 {aiProcessed} / {scanRun.ai.targets} 项
+              </span>
+            </div>
+            <progress
+              max={Math.max(
+                1,
+                scanRun.ai.targets + (scanRun.ai.pending_admission ? 1 : 0),
+              )}
+              value={aiProcessed}
             />
+            <small>
+              已保存 {scanRun.ai.saved} 项 · 排队 {scanRun.ai.queued} · 处理中{" "}
+              {scanRun.ai.running}
+              {scanRun.ai.waiting ? ` · 待处理 ${scanRun.ai.waiting}` : ""}
+              {scanRun.ai.failed ? ` · 失败 ${scanRun.ai.failed}` : ""}
+            </small>
+            {scanRun.ai.error && <p>{scanRun.ai.error}</p>}
+            <div className="batch-actions">
+              {legacyInPipeline && current && active(current) && (
+                <button
+                  disabled={
+                    !editable ||
+                    stoppingJob === current.id ||
+                    current.state === "cancelling"
+                  }
+                  onClick={() => void stop(current)}
+                >
+                  <Square size={13} />
+                  停止当前关联
+                </button>
+              )}
+              {!!(scanRun.ai.failed || scanRun.ai.cancelled) &&
+                scanRun.current_scope &&
+                !["cancelled", "invalidated"].includes(scanRun.state) && (
+                  <button
+                    disabled={busy || !editable}
+                    onClick={() => void retryAI()}
+                  >
+                    重试 AI 未完成项
+                  </button>
+                )}
+              {aiActive && !scanSession && (
+                <button disabled={!editable} onClick={() => void stopScan()}>
+                  停止任务
+                </button>
+              )}
+            </div>
+            {legacyInPipeline && current?.result?.completed && (
+              <BatchResultList
+                base={base}
+                job={current}
+                key={`${base}:${analysis}:${accountId}:${current.id}`}
+              />
+            )}
+            {!!pipelineJobs.length && (
+              <details>
+                <summary>查看逐页处理结果（{pipelineJobs.length}）</summary>
+                <ul className="batch-job-results" aria-label="逐页处理结果">
+                  {pipelineJobs.map((job) => (
+                    <li key={job.id}>
+                      <b>
+                        {job.state === "succeeded"
+                          ? "已处理"
+                          : active(job)
+                            ? "处理中"
+                            : job.state === "cancelled"
+                              ? "已停止"
+                              : "待重试"}
+                      </b>{" "}
+                      · 已保存 {job.result?.saved || 0} 项
+                      {job.error?.message ? ` · ${job.error.message}` : ""}
+                      {!!job.result?.completed && (
+                        <BatchResultList
+                          key={`${base}:${analysis}:${accountId}:${job.id}`}
+                          base={base}
+                          job={job}
+                        />
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+        {!scanRun &&
+          storedProgress &&
+          (storedProgress.pages_captured > 0 ||
+            storedProgress.pages_failed > 0) && (
+            <div
+              className="batch-current"
+              role="status"
+              aria-label="已保存的页面清单"
+            >
+              <b>已保存页面清单</b>
+              <p>
+                已采集 {storedProgress.pages_captured} /{" "}
+                {storedProgress.pages_total} 页 · {storedProgress.controls} 控件
+                {storedProgress.pages_failed
+                  ? ` · ${storedProgress.pages_failed} 页待重试`
+                  : ""}
+              </p>
+              <small>
+                可先扫描页面变更，复用已有清单；需要生成文档关联时再选择 AI
+                关联操作。
+              </small>
+            </div>
           )}
-        </div>
-      )}
+        {coverage ? (
+          <div className="batch-coverage" aria-label="关联覆盖情况">
+            <span>
+              已发现 <b>{coverage.discovered}</b>
+            </span>
+            <span>
+              模块 <b>{coverage.modules}</b>
+            </span>
+            <span>
+              控件 <b>{coverage.controls}</b>
+            </span>
+            <span>
+              已关联 <b>{coverage.linked}</b>
+            </span>
+            <span>
+              人工维护 <b>{coverage.manual}</b>
+            </span>
+            <span>
+              已移除 <b>{coverage.excluded}</b>
+            </span>
+            <span>
+              待处理 <b>{coverage.pending}</b>
+            </span>
+            {!!coverage.duplicate_controls && (
+              <span>
+                重复行操作 <b>{coverage.duplicate_controls}</b>
+              </span>
+            )}
+          </div>
+        ) : (
+          <p role="status">
+            <LoaderCircle size={14} className="spinning" />
+            正在扫描当前资料中的模块与控件…
+          </p>
+        )}
+        {!!coverage?.limitations?.length && (
+          <details className="batch-limitations">
+            <summary>扫描范围与尚未覆盖的状态</summary>
+            <ul>
+              {coverage.limitations.map((s, i) => (
+                <li key={i}>{typeof s === "string" ? s : s.message}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {current && !legacyInPipeline && (
+          <div
+            className="batch-current"
+            role="status"
+            aria-label="整批关联进度"
+          >
+            {scanRun?.pipeline && <small>此前的整批关联任务</small>}
+            <div>
+              <b>
+                {active(current)
+                  ? current.state === "queued"
+                    ? "等待预关联"
+                    : current.state === "cancelling"
+                      ? "正在停止预关联"
+                      : current.stage === "DOCUMENT_INDEX"
+                        ? "正在建立文档索引"
+                        : "正在预关联"
+                  : current.state === "succeeded"
+                    ? "本次处理完成"
+                    : current.state === "cancelled"
+                      ? "预关联已停止"
+                      : "预关联暂未完成"}
+              </b>
+              <span>
+                {current.result?.processed ?? 0} /{" "}
+                {current.result?.total ?? coverage?.discovered ?? 0} 项
+              </span>
+            </div>
+            <progress max={100} value={current.progress} />
+            <small>
+              已保存 {current.result?.saved ?? 0} 项 ·
+              处理完成与有依据的关联覆盖率分别统计
+            </small>
+            {current.error && <p>{current.error.message}</p>}
+            <div className="batch-actions">
+              {active(current) ? (
+                <button
+                  disabled={
+                    !editable ||
+                    stoppingJob === current.id ||
+                    current.state === "cancelling"
+                  }
+                  onClick={() => void stop(current)}
+                >
+                  <Square size={13} />
+                  停止任务
+                </button>
+              ) : current.state !== "succeeded" || !!current.result?.pending ? (
+                <button
+                  disabled={disabled}
+                  onClick={() =>
+                    void run(current.mode || "missing", current.id)
+                  }
+                >
+                  继续 / 重试未完成项
+                </button>
+              ) : null}
+            </div>
+            {!!current.result?.completed && (
+              <BatchResultList
+                key={`${base}:${analysis}:${accountId}:${current.id}`}
+                base={base}
+                job={current}
+              />
+            )}
+          </div>
+        )}
+      </details>
     </section>
   );
 }

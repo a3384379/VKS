@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import asynccontextmanager
-from contextvars import ContextVar
 import json
 import os
-from pathlib import Path
 import re
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from pathlib import Path
 
 import httpx
 from jsonschema import Draft202012Validator, FormatChecker
@@ -26,6 +26,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
+
 from .version import VERSION
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -83,6 +84,18 @@ class APIBridge:
         project = a.pop("project_id", None)
         key = a.pop("idempotency_key", None)
         prefix = f"/projects/{project}"
+        interactive = f"/api/v3/projects/{project}/interactive"
+        if name == "get_interactive_context":
+            return await self.request("POST", interactive + "/tools/context", body=a)
+        if name == "save_interactive_binding":
+            version = a.pop("selection_version")
+            return await self.request("POST", interactive + "/bindings", body=a, key=key, if_match=version)
+        if name == "get_workspace_document":
+            return await self.request("POST", interactive + "/tools/document", body=a)
+        if name == "save_workspace_document":
+            return await self.request("POST", interactive + "/tools/document/save", body=a, key=key)
+        if name == "export_workspace_documents":
+            return await self.request("POST", interactive + "/tools/export", body=a, key=key)
         if name == "get_prototype_action_context":
             action = a.pop("action_key")
             return await self.request("GET", f"/api/v3/projects/{project}/prototype/actions/{action}/context", params=a)

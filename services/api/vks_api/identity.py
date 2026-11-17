@@ -169,8 +169,11 @@ def human_scopes(service, session, identity):
 
 
 def _active_identity(service, session, identity_id):
-    ensure_owner(service, session)
-    identity = session.get(UserIdentity, identity_id)
+    owner = ensure_owner(service, session)
+    # Keep the just-read row alive until this check completes. SQLAlchemy's
+    # identity map is weak: discarding ensure_owner's return otherwise makes
+    # the immediately following owner lookup query the same row a second time.
+    identity = owner if identity_id == owner.id else session.get(UserIdentity, identity_id)
     if not identity or identity.status != "active":
         raise _error("VKS_UNAUTHENTICATED", "会话或令牌已失效", 401)
     return identity
@@ -287,23 +290,32 @@ def _authenticate_credential(service, session, secret, kind):
     )
 
 
-def authorize_project(service, session, actor, project_id, scope):
+def project_grants(service, session, actor, project_id):
+    """Read the current project grant set once; write-side calls never cache it."""
     if actor.credential_id and actor.credential_id.startswith("oauth:"):
-        from .oauth import authorize_project as oauth_authorize
+        from .oauth import project_grants as oauth_project_grants
 
-        return oauth_authorize(service, session, actor, project_id, scope)
+        return oauth_project_grants(service, session, actor, project_id)
     readonly = bool(session.info.get("vks_read_only"))
     cache_key = (actor.id, actor.credential_id, actor.human, project_id, actor.scopes)
     cached = session.info.get("vks_auth_grants") if readonly else None
     if cached and cached[0] is session.get_transaction() and cache_key in cached[1]:
         project, grants = cached[1][cache_key]
-        if scope not in actor.scopes or scope not in grants:
-            raise _error("VKS_FORBIDDEN", f"需要 {scope} 权限", 403)
-        return project
+        return project, grants
     query = select(Project).where(Project.id == project_id)
     if not readonly:
         query = query.with_for_update()
-    project = session.scalar(query)
+    from .inference_pipeline import WRITE_SESSION
+
+    internal_writer = (
+        WRITE_SESSION.get() == (service, session)
+        and session.info.get("vks_completion_batch")
+        and session.bind.dialect.name == "sqlite"
+    )
+    # BEGIN IMMEDIATE already excludes other SQLite writers. Reuse the actual
+    # ORM project row in this transaction; still check the live identity,
+    # membership and requested capability on every call below.
+    project = session.get(Project, project_id) if internal_writer else session.scalar(query)
     if not project:
         raise _error("VKS_NOT_FOUND", "未找到对象", 404)
     if actor.human:
@@ -329,6 +341,11 @@ def authorize_project(service, session, actor, project_id, scope):
             cached = (transaction, {})
             session.info["vks_auth_grants"] = cached
         cached[1][cache_key] = (project, frozenset(grants))
+    return project, frozenset(grants)
+
+
+def authorize_project(service, session, actor, project_id, scope):
+    project, grants = project_grants(service, session, actor, project_id)
     if scope not in actor.scopes or scope not in grants:
         raise _error("VKS_FORBIDDEN", f"需要 {scope} 权限", 403)
     return project

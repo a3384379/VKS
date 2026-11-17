@@ -29,7 +29,9 @@ def test_compact_launcher_panel_drag_and_position_restore_without_credentials(re
         try:
             page.goto(reader_file.as_uri())
             launch = page.get_by_role("button", name="打开知识助手", exact=True)
-            expect(launch).to_have_text("✧")
+            expect(launch.locator("svg")).to_have_count(1)
+            assert launch.bounding_box()["width"] == 44
+            assert launch.bounding_box()["height"] == 44
             before = launch.bounding_box()
             assert before["width"] <= 56
             drag(page, launch, -230, -150)
@@ -44,7 +46,7 @@ def test_compact_launcher_panel_drag_and_position_restore_without_credentials(re
             drag(page, header, -120, -80)
             position = panel.bounding_box()
             assert position["x"] == pytest.approx(original["x"] - 120)
-            page.get_by_role("tab", name="AI 问答", exact=True).click()
+            page.get_by_role("tab", name="回答", exact=True).click()
             assert panel.bounding_box()["x"] == pytest.approx(position["x"])
             page.get_by_role("button", name="收起知识助手", exact=True).click()
             page.reload()
@@ -63,7 +65,7 @@ def test_compact_launcher_panel_drag_and_position_restore_without_credentials(re
             assert bounds["y"] + bounds["height"] <= 640
             expect(page.get_by_role("button", name="连接设置", exact=True)).to_be_in_viewport()
             page.get_by_role("button", name="返回助手", exact=True).click()
-            expect(page.get_by_role("tab", name="相关知识", exact=True)).to_have_attribute("aria-selected", "true")
+            expect(page.get_by_role("tab", name="文档", exact=True)).to_have_attribute("aria-selected", "true")
             page.get_by_role("button", name="收起知识助手", exact=True).click()
             expect(launch).to_be_in_viewport(ratio=1)
             before_key = launch.bounding_box()["x"]
@@ -96,7 +98,9 @@ def test_input_focus_and_plain_click_refresh_knowledge_instead_of_module_fallbac
         page = browser.new_page()
         try:
             page.goto(reader_file.as_uri())
-            page.get_by_role("button", name="模块知识", exact=True).click()
+            source = page.frame_locator("iframe.prototype-frame")
+            source.locator("body").click(button="right", position={"x": 400, "y": 6})
+            page.get_by_role("button", name="查看关联文档", exact=False).click()
             expect(page.locator(".assistant-body")).to_contain_text("模块通用说明不能冒充输入框说明")
             source = page.frame_locator("iframe.prototype-frame")
             source.get_by_role("button", name="创建任务", exact=True).click()
@@ -154,7 +158,7 @@ def test_markdown_image_dialog_wheel_anchor_drag_reset_and_close(reader_file, ki
             page.mouse.move(rect["x"] + rect["width"] / 2 + 90, rect["y"] + rect["height"] / 2 + 50, steps=8)
             page.mouse.up()
             assert large.bounding_box()["x"] == pytest.approx(after["x"] + 90, abs=2)
-            dialog.get_by_role("button", name="复位图片", exact=True).click()
+            dialog.get_by_role("button", name="图片缩放比例", exact=True).click()
             expect(dialog.get_by_label("图片缩放比例")).to_have_text("100%")
             assert large.bounding_box()["x"] == pytest.approx(before["x"], abs=2)
             canvas.focus()

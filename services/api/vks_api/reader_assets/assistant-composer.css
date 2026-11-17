@@ -1,0 +1,91 @@
+/* Shared by Studio, the trusted handbook frame and the exported reader. */
+.vks-ai-composer {
+  display: flex !important;
+  flex-direction: column;
+  gap: 8px !important;
+  flex-shrink: 0;
+  min-width: 0;
+  margin: auto 12px 12px;
+  padding: 12px !important;
+  border: 1px solid #cbd5e3 !important;
+  border-radius: 14px !important;
+  background: #fff !important;
+  box-shadow: none;
+}
+.vks-ai-composer:focus-within {
+  border-color: #8ca6cf !important;
+  box-shadow: 0 0 0 2px #8ca6cf24 !important;
+}
+.vks-ai-composer textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: auto !important;
+  min-height: 24px !important;
+  max-height: min(160px, 24cqh) !important;
+  field-sizing: content;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  color: #243449;
+  font:
+    14px/1.6 system-ui,
+    sans-serif !important;
+  resize: none;
+}
+.vks-ai-composer textarea::placeholder {
+  color: #778399;
+}
+.vks-ai-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin: 0;
+}
+.vks-ai-composer-actions > .assistant-actions {
+  margin: 0;
+}
+.vks-ai-composer-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 4px 6px;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: #53637a;
+  font:
+    12px/1.4 system-ui,
+    sans-serif;
+  white-space: nowrap;
+}
+.vks-ai-composer-actions button:hover {
+  background: #eef4f0;
+}
+.vks-ai-composer-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.vks-ai-composer-spacer {
+  flex: 1;
+}
+.vks-ai-composer-actions button.vks-ai-composer-send {
+  margin-left: auto;
+  min-width: 68px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: #176b52;
+  color: #fff;
+  font-size: 13px;
+}
+.vks-ai-composer-actions button.vks-ai-composer-send:hover {
+  background: #145b46;
+}

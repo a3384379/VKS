@@ -24,6 +24,27 @@ SOURCE = """<title>收费项</title><button id="add">新增收费项</button>
 <tr><td><button id="edit2">编辑收费项</button></td></tr></table>"""
 
 
+def synthetic_response(body, calls=None, *, confidence=0.95):
+    """Protocol-aware provider; calls records logical target inferences."""
+    data = json.loads(body["input"][1]["content"])
+    if "targets" not in data:
+        if calls is not None:
+            calls.append(data)
+        return response(data["chapters"][0]["revision_id"], confidence=confidence)
+    answers = {}
+    for target in data["targets"]:
+        single = {
+            **{k: v for k, v in target.items() if k not in {"task_id", "chapter_keys"}},
+            "chapters": [data["chapter_pool"][key] for key in target["chapter_keys"]],
+        }
+        if calls is not None:
+            calls.append(single)
+        result = response(single["chapters"][0]["revision_id"], confidence=confidence)
+        answers[target["task_id"]] = json.loads(result["output"][0]["content"][0]["text"])
+    result["output"][0]["content"][0]["text"] = json.dumps({"answers": answers})
+    return result
+
+
 def setup(materials, monkeypatch, source=SOURCE):
     _, service, owner, manager, projects = materials
     pid, aid = projects[0]
@@ -49,9 +70,7 @@ def setup(materials, monkeypatch, source=SOURCE):
     calls = []
 
     def model(_config, body):
-        data = json.loads(body["input"][1]["content"])
-        calls.append(data)
-        return response(data["chapters"][0]["revision_id"])
+        return synthetic_response(body, calls)
 
     monkeypatch.setattr(ai_gateway, "request_model", model)
     return service, owner, manager, pid, aid, prototype, document, calls, model
@@ -101,6 +120,30 @@ def test_unlinked_modules_fields_and_repeated_row_actions_are_preassociated(mate
     service.process_job(reused["id"])
     assert len(calls) == 6
     assert service.get_job(owner, reused["id"])["result"]["reused"] == 7
+
+
+def test_parallel_checkpoints_use_batch_upsert_and_keep_resume_identity(materials, monkeypatch):
+    from sqlalchemy import event
+    from vks_api.jobs import Checkpoint
+
+    service, owner, _, pid, aid, _, _, _, _ = setup(materials, monkeypatch)
+    manager = BulkAssociationService(service)
+    job = enqueue(manager, owner, pid, aid, concurrency=3)
+    writes = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        if statement.startswith("INSERT INTO job_checkpoint") and "ON CONFLICT" in statement:
+            writes.append((executemany, len(parameters) if executemany else 1))
+
+    event.listen(service.engine, "before_cursor_execute", record)
+    service.process_job(job["id"])
+    done = service.get_job(owner, job["id"])
+    assert done["state"] == "succeeded" and done["result"]["processed"] == 7
+    with service.db() as s:
+        rows = list(s.scalars(select(Checkpoint).where(Checkpoint.job_id == job["id"])))
+        assert len(rows) == 7 and len({r.input_hash for r in rows}) == 7
+        assert all(r.result_json["status"] == "linked" for r in rows)
+    assert writes and any(batched and count > 1 for batched, count in writes)
 
 
 @pytest.mark.parametrize("state", ["running", "cancelled", "succeeded"])
@@ -229,9 +272,7 @@ def test_insufficient_evidence_is_partial_and_explicitly_retryable(materials, mo
     manager = BulkAssociationService(service)
 
     def uncertain(config, body):
-        data = json.loads(body["input"][1]["content"])
-        calls.append(data)
-        return response(data["chapters"][0]["revision_id"], confidence=0.2)
+        return synthetic_response(body, calls, confidence=0.2)
 
     monkeypatch.setattr(ai_gateway, "request_model", uncertain)
     job = enqueue(manager, owner, pid, aid)
@@ -256,8 +297,7 @@ def test_source_revocation_before_commit_and_diagnostics_do_not_leak(materials, 
     def revoke(_config, body):
         with service.db() as s:
             s.get(Artifact, prototype["artifact_id"]).sensitivity = "confidential"
-        data = json.loads(body["input"][1]["content"])
-        return response(data["chapters"][0]["revision_id"])
+        return synthetic_response(body)
 
     monkeypatch.setattr(ai_gateway, "request_model", revoke)
     service.process_job(job["id"])
@@ -283,29 +323,49 @@ def test_scan_reports_dynamic_unknown_and_truncated_unlabeled_controls():
 
 
 def test_bounded_parallel_generation_commits_distinct_targets(materials, monkeypatch):
-    from threading import Barrier
+    from threading import Barrier, Lock
+    from vks_api.association_limits import GLOBAL_REQUEST_LIMIT
+    from vks_api.interactive_ai import SYSTEM
 
-    service, owner, _, pid, aid, _, _, calls, model = setup(materials, monkeypatch)
-    barrier = Barrier(3)
+    # One more independent prompt than the configured request capacity.
+    # Every response remains blocked until the full allowed capacity is active.
+    source = "<title>收费项</title>" + "".join(f'<button id="b{i}">收费项操作{i}</button>' for i in range(GLOBAL_REQUEST_LIMIT))
+    service, owner, _, pid, aid, _, _, calls, model = setup(materials, monkeypatch, source)
+    barrier, lock = Barrier(GLOBAL_REQUEST_LIMIT), Lock()
+    network = {"calls": 0, "active": 0, "maximum": 0}
 
     def concurrent(config, body):
-        answer = model(config, body)
-        barrier.wait(timeout=5)
-        return answer
+        prompt = body["input"]
+        assert prompt[0]["content"] == SYSTEM
+        assert "targets" not in json.loads(prompt[1]["content"])
+        with lock:
+            network["calls"] += 1
+            number = network["calls"]
+            network["active"] += 1
+            network["maximum"] = max(network["maximum"], network["active"])
+        try:
+            if number <= GLOBAL_REQUEST_LIMIT:
+                barrier.wait(timeout=20)
+            return model(config, body)
+        finally:
+            with lock:
+                network["active"] -= 1
 
     monkeypatch.setattr(ai_gateway, "request_model", concurrent)
     manager = BulkAssociationService(service)
     job = enqueue(manager, owner, pid, aid, concurrency=3)
     service.process_job(job["id"])
     done = service.get_job(owner, job["id"])
-    assert done["state"] == "succeeded" and done["result"]["saved"] == 7, done
-    assert len(calls) == 6
-    first = manager.details(owner, pid, job["id"], limit=3)
-    second = manager.details(owner, pid, job["id"], offset=3, limit=4)
-    assert len(first["items"]) == 3 and first["has_more"]
-    assert first["total"] == second["total"] == 7
-    assert len(second["items"]) == 4 and not second["has_more"]
-    assert len({row["id"] for row in first["items"] + second["items"]}) == 7
+    assert done["state"] == "succeeded" and done["result"]["saved"] == GLOBAL_REQUEST_LIMIT + 1, done
+    assert network["maximum"] == GLOBAL_REQUEST_LIMIT and network["active"] == 0
+    assert len(calls) == GLOBAL_REQUEST_LIMIT + 1
+    assert network["calls"] == len(calls) == GLOBAL_REQUEST_LIMIT + 1
+    first = manager.details(owner, pid, job["id"], limit=10)
+    second = manager.details(owner, pid, job["id"], offset=10, limit=GLOBAL_REQUEST_LIMIT - 9)
+    assert len(first["items"]) == 10 and first["has_more"]
+    assert first["total"] == second["total"] == GLOBAL_REQUEST_LIMIT + 1
+    assert len(second["items"]) == GLOBAL_REQUEST_LIMIT - 9 and not second["has_more"]
+    assert len({row["id"] for row in first["items"] + second["items"]}) == GLOBAL_REQUEST_LIMIT + 1
 
 
 def test_changed_mode_does_not_claim_unlinked_controls_as_reused(materials, monkeypatch):
@@ -375,9 +435,7 @@ def test_large_batch_checkpoints_bound_job_json_and_keep_earlier_failures_partia
         s.get(Relation, manual["binding_id"]).validity_status = "stale"
 
     def uncertain(_config, body):
-        data = json.loads(body["input"][1]["content"])
-        calls.append(data)
-        return response(data["chapters"][0]["revision_id"], confidence=0.2)
+        return synthetic_response(body, calls, confidence=0.2)
 
     monkeypatch.setattr(ai_gateway, "request_model", uncertain)
     manager = BulkAssociationService(service)

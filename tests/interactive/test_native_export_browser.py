@@ -48,24 +48,29 @@ def test_original_static_site_offline_styles_navigation_exact_sections_and_isola
             source = page.frame_locator("iframe.native-document-frame")
             expect(source.get_by_role("heading", name="Original home", exact=True)).to_be_visible()
             expect(page.locator(".document-library-bar")).to_be_hidden()
-            assert page.locator(".native-document-toolbar").evaluate(
-                "node => Math.abs(node.getBoundingClientRect().top-document.querySelector('.topbar').getBoundingClientRect().bottom)"
-            ) < 2
+            assert (
+                page.locator(".native-document-toolbar").evaluate(
+                    "node => Math.abs(node.getBoundingClientRect().top-document.querySelector('.topbar').getBoundingClientRect().bottom)"
+                )
+                < 2
+            )
             assert source.locator("h1").evaluate("el=>getComputedStyle(el).color") == "rgb(12, 34, 56)"
             assert (
                 source.locator("body").evaluate("()=>{try{return parent.document.body.tagName}catch{return 'opaque'}}")
                 == "opaque"
             )
             assert page.locator("iframe.native-document-frame").get_attribute("sandbox") == "allow-scripts allow-modals"
+            # Opening the native view also reveals its initial selection across
+            # animation frames. Finish that scroll before a physical link click
+            # so a moving iframe cannot receive its mouse-down/up at two targets.
+            source.locator("body").evaluate(
+                "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))))"
+            )
             source.get_by_role("link", name="Read next", exact=True).click()
             expect(source.get_by_role("heading", name="Exact rule", exact=True)).to_be_visible()
             expect(page).to_have_url(re.compile(r"#section=" + re.escape(section["revision_id"])))
             assert source.locator("h1").evaluate("el=>getComputedStyle(el).color") == "rgb(23, 45, 67)"
-            page.get_by_role("button", name="标准阅读", exact=True).click()
-            expect(page.locator(".document h1")).to_have_text(second["title"])
-            expect(page.locator(".document-library-bar")).to_be_visible()
-            expect(page.locator("iframe.native-document-frame")).to_have_count(0)
-            page.get_by_role("button", name="原样阅读", exact=True).click()
+            expect(page.get_by_role("button", name="标准阅读", exact=True)).to_have_count(0)
             expect(source.get_by_role("heading", name="Exact rule", exact=True)).to_be_visible()
             expect(page.locator(".document-library-bar")).to_be_hidden()
             assert not errors and not [url for url in requests if url.startswith("http")]
@@ -195,13 +200,12 @@ def test_known_handbook_keeps_home_and_native_navigation_and_disables_updates(ma
             source.get_by_role("link", name="Open original rule", exact=True).click()
             expect(source.get_by_text("Second rule.", exact=True)).to_be_visible()
             expect(page).to_have_url(re.compile(r"#section=" + re.escape(section["revision_id"])))
-            page.get_by_role("button", name="标准阅读", exact=True).click()
-            expect(page.locator("iframe.native-document-frame")).to_have_count(0)
-            expect(page.locator(".document h1")).to_have_text(second["title"])
-            page.get_by_role("button", name="原样阅读", exact=True).click()
+            expect(page.get_by_role("button", name="标准阅读", exact=True)).to_have_count(0)
             expect(source.get_by_text("Second rule.", exact=True)).to_be_visible()
             page.get_by_role("button", name="打开知识助手", exact=True).click()
-            expect(page.get_by_role("tab", name="AI 问答", exact=True)).to_be_visible()
+            document_ai = page.frame_locator('iframe[title="知识手册 AI 助手"]')
+            expect(document_ai.locator("#fh-ai-panel")).to_be_visible()
+            expect(document_ai.get_by_role("button", name="AI 讲解", exact=True)).to_have_count(0)
             assert not errors
         finally:
             browser.close()

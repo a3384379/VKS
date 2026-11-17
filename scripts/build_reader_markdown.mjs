@@ -8,6 +8,10 @@ import "./reader_handbook.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const output = path.join(root, "services/api/vks_api/reader_assets");
+await fs.copyFile(
+  path.join(root, "packages/assistant-runtime/src/composer.css"),
+  path.join(output, "assistant-composer.css"),
+);
 const options = {
   bundle: true,
   minify: true,
@@ -68,6 +72,11 @@ css += await fs.readFile(
   path.join(root, "scripts/reader_markdown.css"),
   "utf8",
 );
+css += await fs.readFile(
+  path.join(root, "packages/markdown-runtime/src/imagePreview.css"),
+  "utf8",
+);
+css += await fs.readFile(path.join(root, "packages/markdown-runtime/src/media.css"), "utf8");
 css = (await transform(css, { loader: "css", minify: true })).code.replace(
   /<\/style/gi,
   "<\\/style",

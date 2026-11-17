@@ -1,0 +1,117 @@
+.md-image-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.md-image-dialog:not([open]) {
+  display: none;
+}
+.md-image-dialog {
+  width: min(1440px, calc(100vw - 24px));
+  height: min(960px, calc(100dvh - 24px));
+  max-height: none;
+  max-width: none;
+  box-sizing: border-box;
+  margin: auto;
+  padding: 0;
+  border: 1px solid #cedacf;
+  border-radius: 10px;
+  background: #fff;
+  color: #28463c;
+  font-family: inherit;
+  overflow: hidden;
+}
+.md-image-dialog::backdrop {
+  background: #13271dcc;
+}
+.md-image-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e0e8e2;
+}
+.md-image-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.md-image-toolbar button {
+  min-width: 36px;
+  min-height: 36px;
+  border: 1px solid #d8e3e1;
+  border-radius: 6px;
+  background: white;
+  color: inherit;
+  padding: 5px 9px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.md-image-toolbar button[aria-pressed="true"] {
+  background: #e3f3ef;
+  color: #096f65;
+  border-color: #8bc9bc;
+}
+.md-image-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 12px 12px 0;
+  overflow: hidden;
+  background: #f3f6f4;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+.md-image-canvas.dragging {
+  cursor: grabbing;
+}
+.md-image-dialog .md-image-canvas > img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  max-width: none !important;
+  max-height: none !important;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  transform-origin: center;
+  pointer-events: none;
+  user-select: none;
+}
+.md-image-help {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #718479;
+  margin: 8px 12px;
+}
+@media (max-width: 600px) {
+  .md-image-dialog {
+    width: calc(100vw - 12px);
+    height: calc(100dvh - 12px);
+  }
+  .md-image-title {
+    flex-basis: 100%;
+  }
+  .md-image-toolbar {
+    gap: 4px;
+    padding: 8px;
+  }
+  .md-image-toolbar button {
+    min-width: 30px;
+    min-height: 34px;
+    padding: 4px 7px;
+  }
+  .md-image-canvas {
+    margin: 8px 8px 0;
+  }
+}

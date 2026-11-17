@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/services/api:$PWD"
 export VKS_DATA_DIR="${VKS_DATA_DIR:-$PWD/.vks/studio-preview/data}"
+export VKS_PERSONAL_MODE="${VKS_PERSONAL_MODE:-1}"
 VKS_STUDIO_PORT="${VKS_STUDIO_PORT:-5193}"
 VKS_API_PORT="${VKS_API_PORT:-8014}"
 VKS_RUNTIME_PORT="${VKS_RUNTIME_PORT:-5195}"

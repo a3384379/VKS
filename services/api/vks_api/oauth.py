@@ -173,7 +173,7 @@ def _granted(service, s, grant):
     return set(grant.scopes) & member_permissions(service, s, s.get(Member, (grant.project_id, grant.created_by)))
 
 
-def authorize_project(service, s, actor, pid, scope):
+def project_grants(service, s, actor, pid):
     from .service import DomainError
 
     principal = s.get(OAuthPrincipal, actor.id)
@@ -189,7 +189,13 @@ def authorize_project(service, s, actor, pid, scope):
     project = s.scalar(query)
     if not principal or not principal.active or not issuer or not issuer.active or not grant or not project:
         raise DomainError("VKS_NOT_FOUND", "未找到对象", 404)
-    scopes = _granted(service, s, grant)
+    return project, frozenset(_granted(service, s, grant))
+
+
+def authorize_project(service, s, actor, pid, scope):
+    from .service import DomainError
+
+    project, scopes = project_grants(service, s, actor, pid)
     if scope not in scopes or scope not in actor.scopes:
         raise DomainError("VKS_FORBIDDEN", f"需要 {scope} 权限", 403)
     return project

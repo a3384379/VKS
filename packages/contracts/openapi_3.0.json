@@ -23,6 +23,24 @@
         }
       }
     },
+    "/api/v3/document-templates/handbook/assistant": {
+      "get": {
+        "summary": "Document Assistant",
+        "operationId": "document_assistant_api_v3_document_templates_handbook_assistant_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/projects/{pid}/prototype/settings": {
       "put": {
         "summary": "Settings",
@@ -1288,6 +1306,290 @@
         }
       }
     },
+    "/api/v3/projects/{pid}/interactive/tools/context": {
+      "post": {
+        "summary": "Context",
+        "operationId": "context_api_v3_projects__pid__interactive_tools_context_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistanceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/tools/document": {
+      "post": {
+        "summary": "Document",
+        "operationId": "document_api_v3_projects__pid__interactive_tools_document_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentRead"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/tools/document/save": {
+      "post": {
+        "summary": "Save Document",
+        "operationId": "save_document_api_v3_projects__pid__interactive_tools_document_save_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentWrite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/tools/export": {
+      "post": {
+        "summary": "Export",
+        "operationId": "export_api_v3_projects__pid__interactive_tools_export_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceExport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/conversation": {
+      "post": {
+        "summary": "Conversation",
+        "description": "Accept: text/event-stream 返回 status、delta、complete 或 error 事件；默认仍返回完整 JSON。complete 才包含已校验的引用及操作回执。",
+        "operationId": "conversation_api_v3_projects__pid__interactive_conversation_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InteractiveQuestionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_ConversationOutput_"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/projects/{pid}/interactive/related": {
       "post": {
         "summary": "Related",
@@ -1369,6 +1671,203 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PrototypeEnvelope_AssistanceOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/explain": {
+      "post": {
+        "summary": "Explain",
+        "operationId": "explain_api_v3_projects__pid__interactive_explain_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExplanationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_AssistanceOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/reassociate": {
+      "post": {
+        "summary": "Reassociate",
+        "operationId": "reassociate_api_v3_projects__pid__interactive_reassociate_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReassociationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_ReassociationOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/reassociate/previews/{preview_id}": {
+      "get": {
+        "summary": "View Reassociation Preview",
+        "operationId": "view_reassociation_preview_api_v3_projects__pid__interactive_reassociate_previews__preview_id__get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "preview_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "title": "Preview Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_ReassociationOutput_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/reassociate/confirm": {
+      "post": {
+        "summary": "Confirm Reassociation",
+        "operationId": "confirm_reassociation_api_v3_projects__pid__interactive_reassociate_confirm_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReassociationConfirmInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_ReassociationOutput_"
                 }
               }
             }
@@ -2154,6 +2653,74 @@
         }
       }
     },
+    "/api/v3/projects/{pid}/materials/trash/purge": {
+      "post": {
+        "summary": "Purge Trash",
+        "operationId": "purge_trash_api_v3_projects__pid__materials_trash_purge_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurgeMaterials"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/projects/{pid}/materials/prepare": {
       "post": {
         "summary": "Prepare",
@@ -2723,6 +3290,314 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BatchAssociationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/reassociate/targets": {
+      "get": {
+        "summary": "Targets",
+        "operationId": "targets_api_v3_projects__pid__interactive_reassociate_targets_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "module_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Module Only"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "missing"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Mode"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/reassociate/batch-preview": {
+      "post": {
+        "summary": "Create",
+        "operationId": "create_api_v3_projects__pid__interactive_reassociate_batch_preview_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 96
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchPreviewInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/reassociate/batch-preview/{jid}": {
+      "get": {
+        "summary": "Listing",
+        "operationId": "listing_api_v3_projects__pid__interactive_reassociate_batch_preview__jid__get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "jid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Jid"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/reassociate/batch-confirm": {
+      "post": {
+        "summary": "Confirm",
+        "operationId": "confirm_api_v3_projects__pid__interactive_reassociate_batch_confirm_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchConfirmInput"
               }
             }
           }
@@ -3719,6 +4594,14 @@
             "type": "string",
             "title": "Retrieval",
             "default": "章节关键词检索 + 模型关联"
+          },
+          "suggested_questions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 4,
+            "title": "Suggested Questions"
           }
         },
         "additionalProperties": false,
@@ -3736,6 +4619,44 @@
           "selection_version"
         ],
         "title": "AssistanceOutput"
+      },
+      "AssociationBaseline": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveCitation"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "point_revision_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Point Revision Id"
+          },
+          "binding_version": {
+            "type": "integer",
+            "title": "Binding Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "explanation",
+          "point_revision_id",
+          "binding_version"
+        ],
+        "title": "AssociationBaseline"
       },
       "BatchAssociationInput": {
         "properties": {
@@ -3800,6 +4721,34 @@
           "analysis_set_id"
         ],
         "title": "BatchAssociationInput"
+      },
+      "BatchConfirmInput": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Job Id"
+          },
+          "preview_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Preview Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "preview_ids"
+        ],
+        "title": "BatchConfirmInput"
       },
       "BatchConfirmation": {
         "properties": {
@@ -3869,6 +4818,65 @@
           "artifact_ids"
         ],
         "title": "BatchPreview"
+      },
+      "BatchPreviewInput": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "instruction": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Instruction",
+            "default": ""
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "all"
+            ],
+            "title": "Mode",
+            "default": "all"
+          },
+          "items": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ReassociationInput"
+                },
+                "type": "array",
+                "maxItems": 10000,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Items"
+          },
+          "module_only": {
+            "type": "boolean",
+            "title": "Module Only",
+            "default": true
+          },
+          "concurrency": {
+            "type": "integer",
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Concurrency",
+            "default": 3
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id"
+        ],
+        "title": "BatchPreviewInput"
       },
       "BindingEdit": {
         "properties": {
@@ -4041,6 +5049,103 @@
         ],
         "title": "ConversationMessage"
       },
+      "ConversationOutput": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "unknowns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unknowns"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "cached": {
+            "type": "boolean",
+            "title": "Cached"
+          },
+          "binding_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Id"
+          },
+          "saved": {
+            "type": "boolean",
+            "title": "Saved"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveCitation"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          },
+          "retrieval": {
+            "type": "string",
+            "title": "Retrieval",
+            "default": "章节关键词检索 + 模型关联"
+          },
+          "suggested_questions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 4,
+            "title": "Suggested Questions"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/OperationReceipt"
+            },
+            "type": "array",
+            "title": "Operations"
+          },
+          "source_fingerprint": {
+            "type": "string",
+            "title": "Source Fingerprint",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "explanation",
+          "unknowns",
+          "confidence",
+          "model_id",
+          "cached",
+          "binding_id",
+          "saved",
+          "sections",
+          "selection_version"
+        ],
+        "title": "ConversationOutput"
+      },
       "DOMTarget": {
         "properties": {
           "route": {
@@ -4132,6 +5237,97 @@
         "type": "object",
         "title": "DocumentIndexInput"
       },
+      "DocumentRead": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "document_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Document Id"
+          },
+          "revision_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Revision Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "document_id",
+          "revision_id"
+        ],
+        "title": "DocumentRead"
+      },
+      "DocumentWrite": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "document_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Document Id"
+          },
+          "base_revision_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Base Revision Id"
+          },
+          "row_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Row Version"
+          },
+          "markdown": {
+            "type": "string",
+            "maxLength": 1000000,
+            "title": "Markdown"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "document_id",
+          "base_revision_id",
+          "row_version",
+          "markdown"
+        ],
+        "title": "DocumentWrite"
+      },
       "Exclusion": {
         "properties": {
           "analysis_set_id": {
@@ -4158,6 +5354,67 @@
           "excluded"
         ],
         "title": "Exclusion"
+      },
+      "ExplanationInput": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "package_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Package Id"
+          },
+          "target": {
+            "$ref": "#/components/schemas/DOMTarget"
+          },
+          "context": {
+            "$ref": "#/components/schemas/ControlContext"
+          },
+          "mode": {
+            "type": "string",
+            "const": "explain",
+            "title": "Mode",
+            "default": "explain"
+          },
+          "refresh": {
+            "type": "boolean",
+            "title": "Refresh",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "target"
+        ],
+        "title": "ExplanationInput",
+        "description": "Generate a reading explanation without creating or rewriting links."
       },
       "HTTPValidationError": {
         "properties": {
@@ -4781,6 +6038,15 @@
             ],
             "title": "Document Revision Id"
           },
+          "document_scope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "current"
+            ],
+            "title": "Document Scope",
+            "default": "all"
+          },
           "question": {
             "type": "string",
             "maxLength": 2000,
@@ -4795,6 +6061,22 @@
             "type": "array",
             "maxItems": 6,
             "title": "History"
+          },
+          "selected_text": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Selected Text",
+            "default": ""
+          },
+          "retrieval_mode": {
+            "type": "string",
+            "enum": [
+              "model",
+              "keyword",
+              "local"
+            ],
+            "title": "Retrieval Mode",
+            "default": "model"
           }
         },
         "additionalProperties": false,
@@ -5196,6 +6478,58 @@
         "type": "object",
         "title": "OpenWorkspace"
       },
+      "OperationReceipt": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Id"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "title"
+        ],
+        "title": "OperationReceipt"
+      },
       "PointText": {
         "properties": {
           "title": {
@@ -5207,7 +6541,7 @@
           },
           "summary": {
             "type": "string",
-            "maxLength": 8000,
+            "maxLength": 512000,
             "minLength": 1,
             "pattern": "\\S",
             "title": "Summary"
@@ -5721,6 +7055,24 @@
         ],
         "title": "PrototypeEnvelope[AssistanceOutput]"
       },
+      "PrototypeEnvelope_ConversationOutput_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConversationOutput"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[ConversationOutput]"
+      },
       "PrototypeEnvelope_ImportPreviewResult_": {
         "properties": {
           "data": {
@@ -5972,6 +7324,24 @@
           "meta"
         ],
         "title": "PrototypeEnvelope[PrototypeSettingsResult]"
+      },
+      "PrototypeEnvelope_ReassociationOutput_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReassociationOutput"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[ReassociationOutput]"
       },
       "PrototypeEnvelope_RelatedOutput_": {
         "properties": {
@@ -6492,6 +7862,32 @@
         ],
         "title": "PrototypeSource"
       },
+      "PurgeMaterials": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/TrashTarget"
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Targets"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "targets"
+        ],
+        "title": "PurgeMaterials"
+      },
       "RagSettings": {
         "properties": {
           "enabled": {
@@ -6525,6 +7921,20 @@
             "title": "Dimensions",
             "default": 512
           },
+          "candidate_limit": {
+            "type": "integer",
+            "maximum": 64.0,
+            "minimum": 6.0,
+            "title": "Candidate Limit",
+            "default": 24
+          },
+          "per_document_limit": {
+            "type": "integer",
+            "maximum": 24.0,
+            "minimum": 1.0,
+            "title": "Per Document Limit",
+            "default": 8
+          },
           "daily_token_limit": {
             "type": "integer",
             "maximum": 100000000.0,
@@ -6538,6 +7948,292 @@
         "type": "object",
         "title": "RagSettings"
       },
+      "ReassociationConfirmInput": {
+        "properties": {
+          "preview_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Preview Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "preview_id"
+        ],
+        "title": "ReassociationConfirmInput"
+      },
+      "ReassociationInput": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "package_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Package Id"
+          },
+          "target": {
+            "$ref": "#/components/schemas/DOMTarget"
+          },
+          "context": {
+            "$ref": "#/components/schemas/ControlContext"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "documents",
+              "explain"
+            ],
+            "title": "Mode",
+            "default": "explain"
+          },
+          "refresh": {
+            "type": "boolean",
+            "const": true,
+            "title": "Refresh",
+            "default": true
+          },
+          "instruction": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Instruction",
+            "default": ""
+          },
+          "additional_section_revision_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Additional Section Revision Ids"
+          },
+          "binding_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Id"
+          },
+          "binding_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Version"
+          },
+          "point_revision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Revision Id"
+          },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "item_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Id"
+          },
+          "base_preview_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Preview Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "target"
+        ],
+        "title": "ReassociationInput"
+      },
+      "ReassociationOutput": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "unknowns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unknowns"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "cached": {
+            "type": "boolean",
+            "title": "Cached"
+          },
+          "binding_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Id"
+          },
+          "saved": {
+            "type": "boolean",
+            "title": "Saved"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveCitation"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "selection_version": {
+            "type": "integer",
+            "title": "Selection Version"
+          },
+          "retrieval": {
+            "type": "string",
+            "title": "Retrieval",
+            "default": "章节关键词检索 + 模型关联"
+          },
+          "suggested_questions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 4,
+            "title": "Suggested Questions"
+          },
+          "preview_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Id"
+          },
+          "can_confirm": {
+            "type": "boolean",
+            "title": "Can Confirm",
+            "default": false
+          },
+          "baseline": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssociationBaseline"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "explanation",
+          "unknowns",
+          "confidence",
+          "model_id",
+          "cached",
+          "binding_id",
+          "saved",
+          "sections",
+          "selection_version"
+        ],
+        "title": "ReassociationOutput"
+      },
       "RelatedOutput": {
         "properties": {
           "title": {
@@ -6550,6 +8246,13 @@
             },
             "type": "array",
             "title": "Sections"
+          },
+          "related_sections": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveCitation"
+            },
+            "type": "array",
+            "title": "Related Sections"
           },
           "binding_id": {
             "anyOf": [
@@ -7033,6 +8736,31 @@
         ],
         "title": "TrashMaterial"
       },
+      "TrashTarget": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "package",
+              "version"
+            ],
+            "title": "Kind"
+          },
+          "target_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Target Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "target_id"
+        ],
+        "title": "TrashTarget"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -7102,6 +8830,74 @@
           "devicePixelRatio"
         ],
         "title": "Viewport"
+      },
+      "WorkspaceExport": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "markdown_bundle",
+              "pdf",
+              "vksbundle",
+              "readonly_html"
+            ],
+            "title": "Format",
+            "default": "readonly_html"
+          },
+          "include_source": {
+            "type": "boolean",
+            "title": "Include Source",
+            "default": false
+          },
+          "document_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Document Ids"
+          },
+          "document_mode": {
+            "type": "string",
+            "enum": [
+              "project",
+              "original"
+            ],
+            "title": "Document Mode",
+            "default": "project"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "WorkspaceExport"
       }
     }
   }

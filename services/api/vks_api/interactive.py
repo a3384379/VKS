@@ -245,6 +245,10 @@ class InteractiveKnowledgeService:
     def _packages(self, s, actor, pid, choices, *, kind=None, package_id=None):
         base = self._read_key(s, actor, pid, choices)
         key = (base, kind, package_id) if base is not None else None
+        if s.info.get("vks_completion_batch") and s.bind.dialect.name == "sqlite":
+            # Derived-point batches never alter source packages or grants, and
+            # BEGIN IMMEDIATE excludes other writers until this batch commits.
+            key = ("derived-point-batch", actor, pid, kind, package_id)
         cache = s.info.setdefault("vks_interactive_packages", {})
         if key is None:
             return self._build_packages(s, actor, pid, choices, kind=kind, package_id=package_id)
@@ -253,10 +257,11 @@ class InteractiveKnowledgeService:
         return [dict(package) for package in cache[key]]
 
     def _build_packages(self, s, actor, pid, choices, *, kind=None, package_id=None):
-        from .materials import COMPOSITION, ROOT, readable, roots
+        from .materials import COMPOSITION, ROOT, readable
         from .native_documents import complete_selection, package_documents
+        from .interactive_targets import selected_roots
 
-        installed = roots(s, pid, choices)
+        installed = selected_roots(self.service, s, pid, choices)
         projection = None if installed else self._package_scope(s, actor, pid, choices)
         fallback = None
         if not installed and projection is None:
@@ -556,122 +561,177 @@ class InteractiveKnowledgeService:
                 else None,
             }
 
-    def bindings(self, actor, pid, aid=None, release_id=None, *, session=None):
-        from .reading import chunks
+    def _target_rows(self, s, actor, pid, choices, package_id, target, *, normalize=False):
+        """Find selected anchors before loading content; legacy identities remain valid."""
+        from .interactive_targets import selected_targets
 
+        ids = selected_targets(self.service, s, pid, choices, package_id, target, DOMTarget, normalize=normalize)
+        return self._rows(s, actor, pid, choices, revision_ids=ids) if ids else []
+
+    def _binding_relations(self, s, analysis, release, action_ids=None):
+        kinds = {"has_business_point", "supported_by_section"}
+        cached = s.info.get("vks_ready_edges", {})
+        if not release and action_ids is not None and all((analysis.id, rid) in cached for rid in action_ids):
+            bindings = {edge.id: edge for rid in action_ids for edge in cached[(analysis.id, rid)]
+                        if edge.from_revision_id == rid and edge.relation_type == "has_business_point"}
+            points = {edge.to_revision_id for edge in bindings.values()}
+            # Ambiguous legacy anchors keep the original SQL traversal.
+            if len(bindings) <= len(action_ids) and all((analysis.id, rid) in cached for rid in points):
+                edges = {**bindings, **{edge.id: edge for rid in points for edge in cached[(analysis.id, rid)]
+                                      if edge.from_revision_id == rid and edge.relation_type in kinds}}
+                return [self.service.relation_dto(edge)
+                        for edge in sorted(edges.values(), key=lambda row: (row.created_at, row.id))]
+        if release:
+            relations = [r for r in self.service._relations(s, analysis, release) if r["relation_type"] in kinds]
+            if action_ids is not None:
+                points = {
+                    r["to_revision_id"]
+                    for r in relations
+                    if r["relation_type"] == "has_business_point" and r["from_revision_id"] in action_ids
+                }
+                relations = [r for r in relations if r["from_revision_id"] in action_ids | points]
+            return relations
+        query = select(Relation).where(Relation.analysis_set_id == analysis.id, Relation.relation_type.in_(kinds))
+        if action_ids is not None:
+            points = select(Relation.to_revision_id).where(
+                Relation.analysis_set_id == analysis.id,
+                Relation.relation_type == "has_business_point",
+                Relation.from_revision_id.in_(action_ids),
+            )
+            query = query.where(Relation.from_revision_id.in_(action_ids) | Relation.from_revision_id.in_(points))
+        # Full and targeted projections expose the same deterministic citation order.
+        return [self.service.relation_dto(r) for r in s.scalars(query.order_by(Relation.created_at, Relation.id))]
+
+    def binding(self, actor, pid, aid, release_id, package_id, target, *, session=None):
         with nullcontext(session) if session is not None else self.reader.reading.db() as s:
             analysis, release, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
-            relations = [
-                edge
-                for edge in self.service._relations(s, analysis, release)
-                if edge["relation_type"] in {"has_business_point", "supported_by_section"}
-            ]
-            relation_ids = {rid for edge in relations for rid in (edge["from_revision_id"], edge["to_revision_id"])}
-            rows = {r.id: (e, r) for e, r in self._rows(s, actor, pid, choices, revision_ids=relation_ids)}
-            document_keys = {r.metadata_json.get("document_key") for e, r in rows.values() if e.type == "section"}
-            document_ids = set()
-            for batch in chunks(document_keys):
-                for eid in s.scalars(
-                    select(Entity.id).where(
-                        Entity.project_id == pid, Entity.type == "document", Entity.stable_key.in_(batch)
-                    )
-                ):
-                    if eid in choices:
-                        document_ids.add(choices[eid])
-            rows.update({r.id: (e, r) for e, r in self._rows(s, actor, pid, choices, revision_ids=document_ids)})
-            evidence_ids = {eid for edge in relations for eid in edge.get("evidence_ids", [])}
-            evidence = []
-            retained = s.info.setdefault("vks_prefetched", {})
-            for batch in chunks(evidence_ids):
-                evidence.extend(s.scalars(select(Evidence).where(Evidence.id.in_(batch))))
-            retained.update({(Evidence, row.id): row for row in evidence})
-            self.reader.reading.preload(s, evidence=evidence)
-            full_access = self.service._can(s, actor, pid, "source:read") and self.service._can(
-                s, actor, pid, "trace:read"
+            actions = self._target_rows(s, actor, pid, choices, package_id, target, normalize=True)
+            if not actions:
+                return None
+            relations = self._binding_relations(s, analysis, release, {r.id for _, r in actions})
+            found = self._project_bindings(s, actor, pid, choices, relations)
+            signature = {k: v for k, v in target.model_dump().items() if k != "open_steps"}
+            return next(
+                (
+                    row
+                    for row in found
+                    if row["package_id"] == package_id
+                    and {
+                        k: v
+                        for k, v in DOMTarget.model_validate(row["target"]).model_dump().items()
+                        if k != "open_steps"
+                    }
+                    == signature
+                ),
+                None,
             )
 
-            def evidence_visible(eid):
-                row = s.get(Evidence, eid)
-                if not full_access:
-                    return bool(row and self.service._visible_evidence(s, actor, pid, row))
-                art = s.get(Artifact, row.artifact_id) if row else None
-                return bool(row and row.project_id == pid and art and art.project_id == pid)
+    def bindings(self, actor, pid, aid=None, release_id=None, *, session=None):
+        with nullcontext(session) if session is not None else self.reader.reading.db() as s:
+            analysis, release, choices, _ = self.reader.scope(s, actor, pid, aid, release_id)
+            relations = self._binding_relations(s, analysis, release)
+            return self._project_bindings(s, actor, pid, choices, relations)
 
-            visible = [
-                edge
-                for edge in relations
-                if edge["from_revision_id"] in rows
-                and edge["to_revision_id"] in rows
+    def _project_bindings(self, s, actor, pid, choices, relations):
+        from .reading import chunks
+
+        relation_ids = {rid for edge in relations for rid in (edge["from_revision_id"], edge["to_revision_id"])}
+        rows = {r.id: (e, r) for e, r in self._rows(s, actor, pid, choices, revision_ids=relation_ids)}
+        document_keys = {r.metadata_json.get("document_key") for e, r in rows.values() if e.type == "section"}
+        document_ids = self._document_selections(s, pid, choices, document_keys)
+        rows.update({r.id: (e, r) for e, r in self._rows(s, actor, pid, choices, revision_ids=document_ids)})
+        evidence_ids = {eid for edge in relations for eid in edge.get("evidence_ids", [])}
+        evidence = []
+        retained = s.info.setdefault("vks_prefetched", {})
+        evidence.extend(retained[(Evidence, eid)] for eid in evidence_ids if (Evidence, eid) in retained)
+        for batch in chunks(eid for eid in evidence_ids if (Evidence, eid) not in retained):
+            evidence.extend(s.scalars(select(Evidence).where(Evidence.id.in_(batch))))
+        retained.update({(Evidence, row.id): row for row in evidence})
+        self.reader.reading.preload(s, evidence=evidence)
+        full_access = self.service._can(s, actor, pid, "source:read") and self.service._can(s, actor, pid, "trace:read")
+
+        def evidence_visible(eid):
+            row = s.get(Evidence, eid)
+            if not full_access:
+                return bool(row and self.service._visible_evidence(s, actor, pid, row))
+            art = s.get(Artifact, row.artifact_id) if row else None
+            return bool(row and row.project_id == pid and art and art.project_id == pid)
+
+        visible = [
+            edge
+            for edge in relations
+            if edge["from_revision_id"] in rows
+            and edge["to_revision_id"] in rows
+            and (full_access or self.service._visible_relation(s, actor, pid, edge))
+            and all(evidence_visible(eid) for eid in edge.get("evidence_ids", []))
+        ]
+        missing_points = set()
+        for edge in relations:
+            if (
+                edge["from_revision_id"] in rows
+                and edge["to_revision_id"] not in rows
+                and edge["relation_type"] == "supported_by_section"
+                and not edge["excluded"]
                 and (full_access or self.service._visible_relation(s, actor, pid, edge))
                 and all(evidence_visible(eid) for eid in edge.get("evidence_ids", []))
-            ]
-            missing_points = set()
-            for edge in relations:
-                if (
-                    edge["from_revision_id"] in rows
-                    and edge["to_revision_id"] not in rows
-                    and edge["relation_type"] == "supported_by_section"
-                    and not edge["excluded"]
-                    and (full_access or self.service._visible_relation(s, actor, pid, edge))
-                    and all(evidence_visible(eid) for eid in edge.get("evidence_ids", []))
-                    and self.service._visible_revision(s, actor, pid, s.get(Revision, edge["to_revision_id"]))
-                ):
-                    missing_points.add(edge["from_revision_id"])
-            package_ids = {p["id"] for p in self._packages(s, actor, pid, choices, kind="prototype")}
-            # Index once rather than scanning all relations and documents for
-            # every binding. A selected orphan chapter is not a citation to the
-            # current document merely because its logical document key matches.
-            section_edges = {}
-            for edge in visible:
-                if edge["relation_type"] == "supported_by_section" and not edge["excluded"]:
-                    section_edges.setdefault(edge["from_revision_id"], []).append(edge)
-            documents = self._citation_documents(
-                s, rows, {edge["to_revision_id"] for edges in section_edges.values() for edge in edges}
+                and self.service._visible_revision(s, actor, pid, s.get(Revision, edge["to_revision_id"]))
+            ):
+                missing_points.add(edge["from_revision_id"])
+        package_ids = {p["id"] for p in self._packages(s, actor, pid, choices, kind="prototype")}
+        # Index once rather than scanning all relations and documents for
+        # every binding. A selected orphan chapter is not a citation to the
+        # current document merely because its logical document key matches.
+        section_edges = {}
+        for edge in visible:
+            if edge["relation_type"] == "supported_by_section" and not edge["excluded"]:
+                section_edges.setdefault(edge["from_revision_id"], []).append(edge)
+        documents = self._citation_documents(
+            s, rows, {edge["to_revision_id"] for edges in section_edges.values() for edge in edges}
+        )
+        out = []
+        for edge in visible:
+            action = rows[edge["from_revision_id"]][1]
+            meta = action.metadata_json.get("interactive_anchor")
+            if edge["relation_type"] != "has_business_point" or not meta or meta["package_id"] not in package_ids:
+                continue
+            point = rows[edge["to_revision_id"]][1]
+            citations = []
+            missing_citation = point.id in missing_points or not section_edges.get(point.id)
+            for citation in section_edges.get(point.id, []):
+                section = rows[citation["to_revision_id"]][1]
+                document = documents.get(section.id)
+                if document:
+                    citations.append(
+                        {
+                            "revision_id": section.id,
+                            "name": section.name,
+                            "content": section.content,
+                            "document_revision_id": document[1].id,
+                            "document_name": document[1].name,
+                        }
+                    )
+                else:
+                    missing_citation = True
+            out.append(
+                {
+                    "id": edge["id"],
+                    "binding_version": edge["row_version"],
+                    "excluded": edge["excluded"],
+                    "validity_status": "outdated"
+                    if missing_citation and edge["validity_status"] == "valid"
+                    else edge["validity_status"],
+                    "point_revision_id": point.id,
+                    "title": point.name,
+                    "summary": point.content,
+                    "package_id": meta["package_id"],
+                    "target": meta["target"],
+                    "sections": citations,
+                    "scope": "module" if meta["target"].get("selector") == "body" else "control",
+                    "origin": point.metadata_json.get("origin", "manual"),
+                    "model_id": point.metadata_json.get("model_id", ""),
+                }
             )
-            out = []
-            for edge in visible:
-                action = rows[edge["from_revision_id"]][1]
-                meta = action.metadata_json.get("interactive_anchor")
-                if edge["relation_type"] != "has_business_point" or not meta or meta["package_id"] not in package_ids:
-                    continue
-                point = rows[edge["to_revision_id"]][1]
-                citations = []
-                missing_citation = point.id in missing_points or not section_edges.get(point.id)
-                for citation in section_edges.get(point.id, []):
-                    section = rows[citation["to_revision_id"]][1]
-                    document = documents.get(section.id)
-                    if document:
-                        citations.append(
-                            {
-                                "revision_id": section.id,
-                                "name": section.name,
-                                "content": section.content,
-                                "document_revision_id": document[1].id,
-                                "document_name": document[1].name,
-                            }
-                        )
-                    else:
-                        missing_citation = True
-                out.append(
-                    {
-                        "id": edge["id"],
-                        "binding_version": edge["row_version"],
-                        "excluded": edge["excluded"],
-                        "validity_status": "outdated"
-                        if missing_citation and edge["validity_status"] == "valid"
-                        else edge["validity_status"],
-                        "point_revision_id": point.id,
-                        "title": point.name,
-                        "summary": point.content,
-                        "package_id": meta["package_id"],
-                        "target": meta["target"],
-                        "sections": citations,
-                        "scope": "module" if meta["target"].get("selector") == "body" else "control",
-                        "origin": point.metadata_json.get("origin", "manual"),
-                        "model_id": point.metadata_json.get("model_id", ""),
-                    }
-                )
-            return out
+        return out
 
     def _citation_documents(self, s, rows, section_ids):
         by_key = {r.metadata_json.get("document_key") for _, r in rows.values() if r.id in section_ids}
@@ -680,40 +740,65 @@ class InteractiveKnowledgeService:
             if entity.type != "document" or entity.stable_key not in by_key:
                 continue
             try:
-                chapters = self.documents._sections(s, entity, document)
+                members = self.documents.section_members(s, entity, document, section_ids)
             except DomainError:
                 continue
-            for chapter in chapters:
-                if chapter.id in section_ids:
-                    result[chapter.id] = (entity, document)
+            for rid in members:
+                result[rid] = (entity, document)
         return result
+
+    @staticmethod
+    def _document_selections(s, pid, choices, keys):
+        from .reading import chunks
+
+        ids = set()
+        scoped = s.info.get("vks_completion_batch") or s.info.get("vks_read_batch")
+        entities = s.info.setdefault("vks_document_entities", {}) if scoped else {}
+        for batch in chunks(key for key in keys if (pid, key) not in entities):
+            entities.update({(pid, key): None for key in batch})
+            for entity in s.scalars(
+                select(Entity).where(Entity.project_id == pid, Entity.type == "document", Entity.stable_key.in_(batch))
+            ):
+                entities[(pid, entity.stable_key)] = entity.id
+        for key in keys:
+            eid = entities.get((pid, key))
+            if eid in choices:
+                ids.add(choices[eid])
+        return ids
+
+    def _selected_citation_documents(self, s, actor, pid, choices, sections):
+        from .reading import chunks
+
+        keys = {row.metadata_json.get("document_key") for row in sections}
+        ids = self._document_selections(s, pid, choices, keys)
+        cache = s.info.setdefault("vks_citation_document_rows", {})
+        key = (actor, pid, frozenset(ids))
+        scoped = s.info.get("vks_completion_batch") and s.bind.dialect.name == "sqlite"
+        documents = cache.get(key) if scoped else None
+        if documents is None:
+            documents = {r.id: (e, r) for e, r in self._rows(s, actor, pid, choices, revision_ids=ids)}
+            if scoped:
+                cache[key] = documents
+        rows = {**documents, **{r.id: (s.get(Entity, r.entity_id), r) for r in sections}}
+        return self._citation_documents(s, rows, {r.id for r in sections})
 
     def save(self, actor, pid, form, expected, key, *, generation=None, validate=None):
         service = self.service
         with service.db() as s:
             analysis, choices = draft(s, service, actor, pid, form.analysis_set_id, allow_frozen=True)
-            if not any(
-                p["id"] == form.package_id and p["kind"] == "prototype" for p in self._packages(s, actor, pid, choices)
-            ):
+            package = next(
+                (p for p in self._packages(s, actor, pid, choices, kind="prototype", package_id=form.package_id)), None
+            )
+            if not package:
                 raise missing()
             art = s.get(Artifact, form.package_id)
             locator = form.target.model_dump()
             signature = {k: v for k, v in locator.items() if k != "open_steps"}
-            package = next(p for p in self._packages(s, actor, pid, choices) if p["id"] == art.id)
             action_key = (
                 "interactive."
                 + sha(canonical({"package": package.get("package_key") or art.id, "target": signature}))[:40]
             )
-            existing = next(
-                (
-                    r
-                    for _, r in self._rows(s, actor, pid, choices)
-                    if r.metadata_json.get("interactive_anchor", {}).get("package_id") == art.id
-                    and {k: v for k, v in r.metadata_json["interactive_anchor"]["target"].items() if k != "open_steps"}
-                    == signature
-                ),
-                None,
-            )
+            existing = next((r for _, r in self._target_rows(s, actor, pid, choices, art.id, form.target)), None)
             action_entity = s.get(Entity, existing.entity_id) if existing else _identity(s, pid, "action", action_key)
             prior_action = s.get(Revision, choices.get(action_entity.id)) if action_entity else None
             prior_edges = _edges(s, analysis, prior_action.id) if prior_action else []
@@ -738,13 +823,15 @@ class InteractiveKnowledgeService:
                     version(binding.to_revision_id, form.point_revision_id)
                 elif form.binding_id or form.binding_version or form.point_revision_id:
                     raise missing()
+                requested = set(form.section_revision_ids) | set(generation["input_revision_ids"] if generation else [])
+                retained = s.info.setdefault("vks_prefetched", {})
+                requested_rows = self.reader.reading.revision_rows(s, requested)
+                retained.update({(Revision, row.id): row for row in requested_rows})
                 refs = [
                     selected_id(s, service, actor, pid, choices, rid, "section")[1]
                     for rid in dict.fromkeys(form.section_revision_ids)
                 ]
-                members = self._citation_documents(
-                    s, {r.id: (e, r) for e, r in self._rows(s, actor, pid, choices)}, {r.id for r in refs}
-                )
+                members = self._selected_citation_documents(s, actor, pid, choices, refs)
                 if any(r.id not in members for r in refs):
                     raise missing()
                 action = prior_action

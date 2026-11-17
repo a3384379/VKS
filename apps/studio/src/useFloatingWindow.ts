@@ -14,9 +14,9 @@ import {
 } from "../../../packages/assistant-runtime/src/floating";
 export type { ResizeDirection } from "../../../packages/assistant-runtime/src/floating";
 const storageKey = "vks.studio.assistant-window.v1";
-function savedBox(): Box | null {
+function savedBox(key: string): Box | null {
   try {
-    const box = JSON.parse(localStorage.getItem(storageKey) || "null");
+    const box = JSON.parse(localStorage.getItem(key) || "null");
     return box &&
       [box.left, box.top, box.width, box.height].every(Number.isFinite) &&
       box.width > 0 &&
@@ -27,8 +27,12 @@ function savedBox(): Box | null {
     return null;
   }
 }
-export function useFloatingWindow(docked: boolean) {
-  const [initial] = useState(savedBox);
+export function useFloatingWindow(
+  docked: boolean,
+  key = storageKey,
+  defaults?: Box,
+) {
+  const [initial] = useState(() => savedBox(key));
   const [position, setPosition] = useState<{
     left: number;
     top: number;
@@ -52,7 +56,7 @@ export function useFloatingWindow(docked: boolean) {
     setPosition({ left: next.left, top: next.top });
     setSize({ width: next.width, height: next.height });
     try {
-      localStorage.setItem(storageKey, JSON.stringify(next));
+      localStorage.setItem(key, JSON.stringify(next));
     } catch {
       /* Optional layout preference. */
     }
@@ -82,16 +86,28 @@ export function useFloatingWindow(docked: boolean) {
       height: box.height + dy,
     });
   };
+  const keyboardMove = (dx: number, dy: number) => {
+    const box = ref.current?.getBoundingClientRect();
+    if (!box || docked) return;
+    commit({
+      left: box.left + dx,
+      top: box.top + dy,
+      width: box.width,
+      height: box.height,
+    });
+  };
   let style: CSSProperties | undefined;
   if (!docked) {
-    const dimensions = size || {
-      width: 430,
-      height: Math.min(640, innerHeight - 205),
-    };
-    const point = position || {
-      left: innerWidth - dimensions.width - 24,
-      top: innerHeight - dimensions.height - 90,
-    };
+    const dimensions = size ||
+      defaults || {
+        width: 430,
+        height: Math.min(640, innerHeight - 205),
+      };
+    const point = position ||
+      defaults || {
+        left: innerWidth - dimensions.width - 24,
+        top: innerHeight - dimensions.height - 90,
+      };
     style = {
       ...bound({ ...dimensions, ...point }),
       right: "auto",
@@ -105,11 +121,12 @@ export function useFloatingWindow(docked: boolean) {
     style,
     begin,
     keyboardResize,
+    keyboardMove,
     reset: () => {
       setPosition(null);
       setSize(null);
       try {
-        localStorage.removeItem(storageKey);
+        localStorage.removeItem(key);
       } catch {
         /* Optional layout preference. */
       }

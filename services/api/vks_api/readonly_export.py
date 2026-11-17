@@ -295,6 +295,7 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
 def html_library(payload):
     """Embed data as inert gzip/base64 and platform-owned runtime as inline code."""
     assets = Path(__file__).with_name("reader_assets")
+    from .document_assistant import embedded_assistant
     template = (assets / "template.html").read_text()
     encoded = base64.b64encode(gzip.compress(canonical(payload), compresslevel=9, mtime=0)).decode()
     # Replacement markers occur only in platform-owned template, never in data.
@@ -302,10 +303,11 @@ def html_library(payload):
         template.replace(
             "<title>VKS 成品知识库</title>", "<title>" + escape(payload["project"]["name"]) + " · 成品知识库</title>"
         )
-        .replace("/* VKS_READER_CSS */", (assets / "reader.css").read_text())
+        .replace("/* VKS_READER_CSS */", (assets / "reader.css").read_text() + (assets / "assistant-composer.css").read_text())
         .replace("/* VKS_HANDBOOK_CSS */", (assets / "handbook.css").read_text())
         .replace("/* VKS_MARKDOWN_CSS */", (assets / "markdown-vendor.css").read_text())
         .replace("VKS_READER_PAYLOAD", encoded)
+        .replace("VKS_DOCUMENT_AI_SOURCE", embedded_assistant())
         .replace("/* VKS_READER_JS */", (assets / "reader.js").read_text())
         .replace("/* VKS_ASSISTANT_JS */", (assets / "assistant-runtime.js").read_text())
         .replace("/* VKS_HANDBOOK_JS */", (assets / "handbook.js").read_text())

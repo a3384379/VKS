@@ -5,6 +5,7 @@ from time import monotonic
 
 import pytest
 from vks_api import jobs
+from vks_api.association_limits import GLOBAL_REQUEST_LIMIT, request_concurrency
 from vks_api.models import Job
 from vks_api.service import Service
 
@@ -18,7 +19,7 @@ def setup(tmp_path, monkeypatch):
     with service.db() as session:
         page_jobs = [
             service._new_job(session, actor, project["id"], "associate_all", {"scan_pipeline": True}).id
-            for _ in range(4)
+            for _ in range(GLOBAL_REQUEST_LIMIT + 1)
         ]
         ordinary = service._new_job(session, actor, project["id"], "index", {}).id
     started = {jid: Event() for jid in [*page_jobs, ordinary]}
@@ -47,30 +48,30 @@ def setup(tmp_path, monkeypatch):
     service.engine.dispose()
 
 
-def test_three_models_overlap_fourth_waits_and_regular_job_dispatches(setup):
+def test_model_capacity_overlaps_next_waits_and_regular_job_dispatches(setup):
     service, page_jobs, ordinary, started, release, calls, peak = setup
     before = monotonic()
     jobs.run_pending(service)
     assert monotonic() - before < 2
     assert started[ordinary].is_set()
-    for jid in page_jobs[:3]:
+    for jid in page_jobs[:GLOBAL_REQUEST_LIMIT]:
         assert started[jid].wait(2)
-    assert not started[page_jobs[3]].is_set() and max(peak) == 3
+    assert not started[page_jobs[GLOBAL_REQUEST_LIMIT]].is_set() and max(peak) == GLOBAL_REQUEST_LIMIT
     # Repeated ticks cannot build an unbounded executor queue or resend a job.
     jobs.run_pending(service)
-    assert len(calls) == 4
+    assert len(calls) == GLOBAL_REQUEST_LIMIT + 1
     first = page_jobs[0]
     release[first].set()
     service.pipeline_futures[first].result(timeout=2)
     jobs.run_pending(service)
-    assert started[page_jobs[3]].wait(2)
-    assert max(peak) == 3 and all(calls.count(jid) == 1 for jid in [*page_jobs, ordinary])
+    assert started[page_jobs[GLOBAL_REQUEST_LIMIT]].wait(2)
+    assert max(peak) == GLOBAL_REQUEST_LIMIT and all(calls.count(jid) == 1 for jid in [*page_jobs, ordinary])
 
 
 def test_shutdown_drains_started_models_and_leaves_unstarted_jobs_durable(setup):
     service, page_jobs, _, started, release, calls, _ = setup
     jobs.run_pending(service)
-    for jid in page_jobs[:3]:
+    for jid in page_jobs[:GLOBAL_REQUEST_LIMIT]:
         assert started[jid].wait(2)
     stopped = Event()
     thread = Thread(target=lambda: (service.stop_worker(), stopped.set()))
@@ -79,7 +80,7 @@ def test_shutdown_drains_started_models_and_leaves_unstarted_jobs_durable(setup)
         assert service.stop.wait(2)
         assert not stopped.wait(0.05)
         jobs.run_pending(service)
-        assert not started[page_jobs[3]].is_set()
+        assert not started[page_jobs[GLOBAL_REQUEST_LIMIT]].is_set()
         for event in release.values():
             event.set()
         assert stopped.wait(2)
@@ -88,13 +89,13 @@ def test_shutdown_drains_started_models_and_leaves_unstarted_jobs_durable(setup)
             event.set()
         thread.join(timeout=3)
     with service.db() as session:
-        assert session.get(Job, page_jobs[3]).state == "queued"
-        assert all(session.get(Job, jid).state == "succeeded" for jid in page_jobs[:3])
+        assert session.get(Job, page_jobs[GLOBAL_REQUEST_LIMIT]).state == "queued"
+        assert all(session.get(Job, jid).state == "succeeded" for jid in page_jobs[:GLOBAL_REQUEST_LIMIT])
     assert service.pipeline_executor is None and not service.pipeline_futures
     service.stop.clear()
     jobs.run_pending(service)
-    assert started[page_jobs[3]].wait(2)
-    service.pipeline_futures[page_jobs[3]].result(timeout=2)
+    assert started[page_jobs[GLOBAL_REQUEST_LIMIT]].wait(2)
+    service.pipeline_futures[page_jobs[GLOBAL_REQUEST_LIMIT]].result(timeout=2)
     assert all(calls.count(jid) == 1 for jid in page_jobs)
 
 
@@ -110,6 +111,20 @@ def test_external_and_broker_modes_do_not_start_local_models(setup, monkeypatch)
     assert published == [True] and service.pipeline_executor is None
 
 
+def test_preview_batch_uses_model_pool_and_does_not_block_regular_dispatch(setup):
+    service, page_jobs, ordinary, started, _release, calls, _ = setup
+    with service.db() as s:
+        for jid in page_jobs:
+            s.get(Job, jid).state = "cancelled"
+        preview = s.get(Job, page_jobs[0])
+        preview.kind = "reassociation_preview"
+        preview.input_json = {"pipeline_concurrency": 1}
+        preview.state = "queued"
+    jobs.run_pending(service)
+    assert started[page_jobs[0]].wait(2) and started[ordinary].is_set()
+    assert set(calls) == {page_jobs[0], ordinary}
+
+
 @pytest.mark.parametrize("lanes", [1, 4])
 def test_pipeline_pool_uses_the_configured_shared_lane_count(setup, lanes):
     service, page_jobs, ordinary, started, _, calls, peak = setup
@@ -118,9 +133,10 @@ def test_pipeline_pool_uses_the_configured_shared_lane_count(setup, lanes):
             row = session.get(Job, jid)
             row.input_json = {**row.input_json, "pipeline_concurrency": lanes}
     jobs.run_pending(service)
-    for jid in page_jobs[:lanes]:
+    capacity = request_concurrency(lanes)
+    for jid in page_jobs[:capacity]:
         assert started[jid].wait(2)
-    assert not any(started[jid].is_set() for jid in page_jobs[lanes:])
-    assert max(peak) == lanes and started[ordinary].is_set()
+    assert not any(started[jid].is_set() for jid in page_jobs[capacity:])
+    assert max(peak) == capacity and started[ordinary].is_set()
     jobs.run_pending(service)
-    assert len(calls) == lanes + 1
+    assert len(calls) == capacity + 1

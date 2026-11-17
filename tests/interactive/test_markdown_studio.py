@@ -15,6 +15,7 @@ from vks_api.interactive import InteractiveBinding, InteractiveKnowledgeService
 from vks_api.models import uid
 
 from tests.interactive import test_materials
+from tests.ui.diagram_assertions import assert_clear_mermaid_zoom
 from tests.ui.test_frontend_browser import chromium_path, live_api
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -216,6 +217,21 @@ def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(m
                             diagram = article.get_by_role("figure", name=label)
                             diagram.scroll_into_view_if_needed()
                             expect(diagram.get_by_role("img", name=label)).to_be_visible(timeout=45000)
+                            if label == "Mermaid 图表":
+                                assert_clear_mermaid_zoom(diagram)
+                            else:
+                                image = diagram.get_by_role("img", name=label)
+                                assert image.bounding_box()["height"] <= 481
+                                image.click()
+                                viewer = page.get_by_role("dialog", name=label, exact=True)
+                                expect(viewer).to_be_visible()
+                                viewer.get_by_role("button", name="图片缩放比例", exact=True).click()
+                                expect(viewer.get_by_role("button", name="图片缩放比例", exact=True)).to_have_text("100%")
+                                assert viewer.locator("img").evaluate("n=>Math.abs(n.getBoundingClientRect().width-n.naturalWidth)<1")
+                                viewer.get_by_role("button", name="按宽度", exact=True).click()
+                                expect(viewer.get_by_role("button", name="按宽度", exact=True)).to_have_attribute("aria-pressed", "true")
+                                viewer.get_by_role("button", name="关闭大图", exact=True).click()
+                                expect(viewer).to_have_count(0)
                         first_diagram_url = (
                             article.get_by_role("figure", name="Mermaid 图表")
                             .first.get_by_role("img", name="Mermaid 图表")

@@ -6,6 +6,8 @@ type Settings = {
   connection_id: string | null;
   model_id: string;
   dimensions: number;
+  candidate_limit?: number;
+  per_document_limit?: number;
 };
 type Status = {
   state: string;
@@ -124,89 +126,25 @@ export function RAGSettings({
       <div className="rag-heading">
         <div>
           <Database size={21} />
-          <h2>RAG 向量知识库</h2>
+          <h2>知识检索</h2>
         </div>
         <span className="pill">
           {building
             ? "建库中"
-            : status?.state === "ready"
-              ? "混合检索可用"
-              : status?.state === "failed"
-                ? "需要重试"
-                : "待建立索引"}
+            : form?.enabled === false
+              ? "混合检索已关闭"
+              : status?.state === "ready"
+                ? "混合检索可用"
+                : status?.state === "failed"
+                  ? "需要重试"
+                  : "待建立索引"}
         </span>
       </div>
       <p>
-        把项目文档建立为本地向量索引，结合关键词检索理解模块和按钮的含义。相关章节先显示，AI
-        在后台核对和讲解。
+        原型助手和文档问答共用项目的向量与关键词索引。文档变更后可增量更新，已有片段会继续复用。
       </p>
       {form && (
         <>
-          <div className="rag-grid">
-            <label>
-              嵌入模型连接
-              <select
-                aria-label="嵌入模型连接"
-                value={form.connection_id || ""}
-                onChange={(e) =>
-                  setForm({ ...form, connection_id: e.target.value || null })
-                }
-              >
-                <option value="">使用当前项目连接</option>
-                {connections.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} · {c.provider}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              嵌入模型
-              <select
-                aria-label="嵌入模型"
-                value={form.model_id}
-                onChange={(e) => setForm({ ...form, model_id: e.target.value })}
-              >
-                <option value="text-embedding-3-small">
-                  text-embedding-3-small
-                </option>
-                <option value="text-embedding-3-large">
-                  text-embedding-3-large
-                </option>
-                {!["text-embedding-3-small", "text-embedding-3-large"].includes(
-                  form.model_id,
-                ) && <option>{form.model_id}</option>}
-              </select>
-            </label>
-            <label>
-              向量维度
-              <select
-                aria-label="向量维度"
-                value={form.dimensions}
-                onChange={(e) =>
-                  setForm({ ...form, dimensions: Number(e.target.value) })
-                }
-              >
-                <option value={512}>512 · 轻量快速</option>
-                <option value={1536}>1536 · 完整小模型维度</option>
-                <option
-                  value={3072}
-                  disabled={form.model_id === "text-embedding-3-small"}
-                >
-                  3072 · 大模型完整维度
-                </option>
-              </select>
-            </label>
-          </div>
-          <label className="check-line">
-            <input
-              aria-label="启用 RAG 混合检索"
-              type="checkbox"
-              checked={form.enabled}
-              onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
-            />
-            启用 RAG 混合检索
-          </label>
           <div className="rag-progress">
             <div>
               <b>
@@ -238,41 +176,7 @@ export function RAGSettings({
               {error || status?.error || status?.configuration_error}
             </p>
           )}
-          <div className="rag-actions">
-            <button
-              disabled={busy || building}
-              onClick={async () => {
-                const n = epoch.current;
-                setBusy(true);
-                setError("");
-                try {
-                  await api(base + "/settings", mutation("POST", form));
-                  if (n !== epoch.current) return;
-                  const result = await api<{
-                    dimensions: number;
-                    elapsed_ms: number;
-                  }>(base + "/test", mutation("POST", {}));
-                  if (n !== epoch.current) return;
-                  setNotice(
-                    `嵌入连接验证成功：${result.dimensions} 维，${Math.round(result.elapsed_ms)} ms`,
-                  );
-                } catch (e) {
-                  if (n === epoch.current)
-                    setError(e instanceof Error ? e.message : String(e));
-                } finally {
-                  if (n === epoch.current) setBusy(false);
-                }
-              }}
-            >
-              测试嵌入连接
-            </button>
-            <button
-              disabled={busy || building}
-              onClick={() => void save(false)}
-            >
-              <Save size={15} />
-              保存检索设置
-            </button>
+          <div className="rag-actions rag-main-actions">
             <button
               className="primary"
               disabled={
@@ -299,11 +203,163 @@ export function RAGSettings({
               刷新状态
             </button>
           </div>
-          <small>
-            {release &&
-              "当前为只读快照，可查看该版本索引状态；请回到项目当前草稿更新索引。 "}
-            建库会把获授权的文档片段发送到所选嵌入服务，并产生模型用量。向量保存在本机，修改文档后可增量更新；失败后重试会保留已完成的片段。嵌入与回答模型的调用用量分别记录。
-          </small>
+          {release && (
+            <p className="rag-hint">
+              当前为只读快照，可查看该版本索引状态；请回到项目当前草稿更新索引。
+            </p>
+          )}
+          <details className="rag-parameters">
+            <summary>
+              索引与召回参数{" "}
+              <span>
+                {form.model_id} · {form.dimensions} 维
+              </span>
+            </summary>
+            <div className="rag-grid">
+              <label>
+                嵌入模型连接
+                <select
+                  aria-label="嵌入模型连接"
+                  value={form.connection_id || ""}
+                  onChange={(e) =>
+                    setForm({ ...form, connection_id: e.target.value || null })
+                  }
+                >
+                  <option value="">使用当前项目连接</option>
+                  {connections.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} · {c.provider}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                嵌入模型
+                <select
+                  aria-label="嵌入模型"
+                  value={form.model_id}
+                  onChange={(e) =>
+                    setForm({ ...form, model_id: e.target.value })
+                  }
+                >
+                  <option value="text-embedding-3-small">
+                    text-embedding-3-small
+                  </option>
+                  <option value="text-embedding-3-large">
+                    text-embedding-3-large
+                  </option>
+                  {![
+                    "text-embedding-3-small",
+                    "text-embedding-3-large",
+                  ].includes(form.model_id) && <option>{form.model_id}</option>}
+                </select>
+              </label>
+              <label>
+                向量维度
+                <select
+                  aria-label="向量维度"
+                  value={form.dimensions}
+                  onChange={(e) =>
+                    setForm({ ...form, dimensions: Number(e.target.value) })
+                  }
+                >
+                  <option value={512}>512 · 轻量快速</option>
+                  <option value={1536}>1536 · 完整小模型维度</option>
+                  <option
+                    value={3072}
+                    disabled={form.model_id === "text-embedding-3-small"}
+                  >
+                    3072 · 大模型完整维度
+                  </option>
+                </select>
+              </label>
+              <label>
+                混合检索候选章节数
+                <input
+                  aria-label="混合检索候选章节数"
+                  type="number"
+                  min={6}
+                  max={64}
+                  value={form.candidate_limit ?? 24}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      candidate_limit: Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                单篇文档候选上限
+                <input
+                  aria-label="单篇文档候选上限"
+                  type="number"
+                  min={1}
+                  max={24}
+                  value={form.per_document_limit ?? 8}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      per_document_limit: Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
+            </div>
+            <p className="rag-hint">
+              候选数影响召回范围，不代表最终引用数量。调整这两项无需重新建立向量索引；重新关联按当前底稿与完整原文章节生成预览。
+            </p>
+            <label className="check-line">
+              <input
+                aria-label="启用 RAG 混合检索"
+                type="checkbox"
+                checked={form.enabled}
+                onChange={(e) =>
+                  setForm({ ...form, enabled: e.target.checked })
+                }
+              />
+              启用 RAG 混合检索
+            </label>
+            <div className="rag-actions">
+              <button
+                disabled={busy || building}
+                onClick={() => void save(false)}
+              >
+                <Save size={15} />
+                保存检索设置
+              </button>
+              <button
+                disabled={busy || building}
+                onClick={async () => {
+                  const n = epoch.current;
+                  setBusy(true);
+                  setError("");
+                  try {
+                    await api(base + "/settings", mutation("POST", form));
+                    if (n !== epoch.current) return;
+                    const result = await api<{
+                      dimensions: number;
+                      elapsed_ms: number;
+                    }>(base + "/test", mutation("POST", {}));
+                    if (n !== epoch.current) return;
+                    setNotice(
+                      `嵌入连接验证成功：${result.dimensions} 维，${Math.round(result.elapsed_ms)} ms`,
+                    );
+                  } catch (e) {
+                    if (n === epoch.current)
+                      setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    if (n === epoch.current) setBusy(false);
+                  }
+                }}
+              >
+                测试嵌入连接
+              </button>
+            </div>
+            <small>
+              建库会把获授权的文档片段发送到所选嵌入服务，并产生模型用量。向量保存在本机，修改文档后可增量更新；失败后重试会保留已完成的片段。嵌入与回答模型的调用用量分别记录。
+            </small>
+          </details>
         </>
       )}
     </section>

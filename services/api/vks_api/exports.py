@@ -152,7 +152,7 @@ def markdown_zip(service, release, capabilities, rows, relations, evidence):
     originals = set()
     for entity, rev, art in rows:
         if entity.type == "document":
-            if art and art.id not in originals:
+            if art and art.id not in originals and not capabilities.get("documents_only"):
                 raw = safe_original(service, art)
                 if raw is not None:
                     path = f"originals/{art.snapshot_id}/{art.relative_path}"

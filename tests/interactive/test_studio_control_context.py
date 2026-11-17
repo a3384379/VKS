@@ -1,5 +1,7 @@
 """Explicit assistant actions follow the displayed control, including editable fields."""
 
+import json
+
 from contextlib import contextmanager
 from urllib.parse import urlsplit
 
@@ -36,7 +38,7 @@ def control_studio(assistant, tmp_path, monkeypatch, *, saved_binding=False):
 
     def respond(route):
         endpoint = urlsplit(route.request.url).path.rsplit("/", 1)[-1]
-        if endpoint not in {"related", "assist", "questions"}:
+        if endpoint not in {"related", "explain", "conversation"}:
             route.continue_()
             return
         payload = route.request.post_data_json
@@ -89,6 +91,7 @@ def control_studio(assistant, tmp_path, monkeypatch, *, saved_binding=False):
             page.get_by_role("button", name="打开知识助手", exact=True).click()
             panel = page.get_by_role("complementary", name="知识助手")
             expect(panel.locator(".knowledge-context")).to_contain_text("Code")
+            expect(panel.get_by_role("tab", name="文档", exact=True)).to_have_attribute("aria-selected", "true")
             # Ordinary field interaction must preserve native input and avoid a
             # background generation; only an explicit assistant action starts it.
             page.wait_for_timeout(450)
@@ -101,13 +104,17 @@ def control_studio(assistant, tmp_path, monkeypatch, *, saved_binding=False):
 
 def test_clicked_input_primary_explanation_sends_its_displayed_target(assistant, tmp_path, monkeypatch):
     with control_studio(assistant, tmp_path, monkeypatch) as (page, panel, _source, field, requests):
-        with page.expect_request(lambda request: request.url.endswith("/assist"), timeout=3000):
-            panel.get_by_role("button", name="AI 自动关联并讲解", exact=True).click()
+        with page.expect_request(lambda request: request.url.endswith("/explain"), timeout=3000):
+            panel.get_by_role("tab", name="AI 讲解", exact=True).click()
         expect(panel.get_by_role("region", name="AI 功能讲解")).to_contain_text("Synthetic explanation for Code")
-        assert [endpoint for endpoint, _ in requests] == ["related", "assist"]
+        assert [endpoint for endpoint, _ in requests] == ["related", "explain"]
         assert all(payload["target"]["label"] == "Code" for _, payload in requests)
         assert all("input" in payload["target"]["selector"] for _, payload in requests)
         expect(field).to_have_value("Retain this entered value")
+        panel.get_by_role("button", name="收起助手面板", exact=True).click()
+        page.get_by_role("button", name="打开知识助手", exact=True).click()
+        expect(panel.get_by_role("tab", name="文档", exact=True)).to_have_attribute("aria-selected", "true")
+        assert [endpoint for endpoint, _ in requests] == ["related", "explain"]
 
 
 @pytest.mark.parametrize("entrypoint", ["footer", "tab"])
@@ -115,13 +122,17 @@ def test_clicked_input_other_explanation_entries_send_its_displayed_target(
     assistant, tmp_path, monkeypatch, entrypoint
 ):
     with control_studio(assistant, tmp_path, monkeypatch) as (page, panel, _source, field, requests):
-        with page.expect_request(lambda request: request.url.endswith("/assist"), timeout=3000):
+        with page.expect_request(lambda request: request.url.endswith("/explain"), timeout=3000):
             if entrypoint == "footer":
-                panel.locator(".knowledge-footer").get_by_role("button", name="AI 讲解", exact=True).click()
+                panel.get_by_role("tab", name="AI 讲解", exact=True).click()
             else:
                 panel.get_by_role("tab", name="AI 讲解", exact=True).click()
         expect(panel.get_by_role("region", name="AI 功能讲解")).to_contain_text("Synthetic explanation for Code")
-        assert [endpoint for endpoint, _ in requests] == ["related", "assist"]
+        if entrypoint == "footer":
+            with page.expect_request(lambda request: request.url.endswith("/explain")):
+                panel.locator(".knowledge-footer").get_by_role("button", name="重新讲解", exact=True).click()
+            expect(panel.locator(".knowledge-footer").get_by_role("button", name="重新讲解", exact=True)).to_be_enabled()
+        assert [endpoint for endpoint, _ in requests] == ["related", "explain"] * (2 if entrypoint == "footer" else 1)
         assert all(payload["target"]["label"] == "Code" for _, payload in requests)
         assert all("input" in payload["target"]["selector"] for _, payload in requests)
         expect(field).to_have_value("Retain this entered value")
@@ -129,12 +140,12 @@ def test_clicked_input_other_explanation_entries_send_its_displayed_target(
 
 def test_clicked_input_questions_send_its_displayed_target(assistant, tmp_path, monkeypatch):
     with control_studio(assistant, tmp_path, monkeypatch) as (page, panel, _source, field, requests):
-        panel.get_by_role("tab", name="AI 问答", exact=True).click()
+        panel.get_by_role("tab", name="回答", exact=True).click()
         panel.get_by_label("向知识助手提问", exact=True).fill("Explain the selected field")
-        with page.expect_request(lambda request: request.url.endswith("/questions"), timeout=3000):
+        with page.expect_request(lambda request: request.url.endswith("/conversation"), timeout=3000):
             panel.get_by_role("button", name="发送问题", exact=True).click()
         expect(panel.locator(".chat-answer")).to_contain_text("Synthetic explanation for Code")
-        assert [endpoint for endpoint, _ in requests] == ["questions"]
+        assert [endpoint for endpoint, _ in requests] == ["conversation"]
         assert requests[0][1]["target"]["label"] == "Code"
         assert "input" in requests[0][1]["target"]["selector"]
         expect(field).to_have_value("Retain this entered value")
@@ -160,10 +171,12 @@ def test_cancelled_picker_keeps_new_control_as_explanation_target(assistant, tmp
         expect(panel.locator(".knowledge-context")).to_contain_text("Close")
         expect(panel.get_by_label("业务说明", exact=True)).to_be_visible()
         panel.locator(".knowledge-footer").get_by_role("button", name="取消", exact=True).click()
-        with page.expect_request(lambda request: request.url.endswith("/assist"), timeout=3000):
-            panel.locator(".knowledge-footer").get_by_role("button", name="AI 讲解", exact=True).click()
+        expect(panel).to_have_count(0)
+        page.get_by_role("button", name="打开知识助手", exact=True).click()
+        with page.expect_request(lambda request: request.url.endswith("/explain"), timeout=3000):
+            panel.get_by_role("tab", name="AI 讲解", exact=True).click()
         expect(panel.get_by_role("region", name="AI 功能讲解")).to_contain_text("Synthetic explanation for Close")
-        assert [endpoint for endpoint, _ in requests] == ["related", "assist"]
+        assert [endpoint for endpoint, _ in requests] == ["related", "explain"]
         assert all(payload["target"]["label"] == "Close" for _, payload in requests)
         expect(field).to_have_value("Retain this entered value")
 
@@ -183,9 +196,65 @@ def test_cancelled_existing_binding_edit_uses_binding_control_for_explanation(as
         expect(panel.locator(".knowledge-context")).to_contain_text("Add")
         expect(panel.get_by_label("业务说明", exact=True)).to_have_value("Synthetic manual Add explanation")
         panel.locator(".knowledge-footer").get_by_role("button", name="取消", exact=True).click()
-        with page.expect_request(lambda request: request.url.endswith("/assist"), timeout=3000):
-            panel.locator(".knowledge-footer").get_by_role("button", name="AI 讲解", exact=True).click()
+        expect(panel).to_have_count(0)
+        page.get_by_role("article", name="关联详情").get_by_role("button", name="打开原型", exact=True).click()
+        with page.expect_request(lambda request: request.url.endswith("/explain"), timeout=3000):
+            panel.get_by_role("tab", name="AI 讲解", exact=True).click()
         expect(panel.get_by_role("region", name="AI 功能讲解")).to_contain_text("Synthetic explanation for Add")
-        assert [endpoint for endpoint, _ in requests] == ["assist"]
+        assert [endpoint for endpoint, _ in requests] == ["explain"]
         assert requests[0][1]["target"]["label"] == "Add"
         assert requests[0][1]["target"]["selector"] == "#add"
+
+
+def test_explanation_reuses_target_after_context_tabs_and_switch_back(assistant, tmp_path, monkeypatch):
+    with control_studio(assistant, tmp_path, monkeypatch) as (page, panel, source, field, requests):
+        panel.get_by_role("tab", name="AI 讲解", exact=True).click()
+        answer = panel.get_by_role("region", name="AI 功能讲解")
+        expect(answer).to_contain_text("Synthetic explanation for Code")
+        footer = panel.locator(".knowledge-footer")
+        expect(footer.get_by_role("button", name="重新讲解", exact=True)).to_have_count(1)
+        expect(panel.locator(".assistant-answer-title button")).to_have_count(0)
+        expect(footer.get_by_role("button", name="编辑知识", exact=True)).to_have_count(0)
+        for tab in ("文档", "回答", "AI 讲解"):
+            panel.get_by_role("tab", name=tab, exact=True).click()
+            if tab == "回答":
+                expect(footer.get_by_role("button", name="编辑知识", exact=True)).to_have_count(0)
+        field.fill("Changed nearby runtime context")
+        page.wait_for_timeout(450)  # Let the runtime emit its debounced context update.
+        panel.get_by_role("tab", name="AI 讲解", exact=True).click()
+        expect(answer).to_contain_text("Synthetic explanation for Code")
+        page.wait_for_timeout(450)
+        assert len([p for endpoint, p in requests if endpoint == "explain"]) == 1
+        source.get_by_role("button", name="Close", exact=True).click(button="right")
+        page.get_by_role("menuitem", name="AI 讲解此功能", exact=True).press("Enter")
+        expect(answer).to_contain_text("Synthetic explanation for Close")
+        field.click()
+        panel.get_by_role("tab", name="AI 讲解", exact=True).click()
+        expect(answer).to_contain_text("Synthetic explanation for Code")
+        assert len([p for endpoint, p in requests if endpoint == "explain"]) == 2
+        with page.expect_request(lambda r: r.url.endswith("/explain")):
+            footer.get_by_role("button", name="重新讲解", exact=True).click()
+        expect(footer.get_by_role("button", name="重新讲解", exact=True)).to_be_enabled()
+        explanations = [p for endpoint, p in requests if endpoint == "explain"]
+        assert len(explanations) == 3 and explanations[-1]["refresh"] is True
+        assert explanations[-1]["target"]["label"] == "Code"
+
+
+def test_pending_explanation_is_not_restarted_by_tabs_or_same_target(assistant, tmp_path, monkeypatch):
+    held = []
+    with control_studio(assistant, tmp_path, monkeypatch) as (page, panel, _source, field, _requests):
+        page.route("**/interactive/explain", lambda route: held.append(route))
+        panel.get_by_role("tab", name="AI 讲解", exact=True).click()
+        expect(panel.get_by_role("button", name="重新讲解", exact=True)).to_be_disabled()
+        field.click(button="right")
+        page.get_by_role("menuitem", name="AI 讲解此功能", exact=True).press("Enter")
+        for tab in ("文档", "回答", "AI 讲解"):
+            panel.get_by_role("tab", name=tab, exact=True).click()
+        page.set_viewport_size({"width": 1200, "height": 800})
+        page.wait_for_timeout(450)
+        assert len(held) == 1
+        held[0].fulfill(json={"data": {"title": "One explanation", "explanation": "The in-flight explanation completed", "unknowns": [], "confidence": .9, "model_id": "synthetic", "cached": False, "saved": False, "binding_id": None, "sections": [], "selection_version": 0}})
+        expect(panel.get_by_role("region", name="AI 功能讲解")).to_contain_text("The in-flight explanation completed")
+        panel.get_by_role("tab", name="文档", exact=True).click()
+        panel.get_by_role("tab", name="AI 讲解", exact=True).click()
+        assert len(held) == 1

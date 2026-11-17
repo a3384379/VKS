@@ -148,18 +148,22 @@ def test_partial_pipeline_refresh_keeps_failures_and_only_admits_captured_page_c
             endpoint = f"{url}/api/v3/projects/{pid}/associations/scans?analysis_set_id={aid}"
             current = page.request.get(endpoint).json()["data"]["run"]
             admitted = pipeline_jobs(service, current["id"])
-            assert current["pipeline"] and current["ai"]["targets"] == len(admitted) >= 1
+            assert (
+                current["pipeline"]
+                and current["ai"]["targets"] == sum(len(payload["items"]) for _, payload in admitted) >= 1
+            )
             assert not batches and not calls
             assert all(item["target"]["route"] == "/a.html" for _, payload in admitted for item in payload["items"]), (
                 "a permanently busy page must not send static or unseen controls to AI"
             )
+            expected_calls = len(admitted[0][1]["groups"])
             service.process_job(admitted[0][0])
-            assert service.get_job(owner, admitted[0][0])["state"] == "succeeded" and len(calls) == 1
+            assert service.get_job(owner, admitted[0][0])["state"] == "succeeded" and len(calls) == expected_calls
             page.reload()
             expect(saved.get_by_text("预扫描部分完成", exact=True)).to_be_visible()
             expect(saved).to_contain_text("1 / 2 页")
             expect(page.locator('iframe[title="预扫描原型"]')).to_have_count(0)
-            assert not batches and len(calls) == 1
+            assert not batches and len(calls) == expected_calls
             assert len(pipeline_jobs(service, current["id"])) == len(admitted)
             expect(page.get_by_role("button", name="重试未完成页面", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="仅关联已采集内容", exact=True)).to_have_count(0)

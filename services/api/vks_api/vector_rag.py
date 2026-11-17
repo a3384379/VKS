@@ -1,8 +1,8 @@
 """Rebuildable local vector database and permission-scoped hybrid RAG.
 
 SQLite stores real normalized float32 embeddings, immutable chunk identities and
-query vectors. Exact cosine search uses math.sumprod in C; no external DB server
-or extension is needed for this personal-use corpus. Knowledge remains in VKS.
+query vectors. Native matrix scoring shortlists candidates, then the original
+math.sumprod scoring fixes exact order and ties. Knowledge remains in VKS.
 """
 
 import json
@@ -17,6 +17,7 @@ from array import array
 from base64 import b64encode
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import closing, contextmanager, nullcontext
+from contextvars import copy_context
 from datetime import datetime
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -26,7 +27,7 @@ from pydantic import Field, model_validator
 from sqlalchemy import select
 
 from . import ai_gateway
-from .ai_gateway import ModelNotSent, ModelPolicy, failure
+from .ai_gateway import ModelNotSent, failure
 from .model_connections import ModelConnection
 from .prototype_contracts import PrototypeEnvelope
 from .prototype_edit import Input, Ref
@@ -42,6 +43,8 @@ class RagSettings(Input):
     connection_id: str | None = Field(default=None, max_length=96)
     model_id: str = Field(default="text-embedding-3-small", min_length=1, max_length=160)
     dimensions: int = Field(default=512, ge=64, le=3072)
+    candidate_limit: int = Field(default=24, ge=6, le=64)
+    per_document_limit: int = Field(default=8, ge=1, le=24)
     daily_token_limit: int = Field(default=10000000, ge=10000, le=100000000, deprecated=True)
 
     @model_validator(mode="after")
@@ -88,6 +91,7 @@ class VectorStore:
         if self.path.is_symlink():
             failure("VKS_INVALID_INPUT", "向量库路径不能是符号链接")
         with self.db() as db:
+            db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS config(project TEXT PRIMARY KEY, settings TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS status(project TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -96,6 +100,11 @@ class VectorStore:
                 CREATE TABLE IF NOT EXISTS queries(project TEXT, space TEXT, id TEXT, embedding BLOB, PRIMARY KEY(project,space,id));
                 CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY,project TEXT,day TEXT,model TEXT,reserved INTEGER,used INTEGER,state TEXT);
                 CREATE TABLE IF NOT EXISTS index_build(project TEXT, space TEXT, token TEXT NOT NULL, lease_until REAL NOT NULL, PRIMARY KEY(project,space));
+                CREATE TABLE IF NOT EXISTS chunk_epoch(id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL);
+                INSERT OR IGNORE INTO chunk_epoch VALUES(1,0);
+                CREATE TRIGGER IF NOT EXISTS chunks_insert_epoch AFTER INSERT ON chunks BEGIN UPDATE chunk_epoch SET value=value+1 WHERE id=1; END;
+                CREATE TRIGGER IF NOT EXISTS chunks_update_epoch AFTER UPDATE ON chunks BEGIN UPDATE chunk_epoch SET value=value+1 WHERE id=1; END;
+                CREATE TRIGGER IF NOT EXISTS chunks_delete_epoch AFTER DELETE ON chunks BEGIN UPDATE chunk_epoch SET value=value+1 WHERE id=1; END;
             """)
         os.chmod(self.path, 0o600)
 
@@ -104,13 +113,58 @@ class VectorStore:
         # Connection.__exit__ commits/rolls back but does not close the SQLite
         # connection. Explicit closing keeps frequent lookups from retaining FDs.
         with closing(sqlite3.connect(self.path, timeout=30)) as db, db:
-            db.execute("PRAGMA journal_mode=WAL")
             yield db
 
     def settings(self, pid):
+        from .inference_pipeline import READ_SESSION, WRITE_SESSION
+
+        current = WRITE_SESSION.get() or READ_SESSION.get()
+        session = current[1] if current and current[0].data_dir / "rag-vectors.sqlite" == self.path else None
+        scoped = session is not None and (
+            session.info.get("vks_read_batch") or session.info.get("vks_completion_batch")
+        )
+        cached = session.info.setdefault("vks_vector_settings", {}) if scoped else {}
+        if pid in cached:
+            return cached[pid].model_copy(deep=True)
         with self.db() as db:
             row = db.execute("SELECT settings FROM config WHERE project=?", (pid,)).fetchone()
-        return RagSettings.model_validate_json(row[0]) if row else RagSettings(enabled=False)
+        result = RagSettings.model_validate_json(row[0]) if row else RagSettings(enabled=False)
+        cached[pid] = result
+        return result.model_copy(deep=True)
+
+    def batch_reads(self):
+        from .inference_pipeline import READ_SESSION, WRITE_SESSION
+
+        current = READ_SESSION.get() or WRITE_SESSION.get()
+        if current and current[0].data_dir / "rag-vectors.sqlite" == self.path:
+            session = current[1]
+            if session.info.get("vks_read_batch") or session.info.get("vks_completion_batch"):
+                return session.info.setdefault("vks_vector_reads", {})
+        return {}
+
+    def query_vector(self, pid, space, key):
+        cached = self.batch_reads()
+        identity = ("query", pid, space, key)
+        if identity not in cached:
+            with self.db() as db:
+                row = db.execute(
+                    "SELECT embedding FROM queries WHERE project=? AND space=? AND id=?", (pid, space, key)
+                ).fetchone()
+            cached[identity] = row[0] if row else None
+        return cached[identity]
+
+    def query_vectors(self, pid, space, keys):
+        cached = self.batch_reads()
+        missing = [key for key in keys if ("query", pid, space, key) not in cached]
+        if missing:
+            with self.db() as db:
+                rows = db.execute(
+                    "SELECT id,embedding FROM queries WHERE project=? AND space=? "
+                    "AND id IN (SELECT value FROM json_each(?))",
+                    (pid, space, json.dumps(missing)),
+                ).fetchall()
+            cached.update({("query", pid, space, key): None for key in missing})
+            cached.update({("query", pid, space, key): value for key, value in rows})
 
     def state(self, pid, data=None):
         with self.db() as db:
@@ -164,12 +218,30 @@ class VectorStore:
 
     def count(self, pid, space, revisions):
         with self.db() as db:
-            db.execute("CREATE TEMP TABLE allowed(id TEXT PRIMARY KEY)")
-            db.executemany("INSERT OR IGNORE INTO allowed VALUES (?)", ((r,) for r in revisions))
             return db.execute(
-                "SELECT COUNT(*),COUNT(DISTINCT revision) FROM chunks WHERE project=? AND space=? AND embedding IS NOT NULL AND revision IN (SELECT id FROM allowed)",
-                (pid, space),
+                "SELECT COUNT(*),COUNT(DISTINCT revision) FROM chunks WHERE project=? AND space=? AND embedding IS NOT NULL AND revision IN (SELECT value FROM json_each(?))",
+                (pid, space, json.dumps(list(revisions))),
             ).fetchone()
+
+    def has_vectors(self, pid, space, revisions):
+        # Inference needs existence, not two complete COUNT aggregations over
+        # every visible chunk. Keep count() for the actual status statistics.
+        revisions = tuple(sorted(revisions))
+        cached = self.batch_reads()
+        key = ("has", pid, space, revisions)
+        if key in cached:
+            return cached[key]
+        with self.db() as db:
+            result = (
+                db.execute(
+                    "SELECT 1 FROM chunks WHERE project=? AND space=? AND embedding IS NOT NULL "
+                    "AND revision IN (SELECT value FROM json_each(?)) LIMIT 1",
+                    (pid, space, json.dumps(list(revisions))),
+                ).fetchone()
+                is not None
+            )
+        cached[key] = result
+        return result
 
     @contextmanager
     def index_build(self, pid, space, validate):
@@ -266,6 +338,9 @@ class VectorRag:
             if shared is None:
                 shared = (threading.RLock(), weakref.WeakValueDictionary())
                 service._rag_index_sync = shared
+            from .vector_search import ExactVectorSearch
+
+            self.vector_search = service.__dict__.setdefault("_rag_vector_search", ExactVectorSearch())
         self.lock, self.export_locks = shared
         self.running = {}
         self.query_locks = weakref.WeakValueDictionary()
@@ -299,63 +374,101 @@ class VectorRag:
         supplied revision IDs restrict the scope; they never grant permission or
         select historical/unmounted revisions on their own.
         """
-        from .models import Artifact
-        from .reading import artifact_policy
 
         requested = None if section_revision_ids is None else set(section_revision_ids)
         with self.assistant.links.reader.reading.db() as s:
-            self.service.require(s, actor, pid, permission)
-            analysis, release, choices, _ = self.assistant.links.reader.scope(
-                s, actor, pid, analysis_set_id, release_id
-            )
-            rows = self.assistant.links._rows(s, actor, pid, choices)
-            selected = {r.id for e, r in rows if e.type == "section"}
-            policies, chapters, provenance = {}, [], {}
-            for entity, document in rows:
-                if entity.type != "document":
+            from .input_versions import cached_projection
+            from .jobs import PERSONAL_TASK
+            from .models import Analysis
+
+            analysis = s.get(Analysis, analysis_set_id) if analysis_set_id and not release_id else None
+            if (
+                self.service.personal_mode
+                and PERSONAL_TASK.get() == (self.service, pid)
+                and analysis is not None
+                and analysis.project_id == pid
+                and analysis.state == "draft"
+            ):
+                key = (
+                    "personal-document-scope",
+                    pid,
+                    analysis_set_id,
+                    None if requested is None else tuple(sorted(requested)),
+                    permission,
+                    analysis.selection_version if permission != "knowledge:edit" else None,
+                )
+                facts = cached_projection(
+                    self.service,
+                    s,
+                    key,
+                    lambda: self._document_scope_rows(
+                        s, actor, pid, analysis_set_id, release_id, requested, permission
+                    ),
+                )
+                from copy import deepcopy
+
+                return deepcopy(facts)
+            return self._document_scope_rows(s, actor, pid, analysis_set_id, release_id, requested, permission)
+
+    def _document_scope_rows(self, s, actor, pid, analysis_set_id, release_id, requested, permission):
+        from .models import Artifact
+        from .reading import artifact_policy
+
+        self.service.require(s, actor, pid, permission)
+        analysis, release, choices, _ = self.assistant.links.reader.scope(s, actor, pid, analysis_set_id, release_id)
+        from .corpus_cache import corpus_rows
+
+        rows = corpus_rows(self.assistant, s, actor, pid, choices, analysis_id=analysis.id if not release else None)
+        selected = {r.id for e, r in rows if e.type == "section"}
+        policies, chapters, provenance = {}, [], {}
+        for entity, document in rows:
+            if entity.type != "document":
+                continue
+            for chapter in self.assistant.links.documents._sections(s, entity, document):
+                if chapter.id not in selected or (requested is not None and chapter.id not in requested):
                     continue
-                for chapter in self.assistant.links.documents._sections(s, entity, document):
-                    if chapter.id not in selected or (requested is not None and chapter.id not in requested):
-                        continue
-                    if chapter.artifact_id not in policies:
-                        art = s.get(Artifact, chapter.artifact_id)
-                        policy = artifact_policy(s, art)
-                        policies[chapter.artifact_id] = {
-                            "sensitivity": art.sensitivity if art else "confidential",
-                            "requires_source_read": bool(policy.get("requires_source_read")),
-                            "requires_trace_read": bool(policy.get("requires_trace_read")),
-                        }
-                    chapters.append(
-                        {
-                            "revision_id": chapter.id,
-                            "name": chapter.name,
-                            "content": chapter.content,
-                            "document_revision_id": document.id,
-                            "document_name": document.name,
-                        }
-                    )
-                    provenance[chapter.id] = {
-                        "sha": chapter.content_sha256,
-                        "document": document.id,
-                        "artifact": chapter.artifact_id,
-                        "policy": policies[chapter.artifact_id],
+                if chapter.artifact_id not in policies:
+                    art = s.get(Artifact, chapter.artifact_id)
+                    policy = artifact_policy(s, art)
+                    policies[chapter.artifact_id] = {
+                        "sensitivity": art.sensitivity if art else "confidential",
+                        "requires_source_read": bool(policy.get("requires_source_read")),
+                        "requires_trace_read": bool(policy.get("requires_trace_read")),
                     }
-            if requested is not None and requested != {r["revision_id"] for r in chapters}:
-                failure("VKS_NOT_FOUND", "导出章节不在当前可读取版本中", 404)
-            fingerprint = sha(
-                canonical(
+                chapters.append(
                     {
-                        "analysis": analysis.id,
-                        "state": analysis.state,
-                        "version": analysis.selection_version,
-                        "release": release.id if release else None,
-                        "chapters": provenance,
+                        "revision_id": chapter.id,
+                        "name": chapter.name,
+                        "content": chapter.content,
+                        "document_revision_id": document.id,
+                        "document_name": document.name,
                     }
                 )
+                provenance[chapter.id] = {
+                    "sha": chapter.content_sha256,
+                    "document": document.id,
+                    "artifact": chapter.artifact_id,
+                    "policy": policies[chapter.artifact_id],
+                }
+        if requested is not None and requested != {r["revision_id"] for r in chapters}:
+            failure("VKS_NOT_FOUND", "导出章节不在当前可读取版本中", 404)
+        fingerprint = sha(
+            canonical(
+                {
+                    "analysis": analysis.id,
+                    "state": analysis.state,
+                    # Background association writes advance the draft
+                    # counter without changing any document input. Exact
+                    # export projections still bind that counter.
+                    "version": analysis.selection_version if permission != "knowledge:edit" else None,
+                    "release": release.id if release else None,
+                    "chapters": provenance,
+                }
             )
-            return chapters, fingerprint, provenance
+        )
+        return chapters, fingerprint, provenance
 
-    def _export_vectors(self, pid, space, chunks, dimensions):
+    def _export_vectors(self, pid, space, chunks, dimensions, *, encode=True):
         """Project only exact expected chunks; never copy the shared SQLite DB."""
         expected = {c["id"]: c for c in chunks}
         result = {}
@@ -380,6 +493,9 @@ class VectorRag:
                 values = vector(blob)
                 norm = math.hypot(*values)
                 if not math.isfinite(norm) or not 0.999 <= norm <= 1.001:
+                    continue
+                if not encode:
+                    result[cid] = True
                     continue
                 # Browser readers decode a declared little-endian Float32
                 # representation, independent of the publisher's CPU.
@@ -437,7 +553,7 @@ class VectorRag:
             self.store.index_state(pid, state, token, space=space)
 
         try:
-            _, baseline, _ = self.document_scope(
+            chapters, baseline, _ = self.document_scope(
                 actor, pid, analysis_set_id=analysis_set_id, permission="knowledge:edit"
             )
             settings, config, space = self.config(actor, pid)
@@ -448,6 +564,23 @@ class VectorRag:
                 now = self.document_scope(actor, pid, analysis_set_id=analysis_set_id, permission="knowledge:edit")
                 if now[1] != baseline or self.config(actor, pid) != (settings, config, space):
                     failure("VKS_VERSION_CONFLICT", "文档建库期间版本、权限或配置已变化", 412)
+
+            if not form and settings.enabled:
+                # Association jobs only need a verified ready index, not an
+                # export of all vectors plus repeated build-lease validation.
+                # Inspect every exact chunk/vector once; a count alone cannot
+                # establish coverage or detect malformed cached embeddings.
+                chunks = list(split(chapters))
+                ready = self._export_vectors(pid, space, chunks, settings.dimensions, encode=False)
+                if len(ready) == len(chunks):
+                    unchanged()
+                    return {
+                        "total_chunks": len(chunks),
+                        "indexed_chunks": len(chunks),
+                        "total_sections": len(chapters),
+                        "indexed_sections": len({row["revision"] for row in chunks}),
+                        "complete": True,
+                    }
 
             result = self._document_index(
                 actor,
@@ -568,7 +701,10 @@ class VectorRag:
                         return len(rows)
 
                     with ThreadPoolExecutor(max_workers=4) as pool:
-                        futures = [pool.submit(batch, pending[i : i + 32]) for i in range(0, len(pending), 32)]
+                        futures = [
+                            pool.submit(copy_context().run, batch, pending[i : i + 32])
+                            for i in range(0, len(pending), 32)
+                        ]
                         completed = len(embeddings)
                         try:
                             for future in as_completed(futures):
@@ -614,9 +750,26 @@ class VectorRag:
         }
 
     def config(self, actor, pid):
+        from .inference_pipeline import CURRENT_PIPELINE, READ_SESSION, WRITE_SESSION
+
+        pipeline = CURRENT_PIPELINE.get()
+        if (
+            pipeline
+            and pipeline.capacity > 1
+            and pipeline.service is self.service
+            and not (READ_SESSION.get() or WRITE_SESSION.get())
+        ):
+            return pipeline.read(lambda: self.config(actor, pid), priority=True)
         with self.assistant.links.reader.reading.db() as s:
             self.service.require(s, actor, pid)
-            policy = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
+            scoped = s.info.get("vks_read_batch") or s.info.get("vks_completion_batch")
+            cached = s.info.setdefault("vks_rag_configs", {}) if scoped else {}
+            if (actor, pid) in cached:
+                settings, config, space = cached[(actor, pid)]
+                return settings.model_copy(deep=True), dict(config), space
+            from .corpus_validation import policy_row
+
+            policy = policy_row(s, pid)
             if not policy or not policy.settings.get("enabled") or not policy.settings.get("allow_external"):
                 failure("VKS_MODEL_NOT_CONFIGURED", "请先保存模型连接并允许使用项目资料", 503)
             settings = self.store.settings(pid)
@@ -642,7 +795,8 @@ class VectorRag:
                     }
                 )
             )
-            return settings, config, space
+            cached[(actor, pid)] = (settings, config, space)
+            return settings.model_copy(deep=True), dict(config), space
 
     def embed(self, actor, pid, settings, config, texts):
         bound = sum(len(t.encode()) for t in texts) + 128
@@ -687,11 +841,21 @@ class VectorRag:
             raise
 
     def available(self, actor, pid, chapters):
+        from .inference_pipeline import CURRENT_PIPELINE, READ_SESSION, WRITE_SESSION
+
+        pipeline = CURRENT_PIPELINE.get()
+        if pipeline and pipeline.capacity > 1 and not (READ_SESSION.get() or WRITE_SESSION.get()):
+            return pipeline.read(lambda: self.available(actor, pid, chapters), priority=True)
         try:
             settings, _, space = self.config(actor, pid)
-            return bool(settings.enabled and self.store.count(pid, space, (c["revision_id"] for c in chapters))[0])
+            return bool(settings.enabled and self.store.has_vectors(pid, space, (c["revision_id"] for c in chapters)))
         except DomainError:
             return False
+
+    def prefetch_queries(self, actor, pid, keys):
+        settings, _config, space = self.config(actor, pid)
+        if settings.enabled:
+            self.store.query_vectors(pid, space, keys)
 
     def document_status(self, actor, pid, form):
         """Status for an exact readable Markdown corpus, with no prototype dependency."""
@@ -954,7 +1118,9 @@ class VectorRag:
                 return len(rows)
 
             with ThreadPoolExecutor(max_workers=4) as pool:
-                futures = [pool.submit(batch, pending[i : i + 32]) for i in range(0, len(pending), 32)]
+                futures = [
+                    pool.submit(copy_context().run, batch, pending[i : i + 32]) for i in range(0, len(pending), 32)
+                ]
                 try:
                     for future in as_completed(futures):
                         state["completed"] += future.result()
@@ -1046,9 +1212,6 @@ class VectorRag:
         validate_scope()
 
     def hybrid(self, actor, pid, form, chapters, corpus, lexical):
-        settings, config, space = self.config(actor, pid)
-        if not settings.enabled or not self.store.count(pid, space, (c["revision_id"] for c in chapters))[0]:
-            return lexical
         text = (
             "模块：" + form.target.label.split(" · ")[0]
             if form.context.scope == "module"
@@ -1076,14 +1239,38 @@ class VectorRag:
             if form.context.scope == "module" and not question
             else sha(text)
         )
+        # A new module direction must not reuse the generic warmed query.
+        instruction = getattr(form, "instruction", "").strip()
+        if instruction and form.context.scope == "module":
+            text += "\n重新关联方向：" + instruction
+            key += ":" + sha(text)
+
+        def inputs():
+            settings, config, space = self.config(actor, pid)
+            scope = {chapter["revision_id"] for chapter in chapters}
+            if not settings.enabled or not self.store.has_vectors(pid, space, scope):
+                return None
+            snapshot = self.vector_search.snapshot(self.store, pid, space, scope, settings.dimensions)
+            return settings, config, space, self.store.query_vector(pid, space, key), snapshot
+
+        from .inference_pipeline import CURRENT_PIPELINE, READ_SESSION, WRITE_SESSION
+
+        pipeline = CURRENT_PIPELINE.get()
+        ready = (
+            pipeline.read(inputs, priority=True, vector_lookup=(self, actor, pid, key))
+            if pipeline and pipeline.capacity > 1 and not (READ_SESSION.get() or WRITE_SESSION.get())
+            else inputs()
+        )
+        if ready is None:
+            return lexical
+        settings, config, space, query, snapshot = ready
         with self.lock:
             lock = self.query_locks.setdefault((pid, space, key), threading.Lock())
         with lock:
-            with self.store.db() as db:
-                row = db.execute(
-                    "SELECT embedding FROM queries WHERE project=? AND space=? AND id=?", (pid, space, key)
-                ).fetchone()
-            query = row[0] if row else None
+            learned_key = (str(self.store.path), pid, space, key)
+            if query is None and pipeline:
+                with self.lock:
+                    query = pipeline.new_query_vectors.get(learned_key)
             if isinstance(query, bytes) and len(query) == settings.dimensions * 4:
                 length = math.hypot(*vector(query))
                 if not math.isfinite(length) or not 0.999 <= length <= 1.001:
@@ -1094,27 +1281,17 @@ class VectorRag:
                 query = self.embed(actor, pid, settings, config, [text])[0]
                 with self.store.db() as db:
                     db.execute("INSERT OR REPLACE INTO queries VALUES (?,?,?,?)", (pid, space, key, query))
+                if pipeline:
+                    with self.lock:
+                        pipeline.new_query_vectors[learned_key] = query
+                        if len(pipeline.new_query_vectors) > 1024:
+                            pipeline.new_query_vectors.pop(next(iter(pipeline.new_query_vectors)))
         q = vector(query)
         lookup = {c["revision_id"]: c for c in chapters}
 
-        def similarity(blob):
-            if not isinstance(blob, bytes) or len(blob) != len(q) * 4:
-                return -2.0
-            try:
-                score = math.sumprod(vector(blob), q)
-            except (ValueError, OverflowError):
-                return -2.0
-            return score if math.isfinite(score) and -1.001 <= score <= 1.001 else -2.0
-
-        with self.store.db() as db:
-            # Filter current authorized revisions BEFORE computing nearest matches.
-            db.execute("CREATE TEMP TABLE allowed(id TEXT PRIMARY KEY)")
-            db.executemany("INSERT OR IGNORE INTO allowed VALUES (?)", ((rid,) for rid in lookup))
-            db.create_function("vks_dot", 1, similarity)
-            matches = db.execute(
-                "SELECT id,revision,start,content,vks_dot(embedding) AS score FROM chunks WHERE project=? AND space=? AND revision IN (SELECT id FROM allowed) ORDER BY score DESC LIMIT 36",
-                (pid, space),
-            ).fetchall()
+        matches = self.vector_search.nearest(
+            self.store, pid, space, lookup, q, limit=max(36, settings.candidate_limit * 2), snapshot=snapshot
+        )
         scores = {}
         candidates = {r["revision_id"]: r for r in lexical}
         seen = set()
@@ -1142,11 +1319,11 @@ class VectorRag:
         for rid in sorted(scores, key=lambda r: -scores[r]):
             row = candidates[rid]
             doc = row["document_revision_id"]
-            if docs.get(doc, 0) >= 3:
+            if docs.get(doc, 0) >= settings.per_document_limit:
                 continue
             docs[doc] = docs.get(doc, 0) + 1
             result.append(row)
-            if len(result) == 6:
+            if len(result) == settings.candidate_limit:
                 break
         return result
 

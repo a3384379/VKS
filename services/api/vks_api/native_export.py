@@ -174,6 +174,11 @@ def _handbook_page(raw):
             node["disabled"] = ""
         node["hidden"] = ""
         node.attrs.pop("contenteditable", None)
+    # Derived reader only: preserve original imported bytes and SVG content.
+    stable = soup.new_tag("style")
+    stable["data-vks-diagram-viewport"] = "stable"
+    stable.string = "#diagram-dialog #diagram-viewport{overflow:scroll!important;scrollbar-gutter:stable!important}"
+    (soup.head or soup).append(stable)
     return {"__handbook__": "<!doctype html>" + str(soup)}
 
 

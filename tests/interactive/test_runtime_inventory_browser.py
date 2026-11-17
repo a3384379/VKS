@@ -11,7 +11,7 @@ from vks_api.ai_gateway import ModelPolicy, PolicyInput
 from vks_api.bulk_association import BulkAssociationService, InventoryPageInput
 from vks_api.models import uid
 
-from tests.interactive import test_assistant, test_materials
+from tests.interactive import test_bulk_association, test_materials
 from tests.interactive.test_document_navigation import zip_docs
 from tests.interactive.test_native_documents_browser import login, native_studio
 from tests.ui.test_frontend_browser import chromium_path
@@ -78,9 +78,7 @@ def setup(materials, monkeypatch, charge=False, partial=False):
     calls = []
 
     def model(_config, body):
-        payload = json.loads(body["input"][1]["content"])
-        calls.append(payload)
-        return test_assistant.response(payload["chapters"][0]["revision_id"])
+        return test_bulk_association.synthetic_response(body, calls)
 
     monkeypatch.setattr(ai_gateway, "request_model", model)
     return web, service, owner, pid, aid, calls
@@ -118,7 +116,7 @@ def test_two_dynamic_routes_discovered_before_clicks_and_ai_enqueue(materials, t
             expect(original.get_by_role("heading", name="账单 A", exact=True)).to_be_visible(timeout=15000)
             original.get_by_label("客户名称", exact=True).fill("UNSAVED_CURRENT_FORM")
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+            page.get_by_role("button", name="重新关联全部", exact=True).click()
             expect(page.get_by_label("动态原型预扫描", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="停止任务", exact=True)).to_be_visible()
             page.wait_for_function("!document.querySelector('[aria-label=\"动态原型预扫描\"]')", timeout=30000)
@@ -214,7 +212,7 @@ def test_navigation_keeps_scan_and_does_not_restart_completed_pages(materials, t
                     and response.status == 200
                 )
             ):
-                page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+                page.get_by_role("button", name="重新关联全部", exact=True).click()
             current = page.request.get(f"{url}/api/v3/projects/{pid}/associations/scans?analysis_set_id={aid}").json()[
                 "data"
             ]["run"]
@@ -267,7 +265,7 @@ def test_refresh_keeps_persisted_progress_and_requires_explicit_resume(materials
                     and response.status == 200
                 )
             ):
-                page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+                page.get_by_role("button", name="重新关联全部", exact=True).click()
             previous = page.request.get(f"{url}/api/v3/projects/{pid}/associations/scans?analysis_set_id={aid}").json()[
                 "data"
             ]["run"]
@@ -301,7 +299,7 @@ def test_failed_page_preserves_partial_progress_while_captured_page_ai_runs(mate
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+            page.get_by_role("button", name="重新关联全部", exact=True).click()
             progress = page.get_by_label("已保存的预扫描进度", exact=True)
             expect(progress).to_contain_text("1 页待重试", timeout=20000)
             expect(progress).to_contain_text("预扫描部分完成")

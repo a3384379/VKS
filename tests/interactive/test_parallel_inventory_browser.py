@@ -1,6 +1,5 @@
 """Prove actual isolated-page overlap and ACK-based capture, not just a UI lane label."""
 
-import json
 import time
 
 from playwright.sync_api import expect, sync_playwright
@@ -10,7 +9,7 @@ from vks_api.ai_gateway import ModelPolicy, PolicyInput
 from vks_api.models import Job, uid
 from vks_api.scan_pipeline import reconcile
 
-from tests.interactive import test_assistant, test_materials
+from tests.interactive import test_bulk_association, test_materials
 from tests.interactive.test_native_documents_browser import login, native_studio
 from tests.interactive.test_runtime_inventory_browser import charge_source, dynamic_page
 from tests.ui.test_frontend_browser import chromium_path
@@ -42,9 +41,7 @@ def test_three_independent_lanes_overlap_and_match_serial_results(materials, tmp
     calls = []
 
     def model(_config, body):
-        data = json.loads(body["input"][1]["content"])
-        calls.append(data)
-        return test_assistant.response(data["chapters"][0]["revision_id"])
+        return test_bulk_association.synthetic_response(body, calls)
 
     monkeypatch.setattr(ai_gateway, "request_model", model)
     with native_studio(web.app, tmp_path, monkeypatch) as url, sync_playwright() as p:
@@ -68,7 +65,7 @@ def test_three_independent_lanes_overlap_and_match_serial_results(materials, tmp
                 page.evaluate("window.scanStarts=[]")
                 page.get_by_label("分析与关联并发", exact=True).select_option(str(lanes))
                 began = time.monotonic()
-                page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+                page.get_by_role("button", name="重新关联全部", exact=True).click()
                 expect(page.get_by_label("动态原型预扫描", exact=True)).to_be_visible()
                 expect(page.get_by_label("已保存的预扫描进度", exact=True)).to_contain_text(
                     "已采集 3 / 3 页", timeout=30000
@@ -102,12 +99,69 @@ def test_three_independent_lanes_overlap_and_match_serial_results(materials, tmp
                 reconcile(service)
                 # Refresh is explicit and does not queue duplicate page jobs.
                 page.reload()
-                expect(page.get_by_role("button", name="全量 AI 关联", exact=True)).to_be_enabled(timeout=15000)
+                expect(page.get_by_role("button", name="重新关联全部", exact=True)).to_be_enabled(timeout=15000)
             assert targets[1] == targets[3] and len(targets[3]) == 12
             assert elapsed[3] < elapsed[1] * 0.82, elapsed
             print(
                 f"capture_elapsed_seconds serial={elapsed[1]:.3f} parallel3={elapsed[3]:.3f} ratio={elapsed[3] / elapsed[1]:.3f}"
             )
             assert calls, "Only the local mocked model was used"
+        finally:
+            browser.close()
+
+
+def test_async_wrapper_startup_cannot_override_first_page_in_each_lane(materials, tmp_path, monkeypatch):
+    web, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    pages = [(name + ".html", dynamic_page("账单 " + name.upper(), 60)) for name in ("a", "b", "c")]
+    # The real wrapper assigns its navigation API before asynchronously loading
+    # portal code, which later selects the default page. First-page scans must
+    # wait for that declared page instead of racing its startup redirect.
+    source = charge_source(pages).replace(
+        "window.__prototypePack.show('a.html')",
+        "setTimeout(()=>window.__prototypePack.show('a.html'),450)",
+    )
+    prototype = test_materials.stage(service, owner, manager, pid, aid, "prototype", source, filename="startup.html")
+    docs = test_materials.stage(service, owner, manager, pid, aid, "documents", "# 收费管理\n\n账单提供默认操作。")
+    test_materials.activate(service, owner, manager, pid, aid, [prototype, docs])
+    with service.db() as db:
+        db.add(
+            ModelPolicy(
+                id=uid(),
+                project_id=pid,
+                settings=PolicyInput(enabled=True, allow_external=True, model_id="synthetic").model_dump(),
+            )
+        )
+    with native_studio(web.app, tmp_path, monkeypatch) as url, sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+        page.add_init_script(PROBE)
+        captures, errors = [], []
+        page.on(
+            "request",
+            lambda request: (
+                captures.append(request.post_data_json)
+                if request.method == "PUT" and request.url.endswith("/associations/inventory")
+                else None
+            ),
+        )
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        try:
+            login(page, url, pid, aid)
+            page.get_by_role("button", name="关联管理", exact=True).click()
+            page.get_by_label("分析与关联并发", exact=True).select_option("3")
+            page.get_by_role("button", name="重新关联全部", exact=True).click()
+            expect(page.get_by_label("已保存的预扫描进度", exact=True)).to_contain_text(
+                "已采集 3 / 3 页", timeout=20000
+            )
+            starts = page.evaluate("window.scanStarts")
+            assert len(starts) == 3 and len({item["id"] for item in starts}) == 3
+            assert len(captures) == 3 and all(item["status"] == "captured" for item in captures)
+            assert {item["route"] for item in captures} == {"/a.html", "/b.html", "/c.html"}
+            assert all(
+                {target["selector"] for target in item["targets"]} == {"body", "#add", "#customer", "#open"}
+                for item in captures
+            )
+            assert not errors
         finally:
             browser.close()

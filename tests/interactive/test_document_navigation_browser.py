@@ -103,6 +103,9 @@ def test_studio_categories_source_order_lazy_heading_tree_and_global_search(mate
                             ["业务概览 Z", "业务补充 A", "业务总手册"]
                         )
                         assert not any(docs["业务补充 A"]["revision_id"] in request for request in requests)
+                        expect(sidebar.get_by_role("button", name="展开章节 业务概览 Z", exact=True)).to_have_attribute("aria-expanded", "false")
+                        expect(sidebar.get_by_role("button", name="办理步骤", exact=True)).to_have_count(0)
+                        sidebar.get_by_role("button", name="展开章节 业务概览 Z", exact=True).click()
                         expect(sidebar).to_contain_text("办理步骤")
                         sidebar.get_by_role("button", name="展开下级章节 办理步骤", exact=True).click()
                         sidebar.get_by_role("button", name="深层节点", exact=True).click()
@@ -114,6 +117,7 @@ def test_studio_categories_source_order_lazy_heading_tree_and_global_search(mate
                         assert any(docs["业务补充 A"]["revision_id"] in request for request in requests)
                         sidebar.get_by_role("button", name="备用章节", exact=True).click()
                         expect(article.get_by_role("heading", name="业务补充 A", exact=True)).to_be_visible()
+                        expect(sidebar.get_by_role("button", name="收起章节 业务概览 Z", exact=True)).to_have_attribute("aria-expanded", "true")
                         expect(article.locator(".chapter-selected")).to_contain_text("备用章节")
                         # Expanding the heading tree already fetched the full body;
                         # choosing it or another section must not request it again.
@@ -124,6 +128,9 @@ def test_studio_categories_source_order_lazy_heading_tree_and_global_search(mate
                         ]
                         categories.get_by_role("button", name=re.compile(r"^01基础")).click()
                         expect(article.get_by_role("heading", name="基础说明 B", exact=True)).to_be_visible()
+                        expect(sidebar.get_by_role("button", name="展开章节 基础说明 B", exact=True)).to_have_attribute("aria-expanded", "false")
+                        sidebar.locator(".document-open").filter(has_text="基础说明 B").click()
+                        expect(sidebar.get_by_role("button", name="展开章节 基础说明 B", exact=True)).to_have_attribute("aria-expanded", "false")
                         sidebar.get_by_label("搜索文档", exact=True).fill("业务补充")
                         result = sidebar.locator(".document-search-results button").filter(has_text="业务补充 A")
                         expect(result).to_be_visible()
@@ -156,6 +163,9 @@ def test_studio_categories_source_order_lazy_heading_tree_and_global_search(mate
                         expect(article).not_to_contain_text("选择一篇文档开始阅读")
                         article.get_by_role("button", name="重新加载文档", exact=True).click()
                         expect(article).to_contain_text("开头介绍文字保留在正文")
+                        expect(sidebar.get_by_role("button", name="展开章节 业务概览 Z", exact=True)).to_have_attribute("aria-expanded", "false")
+                        expect(sidebar.get_by_role("button", name="办理步骤", exact=True)).to_have_count(0)
+                        sidebar.get_by_role("button", name="展开章节 业务概览 Z", exact=True).click()
                         expect(sidebar).to_contain_text("办理步骤")
                         expect(sidebar.get_by_role("button", name="章节未能读取，重试", exact=True)).to_have_count(0)
                         page.unroute("**/interactive/documents/" + z_doc["revision_id"] + "?*", temporary_failure)

@@ -113,9 +113,7 @@ export function HandbookTemplate({
   const [categoryId, setCategory] = useState(
     selected?.category.id || tree.packages[0]?.categories[0]?.id || "",
   );
-  const [expanded, setExpanded] = useState<Set<string>>(
-    new Set(selectedDocument ? [selectedDocument] : []),
-  );
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [folders, setFolders] = useState<Set<string>>(new Set());
   const [outlineCache, setOutlineCache] = useState<
     Record<string, HandbookArticle>
@@ -219,7 +217,6 @@ export function HandbookTemplate({
     if (!selected) return;
     setPackage(selected.package.id);
     setCategory(selected.category.id);
-    setExpanded((previous) => new Set([...previous, selected.document.id]));
     setFolders(
       (previous) =>
         new Set([...previous, ...selected.folders.map((folder) => folder.id)]),

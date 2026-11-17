@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from contextlib import nullcontext
 from hashlib import sha256
 
 from markdown_it import MarkdownIt
@@ -171,10 +172,10 @@ class DocumentService:
         retained = s.info.setdefault("vks_prefetched", {})
         missing = [rid for rid in ids if (Revision, rid) not in retained]
         retained.update({(Revision, row.id): row for row in ReadingService(None).revision_rows(s, missing)})
-        rows = [s.get(Revision, rid) for rid in ids]
+        rows = [retained.get((Revision, rid)) or s.get(Revision, rid) for rid in ids]
         identities = set()
         for row in rows:
-            entity = s.get(Entity, row.entity_id) if row else None
+            entity = (retained.get((Entity, row.entity_id)) or s.get(Entity, row.entity_id)) if row else None
             if (
                 not row
                 or not entity
@@ -238,6 +239,118 @@ class DocumentService:
         return rows
 
     @classmethod
+    def _membership_mapping(cls, document, revision):
+        ids = revision.metadata_json["section_revision_ids"]
+        if (
+            not isinstance(ids, list)
+            or any(not isinstance(rid, str) for rid in ids)
+            or len(ids) != len(set(ids))
+            or revision.metadata_json.get("section_count") != len(ids)
+        ):
+            cls._section_gap("invalid_mapping")
+        key = (document.id, document.project_id, document.stable_key, revision.id, revision.artifact_id, tuple(ids))
+        return ids, key
+
+    @classmethod
+    def prefetch_section_members(cls, s, documents):
+        """Validate complete maps in one SQL query, retaining per-document results.
+
+        Invalid maps are deliberately left uncached: the ordinary resolver
+        rejects only the affected item, without failing its healthy neighbours.
+        No chapter bodies or permission decisions enter this snapshot cache.
+        """
+        if s.bind.dialect.name != "sqlite" or not (s.info.get("vks_read_only") or s.info.get("vks_completion_batch")):
+            return
+        from sqlalchemy import and_, func, true
+
+        from .reading import chunks
+        from .service import DomainError
+
+        cache = s.info.setdefault("vks_mapped_section_members", set())
+        pending = {}
+        for document, revision in documents:
+            if not document or document.type != "document" or "section_revision_ids" not in revision.metadata_json:
+                continue
+            try:
+                ids, key = cls._membership_mapping(document, revision)
+            except DomainError:
+                continue
+            if key not in cache:
+                pending[key] = {
+                    "pid": document.project_id,
+                    "key": document.stable_key,
+                    "artifact": revision.artifact_id,
+                    "ids": ids,
+                }
+        for batch in chunks(pending, 200):
+            values = (
+                func.json_each(canonical([pending[key] for key in batch]))
+                .table_valued("key", "value")
+                .alias("documents")
+            )
+            ids = func.json_each(func.json_extract(values.c.value, "$.ids")).table_valued("value").alias("members")
+            pid = func.json_extract(values.c.value, "$.pid")
+            artifact = func.json_extract(values.c.value, "$.artifact")
+            key = func.json_extract(values.c.value, "$.key")
+            counts = s.execute(
+                select(values.c.key, func.count(Entity.id), func.count(func.distinct(Entity.id)))
+                .select_from(values)
+                .outerjoin(ids, true())
+                .outerjoin(
+                    Revision,
+                    and_(
+                        Revision.id == ids.c.value,
+                        Revision.project_id == pid,
+                        Revision.artifact_id.is_not_distinct_from(artifact),
+                        Revision.metadata_json["document_key"].as_string() == key,
+                    ),
+                )
+                .outerjoin(
+                    Entity, and_(Entity.id == Revision.entity_id, Entity.project_id == pid, Entity.type == "section")
+                )
+                .group_by(values.c.key)
+            )
+            for index, count, distinct in counts:
+                mapping_key = batch[int(index)]
+                if count == distinct == len(pending[mapping_key]["ids"]):
+                    cache.add(mapping_key)
+
+    @classmethod
+    def section_members(cls, s, document, revision, wanted):
+        """Check the ENTIRE exact mapping in SQL without hydrating every body.
+
+        This has the same project, kind, artifact, document-key and unique
+        identity checks as _mapped_sections. Legacy mappings retain their full
+        resolver. Only the small requested membership set is returned.
+        """
+        if "section_revision_ids" not in revision.metadata_json or s.bind.dialect.name != "sqlite":
+            return {row.id for row in cls._sections(s, document, revision)} & set(wanted)
+        ids, key = cls._membership_mapping(document, revision)
+        from sqlalchemy import func
+
+        cache = s.info.setdefault("vks_mapped_section_members", set())
+        scoped = s.info.get("vks_read_only") or s.info.get("vks_completion_batch")
+        if not scoped or key not in cache:
+            values = func.json_each(canonical(ids)).table_valued("value")
+            count, distinct = s.execute(
+                select(func.count(), func.count(func.distinct(Revision.entity_id)))
+                .join(Entity, Entity.id == Revision.entity_id)
+                .where(
+                    Revision.id.in_(select(values.c.value)),
+                    Entity.type == "section",
+                    Entity.project_id == document.project_id,
+                    Revision.project_id == document.project_id,
+                    Revision.artifact_id == revision.artifact_id,
+                    Revision.metadata_json["document_key"].as_string() == document.stable_key,
+                )
+            ).one()
+            if count != len(ids) or distinct != len(ids):
+                cls._section_gap("invalid_mapping")
+            if scoped:
+                cache.add(key)
+        return set(ids) & set(wanted)
+
+    @classmethod
     def _sections(cls, s, document, revision, aid=None):
         if "section_revision_ids" in revision.metadata_json:
             rows = cls._mapped_sections(
@@ -298,6 +411,34 @@ class DocumentService:
             "schema_version": "1.0",
         }
         fingerprint = digest(canonical(payload))
+        known = s.info.get("vks_known_revisions", {}).get((entity.id, fingerprint))
+        if known is not None:
+            return known
+        if s.info.get("vks_completion_batch") and s.bind.dialect.name == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert
+
+            statement = (
+                insert(Revision)
+                .values(
+                    id=uid(),
+                    project_id=entity.project_id,
+                    entity_id=entity.id,
+                    artifact_id=artifact.id,
+                    name=name,
+                    content=content,
+                    locator=locator,
+                    metadata_json=metadata,
+                    content_sha256=fingerprint,
+                    semantic_content_sha256=digest(content),
+                )
+                .on_conflict_do_nothing(index_elements=["entity_id", "content_sha256"])
+                .returning(Revision)
+            )
+            created = s.scalar(statement)
+            if created is not None:
+                s.info.setdefault("vks_prefetched", {})[(Revision, created.id)] = created
+                s.info.setdefault("vks_known_revisions", {})[(entity.id, fingerprint)] = created
+                return created
         existing = s.scalar(
             select(Revision).where(Revision.entity_id == entity.id, Revision.content_sha256 == fingerprint)
         )
@@ -319,7 +460,7 @@ class DocumentService:
         s.flush()
         return revision
 
-    def _artifact(self, s, analysis, document, old, markdown):
+    def _artifact(self, s, analysis, document, old, markdown, generation=None):
         from .reading import artifact_policy
 
         raw = markdown.encode("utf-8")
@@ -332,6 +473,24 @@ class DocumentService:
             "allow_platform_llm": bool(source and source.metadata_json.get("allow_platform_llm", False)),
             "sensitivity": source.sensitivity if source else "internal",
         }
+        provenance = list(source.metadata_json.get("input_revision_provenance", [])) if source else []
+        if generation:
+            from .reading import revision_policy
+
+            provenance = [
+                *provenance,
+                {
+                    "revision_id": old.id,
+                    "entity_id": old.entity_id,
+                    "sha256": old.content_sha256,
+                    "artifact_id": old.artifact_id,
+                    **revision_policy(s, old),
+                },
+            ]
+        if provenance:
+            inherited_policy["input_revision_provenance"] = provenance
+        if generation:
+            inherited_policy["interactive_generation"] = generation
         # Equal bytes may have an older, weaker disclosure/model policy. Keep
         # the logical draft source stable while selecting a distinct immutable
         # snapshot when inherited policy changes, even for a content rollback.
@@ -403,23 +562,27 @@ class DocumentService:
                     "requires_source_read": bool(source and source_policy.get("requires_source_read")),
                     "requires_trace_read": bool(source and source_policy.get("requires_trace_read")),
                     "allow_platform_llm": bool(source and source.metadata_json.get("allow_platform_llm", False)),
+                    **({"input_revision_provenance": provenance} if provenance else {}),
+                    **({"interactive_generation": generation} if generation else {}),
                 },
             )
             s.add(artifact)
             s.flush()
         return artifact
 
-    def save_draft(self, actor, eid, payload, version):
+    def save_draft(self, actor, eid, payload, version, *, session=None, validate=None, generation=None):
         markdown = payload["markdown"]
         if len(markdown.encode()) > 1_000_000:
             fail("VKS_LIMIT_EXCEEDED", "文档草稿超过大小限制", 413)
-        with self.service.db() as s:
+        with nullcontext(session) if session is not None else self.service.db() as s:
             document, analysis, selection, old = self._selected_document(s, actor, eid, payload["analysis_set_id"])
             if analysis.state == "frozen":
                 fail("VKS_STATE_CONFLICT", "已发布文档不可修改，请先创建草稿", 409)
             if old.id != payload["base_revision_id"]:
                 fail("VKS_VERSION_CONFLICT", "文档修订已更新，请比较后重新保存", 412)
             self.service._version(old.metadata_json.get("row_version", 1), version)
+            if validate:
+                validate(s)
             previous = self._sections(s, document, old, analysis.id)
             by_id = {r.entity_id: r for r in previous}
             aliases = {r.id: r.entity_id for r in previous}
@@ -432,7 +595,7 @@ class DocumentService:
             sections = parse_sections(markdown, old.name)
             matched, used, ambiguities = match_sections(previous, sections)
             assert_section_locks(previous, sections, matched, locked & requested)
-            artifact = self._artifact(s, analysis, document, old, markdown)
+            artifact = self._artifact(s, analysis, document, old, markdown, generation=generation)
             metadata = dict(
                 old.metadata_json,
                 row_version=old.metadata_json.get("row_version", 1) + 1,
@@ -536,6 +699,7 @@ class DocumentService:
                         if rid in evidence_for_revision
                     ]
                     relation.evidence_ids = list(dict.fromkeys([*relation.evidence_ids, *extra]))
+            self.service.audit(s, actor, document.project_id, "workspace.document.save", new.id)
             return self._dto(s, document, new, analysis.id)
 
     def _dto(self, s, document, revision, aid=None):

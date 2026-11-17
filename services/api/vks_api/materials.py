@@ -12,7 +12,7 @@ from typing import Annotated, ClassVar, Literal
 from fastapi import Depends, Header, Request
 from pydantic import Field
 from sqlalchemy import ForeignKey, select
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, load_only, mapped_column
 
 from .documents import DocumentService, assert_section_locks, match_sections, parse_sections
 from .knowledge import AnalysisSource, KnowledgeService, SourceSnapshot
@@ -63,6 +63,16 @@ class TrashMaterial(Input):
     kind: Literal["package", "version"]
     target_id: Ref
     deleted: bool = True
+
+
+class TrashTarget(Input):
+    kind: Literal["package", "version"]
+    target_id: Ref
+
+
+class PurgeMaterials(Input):
+    analysis_set_id: Ref
+    targets: list[TrashTarget] = Field(min_length=1, max_length=10000)
 
 
 class OpenWorkspace(Input):
@@ -216,6 +226,10 @@ class MaterialService:
 
     def _draft(self, s, actor, pid, aid):
         self.service.require(s, actor, pid, "knowledge:edit")
+        # Serialize project workspace changes before locking an individual draft.
+        # A recycle operation may address another draft while restore switches
+        # the current pointer; both must observe the same active-package state.
+        s.scalar(select(StudioWorkspace).where(StudioWorkspace.project_id == pid).with_for_update())
         analysis = s.scalar(select(Analysis).where(Analysis.id == aid, Analysis.project_id == pid).with_for_update())
         if not analysis:
             raise missing()
@@ -237,6 +251,8 @@ class MaterialService:
         self.service.require(s, actor, pid, "source:import")
         self._complete_access(s, actor, pid, analysis)
         if form.package_id:
+            if s.get(MaterialTrash, (pid, "purged_package", form.package_id)):
+                raise DomainError("VKS_STATE_CONFLICT", "该资料包已从回收站删除，请重新导入。", 409)
             if s.get(MaterialTrash, (pid, "package", form.package_id)):
                 raise DomainError("VKS_STATE_CONFLICT", "请先从回收站恢复资料包，再更新。", 409)
             candidates = [r for r in roots(s, pid) if r.entity_id == form.package_id]
@@ -418,11 +434,35 @@ class MaterialService:
 
     def _versions(self, s, actor, pid, trash):
         versions, removed = [], []
-        for release in s.scalars(select(Release).where(Release.project_id == pid).order_by(Release.created_at.desc())):
-            try:
-                self.service._saved_snapshot(s, actor, release)
-            except DomainError:
+        complete = self.service._can(s, actor, pid, "source:read") and self.service._can(s, actor, pid, "trace:read")
+        query = (
+            select(Release)
+            .options(
+                load_only(
+                    Release.id,
+                    Release.project_id,
+                    Release.analysis_set_id,
+                    Release.change_note,
+                    Release.release_no,
+                    Release.created_at,
+                )
+            )
+            .where(Release.project_id == pid)
+            .order_by(Release.created_at.desc())
+        )
+        for release in s.scalars(query):
+            if ("purged_version", release.id) in trash:
                 continue
+            # This is a metadata directory, not snapshot restoration. A caller
+            # allowed every source/evidence class can see its project version
+            # names without decoding and validating every full manifest. Exact
+            # integrity validation remains mandatory on restore/export. Limited
+            # callers still authorize each exact snapshot before its name/count.
+            if not complete:
+                try:
+                    self.service._saved_snapshot(s, actor, release)
+                except DomainError:
+                    continue
             row = {
                 "id": release.id,
                 "name": release.change_note,
@@ -467,6 +507,8 @@ class MaterialService:
             }
             library = {}
             for rev in roots(s, pid):
+                if ("purged_package", rev.entity_id) in trash:
+                    continue
                 if not readable(self.service, s, actor, pid, rev):
                     continue
                 row = descriptor(s, rev)
@@ -551,7 +593,17 @@ class MaterialService:
                 self.service._saved_snapshot(s, actor, release)
 
             def apply():
-                row = s.get(MaterialTrash, (pid, form.kind, form.target_id))
+                row = s.scalar(
+                    select(MaterialTrash)
+                    .where(
+                        MaterialTrash.project_id == pid,
+                        MaterialTrash.kind == form.kind,
+                        MaterialTrash.target_id == form.target_id,
+                    )
+                    .with_for_update()
+                )
+                if s.get(MaterialTrash, (pid, "purged_" + form.kind, form.target_id)):
+                    raise DomainError("VKS_STATE_CONFLICT", "此项已从回收站删除，无法在回收站恢复。", 409)
                 if form.deleted and not row:
                     s.add(MaterialTrash(project_id=pid, kind=form.kind, target_id=form.target_id, deleted_by=actor.id))
                 elif not form.deleted and row:
@@ -568,6 +620,57 @@ class MaterialService:
 
             return self.service.idem(
                 s, actor, pid, "material.trash", key, {**form.model_dump(), "expected": expected}, apply
+            )
+
+    def purge_trash(self, actor, pid, form, expected, key):
+        """Dismiss explicit recycle entries; immutable facts and snapshot references remain."""
+        with self.service.db() as s:
+            analysis = self._draft(s, actor, pid, form.analysis_set_id)
+
+            def apply():
+                version(analysis.selection_version, expected)
+                targets = sorted({(item.kind, item.target_id) for item in form.targets})
+                for kind, target_id in targets:
+                    if kind == "package":
+                        self.service.require(s, actor, pid, "source:import")
+                        candidates = [r for r in roots(s, pid) if r.entity_id == target_id]
+                        if not candidates or any(not readable(self.service, s, actor, pid, r) for r in candidates):
+                            raise missing()
+                        current = s.get(StudioWorkspace, pid)
+                        aids = {analysis.id, current.analysis_set_id} if current else {analysis.id}
+                        if s.scalar(
+                            select(Selection.entity_id)
+                            .where(
+                                Selection.analysis_set_id.in_(aids),
+                                Selection.entity_id == target_id,
+                            )
+                            .limit(1)
+                        ):
+                            raise DomainError("VKS_STATE_CONFLICT", "正在使用的资料不能从回收站删除。", 409)
+                    else:
+                        release = s.get(Release, target_id)
+                        if not release or release.project_id != pid:
+                            raise missing()
+                        self.service._saved_snapshot(s, actor, release)
+                    row = s.scalar(
+                        select(MaterialTrash)
+                        .where(
+                            MaterialTrash.project_id == pid,
+                            MaterialTrash.kind == kind,
+                            MaterialTrash.target_id == target_id,
+                        )
+                        .with_for_update()
+                    )
+                    if not row:
+                        raise DomainError("VKS_STATE_CONFLICT", "回收站内容已变化，请刷新后重试。", 409)
+                    marker = (pid, "purged_" + kind, target_id)
+                    if not s.get(MaterialTrash, marker):
+                        s.add(MaterialTrash(project_id=pid, kind=marker[1], target_id=target_id, deleted_by=actor.id))
+                self.service.audit(s, actor, pid, "material.trash.purge", key, metadata={"count": len(targets)})
+                return {"purged": len(targets)}
+
+            return self.service.idem(
+                s, actor, pid, "material.trash.purge", key, {**form.model_dump(), "expected": expected}, apply
             )
 
     def prepare(self, actor, pid, form, expected, key):
@@ -621,6 +724,8 @@ class MaterialService:
             else None
         )
         for candidate in roots(s, pid):
+            if s.get(MaterialTrash, (pid, "purged_package", candidate.entity_id)):
+                continue
             meta = candidate.metadata_json[ROOT]
             if meta["kind"] != form.kind or form.package_id and candidate.entity_id != form.package_id:
                 continue
@@ -772,7 +877,9 @@ class MaterialService:
                     preserved_manual = True
                 prior = current or prior
             if (
-                prior and prior.content == markdown and document_path(prior) == path
+                prior
+                and prior.content == markdown
+                and document_path(prior) == path
                 and (not parsed.get("document_names", {}).get(path) or parsed["document_names"][path] == prior.name)
             ):
                 members.extend(
@@ -1040,9 +1147,11 @@ class MaterialService:
             r.metadata_json[ROOT].get("document_template", {}).get("template_id") == "handbook"
             for r in desired.values()
         ):
-            s.add(DocumentPresentation(
-                analysis_set_id=analysis.id, settings=PresentationSettings(mode="handbook").model_dump()
-            ))
+            s.add(
+                DocumentPresentation(
+                    analysis_set_id=analysis.id, settings=PresentationSettings(mode="handbook").model_dump()
+                )
+            )
         report, targets, issues = self._migrate_graph(s, actor, pid, analysis, old, desired, selected_before)
         sources = list(analysis.sources)
         recorded_sources = {row.get("source_snapshot_id") for row in sources}
@@ -1279,8 +1388,9 @@ class MaterialService:
 
             def restore_pointer():
                 for package in roots(s, pid, clone["id"]):
-                    if removed := s.get(MaterialTrash, (pid, "package", package.entity_id)):
-                        s.delete(removed)
+                    for kind in ("package", "purged_package"):
+                        if removed := s.get(MaterialTrash, (pid, kind, package.entity_id)):
+                            s.delete(removed)
                 state = s.get(StudioWorkspace, pid)
                 if state and state.analysis_set_id != form.analysis_set_id:
                     raise DomainError("VKS_VERSION_CONFLICT", "项目工作区已切换，请刷新后再回退", 409)
@@ -1580,6 +1690,17 @@ def install_materials(app, service, actor, envelope):
         idempotency_key: str = Header(..., max_length=100),
     ):
         return envelope(request, shared.trash(a, pid, payload, if_match, idempotency_key))
+
+    @app.post(prefix + "/trash/purge", response_model=PrototypeEnvelope[dict])
+    def purge_trash(
+        pid: str,
+        payload: PurgeMaterials,
+        a: ActorDep,
+        request: Request,
+        if_match: str = Header(...),
+        idempotency_key: str = Header(..., max_length=100),
+    ):
+        return envelope(request, shared.purge_trash(a, pid, payload, if_match, idempotency_key))
 
     @app.post(prefix + "/prepare", response_model=PrototypeEnvelope[dict])
     def prepare(

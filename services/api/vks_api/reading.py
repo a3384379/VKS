@@ -6,6 +6,7 @@ policies, or permission decisions. Those are re-read for each transaction.
 
 from __future__ import annotations
 
+import json
 import re
 from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
@@ -205,6 +206,18 @@ def _revision_input_requirements(s, pid, entries, active):
 
 
 def artifact_policy(s, artifact, _active=None):
+    # One immutable read snapshot may contain thousands of chapters sharing an
+    # artifact. Cache only top-level policy evaluation inside that transaction;
+    # recursive traversal keeps its cycle guard and write-side checks stay fresh.
+    if _active is None and artifact is not None and s.info.get("vks_read_only") and not (s.dirty or s.new or s.deleted):
+        cache = s.info.setdefault("vks_artifact_policy", {})
+        if artifact.id not in cache:
+            cache[artifact.id] = _artifact_policy(s, artifact)
+        return dict(cache[artifact.id])
+    return _artifact_policy(s, artifact, _active)
+
+
+def _artifact_policy(s, artifact, _active=None):
     """Read-time quarantine for legacy model outputs with unknown input scope."""
     active = frozenset() if _active is None else _active
     if not artifact or artifact.id in active or len(active) >= 64:
@@ -473,9 +486,20 @@ class ReadingService:
 
     @contextmanager
     def db(self):
+        # A bounded preparation batch shares one current read snapshot.
+        from .inference_pipeline import READ_SESSION
+
+        shared = READ_SESSION.get()
+        if shared is not None and shared[0] is self.service:
+            yield shared[1]
+            return
         # Reads do not take the process mutation lock or SQLite's write lock.
         with self.service.Session.begin() as session:
             try:
+                from sqlalchemy import event
+
+                retained = set()
+                event.listen(session, "loaded_as_persistent", lambda _s, row: retained.add(row))
                 session.info["vks_read_only"] = True
                 if self.service.engine.dialect.name == "postgresql":
                     session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
@@ -513,7 +537,11 @@ class ReadingService:
             analysis = s.get(Analysis, analysis_set_id)
             if not analysis or analysis.project_id != pid:
                 raise DomainError("VKS_NOT_FOUND", "未找到分析集合", 404)
-            release = s.scalar(release_query.where(Release.analysis_set_id == analysis.id))
+            batched = (s.info.get("vks_completion_batch") or s.info.get("vks_read_batch")) and s.bind.dialect.name == "sqlite"
+            releases = s.info.setdefault("vks_analysis_releases", {}) if batched else {}
+            if analysis.id not in releases:
+                releases[analysis.id] = s.scalar(release_query.where(Release.analysis_set_id == analysis.id))
+            release = releases[analysis.id]
             if not release:
                 self.service.require(s, actor, pid, "knowledge:edit")
             return analysis, release
@@ -554,6 +582,22 @@ class ReadingService:
         if release:
             index = self.index(s, release)
             return index.selections, index
+        if s.bind.dialect.name == "sqlite":
+            maps = s.info.setdefault("vks_selection_maps", {}) if (
+                s.info.get("vks_completion_batch") or s.info.get("vks_read_batch")
+            ) else {}
+            if analysis.id in maps:
+                return dict(maps[analysis.id]), None
+            # SQLite serializes the same fresh scalar mapping in C. Avoid
+            # hydrating thousands of SQLAlchemy rows in every parallel reader.
+            value = s.scalar(
+                select(func.json_group_object(Selection.entity_id, Selection.entity_revision_id)).where(
+                    Selection.analysis_set_id == analysis.id
+                )
+            )
+            choices = json.loads(value or "{}")
+            maps[analysis.id] = choices
+            return dict(choices), None
         return dict(
             s.execute(
                 select(Selection.entity_id, Selection.entity_revision_id).where(
@@ -758,16 +802,66 @@ class ReadingService:
         revisions = list(revisions)
         evidence = list(evidence)
         retained = s.info.setdefault("vks_prefetched", {})
+        # Keep actual rows alive for this transaction. SQLAlchemy's identity
+        # map is weak: dropping the last local reference caused repeated loads
+        # of the same chapter in policy/citation checks.
+        retained.update({(Revision, row.id): row for row in revisions if isinstance(row, Revision)})
         entities = {r.entity_id for r in revisions}
         artifacts = {r.artifact_id for r in revisions if r.artifact_id} | {e.artifact_id for e in evidence}
         for model, ids in ((Entity, entities), (Artifact, artifacts)):
-            for batch in chunks(ids):
+            retained.update({(model, key): row for key in ids
+                             if (row := s.identity_map.get((model, (key,), None))) is not None})
+            missing = [key for key in ids if (model, key) not in retained]
+            for batch in chunks(missing):
                 for row in s.scalars(select(model).where(model.id.in_(batch))):
                     retained[(model, row.id)] = row
 
+        # Policy provenance frequently points every document at the same raw
+        # upload. Keep that bounded closure alive in this transaction instead
+        # of issuing one weak-identity-map lookup for every artifact policy.
+        frontier = [retained[(Artifact, aid)] for aid in artifacts if (Artifact, aid) in retained]
+        for _ in range(64):
+            dependencies = set()
+            for artifact in frontier:
+                metadata = artifact.metadata_json or {}
+                for name in (
+                    "prototype_input_artifact_ids",
+                    "prototype_surface_artifact_ids",
+                    "journey_input_artifacts",
+                ):
+                    dependencies.update(
+                        v
+                        for v in (metadata.get(name) if isinstance(metadata.get(name), list) else [])
+                        if isinstance(v, str)
+                    )
+                for name in ("input_provenance", "input_revision_provenance"):
+                    dependencies.update(
+                        v["artifact_id"]
+                        for v in (metadata.get(name) if isinstance(metadata.get(name), list) else [])
+                        if isinstance(v, dict) and isinstance(v.get("artifact_id"), str)
+                    )
+                original = metadata.get("original_artifact_id")
+                if isinstance(original, str):
+                    dependencies.add(original)
+            missing = [aid for aid in dependencies if (Artifact, aid) not in retained]
+            if not missing or len(missing) > 5000:
+                break
+            frontier = []
+            for batch in chunks(missing):
+                for artifact in s.scalars(select(Artifact).where(Artifact.id.in_(batch))):
+                    retained[(Artifact, artifact.id)] = artifact
+                    frontier.append(artifact)
+            if not frontier:
+                break
+
     def revision_rows(self, s, ids):
-        rows = []
-        for batch in chunks(ids):
+        ids = list(dict.fromkeys(ids))
+        retained = s.info.get("vks_prefetched", {})
+        known = {rid: row for rid in ids if isinstance(
+            row := s.identity_map.get((Revision, (rid,), None)) or retained.get((Revision, rid)), Revision
+        )}
+        rows = list(known.values())
+        for batch in chunks(rid for rid in ids if rid not in known):
             rows.extend(s.scalars(select(Revision).where(Revision.id.in_(batch))))
         self.preload(s, rows)
         return rows
@@ -1242,6 +1336,15 @@ class ReadingService:
 
     def job_dto(self, s, actor, job):
         dto = self.service.job_dto(job)
+        if job.kind == "reassociation_preview":
+            # Its dedicated paginated endpoint reapplies current target and
+            # candidate-source permissions before returning any count/name.
+            dto.pop("result", None)
+            dto.pop("issue_count", None)
+            dto["result_refs"] = []
+            if "error" in dto:
+                dto["error"] = {"code": dto["error"]["code"], "message": "本次预览未完成，请查看预览列表", "retryable": False}
+            return dto
         if job.kind in ("material_migrate", "associate_all") and not all(
             self.service._can(s, actor, job.project_id, scope) for scope in ("source:read", "trace:read")
         ):
