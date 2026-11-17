@@ -24,6 +24,7 @@ from sqlalchemy import select
 
 from . import ai_gateway
 from .ai_gateway import AiService, ModelNotSent, ModelPolicy, PolicyInput, failure
+from .association_text import association_body_without_title
 from .interactive import DOMTarget, InteractiveBinding, InteractiveCitation, InteractiveKnowledgeService
 from .models import Artifact, Idempotency, Job, Revision
 from .prototype_contracts import PrototypeEnvelope
@@ -188,7 +189,7 @@ def answer_schema(form):
     return schema
 
 
-REASSOCIATION_SYSTEM = """你是项目知识关联修订助手。根据 writing_instruction 改善当前控件或模块的关联标题和关联说明，返回可直接替换保存的完整 Markdown，不是摘要或修改清单。
+REASSOCIATION_SYSTEM = """你是项目知识关联修订助手。根据 writing_instruction 改善当前控件或模块的关联标题和关联说明：title 保存标题，explanation 返回可直接替换保存的完整 Markdown 正文，不是摘要或修改清单。
 title 单独填写关联文档标题；explanation 只填写正文，不再输出文档总标题，不以 Markdown 标题、独立标题行或“标题：”重复 title。正文直接从说明段落或“## 功能与适用范围”等内容小节开始，可以保留有信息量的二级、三级小节标题。若底稿正文开头已有文档总标题，本次修订应省去该标题，保留其后的有效正文；沿用底稿结构的要求不包括重复文档总标题。
 additional_section_revision_ids 是用户为当前目标新增选择的准确章节，必须结合其完整内容补充原说明，并在 section_revision_ids 中保留这些引用；它们不改变当前目标的身份，不把章节中的其他模块当作关联目标。若资料不适用于此目标，明确在 unknowns 说明，不伪造对应关系。
 内置修订目标：在原有基础上继续补全完善细节，形成比底稿更完整、具体、可核对的关联文档，而不是另起一份更短的概述。writing_instruction 是用户追加的方向；留空时也必须执行这个内置目标。
@@ -1465,6 +1466,12 @@ class InteractiveAssistant:
                 if question:
                     answer.setdefault("suggested_questions", [])
                 ai_gateway.Draft202012Validator(answer_schema(form)).validate(answer)
+                if not question and not explaining:
+                    answer["explanation"] = association_body_without_title(
+                        answer["explanation"], answer["title"], form.target.label, current["title"] if current else ""
+                    )
+                    if not answer["explanation"].strip():
+                        failure("VKS_INVALID_INPUT", "模型只返回了关联标题，缺少正文，请重新生成")
                 chosen = list(dict.fromkeys(answer["section_revision_ids"]))
                 if set(chosen) - {c["revision_id"] for c in candidates}:
                     failure("VKS_INVALID_EVIDENCE", "模型引用了检索范围以外的章节")

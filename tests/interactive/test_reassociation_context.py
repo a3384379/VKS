@@ -88,9 +88,13 @@ def test_added_chapter_is_not_discarded_or_leaked_outside_current_scope(assistan
     def model(config, payload):
         data = json.loads(payload["input"][1]["content"])
         seen.append(data)
-        return test_assistant.response(
-            next(row["revision_id"] for row in data["chapters"] if row["revision_id"] != added["revision_id"])
-        )
+        response = test_assistant.response(data["chapters"][0]["revision_id"])
+        answer = json.loads(response["output"][0]["content"][0]["text"])
+        # Omit the required citation even when recall returns only that chapter.
+        # A generator failure would test the mock, not the server's evidence gate.
+        answer["section_revision_ids"] = []
+        response["output"][0]["content"][0]["text"] = json.dumps(answer)
+        return response
 
     monkeypatch.setattr(ai_gateway, "request_model", model)
     missing = web.post(
