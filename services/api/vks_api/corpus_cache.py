@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 from sqlalchemy import select
 
-from .models import Artifact, Entity, Revision, Selection
 from .immutable_facts import revision_fact
+from .models import Artifact, Entity, Revision, Selection
 
 
 def corpus_rows(assistant, s, actor, pid, choices, *, analysis_id=None):

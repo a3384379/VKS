@@ -6,8 +6,8 @@ from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 from vks_api import ai_gateway
-from vks_api.materials import MaterialService
 from vks_api.interactive_ai import AssistanceInput, InteractiveAssistant
+from vks_api.materials import MaterialService
 
 from tests.interactive import test_assistant
 from tests.interactive.test_native_documents_browser import native_studio
@@ -75,6 +75,17 @@ def test_footer_review_cancel_and_detached_confirmation_preserve_exact_preview(a
             add.click(button="right", position={"x": 2, "y": 2})
             page.get_by_role("menuitem", name="查看关联文档", exact=True).click()
             panel = page.get_by_role("complementary", name="知识助手")
+
+            def open_citation(number, section_id):
+                before = page.url
+                panel.get_by_role("button", name=f"原文引用 {number}", exact=True).click()
+                preview = page.get_by_role("dialog", name="引用原文预览", exact=True)
+                expect(preview).to_be_visible()
+                assert page.url == before
+                preview.get_by_role("button", name="打开文档原文", exact=True).click()
+                expect(page).to_have_url(re.compile("view=documents"))
+                assert "section=" + section_id in page.url
+
             expect(panel.locator(".knowledge-context")).to_contain_text("Add")
             expect(panel.locator(".reassociate-panel")).to_have_count(0)
             references = panel.locator(".source-disclosure")
@@ -89,15 +100,11 @@ def test_footer_review_cancel_and_detached_confirmation_preserve_exact_preview(a
             expect(panel.get_by_role("button", name="原文引用 1", exact=True)).to_have_count(1)
             expect(panel.get_by_role("button", name="原文引用 2", exact=True)).to_have_count(1)
             expect(panel.get_by_role("button", name="原文引用 3", exact=True)).to_have_count(1)
-            panel.get_by_role("button", name="原文引用 3", exact=True).click()
-            expect(page).to_have_url(re.compile("view=documents"))
-            assert "section=" + original[0]["sections"][2]["revision_id"] in page.url
+            open_citation(3, original[0]["sections"][2]["revision_id"])
             page.get_by_role("button", name="原型", exact=True).click()
             add.click(button="right", position={"x": 2, "y": 2})
             page.get_by_role("menuitem", name="查看关联文档", exact=True).click()
-            panel.get_by_role("button", name="原文引用 1", exact=True).click()
-            expect(page).to_have_url(re.compile("view=documents"))
-            assert "section=" + original[0]["sections"][0]["revision_id"] in page.url
+            open_citation(1, original[0]["sections"][0]["revision_id"])
             page.get_by_role("button", name="原型", exact=True).click()
             add.click(button="right", position={"x": 2, "y": 2})
             page.get_by_role("menuitem", name="查看关联文档", exact=True).click()
@@ -121,9 +128,7 @@ def test_footer_review_cancel_and_detached_confirmation_preserve_exact_preview(a
             assert len(calls) == 1
             expect(panel.locator(".source-disclosure")).not_to_have_attribute("open", "")
             expect(panel.locator(".source-disclosure .citation")).to_have_count(0)
-            panel.get_by_role("button", name="原文引用 1", exact=True).click()
-            expect(page).to_have_url(re.compile("view=documents"))
-            assert "section=" + original[0]["sections"][0]["revision_id"] in page.url
+            open_citation(1, original[0]["sections"][0]["revision_id"])
             page.get_by_role("button", name="原型", exact=True).click()
             add.click(button="right", position={"x": 2, "y": 2})
             page.get_by_role("menuitem", name="查看关联文档", exact=True).click()

@@ -370,7 +370,10 @@ class InteractiveAssistant:
             if for_model and type(form) is AssistanceInput:
                 from .corpus_validation import template_state
 
-                shared = template_state(self, s, actor, pid, form, sha(canonical({"system": SYSTEM, "schema": SCHEMA})))
+                shared = template_state(
+                    self, s, actor, pid, form,
+                    sha(canonical({"system": generation_system(form), "schema": answer_schema(form)})),
+                )
                 if shared is not None:
                     return shared
             # Many sections share an artifact. Retain policy computation only
