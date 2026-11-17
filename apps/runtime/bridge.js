@@ -304,10 +304,39 @@
             event.target?.closest?.(
               'button,a,input,select,textarea,[role="button"],[role="menuitem"],[role="tab"],[onclick],[tabindex]:not([tabindex="-1"]),label,.el-switch,.el-checkbox,.el-radio,.el-menu-item,.el-submenu__title',
             ) || (picking ? event.target : null);
-          if (!el || !visible(el)) return;
           const currentRoute = win.__prototypePackPage?.path
             ? "/" + win.__prototypePackPage.path.replace(/^\//, "")
             : route;
+          const portal =
+            !win.__prototypePackPage?.path &&
+            (win.__prototypePack || doc.getElementById("prototypePackPayload"));
+          if (
+            !picking &&
+            portal &&
+            (!el ||
+              el.matches(
+                '[role="menuitem"],[role="tab"],[data-page],[data-tab],a[data-vks-page]',
+              ))
+          ) {
+            pointed = null;
+            // Same-route navigation can be a no-op in the original portal.
+            // Resolve after its handler without reloading or selecting the menu.
+            setTimeout(() => scan(true), 0);
+            return;
+          }
+          if (!el) {
+            pointed = null;
+            // Blank list/page clicks return to the visible business module.
+            // The surrounding portal/menu must not replace its active iframe.
+            const module =
+              path.length === 0 && currentModule
+                ? currentModule
+                : moduleContext(win, path, currentRoute);
+            currentModule = module;
+            send("control.activated", module);
+            return;
+          }
+          if (!visible(el)) return;
           const selected = target(el, win, path, currentRoute);
           const selectedControl = {
             target: selected,
@@ -682,11 +711,35 @@
         request,
       );
   }
-  function scan() {
+  function scan(activateModule = false) {
     if (loaded) {
       windows.clear();
       ambiguousFrames.clear();
       install(frame.contentWindow, [], "/");
+      if (activateModule === true) {
+        let active = null;
+        for (const { win, path, route } of windows.values()) {
+          let shown = true;
+          for (
+            let child = win;
+            child !== frame.contentWindow && shown;
+            child = child.parent
+          )
+            shown = !!child.frameElement && visible(child.frameElement);
+          if (
+            shown &&
+            (path.length === 0 || path.includes("actualPage")) &&
+            ((!win.__prototypePack &&
+              !win.document.getElementById("prototypePackPayload")) ||
+              win.__prototypePackPage?.path)
+          )
+            active = moduleContext(win, path, route);
+        }
+        if (active) {
+          currentModule = active;
+          send("control.activated", active);
+        }
+      }
     }
   }
   async function inventory(payload, request) {

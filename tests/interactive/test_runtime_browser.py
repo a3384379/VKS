@@ -89,6 +89,76 @@ def registration_options(runtime, material, **changes):
     }
 
 
+def test_prototype_blank_list_click_returns_to_module_without_intercepting_controls(runtime_sites):
+    host_url, runtime, _ = runtime_sites
+    material = '<!doctype html><html><head><title>收费标准设置</title></head><body><h1>收费标准设置</h1><button id="close" onclick="window.closedClicks=(window.closedClicks||0)+1">关闭</button><table><tbody><tr><td id="blank" style="width:500px;height:200px"> </td></tr></tbody></table></body></html>'
+    with sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
+        page = browser.new_page()
+        try:
+            page.goto(host_url)
+            page.evaluate("options=>openMaterial(options)", registration_options(runtime, material, mode="prototype"))
+            source = page.frame_locator("#runtime").frame_locator("#material")
+            source.locator("#close").click()
+            page.wait_for_function("events.some(e=>e.type==='control.activated'&&e.payload.target.selector==='#close')")
+            assert source.locator("body").evaluate("()=>window.closedClicks") == 1
+            source.locator("#blank").click()
+            page.wait_for_function(
+                "events.filter(e=>e.type==='control.activated').at(-1)?.payload.target.selector==='body'"
+            )
+            latest = page.evaluate("events.filter(e=>e.type==='control.activated').at(-1).payload")
+            assert latest["context"]["scope"] == "module" and latest["target"]["label"] == "收费标准设置"
+            page.evaluate("command('picker.start',{})")
+            source.locator("#blank").click()
+            page.wait_for_function("events.some(e=>e.type==='target.selected'&&e.payload.selector==='#blank')")
+            assert source.locator("body").evaluate("()=>window.closedClicks") == 1
+        finally:
+            browser.close()
+
+
+def test_portal_menu_and_tab_reentry_select_business_module(runtime_sites):
+    from tests.ui.prototype_navigation import portal_source
+
+    host_url, runtime, _ = runtime_sites
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=chromium_path(pw), headless=True)
+        page = browser.new_page()
+        try:
+            page.goto(host_url)
+            page.evaluate("options=>openMaterial(options)", registration_options(runtime, portal_source(), mode="prototype"))
+            portal = page.frame_locator("#runtime").frame_locator("#material")
+            business = portal.frame_locator("#actualPage")
+            expect(business.locator("h1")).to_have_text("收费标准管理")
+            menu = portal.get_by_role("menuitem", name="收费项管理", exact=True)
+            menu.click()
+            page.wait_for_function("events.filter(e=>e.type==='context.changed').at(-1)?.payload.module?.target.label==='收费项目管理'")
+            baseline = page.evaluate("events.filter(e=>e.type==='context.changed').at(-1).payload.module.target")
+            business.get_by_label("未保存内容", exact=True).fill("保留表单")
+            loads = portal.locator("body").evaluate("()=>window.pageLoads")
+            for nav in (menu, portal.get_by_role("tab", name="收费项管理", exact=True), menu):
+                page.evaluate("events=[]")
+                nav.click()
+                page.wait_for_function("events.some(e=>e.type==='control.activated'&&e.payload.context.scope==='module')")
+                assert page.evaluate("events.filter(e=>e.type==='control.activated').at(-1).payload.target") == baseline
+                assert not page.evaluate("events.some(e=>e.type==='control.activated'&&e.payload.context.scope!=='module')")
+                expect(business.get_by_label("未保存内容", exact=True)).to_have_value("保留表单")
+                assert portal.locator("body").evaluate("()=>window.pageLoads") == loads
+            business.locator("#query").click()
+            page.wait_for_function("events.filter(e=>e.type==='control.activated').at(-1)?.payload.target.selector==='#query'")
+            business.locator("#blank").click()
+            page.wait_for_function("events.filter(e=>e.type==='control.activated').at(-1)?.payload.target.selector==='body'")
+            assert page.evaluate("events.filter(e=>e.type==='control.activated').at(-1).payload.target") == baseline
+            # Right-click and explicit picking still address the menu control.
+            menu.click(button="right")
+            page.wait_for_function("events.some(e=>e.type==='context.menu'&&e.payload.target.label==='收费项管理')")
+            page.evaluate("command('picker.start',{})")
+            menu.click()
+            page.wait_for_function("events.some(e=>e.type==='target.selected'&&e.payload.label==='收费项管理')")
+            assert business.locator("body").evaluate("()=>window.queryClicks") == 1
+        finally:
+            browser.close()
+
+
 def register(client, host_url, runtime, *, mode="document", origins=None, scope=None):
     return client.post(
         f"http://127.0.0.1:{runtime.server_port}/register",

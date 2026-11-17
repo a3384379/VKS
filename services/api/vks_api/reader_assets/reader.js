@@ -1297,7 +1297,8 @@
       data.prototypes.length ||
       data.bindings?.length ||
       data.native_documents?.length
-    ) return;
+    )
+      return;
     const validText = (value, maximum) =>
       typeof value === "string" && value.length <= maximum;
     function replaceAuthoring(payload) {
@@ -1363,7 +1364,9 @@
             if (
               reference.length > 2048 ||
               typeof image !== "string" ||
-              !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(image)
+              !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(
+                image,
+              )
             )
               throw new Error("手册图片格式不合法");
             return [reference, image];
@@ -1379,7 +1382,9 @@
           images,
         };
       });
-      const nextNavigation = JSON.parse(JSON.stringify(payload.navigation || { packages: [] }));
+      const nextNavigation = JSON.parse(
+        JSON.stringify(payload.navigation || { packages: [] }),
+      );
       if (!Array.isArray(nextNavigation.packages))
         throw new Error("手册目录格式不合法");
       const nodes = [];
@@ -2357,7 +2362,12 @@
       let doc;
       try {
         doc = win.document;
-        if (!doc.body) return;
+        if (
+          !doc.body ||
+          doc.readyState === "loading" ||
+          (!doc.body.childElementCount && !doc.body.textContent.trim())
+        )
+          return;
       } catch {
         return;
       }
@@ -2387,7 +2397,9 @@
               'button,a,input,select,textarea,[role="button"],[role="menuitem"],[role="tab"],[onclick],label,.el-switch,.el-menu-item',
             );
             send("menu", {
-              ...context(win, path, route, node && visible(node) ? node : null),
+              ...(node && visible(node)
+                ? context(win, path, route, node)
+                : module || context(win, path, route)),
               ...coords(win, event.clientX, event.clientY),
             });
           },
@@ -2410,8 +2422,23 @@
             const node = event.target.closest?.(
               'button,a,input,select,textarea,[contenteditable="true"],[role="button"],[role="menuitem"],[role="tab"],[onclick],label,.el-switch,.el-menu-item',
             );
-            if (node && visible(node))
+            const portal =
+              !win.__prototypePackPage?.path &&
+              (win.__prototypePack ||
+                doc.getElementById("prototypePackPayload"));
+            if (
+              portal &&
+              (!node ||
+                node.matches(
+                  '[role="menuitem"],[role="tab"],[data-page],[data-tab],a[data-vks-page]',
+                ))
+            ) {
+              // Let native navigation finish, then select its business page.
+              // Reopening an active menu/tab may deliberately skip iframe load.
+              setTimeout(() => scan(true), 0);
+            } else if (!node || visible(node)) {
               send("context", context(win, path, route, node));
+            }
           },
           true,
         );
@@ -2449,11 +2476,15 @@
     }
     let nextModule = null,
       scanTimer;
-    function scan() {
+    function scan(activateModule = false) {
       windows.clear();
       nextModule = null;
       install(window, [], "/");
-      if (nextModule && JSON.stringify(nextModule) !== JSON.stringify(module)) {
+      if (
+        nextModule &&
+        (activateModule === true ||
+          JSON.stringify(nextModule) !== JSON.stringify(module))
+      ) {
         module = nextModule;
         send("context", module);
       }
