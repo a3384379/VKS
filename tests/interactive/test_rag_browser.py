@@ -85,6 +85,7 @@ def test_doc_only_studio_displays_status_and_submits_real_index_job(materials, t
                         page.goto(url + f"/#project={pid}&analysis={aid}&view=ai")
                         page.get_by_label("密码", exact=True).fill("owner")
                         page.get_by_role("button", name="打开交互工作台").click()
+                        page.get_by_role("tab", name="知识检索", exact=True).click()
                         panel = page.get_by_role("region", name="RAG 向量知识库")
                         expect(panel).to_contain_text("0 / 1 章节已索引")
                         button = panel.get_by_role("button", name="建立向量索引", exact=True)

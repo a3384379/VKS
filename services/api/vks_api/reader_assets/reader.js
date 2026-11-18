@@ -1620,6 +1620,14 @@
       // remain in memory, and incoming AI/history/native fields are ignored.
       contentGeneration++;
       state.controller?.abort();
+      documentAIRequest?.controller.abort();
+      documentAIRequest = null;
+      documentAIChannel = "";
+      documentAIReady = false;
+      ui.documentFrame?.dispose();
+      ui.documentFrame = null;
+      ui.documentAssistant?.remove();
+      ui.documentAssistant = null;
       state.controller = null;
       state.busy = false;
       state.activity = null;
@@ -2350,6 +2358,7 @@
     state.section = id;
     revealNativeSelection = true;
     followDocument(state.doc);
+    expandedDocuments.add(state.doc);
     chapterTree(state.doc);
     for (const ancestor of chapterAncestors.get(id) || [])
       expandedChapters.add(ancestor);
@@ -3045,6 +3054,8 @@
     }
     state.tab = tab;
     renderAssistant();
+    if (tab === "chat" && state.view === "documents")
+      documentAIPost("show_chat");
     $(
       tab === "settings"
         ? "#vks-assistant-settings"
@@ -3312,13 +3323,28 @@
           .stream()
           .pipeThrough(new DecompressionStream("gzip")),
       ).text();
+      const contentScope =
+        data.authoring === "vks-handbook-authoring-1"
+          ? Array.from(
+              new Uint8Array(
+                await crypto.subtle.digest(
+                  "SHA-256",
+                  new TextEncoder().encode(JSON.stringify(data.documents)),
+                ),
+              ),
+              (byte) => byte.toString(16).padStart(2, "0"),
+            ).join("")
+          : "";
       if (documentAIChannel !== channel) return;
       const source = raw
         .replaceAll("HOST_CHANNEL", channel)
         .replaceAll(
           "HOST_SCOPE",
           encodeURIComponent(
-            data.project.id + ":" + data.snapshot?.id,
+            data.project.id +
+              ":" +
+              data.snapshot?.id +
+              (contentScope ? ":" + contentScope : ""),
           ).replaceAll("%", "_"),
         );
       ui.documentFrame = new window.VKSAssistant.DocumentAssistantFrame(
@@ -3421,7 +3447,8 @@
       return;
     }
     const controller = new AbortController(),
-      signal = controller.signal;
+      signal = controller.signal,
+      generation = contentGeneration;
     documentAIRequest = { id: payload.id, controller };
     const config = { ...state.config },
       scope = payload.scope === "current" ? state.doc : "";
@@ -3516,6 +3543,7 @@
         await consume(
           response,
           (delta) => {
+            if (signal.aborted || generation !== contentGeneration) return;
             answer.explanation += delta;
             documentAIPost("delta", { id: payload.id, text: delta });
           },
@@ -3529,7 +3557,7 @@
         if (!cited.length || cited.some((n) => n < 1 || n > refs.length))
           throw new Error("回答缺少有效的原文引用，请重新提问。");
       }
-      if (!signal.aborted)
+      if (!signal.aborted && generation === contentGeneration)
         documentAIPost("complete", { id: payload.id, answer });
     } catch (error) {
       if (!signal.aborted)
@@ -4631,6 +4659,8 @@
           state.appliedConnection = connectionIdentity();
           rememberConnection();
           state.tab = state.settingsReturnTab;
+          if (state.tab === "chat" && state.view === "documents")
+            documentAIPost("show_chat");
           renderAssistant();
           notify(
             state.rememberKey

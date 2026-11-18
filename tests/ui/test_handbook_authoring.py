@@ -15,6 +15,7 @@ from vks_api.template_ingest import read_authoring
 
 from tests.interactive import test_materials
 from tests.ui.test_frontend_browser import chromium_path
+from tests.ui.test_readonly_reader import open_connection_settings
 
 materials = test_materials.materials
 
@@ -62,8 +63,7 @@ def test_local_directory_edit_personal_key_safe_save_reopen_and_platform_reimpor
             editor.get_by_label("Markdown 原文", exact=True).fill("# Notes\n\n**Edited locally.**")
             editor.get_by_role("button", name="应用修改", exact=True).click()
             expect(book.locator(".hb-article h1")).to_have_text("Notes edited")
-            page.get_by_role("button", name="打开知识助手", exact=True).click()
-            page.get_by_role("button", name="连接设置", exact=True).click()
+            open_connection_settings(page)
             page.get_by_label("API Key", exact=True).fill(key)
             with page.expect_download() as download:
                 page.get_by_role("button", name="保存可编辑 HTML", exact=True).click()
@@ -84,8 +84,7 @@ def test_local_directory_edit_personal_key_safe_save_reopen_and_platform_reimpor
             page.wait_for_function("!!window.VksHandbookAuthoring")
             book.get_by_role("button", name="开始阅读", exact=True).click()
             expect(book.get_by_role("img", name="Local picture", exact=True)).to_be_visible()
-            page.get_by_role("button", name="打开知识助手", exact=True).click()
-            page.get_by_role("button", name="连接设置", exact=True).click()
+            open_connection_settings(page)
             expect(page.get_by_label("API Key", exact=True)).to_have_value("")
             readonly = tmp_path / "readonly.html"
             payload.pop("authoring")

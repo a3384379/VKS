@@ -130,9 +130,19 @@ def test_file_reader_offline_links_isolation_and_ephemeral_prototype(reader_file
             browser.close()
 
 
-def configure(page):
+def open_connection_settings(page):
     page.get_by_role("button", name="打开知识助手", exact=True).click()
-    page.get_by_role("button", name="连接设置", exact=True).click()
+    if page.locator(".document-ai-window").is_visible():
+        page.locator('iframe[title="知识手册 AI 助手"]').wait_for(state="visible")
+        assistant = page.frame_locator('iframe[title="知识手册 AI 助手"]')
+        assistant.locator('[data-ai-tab="settings"]').click()
+        assistant.get_by_role("button", name="模型连接设置", exact=True).click()
+    else:
+        page.get_by_role("button", name="连接设置", exact=True).click()
+
+
+def configure(page):
+    open_connection_settings(page)
     page.get_by_label("模型服务", exact=True).select_option("custom")
     page.get_by_label("接口地址", exact=True).fill("https://api.example.test/v1")
     page.get_by_label("API Key", exact=True).fill("fixture-recipient-only")

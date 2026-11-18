@@ -68,28 +68,32 @@ def test_authoring_replace_preserves_personal_connection_and_fences_old_stream(t
             page.goto(path.as_uri())
             page.wait_for_function("!!window.VksHandbookAuthoring")
             configure(page)
-            page.get_by_label("向 AI 提问", exact=True).fill("Original")
+            assistant = page.frame_locator('iframe[title="知识手册 AI 助手"]')
+            assistant.locator("#fh-ai-question").fill("Original")
             with page.expect_request("https://api.example.test/v1/chat/completions"):
-                page.get_by_role("button", name="发送", exact=True).click()
+                assistant.locator("#fh-ai-send").click()
             updated = payload("Updated", "NEW_SOURCE_FACT")
             updated["ai"] = {
                 "key": "INCOMING_KEY_MUST_BE_IGNORED",
                 "base_url": "https://wrong.invalid",
                 "model": "wrong",
             }
-            with page.expect_request("https://api.example.test/v1/chat/completions"):
+            with page.expect_event(
+                "requestfailed", predicate=lambda request: request.url.endswith("/chat/completions")
+            ):
                 page.evaluate(
                     """next => {
-              VksHandbookAuthoring.replace(next);VksHandbookAuthoring.open('doc-Updated');
-              const input=document.querySelector('[aria-label="向 AI 提问"]');
-              input.value='Updated';input.dispatchEvent(new Event('input',{bubbles:true}));
-              [...document.querySelectorAll('.assistant button')].find(node=>node.textContent==='发送').click();
-            }""",
+                      VksHandbookAuthoring.replace(next);VksHandbookAuthoring.open('doc-Updated');
+                    }""",
                     updated,
                 )
-            expect(page.get_by_role("button", name="停止", exact=True)).to_be_visible()
-            expect(page.get_by_text("使用个人密钥", exact=True)).to_be_visible()
-            page.wait_for_function("document.querySelector('.chat-message-list')?.textContent.includes('Updated')")
+            expect(assistant.locator("#vks-host-index-status")).to_contain_text("Updated")
+            expect(assistant.locator(".fh-ai-message.user")).to_have_count(0)
+            assistant.locator("#fh-ai-question").fill("Updated")
+            with page.expect_request("https://api.example.test/v1/chat/completions"):
+                assistant.locator("#fh-ai-send").click()
+            expect(assistant.locator("#fh-ai-stop")).to_be_visible()
+            expect(assistant.locator("#fh-ai-usage")).to_contain_text("使用统一个人连接")
             for _ in range(50):
                 if len(pending) == 2:
                     break
@@ -101,7 +105,9 @@ def test_authoring_replace_preserves_personal_connection_and_fences_old_stream(t
                 headers={"Access-Control-Allow-Origin": "*", "Content-Type": "text/event-stream"},
                 body='data: {"choices":[{"delta":{"content":"Updated answer [1]"}}]}\n\ndata: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
             )
-            expect(page.get_by_text("Updated answer", exact=False)).to_be_visible()
+            expect(assistant.get_by_text("Updated answer", exact=False)).to_be_visible()
+            expect(assistant.locator(".fh-ai-message.user")).to_have_count(1)
+            expect(assistant.locator(".fh-ai-message.assistant")).to_have_count(1)
             assert page.evaluate("VksHandbookAuthoring.currentDocument()") == "doc-Updated"
             invalid = deepcopy(updated)
             invalid["prototypes"] = [{"id": "not-authoring"}]

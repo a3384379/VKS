@@ -46,6 +46,8 @@ def test_native_reading_does_not_wait_for_links_or_download_unvisited_prototype(
             # Visiting the prototype loads it once; subsequent view switches
             # preserve both original runtimes and their authored form state.
             page.get_by_role("button", name="关联知识", exact=True).click()
+            expect(page.locator('iframe[title="知识手册 AI 助手"]')).to_be_visible()
+            page.get_by_role("button", name="原型", exact=True).click()
             page.get_by_role("button", name="助手选项", exact=True).click()
             manual = page.get_by_role("button", name="手动补充关联", exact=True)
             expect(manual).to_be_disabled()

@@ -389,6 +389,7 @@ const vksDocumentHost = (() => {
       current = payload;
       paintContext();
     }
+    if (type === "show_chat") qc("chat");
     if (type === "selection") {
       $a = {
         text: String(payload.text || "").slice(0, 4000),

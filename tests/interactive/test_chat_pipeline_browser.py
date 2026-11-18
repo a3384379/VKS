@@ -12,7 +12,7 @@ from vks_api.scan_pipeline import reconcile
 
 from tests.interactive import test_assistant, test_materials
 from tests.interactive.test_native_documents_browser import login, native_studio
-from tests.interactive.test_runtime_inventory_browser import setup
+from tests.interactive.test_runtime_inventory_browser import setup, start_legacy_pipeline
 from tests.ui.test_frontend_browser import chromium_path
 
 materials = test_materials.materials
@@ -59,7 +59,7 @@ def test_pipeline_catalog_refresh_retains_draft_history_citation_and_inflight_an
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_role("button", name="重新关联全部", exact=True).click()
+            start_legacy_pipeline(page, service, owner, pid, aid)
             expect(page.get_by_label("已保存的预扫描进度", exact=True)).to_contain_text(
                 "已采集 3 / 3 页", timeout=20000
             )
@@ -89,6 +89,9 @@ def test_pipeline_catalog_refresh_retains_draft_history_citation_and_inflight_an
                     lambda response: "/interactive/catalog?" in response.url and response.status == 200, timeout=12000
                 ):
                     service.process_job(job_id)
+                    outcome = service.get_job(owner, job_id)
+                    assert outcome["state"] == "succeeded", outcome
+                    assert outcome["result"]["saved"] > 0, json.dumps(outcome, ensure_ascii=False)
                     reconcile(service)
 
             field.fill("Draft survives background association")

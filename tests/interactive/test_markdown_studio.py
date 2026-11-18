@@ -240,13 +240,22 @@ def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(m
                         selected = article.locator("#section-" + chapter["revision_id"])
                         selected.hover()
                         selected.get_by_role("button", name="关联操作", exact=True).click()
-                        panel = page.get_by_role("complementary", name="知识助手")
-                        expect(panel.locator("strong").filter(has_text="必须填写名称")).to_be_visible()
+                        picker = page.get_by_role("dialog", name="选择关联模块", exact=True)
+                        expect(picker).to_be_visible()
+                        picker.get_by_role("button", name="取消", exact=True).click()
                         expect(
                             article.get_by_role("figure", name="Mermaid 图表").first.get_by_role(
                                 "img", name="Mermaid 图表"
                             )
                         ).to_have_attribute("src", first_diagram_url)
+                        expect(page.locator(".chapter-selected")).to_have_attribute(
+                            "id", "section-" + chapter["revision_id"]
+                        )
+                        # Existing linked knowledge is opened from the related
+                        # operation; the chapter action now selects a module.
+                        page.locator(".related-sidebar").get_by_role("button").first.click()
+                        panel = page.get_by_role("complementary", name="知识助手")
+                        expect(panel.locator("strong").filter(has_text="必须填写名称")).to_be_visible()
                         expect(panel.get_by_alt_text("助手图片", exact=True)).to_be_visible()
                         expect(panel.get_by_alt_text("引用网络图片", exact=True)).to_be_visible()
                         expect(
@@ -262,10 +271,8 @@ def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(m
                         assert "非引用章节的其他正文" not in panel.inner_text()
                         assert not any("ai-image.invalid" in url for url in remote_requests)
                         expect(panel.get_by_role("img", name="Mermaid 图表")).to_be_visible(timeout=45000)
-                        expect(page.locator(".chapter-selected")).to_have_attribute(
-                            "id", "section-" + chapter["revision_id"]
-                        )
                         panel.get_by_role("button", name="收起助手面板", exact=True).click()
+                        page.get_by_role("button", name="文档", exact=True).click()
                         article.get_by_role("link", name="包内链接", exact=True).click()
                         expect(article.get_by_role("heading", name="包一其他资料", exact=True)).to_be_visible()
                         expect(article.locator(".chapter-selected")).to_contain_text("目标段落")

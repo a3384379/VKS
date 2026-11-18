@@ -11,7 +11,12 @@ from vks_api.scan_pipeline import reconcile
 
 from tests.interactive import test_bulk_association, test_materials
 from tests.interactive.test_native_documents_browser import login, native_studio
-from tests.interactive.test_runtime_inventory_browser import charge_source, dynamic_page
+from tests.interactive.test_runtime_inventory_browser import (
+    charge_source,
+    dynamic_page,
+    select_scan_lanes,
+    start_legacy_pipeline,
+)
 from tests.ui.test_frontend_browser import chromium_path
 
 materials = test_materials.materials
@@ -63,9 +68,9 @@ def test_three_independent_lanes_overlap_and_match_serial_results(materials, tmp
             for lanes in (1, 3):
                 captures.clear()
                 page.evaluate("window.scanStarts=[]")
-                page.get_by_label("分析与关联并发", exact=True).select_option(str(lanes))
+                select_scan_lanes(page, lanes)
                 began = time.monotonic()
-                page.get_by_role("button", name="重新关联全部", exact=True).click()
+                start_legacy_pipeline(page, service, owner, pid, aid, concurrency=lanes)
                 expect(page.get_by_label("动态原型预扫描", exact=True)).to_be_visible()
                 expect(page.get_by_label("已保存的预扫描进度", exact=True)).to_contain_text(
                     "已采集 3 / 3 页", timeout=30000
@@ -149,8 +154,8 @@ def test_async_wrapper_startup_cannot_override_first_page_in_each_lane(materials
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("分析与关联并发", exact=True).select_option("3")
-            page.get_by_role("button", name="重新关联全部", exact=True).click()
+            select_scan_lanes(page, 3)
+            page.get_by_role("button", name="扫描页面变更", exact=True).click()
             expect(page.get_by_label("已保存的预扫描进度", exact=True)).to_contain_text(
                 "已采集 3 / 3 页", timeout=20000
             )

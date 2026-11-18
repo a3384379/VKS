@@ -208,8 +208,10 @@ def test_native_handbook_home_controls_fake_ai_storage_reader_switch_and_exact_l
             )
             assert PLATFORM_KEY not in json.dumps(runtime_storage)
             page.get_by_role("button", name="返回文档", exact=True).click()
-            sidebar = page.locator(".doc-sidebar")
-            sidebar.get_by_role("button", name="Exact rule", exact=True).click()
+            toc = page.locator(".article-toc")
+            if toc.get_attribute("open") is None:
+                toc.locator("summary").click()
+            toc.get_by_role("link", name="Exact rule", exact=True).click()
             expect(page.locator(".document-reader .chapter-selected")).to_contain_text("Exact rule")
             page.get_by_role("button", name="查看原文", exact=True).click()
             expect(source.get_by_role("heading", name="Exact rule", exact=True)).to_be_in_viewport()

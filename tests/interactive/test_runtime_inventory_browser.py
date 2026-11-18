@@ -10,6 +10,7 @@ from vks_api import ai_gateway
 from vks_api.ai_gateway import ModelPolicy, PolicyInput
 from vks_api.bulk_association import BulkAssociationService, InventoryPageInput
 from vks_api.models import uid
+from vks_api.prototype_scan import PrototypeScanService, ScanInput
 
 from tests.interactive import test_bulk_association, test_materials
 from tests.interactive.test_document_navigation import zip_docs
@@ -84,6 +85,43 @@ def setup(materials, monkeypatch, charge=False, partial=False):
     return web, service, owner, pid, aid, calls
 
 
+def start_legacy_pipeline(page, service, owner, pid, aid, *, mode="all", concurrency=3):
+    """Restore an explicitly requested legacy API pipeline in the real UI.
+
+    The current AI buttons open review and must never be used as implicit scan
+    or save commands. These tests retain coverage of already-running pipelines.
+    """
+    status = BulkAssociationService(service).status(owner, pid, aid)
+    scans = PrototypeScanService(service)
+    run = scans.start(
+        owner,
+        pid,
+        ScanInput(
+            analysis_set_id=aid,
+            mode=mode,
+            client_id="legacy-browser-fixture",
+            pipeline=True,
+            concurrency=concurrency,
+        ),
+        str(status["selection_version"]),
+        uid(),
+    )
+    scans.pause(owner, pid, run["id"], run["client_id"])
+    # Refresh only the task panel; a browser reload would discard the native
+    # form state and invalidate the isolation assertions in callers.
+    page.get_by_role("button", name="AI 设置", exact=True).click()
+    page.get_by_role("button", name="关联管理", exact=True).click()
+    page.get_by_role("button", name="继续扫描页面", exact=True).click()
+
+
+def select_scan_lanes(page, value):
+    settings = page.locator(".batch-settings")
+    if settings.get_attribute("open") is None:
+        settings.locator("summary").click()
+    page.get_by_label("分析与关联并发", exact=True).select_option(str(value))
+    settings.locator("summary").click()
+
+
 @pytest.mark.parametrize("charge", [False, True])
 def test_two_dynamic_routes_discovered_before_clicks_and_ai_enqueue(materials, tmp_path, monkeypatch, charge):
     web, service, owner, pid, aid, calls = setup(materials, monkeypatch, charge=charge)
@@ -116,7 +154,7 @@ def test_two_dynamic_routes_discovered_before_clicks_and_ai_enqueue(materials, t
             expect(original.get_by_role("heading", name="账单 A", exact=True)).to_be_visible(timeout=15000)
             original.get_by_label("客户名称", exact=True).fill("UNSAVED_CURRENT_FORM")
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_role("button", name="重新关联全部", exact=True).click()
+            start_legacy_pipeline(page, service, owner, pid, aid)
             expect(page.get_by_label("动态原型预扫描", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="停止任务", exact=True)).to_be_visible()
             page.wait_for_function("!document.querySelector('[aria-label=\"动态原型预扫描\"]')", timeout=30000)
@@ -167,7 +205,7 @@ def test_cancel_prescan_stops_queued_ai_and_next_run_reuses_captured_pages(mater
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("分析与关联并发", exact=True).select_option("1")
+            select_scan_lanes(page, 1)
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"
@@ -175,17 +213,17 @@ def test_cancel_prescan_stops_queued_ai_and_next_run_reuses_captured_pages(mater
                     and response.status == 200
                 )
             ):
-                page.get_by_role("button", name="补齐未关联", exact=True).click()
+                start_legacy_pipeline(page, service, owner, pid, aid, mode="missing", concurrency=1)
             page.get_by_role("button", name="停止任务", exact=True).click()
             expect(page.locator('iframe[title="预扫描原型"]')).to_have_count(0)
-            expect(page.get_by_role("button", name="补齐未关联", exact=True)).to_be_enabled()
+            expect(page.get_by_role("button", name="重新扫描页面", exact=True)).to_be_enabled()
             assert all(
                 job["state"] in {"cancelled", "cancelling"}
                 for job in BulkAssociationService(service).status(owner, pid, aid)["jobs"]
             )
             assert not calls
             assert BulkAssociationService(service).inventory_status(owner, pid, aid)["pages_captured"] == 1
-            page.get_by_role("button", name="补齐未关联", exact=True).click()
+            start_legacy_pipeline(page, service, owner, pid, aid, mode="missing", concurrency=1)
             expect(page.get_by_label("已保存的预扫描进度", exact=True)).to_contain_text(
                 "已采集 2 / 2 页", timeout=20000
             )
@@ -204,7 +242,7 @@ def test_navigation_keeps_scan_and_does_not_restart_completed_pages(materials, t
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("分析与关联并发", exact=True).select_option("1")
+            select_scan_lanes(page, 1)
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"
@@ -212,7 +250,7 @@ def test_navigation_keeps_scan_and_does_not_restart_completed_pages(materials, t
                     and response.status == 200
                 )
             ):
-                page.get_by_role("button", name="重新关联全部", exact=True).click()
+                start_legacy_pipeline(page, service, owner, pid, aid, concurrency=1)
             current = page.request.get(f"{url}/api/v3/projects/{pid}/associations/scans?analysis_set_id={aid}").json()[
                 "data"
             ]["run"]
@@ -241,7 +279,7 @@ def test_navigation_keeps_scan_and_does_not_restart_completed_pages(materials, t
 
 
 def test_refresh_keeps_persisted_progress_and_requires_explicit_resume(materials, tmp_path, monkeypatch):
-    web, _service, _owner, pid, aid, calls = setup(materials, monkeypatch)
+    web, service, owner, pid, aid, calls = setup(materials, monkeypatch)
     with native_studio(web.app, tmp_path, monkeypatch) as url, sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
         page = browser.new_page(viewport={"width": 1440, "height": 900})
@@ -257,7 +295,7 @@ def test_refresh_keeps_persisted_progress_and_requires_explicit_resume(materials
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("分析与关联并发", exact=True).select_option("1")
+            select_scan_lanes(page, 1)
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"
@@ -265,7 +303,7 @@ def test_refresh_keeps_persisted_progress_and_requires_explicit_resume(materials
                     and response.status == 200
                 )
             ):
-                page.get_by_role("button", name="重新关联全部", exact=True).click()
+                start_legacy_pipeline(page, service, owner, pid, aid, concurrency=1)
             previous = page.request.get(f"{url}/api/v3/projects/{pid}/associations/scans?analysis_set_id={aid}").json()[
                 "data"
             ]["run"]
@@ -299,7 +337,7 @@ def test_failed_page_preserves_partial_progress_while_captured_page_ai_runs(mate
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_role("button", name="重新关联全部", exact=True).click()
+            start_legacy_pipeline(page, service, owner, pid, aid)
             progress = page.get_by_label("已保存的预扫描进度", exact=True)
             expect(progress).to_contain_text("1 页待重试", timeout=20000)
             expect(progress).to_contain_text("预扫描部分完成")
