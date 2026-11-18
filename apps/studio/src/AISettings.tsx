@@ -14,7 +14,11 @@ import {
 } from "lucide-react";
 import { api, mutation } from "../../web/src/api";
 import { RAGSettings } from "./RAGSettings";
-import { preferredAnswerModels } from "../../web/src/modelChoices";
+import {
+  answerModelCandidates,
+  answerModelRestriction,
+  preferredAnswerModels,
+} from "../../web/src/modelChoices";
 import {
   useDisplaySpeed,
   saveDisplaySpeed,
@@ -264,9 +268,18 @@ export function AISettings({
       setQuery("");
       setShowAllModels(false);
       setModelPage(0);
-      setNotice(`已获取当前 Key 可见的 ${response.models.length} 个模型`);
+      const count = answerModelCandidates(
+        response.models,
+        form?.endpoint || "",
+      ).length;
+      setNotice(
+        `已获取 ${count} 个回答模型候选，调用权限可用「测试连接」确认。`,
+      );
     } catch (e) {
-      if (current === epoch.current) setError(message(e));
+      if (current === epoch.current) {
+        setModels(null);
+        setError(message(e));
+      }
     } finally {
       if (current === epoch.current) setBusy("");
     }
@@ -334,7 +347,11 @@ export function AISettings({
   const selected =
     (models || provider?.models || []).find((m) => m.id === form.model_id) ||
     provider?.models.find((m) => m.id === form.model_id);
-  const allModels = models || provider?.models || [];
+  const allModels = answerModelCandidates(
+    models || provider?.models || [],
+    form.endpoint,
+  );
+  const modelRestriction = answerModelRestriction(form.model_id, form.endpoint);
   const expandedModels = showAllModels || !!query.trim();
   const filtered = (
     expandedModels
@@ -609,7 +626,7 @@ export function AISettings({
                   />
                   <span>
                     {models
-                      ? "账户模型"
+                      ? "目录候选"
                       : busy === "models"
                         ? "正在查询"
                         : "参考模型"}
@@ -632,9 +649,11 @@ export function AISettings({
                   {missingSelected && !custom && (
                     <option value={form.model_id}>
                       {form.model_id} ·{" "}
-                      {models && !allModels.some((m) => m.id === form.model_id)
-                        ? "当前配置（列表未返回）"
-                        : "当前选择"}
+                      {modelRestriction ||
+                        (models &&
+                        !allModels.some((m) => m.id === form.model_id)
+                          ? "当前配置（目录未返回）"
+                          : "当前选择")}
                     </option>
                   )}
                   {!form.model_id && !custom && (
@@ -643,7 +662,7 @@ export function AISettings({
                   <optgroup
                     label={
                       expandedModels
-                        ? "全部模型 · 当前页"
+                        ? "回答模型候选 · 当前页"
                         : "常用回答模型 · 版本优先"
                     }
                   >
@@ -666,7 +685,7 @@ export function AISettings({
                   >
                     {expandedModels
                       ? "收起其他模型"
-                      : `查看全部模型（${allModels.length}）`}
+                      : `查看全部候选（${allModels.length}）`}
                   </button>
                   {expandedModels && pages > 1 && (
                     <span>
@@ -708,8 +727,8 @@ export function AISettings({
                 </div>
                 <p className="model-availability">
                   {models
-                    ? `已获取 ${models.length} 个模型，默认精简展示较新回答模型；其他模型可展开或搜索。`
-                    : "以下仅为参考 ID，尚未验证账户权限。获取可用模型后，以服务返回的列表为准。"}
+                    ? `服务目录中筛出 ${allModels.length} 个候选，已验证目录可见。选中模型后可测试协议和文本生成。`
+                    : "预设仅供参考。获取模型目录后，可选择候选并测试文本生成。"}
                 </p>
               </div>
               <div className="ai-output-row">

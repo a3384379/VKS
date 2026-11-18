@@ -1207,6 +1207,13 @@ class KnowledgeService:
                     s.add(copy)
                     evidence_ids[ev.id] = copy.id
                 for relation in s.scalars(select(Relation).where(Relation.analysis_set_id == aid)):
+                    metadata = dict(relation.metadata_json or {})
+                    citation_fields = {}
+                    if relation.relation_type == "supported_by_section":
+                        # Copying a citation must preserve its original position,
+                        # including when multiple edges share a timestamp.
+                        citation_fields["created_at"] = relation.created_at
+                        metadata.setdefault("citation_source_id", relation.id)
                     s.add(
                         Relation(
                             id=uid(),
@@ -1222,7 +1229,8 @@ class KnowledgeService:
                             reason=relation.reason,
                             row_version=1,
                             manual_lock=relation.manual_lock,
-                            metadata_json=dict(relation.metadata_json or {}),
+                            metadata_json=metadata,
+                            **citation_fields,
                         )
                     )
                 s.flush()

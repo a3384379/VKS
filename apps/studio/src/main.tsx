@@ -24,6 +24,7 @@ import {
 import {
   RichMarkdown as Markdown,
   MarkdownReadingContext,
+  type MarkdownSection,
   type ReadingContext,
 } from "./RichMarkdown";
 import { api, mutation, setCsrf } from "../../web/src/api";
@@ -43,11 +44,16 @@ import { chatSourceFingerprint } from "./chatSourceFingerprint";
 import { Materials } from "./Materials";
 import { BindingsManager } from "./BindingsManager";
 import { BatchAssociations } from "./BatchAssociations";
+import { ProjectTokenUsage } from "./ProjectTokenUsage";
 import { AssociationReview, type ReviewTarget } from "./AssociationReview";
 import {
   DocumentAssociation,
   type AssociationChapter,
 } from "./DocumentAssociation";
+import {
+  DocumentPrototypeEntries,
+  documentPrototypeEntries,
+} from "./DocumentPrototypeEntries";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import {
   HandbookTemplate,
@@ -55,6 +61,7 @@ import {
 } from "./HandbookTemplate";
 import type { Presentation } from "./DocumentAppearance";
 import { useFloatingWindow, type ResizeDirection } from "./useFloatingWindow";
+import { useTransientNotice } from "./useTransientNotice";
 import { NativeDocumentPane, NativeNetworkSettings } from "./NativeDocument";
 import type { NativeDocument, NativeLocation } from "./NativeDocument";
 import {
@@ -180,6 +187,18 @@ type Route = {
   book: string;
   reader: string;
 };
+type ReadingPosition = {
+  route: Route;
+  top: number;
+  chapter: string;
+  chapterOffset?: number;
+};
+const sameWorkspace = (a: Route, b: Route) =>
+  a.project === b.project &&
+  a.analysis === b.analysis &&
+  a.release === b.release;
+const documentScrollRoot = (reader: HTMLElement | null) =>
+  reader?.closest<HTMLElement>(".hb-main") ?? reader;
 const getRoute = (): Route =>
   Object.fromEntries(
     [
@@ -242,7 +261,9 @@ function App() {
     catalog?.packages.filter((p) => p.kind === "prototype") || [];
   const p =
     prototypePackages.find(
-      (p) => p.package_key === (route.package || catalog?.primary_package_id),
+      (p) =>
+        (p.package_key || p.id) ===
+        (route.package || catalog?.primary_package_id),
     ) || prototypePackages[0];
   const prefix = `/api/v3/projects/${route.project}/interactive`,
     scope = route.release
@@ -259,8 +280,8 @@ function App() {
     [accountId, auth, catalog, prefix, scope],
   );
   useEffect(() => () => documentCache.dispose(), [documentCache]);
+  const [notice, setNotice] = useTransientNotice(!!catalog);
   const [error, setError] = useState(""),
-    [notice, setNotice] = useState(""),
     [loadedDocument, setViewDoc] = useState<{
       cacheId: string;
       native: boolean;
@@ -363,12 +384,22 @@ function App() {
   const floating = useFloatingWindow(docked);
   const { ref: windowRef, setPosition } = floating;
   const prototype = useRef<RuntimeHandle | null>(null),
-    pendingReveal = useRef<Target | null>(null),
+    pendingReveal = useRef<{
+      packageId: string;
+      target: Target;
+      page_only?: boolean;
+    } | null>(null),
+    documentReveal = useRef(false),
+    reader = useRef<HTMLElement>(null),
     docEpoch = useRef(0),
     editEpoch = useRef(0),
     loadEpoch = useRef(0),
     selectedBinding = useRef(route.binding),
     assistantTrigger = useRef<HTMLButtonElement>(null);
+  const [prototypeChapter, setPrototypeChapter] = useState<string | null>(null);
+  const [documentOrigin, setDocumentOrigin] = useState<ReadingPosition | null>(
+    null,
+  );
   const [related, setRelated] = useState<Related | null>(null),
     [retrieving, setRetrieving] = useState(false);
   const [assistant, setAssistant] = useState<Assistance | null>(null),
@@ -570,13 +601,17 @@ function App() {
   );
   useEffect(() => {
     setAssociationChapter(null);
+    setPrototypeChapter(null);
   }, [route.project, scope, route.doc, route.view]);
-  const navigate = useCallback((patch: Partial<Route>, replace = false) => {
-    const next = { ...getRoute(), ...patch };
-    const p = new URLSearchParams(Object.entries(next).filter(([, v]) => v));
-    history[replace ? "replaceState" : "pushState"]({}, "", `#${p}`);
-    setRoute(next);
-  }, []);
+  const navigate = useCallback(
+    (patch: Partial<Route>, replace = false, state: object = {}) => {
+      const next = { ...getRoute(), ...patch };
+      const p = new URLSearchParams(Object.entries(next).filter(([, v]) => v));
+      history[replace ? "replaceState" : "pushState"](state, "", `#${p}`);
+      setRoute(next);
+    },
+    [],
+  );
   useEffect(() => {
     const update = () => setRoute(getRoute());
     window.addEventListener("popstate", update);
@@ -860,18 +895,46 @@ function App() {
     if (section) navigate({ section: section.revision_id }, true);
   }, [viewDoc, route.section, navigate]);
   useEffect(() => {
-    if (viewDoc && route.view === "documents")
-      requestAnimationFrame(() => {
-        if (route.section)
-          document
-            .getElementById("section-" + route.section)
-            ?.scrollIntoView({ block: "start", behavior: "instant" });
-        else
-          document
-            .querySelector(".document-reader")
-            ?.scrollTo({ top: 0, behavior: "instant" });
-      });
-  }, [viewDoc?.revision_id, route.section, route.view]);
+    if (!viewDoc || route.view !== "documents") return;
+    const frame = requestAnimationFrame(() => {
+      const container = documentScrollRoot(reader.current);
+      const saved = history.state?.vksReadingPosition as
+        | ReadingPosition
+        | undefined;
+      if (
+        container &&
+        saved &&
+        sameWorkspace(saved.route, route) &&
+        saved.route.doc === route.doc &&
+        saved.route.section === route.section &&
+        saved.route.reader === route.reader &&
+        saved.route.book === route.book
+      ) {
+        const chapter = document.getElementById("section-" + saved.chapter);
+        const top =
+          chapter && saved.chapterOffset !== undefined
+            ? container.scrollTop +
+              chapter.getBoundingClientRect().top -
+              container.getBoundingClientRect().top -
+              saved.chapterOffset
+            : saved.top;
+        container.scrollTo({ top, behavior: "instant" });
+        return;
+      }
+      if (route.section)
+        document
+          .getElementById("section-" + route.section)
+          ?.scrollIntoView({ block: "start", behavior: "instant" });
+      else container?.scrollTo({ top: 0, behavior: "instant" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [viewDoc?.revision_id, route.section, route.view, handbookReader]);
+  useEffect(() => {
+    if (route.view !== "prototype") {
+      documentReveal.current = false;
+      setDocumentOrigin(null);
+    }
+  }, [route.view, route.project, scope]);
   useEffect(() => {
     if (!editDocId) {
       setEditDoc(null);
@@ -1447,6 +1510,7 @@ function App() {
         chooseControl(c);
         if (
           automatic &&
+          !documentReveal.current &&
           (route.view || "prototype") === "prototype" &&
           !bindings.some(
             (b) =>
@@ -1531,18 +1595,26 @@ function App() {
         !pendingReveal.current
       ) {
         chooseControl(c.module);
-        if (automatic && (route.view || "prototype") === "prototype")
+        if (
+          automatic &&
+          !documentReveal.current &&
+          (route.view || "prototype") === "prototype"
+        )
           void assist(c.module, "documents", false, false);
       }
     }
-    if (event.type === "context.changed" && pendingReveal.current) {
-      prototype.current?.send("target.reveal", {
-        target: pendingReveal.current,
-      });
+    if (
+      event.type === "context.changed" &&
+      pendingReveal.current?.packageId === p?.id &&
+      pendingReveal.current
+    ) {
+      const { target, page_only } = pendingReveal.current;
+      prototype.current?.send("target.reveal", { target, page_only });
       pendingReveal.current = null;
     }
     if (event.type === "picker.cancelled") setPicking(false);
     if (event.type === "command.result") {
+      documentReveal.current = false;
       const result = event.payload as { message: string };
       setNotice(result.message);
     }
@@ -1627,7 +1699,7 @@ function App() {
     },
     [navigate, detached.open],
   );
-  function reveal(b: Binding) {
+  function reveal(b: Binding, fromDocument?: { pageOnly: boolean }) {
     chooseControl({
       target: b.target,
       context: {
@@ -1638,18 +1710,59 @@ function App() {
       },
     });
     setEditing(false);
-    setKnowledge(true);
+    setKnowledge(!fromDocument);
     setAssistantOptions(false);
     setActive(b);
     const destination = catalog?.packages.find((p) => p.id === b.package_id);
+    const binding = fromDocument?.pageOnly ? "" : b.id;
+    if (fromDocument) {
+      documentReveal.current = true;
+      selectedBinding.current = binding;
+    }
     navigate({
       view: "prototype",
-      binding: b.id,
-      package: destination?.package_key || "",
+      binding,
+      package: destination?.package_key || destination?.id || "",
     });
+    const payload = { target: b.target, page_only: fromDocument?.pageOnly };
     if (prototype.current && p?.id === b.package_id)
-      prototype.current.send("target.reveal", { target: b.target });
-    else pendingReveal.current = b.target;
+      prototype.current.send("target.reveal", payload);
+    else pendingReveal.current = { packageId: b.package_id, ...payload };
+  }
+  function openPrototypeFromChapter(
+    b: Binding,
+    pageOnly: boolean,
+    chapterId: string,
+  ) {
+    if (editing) {
+      setNotice("请先保存或取消当前编辑");
+      return;
+    }
+    const container = documentScrollRoot(reader.current);
+    const chapter = document.getElementById("section-" + chapterId);
+    const position = {
+      route: getRoute(),
+      top: container?.scrollTop ?? 0,
+      chapter: chapterId,
+      chapterOffset:
+        container && chapter
+          ? chapter.getBoundingClientRect().top -
+            container.getBoundingClientRect().top
+          : undefined,
+    };
+    history.replaceState(
+      { ...history.state, vksReadingPosition: position },
+      "",
+    );
+    setDocumentOrigin(position);
+    setPrototypeChapter(null);
+    reveal(b, { pageOnly });
+  }
+  function returnToReading() {
+    if (!documentOrigin || !sameWorkspace(documentOrigin.route, route)) return;
+    navigate(documentOrigin.route, false, {
+      vksReadingPosition: documentOrigin,
+    });
   }
   function editBinding(b: Binding) {
     if (!checkBindingsReady()) return;
@@ -1681,21 +1794,31 @@ function App() {
   async function save() {
     if (!target || !catalog || !sectionId || !summary.trim() || !title.trim())
       return;
+    const remainingSections = active?.sections.slice(1) || [];
+    if (
+      remainingSections.some((section) => section.revision_id === sectionId)
+    ) {
+      setError("该章节已被后续引用使用，请为第 1 条原文选择其他章节。");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
-      const p = catalog.packages.find((p) => p.kind === "prototype");
-      if (!p) throw new Error("请先导入原型包");
+      const packageId = active?.package_id || p?.id;
+      if (!packageId) throw new Error("请先导入原型包");
       const result = await api<{ binding_id: string }>(
         `${prefix}/bindings`,
         mutation(
           "POST",
           {
             analysis_set_id: route.analysis,
-            package_id: p.id,
+            package_id: packageId,
             target,
             point: { title, summary },
-            section_revision_ids: [sectionId],
+            section_revision_ids: [
+              sectionId,
+              ...remainingSections.map((section) => section.revision_id),
+            ],
             ...(active
               ? {
                   binding_id: active.id,
@@ -1869,16 +1992,75 @@ function App() {
       openDoc,
     ],
   );
+  const chapterEntries = useMemo(
+    () =>
+      viewDoc &&
+      documentPrototypeEntries(
+        viewDoc.revision_id,
+        viewDoc.sections,
+        bindings,
+        catalog?.packages || [],
+      ),
+    [viewDoc, bindings, catalog?.packages],
+  );
+  const chapterTools = useCallback(
+    (section: MarkdownSection) => {
+      const hasEntries =
+        chapterEntries && chapterEntries.has(section.revision_id);
+      if (!hasEntries && !catalog?.editable) return null;
+      return (
+        <div className="chapter-actions">
+          {hasEntries && (
+            <button
+              type="button"
+              onClick={() => setPrototypeChapter(section.revision_id)}
+            >
+              <MousePointer2 size={13} /> 查看原型入口
+            </button>
+          )}
+          {catalog?.editable && (
+            <button
+              type="button"
+              className="chapter-association-edit"
+              onClick={() => {
+                if (editing) {
+                  setNotice("请先保存或取消当前编辑");
+                  return;
+                }
+                navigate({ section: section.revision_id });
+                setAssociationChapter({
+                  revision: section.revision_id,
+                  name: section.name,
+                  document: viewDoc!.name,
+                });
+              }}
+            >
+              <Link2 size={13} /> 将本章关联到原型
+            </button>
+          )}
+        </div>
+      );
+    },
+    [chapterEntries, catalog?.editable, editing, navigate, viewDoc?.name],
+  );
+  const titleChapter = viewDoc?.sections.find(
+    (section) =>
+      section.name === viewDoc.name &&
+      (section.heading_level === 0 || /^ {0,3}#\s/.test(section.content)),
+  );
   const documentArticle = useMemo(
     () =>
       !originalBook && route.view === "documents" ? (
-        <article className="document-reader">
+        <article className="document-reader" ref={reader}>
           <div className="reader-label">
             工作区文档 <span>· 准确修订</span>
           </div>
-          <h1>
-            {viewDoc?.name || documentRef?.name || "选择一篇文档开始阅读"}
-          </h1>
+          <div className="document-title chapter-heading">
+            <h1>
+              {viewDoc?.name || documentRef?.name || "选择一篇文档开始阅读"}
+            </h1>
+            {titleChapter && chapterTools(titleChapter)}
+          </div>
           {!viewDoc &&
             documentRef &&
             (documentError ? (
@@ -1958,36 +2140,13 @@ function App() {
                 });
               })()}
               selectedSection={route.section}
+              sectionHeadingActions={chapterTools}
               sectionActions={(s, position) =>
-                position === "before" ? (
-                  s.content.trim() === "# " + viewDoc.name ? null : (
-                    <div className="chapter-actions">
-                      <button
-                        disabled={!catalog?.editable}
-                        title={
-                          catalog?.editable
-                            ? "选择目标模块并预览新的关联说明"
-                            : "请切换到可编辑草稿关联模块"
-                        }
-                        onClick={() => {
-                          if (editing) {
-                            setNotice("请先保存或取消当前编辑");
-                            return;
-                          }
-                          navigate({ section: s.revision_id });
-                          setAssociationChapter({
-                            revision: s.revision_id,
-                            name: s.name,
-                            document: viewDoc.name,
-                          });
-                        }}
-                      >
-                        <Link2 size={13} />
-                        关联操作
-                      </button>
-                    </div>
-                  )
-                ) : null
+                position === "before" &&
+                s.heading_level === 0 &&
+                titleChapter?.revision_id !== s.revision_id
+                  ? chapterTools(s)
+                  : null
               }
             >
               {viewDoc.content ??
@@ -2008,6 +2167,8 @@ function App() {
       p?.id,
       editing,
       navigate,
+      titleChapter,
+      chapterTools,
     ],
   );
   if (auth === null) return <div className="splash">正在打开知境 Studio…</div>;
@@ -2156,15 +2317,15 @@ function App() {
   const selectedSection = editDoc?.sections.find(
     (s) => s.revision_id === sectionId,
   );
-  const documentBindings = bindings.filter(
-    (b) =>
-      !b.excluded &&
-      b.sections.some(
-        (c) =>
-          c.document_revision_id === route.doc &&
-          (!route.section || c.revision_id === route.section),
-      ),
-  );
+  const canReturnToReading =
+    currentView === "prototype" &&
+    documentOrigin &&
+    sameWorkspace(documentOrigin.route, route);
+  const selectedEntries =
+    prototypeChapter && chapterEntries && chapterEntries.get(prototypeChapter);
+  const selectedChapterName = viewDoc?.sections.find(
+    (section) => section.revision_id === prototypeChapter,
+  )?.name;
 
   const body = (
     <div className="studio">
@@ -2217,6 +2378,10 @@ function App() {
                 }
                 if (v === "documents") {
                   setCitationChat(null);
+                  if (canReturnToReading) {
+                    returnToReading();
+                    return;
+                  }
                 }
                 navigate({ view: v });
                 if (
@@ -2264,6 +2429,11 @@ function App() {
       </header>
       <div className="contextbar">
         <div>
+          {canReturnToReading && (
+            <button type="button" onClick={returnToReading}>
+              <BookOpen size={14} /> 返回文档
+            </button>
+          )}
           <span className="context-badge">
             {currentView === "prototype"
               ? "原始交互"
@@ -2546,26 +2716,6 @@ function App() {
             hidden={originalBook}
           >
             {documentArticle}
-            <aside className="related-sidebar">
-              <span className="eyebrow">与当前文章相关</span>
-              <h3>关联业务操作</h3>
-              {documentBindings.length ? (
-                documentBindings.map((b) => (
-                  <button key={b.id} onClick={() => reveal(b)}>
-                    <MousePointer2 size={17} />
-                    <span>
-                      <b>{b.title}</b>
-                      <small>{b.target.label}</small>
-                    </span>
-                    <ArrowUpRight size={15} />
-                  </button>
-                ))
-              ) : (
-                <p>
-                  点击章节旁的“关联操作”选择目标模块，预览并确认后，可在这里跳回对应操作。
-                </p>
-              )}
-            </aside>
           </DocumentLibrary>
         )}
         {nativePackage &&
@@ -2609,25 +2759,46 @@ function App() {
             release={route.release}
           />
         )}
-        {catalog && (
-          <div hidden={currentView !== "links"} className="batch-task-slot">
-            <BatchAssociations
-              key={"batch:" + route.project + scope}
-              project={route.project}
-              analysis={catalog.analysis_set_id}
-              accountId={accountId || ""}
-              visible={currentView === "links"}
-              editable={!!catalog.editable && !route.release}
-              onChanged={reload}
-              refreshVersion={catalog.selection_version}
-              onReview={(mode) =>
-                setAssociationReviewTarget({ mode, prototype: false })
-              }
-            />
-          </div>
-        )}
-        {currentView === "links" && (
-          <>
+        <div
+          hidden={currentView !== "links"}
+          className="association-management-layout"
+        >
+          {catalog && (
+            <div className="association-management-overview">
+              <BatchAssociations
+                key={"batch:" + route.project + scope}
+                project={route.project}
+                analysis={catalog.analysis_set_id}
+                accountId={accountId || ""}
+                visible={currentView === "links"}
+                editable={!!catalog.editable && !route.release}
+                onChanged={reload}
+                refreshVersion={catalog.selection_version}
+                onReview={(mode) =>
+                  setAssociationReviewTarget({ mode, prototype: false })
+                }
+              />
+              {currentView === "links" && route.project && (
+                <ProjectTokenUsage
+                  key={"token-usage:" + route.project + scope}
+                  project={route.project}
+                  analysis={catalog.analysis_set_id}
+                  release={route.release}
+                  refreshVersion={catalog.selection_version}
+                  packages={catalog.packages}
+                  pages={bindings
+                    .filter((binding) => binding.target.selector === "body")
+                    .map((binding) => ({
+                      package_id: binding.package_id,
+                      route: binding.target.route,
+                      label: binding.target.label,
+                      frame_path: binding.target.frame_path,
+                    }))}
+                />
+              )}
+            </div>
+          )}
+          {currentView === "links" && (
             <BindingsManager
               key={"bindings:" + route.project + scope}
               bindings={bindings}
@@ -2652,9 +2823,23 @@ function App() {
                 <Markdown references={b.sections}>{b.summary}</Markdown>
               )}
             />
-          </>
-        )}
+          )}
+        </div>
       </main>
+      {currentView === "documents" &&
+        !originalBook &&
+        prototypeChapter &&
+        selectedEntries &&
+        selectedChapterName && (
+          <DocumentPrototypeEntries
+            chapter={selectedChapterName}
+            entries={selectedEntries}
+            onClose={() => setPrototypeChapter(null)}
+            onOpen={(binding, pageOnly) =>
+              openPrototypeFromChapter(binding, pageOnly, prototypeChapter)
+            }
+          />
+        )}
       {menu && (
         <div
           ref={menuRef}
@@ -3446,7 +3631,9 @@ function App() {
                           </select>
                         </label>
                         <label>
-                          准确章节
+                          {active && active.sections.length > 1
+                            ? "第 1 条原文"
+                            : "准确章节"}
                           <select
                             aria-label="关联章节"
                             value={sectionId}
@@ -3454,12 +3641,35 @@ function App() {
                           >
                             <option value="">请选择章节</option>
                             {editDoc?.sections.map((s) => (
-                              <option key={s.id} value={s.revision_id}>
+                              <option
+                                key={s.id}
+                                value={s.revision_id}
+                                disabled={active?.sections
+                                  .slice(1)
+                                  .some(
+                                    (section) =>
+                                      section.revision_id === s.revision_id,
+                                  )}
+                              >
                                 {s.name}
                               </option>
                             ))}
                           </select>
                         </label>
+                        {active && active.sections.length > 1 && (
+                          <details className="inline-preview">
+                            <summary>
+                              保留其余 {active.sections.length - 1} 条原文依据
+                            </summary>
+                            <ol start={2}>
+                              {active.sections.slice(1).map((section) => (
+                                <li key={section.revision_id}>
+                                  {section.document_name} / {section.name}
+                                </li>
+                              ))}
+                            </ol>
+                          </details>
+                        )}
                         {selectedSection && (
                           <div className="section-preview">
                             <span className="eyebrow">原文预览</span>

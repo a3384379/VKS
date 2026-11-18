@@ -48,13 +48,13 @@ def test_footer_review_cancel_and_detached_confirmation_preserve_exact_preview(a
         calls.append(data)
         result = test_assistant.response(data["chapters"][0]["revision_id"])
         answer = json.loads(result["output"][0]["content"][0]["text"])
-        answer["title"] = "准备替换的标题"
-        answer["explanation"] = (
-            "独立讲解保持原关联。[1]"
-            if "associated_knowledge" in data
-            else "**预览规则**\\n\\n| 检查 | 预览结果 |\\n| --- | --- |\\n| 原关联 | 确认后才替换 |\\n\\n依据[1]。"
-        )
-        answer["explanation"] = answer["explanation"].replace("\\n", "\n")
+        if "writing_instruction" in data:
+            answer["title"] = "准备替换的标题"
+            answer["explanation"] = "**预览规则**\n\n| 检查 | 预览结果 |\n| --- | --- |\n| 原关联 | 确认后才替换 |\n\n依据[1]。"
+        else:
+            assert "当前页面的操作指引" in payload["input"][0]["content"]
+            assert "associated_knowledge" not in data
+            answer["explanation"] = "独立讲解保持原关联。[1]"
         result["output"][0]["content"][0]["text"] = json.dumps(answer)
         return result
 

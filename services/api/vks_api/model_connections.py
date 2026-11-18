@@ -216,7 +216,7 @@ class ConnectionService:
             if not isinstance(ident, str) or not ident.strip() or len(ident) > 160:
                 continue
             # Keep opaque IDs intact; the account may expose text and other models.
-            out[ident] = {"id": ident, "name": str(item.get("name") or ident)[:160], "description": "当前 Key 可见模型"}
+            out[ident] = {"id": ident, "name": str(item.get("name") or ident)[:160], "description": "当前 Key 的目录记录。可用测试连接验证文本生成。"}
         with self.service.db() as s:
             self.service.require(s, actor, pid, "project:manage")
             self.service.audit(s, actor, pid, "model.connection.discover", pid)

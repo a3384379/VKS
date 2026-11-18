@@ -1386,12 +1386,18 @@ class Service:
         ]
         selections.sort(key=lambda x: x["entity_id"])
         selected = {row.id for row in revisions}
-        relations = [
-            self.relation_dto(r)
+        relation_rows = [
+            r
             for r in s.scalars(select(Relation).where(Relation.analysis_set_id == a.id, Relation.excluded == False))
             if r.from_revision_id in selected and r.to_revision_id in selected
         ]
-        relations.sort(key=lambda x: x["id"])
+        # Legacy business points have no explicit reference order. Keep the
+        # chronological order used by the live binding projection in new snapshots.
+        other_edges = sorted((r for r in relation_rows if r.relation_type != "supported_by_section"), key=lambda r: r.id)
+        source_edges = sorted(
+            (r for r in relation_rows if r.relation_type == "supported_by_section"), key=Relation.citation_order
+        )
+        relations = [self.relation_dto(r) for r in (*other_edges, *source_edges)]
         manifest = {
             "schema_version": "1.0",
             "analysis_set_id": a.id,

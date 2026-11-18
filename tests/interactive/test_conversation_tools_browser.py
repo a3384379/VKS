@@ -5,6 +5,7 @@ import json
 from playwright.sync_api import expect, sync_playwright
 from vks_api import ai_gateway
 from vks_api.ai_gateway import ModelPolicy, PolicyInput
+from vks_api.interactive_ai import EXPLANATION_SYSTEM
 from vks_api.models import uid
 from vks_api.service import DomainError
 
@@ -45,7 +46,9 @@ def test_prompt_reassociate_chat_edit_followup_and_export_download(materials, tm
             guided_attempts.append(data)
             if len(guided_attempts) == 1:
                 raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", "模拟模型响应超时", 503, retryable=True)
-        if "associated_knowledge" in data:
+        explaining = body["input"][0]["content"] == EXPLANATION_SYSTEM
+        if explaining:
+            assert "associated_knowledge" not in data
             lecture_calls.append(data)
         if "document_sections" in data:
             row = data["document_sections"][0]
@@ -62,7 +65,7 @@ def test_prompt_reassociate_chat_edit_followup_and_export_download(materials, tm
             answer = {
                 "title": "更新后的关联",
                 "explanation": f"独立功能讲解 {len(lecture_calls)}"
-                if "associated_knowledge" in data
+                if explaining
                 else "该操作关联办理前提与结果章节。",
                 "section_revision_ids": [data["chapters"][0]["revision_id"]],
                 "confidence": 0.97,

@@ -14,7 +14,7 @@ from sqlalchemy import select
 from vks_api import ai_gateway
 from vks_api.ai_gateway import ModelPolicy, PolicyInput
 from vks_api.documents import DocumentService
-from vks_api.interactive import InteractiveKnowledgeService
+from vks_api.interactive import InteractiveBinding, InteractiveKnowledgeService
 from vks_api.interactive_ai import InteractiveAssistant
 from vks_api.materials import ROOT
 from vks_api.models import Analysis, Artifact, Entity, Evidence, Job, Relation, Release, Revision, Selection, uid
@@ -278,6 +278,57 @@ def test_frozen_export_keeps_old_prototype_chapters_and_citations(library):
     frozen, *_ = export(ctx, fixed)
     assert frozen == before
     assert "后续版本中的全新规则" not in json.dumps(frozen, ensure_ascii=False)
+
+
+def test_checkpoint_preserves_legacy_citation_order_when_timestamps_are_equal(library):
+    ctx = library
+    links = InteractiveKnowledgeService(ctx["service"])
+    args = (ctx["owner"], ctx["pid"])
+    catalog = test_materials.selected(ctx["service"], *args, ctx["aid"])
+    binding = links.bindings(*args, ctx["aid"])[0]
+    document = links.document(*args, catalog["documents"][0]["revision_id"], ctx["aid"])
+    sections = [row["revision_id"] for row in document["sections"]]
+    assert len(sections) > 1
+    form = InteractiveBinding(
+        analysis_set_id=ctx["aid"],
+        package_id=binding["package_id"],
+        target=binding["target"],
+        point={"title": binding["title"], "summary": "收费项 [1]，删除 [2]。"},
+        section_revision_ids=sections,
+        binding_id=binding["id"],
+        binding_version=binding["binding_version"],
+        point_revision_id=binding["point_revision_id"],
+    )
+    links.save(*args, form, str(catalog["selection_version"]), uid())
+    edited = links.bindings(*args, ctx["aid"])[0]
+    with ctx["service"].db() as s:
+        point = s.get(Revision, edited["point_revision_id"])
+        point.metadata_json = {
+            key: value for key, value in point.metadata_json.items() if key != "citation_revision_ids"
+        }
+        edges = list(
+            s.scalars(
+                select(Relation)
+                .where(Relation.from_revision_id == point.id, Relation.relation_type == "supported_by_section")
+                .order_by(Relation.id)
+            )
+        )
+        expected = [edge.to_revision_id for edge in edges]
+        for edge in edges:
+            edge.created_at = "2026-01-01T00:00:00Z"
+        sort_keys = [edge.citation_order() for edge in edges]
+    fixed = snapshot(ctx)
+    with ctx["service"].db() as s:
+        copies = s.scalars(
+            select(Relation).where(
+                Relation.analysis_set_id == fixed["analysis_set_id"],
+                Relation.from_revision_id == point.id,
+                Relation.relation_type == "supported_by_section",
+            )
+        )
+        assert sorted(edge.citation_order() for edge in copies) == sort_keys
+    result, *_ = export(ctx, fixed)
+    assert result["bindings"][0]["section_ids"] == expected
 
 
 def test_download_rechecks_runtime_input_artifact_and_output_digest(library):

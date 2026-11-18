@@ -187,7 +187,7 @@ def test_changing_recipient_connection_discards_previous_model_choices_and_late_
             assert "late-old-account-model" not in page.locator("body").inner_text()
             page.evaluate("window.catalogReleases[1]()")
             expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_text(
-                ["请选择可用模型", "current-account-model", "手动输入模型 ID…"]
+                ["请选择回答模型", "current-account-model", "手动输入模型 ID…"]
             )
         finally:
             browser.close()

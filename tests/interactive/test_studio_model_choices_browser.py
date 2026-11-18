@@ -16,7 +16,7 @@ def test_model_choices_expand_page_search_and_preserve_current(materials, tmp_pa
     pid, aid = projects[0]
     ids = ["gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra", "gpt-6-sol"]
     ids += [f"gpt-5-{index:02d}" for index in range(35)]
-    ids += ["gpt-image-2", "text-embedding-3-small"]
+    ids += ["gpt-image-2", "text-embedding-3-small", "chatgpt-4o-latest", "gpt-4o-2024-11-20"]
     models = [{"id": model, "name": model, "description": ""} for model in ids]
     settings = {
         "endpoint": "https://api.openai.com/v1",
@@ -62,14 +62,15 @@ def test_model_choices_expand_page_search_and_preserve_current(materials, tmp_pa
             expect(options).to_have_count(5)
             expect(select).to_have_value("gpt-5-34")
             expect(options).to_have_text(["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6-sol"])
-            page.get_by_role("button", name="查看全部模型（42）", exact=True).click()
+            page.get_by_role("button", name="查看全部候选（40）", exact=True).click()
             expect(options).to_have_count(20)
             expect(select).to_have_value("gpt-5-34")
             page.get_by_role("button", name="下一页", exact=True).click()
             expect(options).to_have_count(20)
-            page.get_by_role("button", name="下一页", exact=True).click()
-            expect(options).to_have_text(["gpt-image-2", "text-embedding-3-small"])
+            expect(page.get_by_role("button", name="下一页", exact=True)).to_be_disabled()
             expect(select).to_have_value("gpt-5-34")
+            page.get_by_label("搜索模型", exact=True).fill("4o")
+            expect(options).to_have_count(0)
             page.get_by_label("搜索模型", exact=True).fill("gpt-5-12")
             expect(options).to_have_text(["gpt-5-12"])
             select.select_option("gpt-5-12")

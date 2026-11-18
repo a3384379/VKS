@@ -54,7 +54,9 @@ def test_explanation_refresh_is_independent_and_never_writes_knowledge(assistant
         calls.append(data)
         assert config["_request_timeout_seconds"] == 120
         assert "writing_instruction" not in data and "existing_binding" not in data
-        assert data["associated_knowledge"]["summary"] == old["summary"]
+        assert "associated_knowledge" not in data
+        assert old["summary"] not in payload["input"][1]["content"]
+        assert "当前页面的操作指引" in payload["input"][0]["content"]
         assert {row["revision_id"] for row in data["chapters"]} == {row["revision_id"] for row in old["sections"]}
         response = test_assistant.response(data["chapters"][0]["revision_id"])
         answer = json.loads(response["output"][0]["content"][0]["text"])
@@ -87,7 +89,11 @@ def test_reassociation_and_explanation_have_distinct_prompts_and_cache(assistant
         data = json.loads(payload["input"][1]["content"])
         system = payload["input"][0]["content"]
         guided = "writing_instruction" in data
-        assert ("关联说明" in system) if guided else ("只生成独立讲解" in system)
+        if guided:
+            assert "可长期查阅和维护的关联文档" in system
+            assert "业务职责、适用范围、关键规则及其依据" in system
+        else:
+            assert "当前页面的操作指引" in system and "如何核对结果" in system
         calls.append(data)
         response = test_assistant.response(data["chapters"][0]["revision_id"])
         answer = json.loads(response["output"][0]["content"][0]["text"])

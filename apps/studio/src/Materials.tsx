@@ -15,6 +15,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { api, mutation, sha256, date } from "../../web/src/api";
+import { useTransientNotice } from "./useTransientNotice";
 
 type PackageVersion = {
   package_id: string;
@@ -154,9 +155,9 @@ export function Materials({
   selectionVersion?: number;
 }) {
   const prefix = `/api/v3/projects/${project}/materials`;
+  const [notice, setNotice] = useTransientNotice();
   const [data, setData] = useState<Library | null>(null),
-    [error, setError] = useState(""),
-    [notice, setNotice] = useState("");
+    [error, setError] = useState("");
   const [kind, setKind] = useState("prototype"),
     [name, setName] = useState(""),
     [target, setTarget] = useState("choose"),
@@ -660,10 +661,17 @@ export function Materials({
         </p>
       )}
       {notice && (
-        <p className="banner success" role="status">
+        <div className="banner success" role="status">
           <CheckCircle2 size={17} />
-          {notice}
-        </p>
+          <span>{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice("")}
+            aria-label="关闭提示"
+          >
+            <X size={14} />
+          </button>
+        </div>
       )}
       {busy && (
         <p role="status" className="material-progress">

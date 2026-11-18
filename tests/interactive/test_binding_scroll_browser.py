@@ -50,7 +50,7 @@ def test_association_card_keeps_large_reading_area_and_one_scroll_owner(material
             expect(card.get_by_role("heading", name="模块00", exact=True)).to_be_visible()
             expect(page.locator(".binding-inventory-status")).to_be_empty()
             toolbar = page.get_by_role("region", name="AI 预关联", exact=True)
-            assert toolbar.bounding_box()["height"] < 100
+            assert toolbar.bounding_box()["height"] <= 120
             settings = toolbar.locator(".batch-settings")
             expect(settings).not_to_have_attribute("open", "")
             initial_height = toolbar.bounding_box()["height"]

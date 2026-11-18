@@ -1,4 +1,4 @@
-"""Frozen related knowledge and lectures share styled, preview-first sources."""
+"""Frozen related knowledge has styled, preview-first sources in both layouts."""
 
 import pytest
 from playwright.sync_api import expect, sync_playwright
@@ -19,7 +19,7 @@ def test_saved_knowledge_preview_cards_and_uninterrupted_document_reading(reader
             origin="model",
             title="创建任务的完整说明",
             section_ids=["s1", "s2"],
-            summary="## 创建任务的完整说明\n\n第一段的**重要内容**。[1]\n\n|字段|条件|\n|---|---|\n|负责人|必须填写 [2]|\n\n第二段保留连续阅读。[2]",
+            summary="## 创建任务的完整说明\n\n第一段的**重要内容**。[1]\n\n|字段|条件|\n|---|---|\n|负责人|必须填写 [2]|\n\n第二段保留连续阅读。[2][3] `[4]`",
         )
 
     reader.rewrite_library(reader_file, update)
@@ -41,6 +41,8 @@ def test_saved_knowledge_preview_cards_and_uninterrupted_document_reading(reader
             expect(related.locator(".knowledge-source-preview")).to_have_count(0)
             expect(related.locator("details.chat-citations")).not_to_have_attribute("open", "")
             expect(related.locator(".chat-source-entry")).to_have_count(2)
+            expect(related.locator(".citation-missing")).to_have_text("[3]（原文缺失）")
+            expect(related.locator(".knowledge-summary code")).to_have_text("[4]")
             assert related.locator("strong").evaluate("e=>getComputedStyle(e).display") == "inline"
             assert (
                 related.locator(".citation-inline").first.evaluate("e=>getComputedStyle(e).backgroundColor")
@@ -66,17 +68,11 @@ def test_saved_knowledge_preview_cards_and_uninterrupted_document_reading(reader
             page.keyboard.press("Escape")
             expect(preview).to_have_count(0)
             page.get_by_role("tab", name="AI 讲解", exact=True).click()
-            saved = page.locator(".exported-explanation")
-            expect(saved.locator("details.chat-citations")).not_to_have_attribute("open", "")
-            saved.locator(".chat-citations summary").click()
-            saved_card = saved.locator(".chat-source-entry button").first
-            assert (
-                saved_card.evaluate(
-                    "e=>({color:getComputedStyle(e).color,bg:getComputedStyle(e).backgroundColor,pad:getComputedStyle(e).padding})"
-                )
-                == style
-            )
-            saved_card.click()
+            expect(page.locator(".assistant-body")).to_contain_text("暂无讲解")
+            expect(page.locator(".assistant-body")).not_to_contain_text("第二段保留连续阅读")
+            page.get_by_role("tab", name="文档", exact=True).click()
+            related.locator(".chat-citations summary").click()
+            card.click()
             expect(preview).to_be_visible()
             assert page.url == original_url
             preview.get_by_role("button", name="打开文档原文", exact=True).click()

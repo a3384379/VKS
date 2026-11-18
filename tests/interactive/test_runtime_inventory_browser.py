@@ -262,7 +262,7 @@ def test_navigation_keeps_scan_and_does_not_restart_completed_pages(materials, t
             assert calls, "Mocked AI must process captured content before the scan finishes"
             run_id = current["id"]
             page.get_by_role("button", name="文档", exact=True).click()
-            expect(page.locator(".document-reader > h1")).to_have_text("收费管理")
+            expect(page.locator(".document-reader").get_by_role("heading", name="收费管理", level=1, exact=True)).to_be_visible()
             page.get_by_role("button", name="AI 设置", exact=True).click()
             page.get_by_role("button", name="关联管理", exact=True).click()
             expect(page.get_by_label("已保存的预扫描进度", exact=True)).to_contain_text(

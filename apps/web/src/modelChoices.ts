@@ -1,8 +1,53 @@
 /** Compact choices derived only from the provider's actual IDs. */
 const nonAnswer =
-  /audio|realtime|embedding|rerank|whisper|(?:^|[-_/])tts(?:$|[-_/])|dall-e|moderation|transcrib|(?:^|[-_/])image(?:$|[-_/])|(?:^|[-_/])sora(?:$|[-_/])/i;
+  /audio|realtime|embedding|rerank|whisper|(?:^|[-_/])tts(?:$|[-_/])|dall-e|moderation|transcrib|(?:^|[-_/])image(?:$|[-_/])|(?:^|[-_/])sora(?:$|[-_/])|^gpt-live|^text-search|^code-search/i;
 const snapshot =
   /-(?:20\d{2}-\d{2}-\d{2}|(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))$/;
+// Public lifecycle notices for legacy families, including their dated aliases.
+// https://developers.openai.com/api/docs/deprecations
+const deprecatedOpenAIAnswer = new Set([
+  "chatgpt-4o-latest",
+  "gpt-4o",
+  "gpt-4o-mini",
+  "gpt-4.1",
+  "gpt-4.1-mini",
+  "gpt-4.1-nano",
+  "gpt-4",
+  "gpt-4-completions",
+  "gpt-4-32k",
+  "gpt-4-turbo",
+  "gpt-4-turbo-preview",
+  "gpt-4-turbo-completions",
+  "gpt-4-turbo-preview-completions",
+  "gpt-4-0125-preview",
+  "gpt-4-1106-preview",
+  "gpt-4-vision-preview",
+  "gpt-3.5-turbo",
+  "gpt-3.5-turbo-completions",
+  "gpt-3.5-turbo-16k",
+  "gpt-5",
+  "gpt-5-mini",
+  "o1",
+  "o1-pro",
+  "o3-pro",
+]);
+
+export function answerModelRestriction(id: string, endpoint: string): string {
+  // A proxy can expose the same ID with a different deployment or lifecycle.
+  if (!/^https:\/\/api\.openai\.com(?::443)?(?:\/|$)/i.test(endpoint.trim()))
+    return "";
+  if (nonAnswer.test(id)) return "不属于文本回答模型";
+  if (deprecatedOpenAIAnswer.has(id.toLowerCase().replace(snapshot, "")))
+    return "官方已弃用或停用";
+  return "";
+}
+
+export function answerModelCandidates<T extends { id: string }>(
+  models: T[],
+  endpoint: string,
+): T[] {
+  return models.filter(({ id }) => !answerModelRestriction(id, endpoint));
+}
 function family(id: string) {
   return (
     id

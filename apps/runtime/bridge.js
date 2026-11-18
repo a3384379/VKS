@@ -697,7 +697,7 @@
       if (generation === navigation) documentNavigating = false;
     }
   }
-  async function reveal(t, request) {
+  async function reveal(t, request, pageOnly = false) {
     picking = false;
     const generation = ++navigation;
     let root = frame.contentWindow;
@@ -723,6 +723,10 @@
         { ok: false, message: "页面尚未加载，请在原型中打开对应页面" },
         request,
       );
+      return;
+    }
+    if (pageOnly) {
+      send("command.result", { ok: true, message: "已打开原型页面" }, request);
       return;
     }
     let el;
@@ -1236,7 +1240,7 @@
         !documentMode &&
         data.payload?.target
       )
-        await reveal(data.payload.target, data.request_id);
+        await reveal(data.payload.target, data.request_id, data.payload.page_only === true);
     };
     port.start();
     send("runtime.ready");

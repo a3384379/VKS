@@ -79,7 +79,7 @@ def test_document_chapter_selects_module_preview_cancel_and_confirm(assistant, t
                 f"project={pid}&analysis={aid}&view=documents&doc={document['revision_id']}&reader=standard",
             )
             article = page.locator(".document-reader")
-            action = article.get_by_role("button", name="关联操作", exact=True).first
+            action = article.get_by_role("button", name="将本章关联到原型", exact=True).first
             expect(action).to_be_visible(timeout=20000)
             action.click()
             picker = page.get_by_role("dialog", name="选择关联模块", exact=True)

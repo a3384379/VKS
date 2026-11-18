@@ -50,7 +50,7 @@ def test_touch_model_picker_preserves_exact_catalog_and_manual_ids(reader_file):
             page.get_by_role("button", name="获取模型", exact=True).tap()
             picker = page.get_by_label("可用模型", exact=True)
             expect(picker).to_have_value(catalog_id)
-            expect(picker.locator("option")).to_have_text(["请选择可用模型", catalog_id, "手动输入模型 ID…"])
+            expect(picker.locator("option")).to_have_text(["请选择回答模型", catalog_id, "手动输入模型 ID…"])
             expect(custom).to_be_hidden()
             expect(page.locator("datalist")).to_have_count(0)
             # The native select is the touch control; manual entry is an
@@ -174,7 +174,7 @@ def test_protocol_change_cancels_late_catalog_and_pending_state_survives_tabs(re
             page.evaluate("window.catalogReleases[1]()")
             expect(fetch).to_be_enabled()
             expect(page.get_by_label("可用模型", exact=True).locator("option")).to_have_text(
-                ["请选择可用模型", "current-protocol-model", "手动输入模型 ID…"]
+                ["请选择回答模型", "current-protocol-model", "手动输入模型 ID…"]
             )
         finally:
             browser.close()

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, mutation } from "../../web/src/api";
 import { RichMarkdown, type MarkdownReference } from "./RichMarkdown";
 import {
@@ -67,20 +67,25 @@ type ReviewPage = {
   state: string;
   processed: number;
   total: number;
+  matched_total: number;
+  unresolved_total: number;
   items: ReviewRow[];
   next_offset?: number | null;
+};
+type ReviewFilter = "all" | "needs_attention" | ReviewRow["status"];
+const reviewFilters: Record<ReviewFilter, string> = {
+  all: "全部状态",
+  needs_attention: "需处理",
+  failed: "生成失败",
+  insufficient: "依据不足",
+  generated: "已生成预览",
+  pending: "待生成",
 };
 const settled = (state: string) =>
   ["succeeded", "failed", "cancelled"].includes(state);
 const rowError = (row: ReviewRow) =>
   typeof row.error === "string" ? row.error : row.error?.message;
-const statusText = (row: ReviewRow) =>
-  ({
-    pending: "待生成",
-    generated: "已生成预览",
-    insufficient: "依据不足",
-    failed: "生成失败",
-  })[row.status];
+const statusText = (row: ReviewRow) => reviewFilters[row.status];
 const pageSize = 25;
 
 export function AssociationReview({
@@ -114,6 +119,11 @@ export function AssociationReview({
   const [overrides, setOverrides] = useState<Record<string, ReviewRow>>({});
   const [excluded, setExcluded] = useState(new Set<string>());
   const [directions, setDirections] = useState<Record<string, string>>({});
+  const [keyword, setKeyword] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ReviewFilter>("all");
+  const [matched, setMatched] = useState(0);
+  const [unresolved, setUnresolved] = useState(0);
+  const [listLoading, setListLoading] = useState(false);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState("");
   const [preview, setPreview] = useState<{
@@ -122,7 +132,9 @@ export function AssociationReview({
   } | null>(null);
   const localPreviews = useRef(new Map<string, AssociationPreview>());
   const [generating, setGenerating] = useState(false);
-  const [regenerating, setRegenerating] = useState("");
+  const retrying = useRef(new Set<string>());
+  const [regenerating, setRegenerating] = useState(new Set<string>());
+  const [retryErrors, setRetryErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -141,6 +153,17 @@ export function AssociationReview({
   const value = preview && preview.id === currentPreview ? preview.value : null;
   const total = job?.total ?? rows.length;
   const remaining = Math.max(0, total - excluded.size);
+  const localFilters = useMemo(
+    () => ({
+      excluded_item_ids: [...excluded],
+      insufficient_item_ids: Object.values(overrides)
+        .filter((row) => !row.can_confirm)
+        .map((row) => row.item_id),
+    }),
+    [excluded, overrides],
+  );
+  const currentRetrying = !!current && regenerating.has(current.item_id);
+  const showUnresolved = !!job && settled(job.state) && unresolved > 0;
 
   async function request<T>(path: string, init: RequestInit = {}) {
     const controller = new AbortController();
@@ -178,14 +201,24 @@ export function AssociationReview({
   }, []);
   useEffect(() => {
     if (!job?.id) return;
-    let cancelled = false;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
-        const result = await request<ReviewPage>(
-          `${base}/batch-preview/${job!.id}?offset=${offset}&limit=${pageSize}`,
+        const result = await api<ReviewPage>(
+          `${base}/batch-preview/${job!.id}/results`,
+          {
+            ...mutation("POST", {
+              ...localFilters,
+              offset,
+              limit: pageSize,
+              q: keyword,
+              status: statusFilter,
+            }),
+            signal: controller.signal,
+          },
         );
-        if (cancelled || !active.current) return;
+        if (controller.signal.aborted || !active.current) return;
         currentJob.current = { id: result.job_id, state: result.state };
         setJob({
           id: result.job_id,
@@ -193,18 +226,32 @@ export function AssociationReview({
           processed: result.processed,
           total: result.total,
         });
+        setMatched(result.matched_total);
+        setUnresolved(result.unresolved_total);
+        if (offset && offset >= result.matched_total) {
+          setOffset(
+            Math.max(0, Math.ceil(result.matched_total / pageSize) - 1) *
+              pageSize,
+          );
+          setSelected("");
+          return;
+        }
         setRows(result.items);
+        setListLoading(false);
         if (!settled(result.state)) timer = setTimeout(poll, 1000);
       } catch (cause) {
-        if (!cancelled && active.current) setError((cause as Error).message);
+        if (!controller.signal.aborted && active.current) {
+          setError((cause as Error).message);
+          setListLoading(false);
+        }
       }
     }
-    void poll();
+    timer = setTimeout(poll, keyword.trim() ? 180 : 0);
     return () => {
-      cancelled = true;
+      controller.abort();
       clearTimeout(timer);
     };
-  }, [job?.id, offset, base]);
+  }, [job?.id, offset, base, keyword, statusFilter, localFilters]);
   useEffect(() => {
     if (!currentPreview) {
       setPreview(null);
@@ -301,9 +348,16 @@ export function AssociationReview({
     }
   }
   async function regenerate(row: ReviewRow) {
-    if (regenerating || saving || saved) return;
-    setRegenerating(row.item_id);
-    setError("");
+    if (
+      retrying.current.has(row.item_id) ||
+      saving ||
+      saved ||
+      (row.status === "pending" && (!job || !settled(job.state)))
+    )
+      return;
+    retrying.current.add(row.item_id);
+    setRegenerating(new Set(retrying.current));
+    setRetryErrors((previous) => ({ ...previous, [row.item_id]: "" }));
     try {
       const original =
         row.request ||
@@ -339,13 +393,35 @@ export function AssociationReview({
           value: result,
         });
     } catch (cause) {
-      if (active.current) setError((cause as Error).message);
+      if (active.current)
+        setRetryErrors((previous) => ({
+          ...previous,
+          [row.item_id]: (cause as Error).message,
+        }));
     } finally {
-      if (active.current) setRegenerating("");
+      retrying.current.delete(row.item_id);
+      if (active.current) setRegenerating(new Set(retrying.current));
     }
   }
+  function moveToPage(next: number) {
+    setOffset(next);
+    setSelected("");
+    setRows([]);
+    setListLoading(true);
+  }
+  function filterByStatus(status: ReviewFilter) {
+    if (status === statusFilter) return;
+    setStatusFilter(status);
+    moveToPage(0);
+  }
+  function showNeedsAttention() {
+    if (!keyword && statusFilter === "needs_attention" && !offset) return;
+    setKeyword("");
+    setStatusFilter("needs_attention");
+    moveToPage(0);
+  }
   async function confirm() {
-    if (saving || generating || regenerating || !remaining) return;
+    if (saving || generating || retrying.current.size || !remaining) return;
     setSaving(true);
     setError("");
     try {
@@ -365,27 +441,23 @@ export function AssociationReview({
         let next: number | null = 0;
         while (next !== null) {
           const result: ReviewPage = await request(
-            `${base}/batch-preview/${job.id}?offset=${next}&limit=50`,
+            `${base}/batch-preview/${job.id}/results`,
+            mutation("POST", { ...localFilters, offset: next, limit: 100 }),
           );
-          candidates.push(
-            ...result.items
-              .map((row) => overrides[row.item_id] || row)
-              .filter((row) => !excluded.has(row.item_id)),
-          );
-          next =
-            result.next_offset ??
-            (next + result.items.length < result.total && result.items.length
-              ? next + result.items.length
-              : null);
+          candidates.push(...result.items);
+          next = result.next_offset ?? null;
         }
         if (!candidates.length) throw new Error("本次没有待保存的预览。");
         const invalid = candidates.filter(
           (row) => !row.can_confirm || !row.preview_id,
         );
-        if (invalid.length)
+        if (invalid.length) {
+          setUnresolved(invalid.length);
+          showNeedsAttention();
           throw new Error(
             `还有 ${invalid.length} 项未形成可保存预览，请重试或从本次移除。`,
           );
+        }
         const result = await request<{ saved: boolean; count: number }>(
           `${base}/batch-confirm`,
           mutation("POST", {
@@ -504,9 +576,16 @@ export function AssociationReview({
       ) : (
         <>
           {job && (
-            <div className="association-review-progress" role="status">
-              已处理 {job.processed} / {job.total} 项
-              {!settled(job.state) ? " · 正在生成预览" : " · 预览生成结束"}
+            <div className="association-review-progress">
+              <span role="status">
+                已处理 {job.processed} / {job.total} 项
+                {!settled(job.state) ? " · 正在生成预览" : " · 预览生成结束"}
+              </span>
+              {showUnresolved && (
+                <button type="button" onClick={showNeedsAttention}>
+                  查看 {unresolved} 项需处理
+                </button>
+              )}
             </div>
           )}
           <div className="association-review-workspace">
@@ -516,9 +595,41 @@ export function AssociationReview({
                 aria-label="本次关联预览列表"
               >
                 <p>
-                  {remaining} 项待保存
+                  本次保留 {remaining} 项
                   {excluded.size ? ` · 已从本次移除 ${excluded.size} 项` : ""}
+                  {(keyword || statusFilter !== "all") &&
+                    ` · 筛选结果 ${matched} 项`}
                 </p>
+                <div
+                  className="association-review-filters"
+                  role="group"
+                  aria-label="筛选本次关联预览"
+                >
+                  <input
+                    type="search"
+                    aria-label="搜索关联预览"
+                    placeholder="搜索模块、页面或控件"
+                    maxLength={200}
+                    value={keyword}
+                    onChange={(event) => {
+                      setKeyword(event.target.value);
+                      moveToPage(0);
+                    }}
+                  />
+                  <select
+                    aria-label="预览状态"
+                    value={statusFilter}
+                    onChange={(event) =>
+                      filterByStatus(event.target.value as ReviewFilter)
+                    }
+                  >
+                    {Object.entries(reviewFilters).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <ul>
                   {visible.map((row) => (
                     <li key={row.item_id}>
@@ -532,33 +643,37 @@ export function AssociationReview({
                       >
                         <strong>{row.label}</strong>
                         <small>{row.module_label}</small>
-                        <span>{statusText(row)}</span>
+                        <span>
+                          {regenerating.has(row.item_id)
+                            ? "正在重新生成…"
+                            : statusText(row)}
+                        </span>
                       </button>
                     </li>
                   ))}
                 </ul>
-                {!visible.length && <p>本页没有待查看项目。</p>}
-                {job && job.total > pageSize && (
+                {!visible.length && (
+                  <p>
+                    {listLoading || (job && !settled(job.state))
+                      ? "正在查找预览…"
+                      : "没有符合条件的预览。"}
+                  </p>
+                )}
+                {matched > pageSize && (
                   <nav aria-label="预览列表分页">
                     <button
-                      disabled={!offset}
-                      onClick={() => {
-                        setOffset(Math.max(0, offset - pageSize));
-                        setSelected("");
-                      }}
+                      disabled={listLoading || !offset}
+                      onClick={() => moveToPage(Math.max(0, offset - pageSize))}
                     >
                       上一页
                     </button>
                     <span>
                       {Math.floor(offset / pageSize) + 1} /{" "}
-                      {Math.ceil(job.total / pageSize)}
+                      {Math.ceil(matched / pageSize)}
                     </span>
                     <button
-                      disabled={offset + pageSize >= job.total}
-                      onClick={() => {
-                        setOffset(offset + pageSize);
-                        setSelected("");
-                      }}
+                      disabled={listLoading || offset + pageSize >= matched}
+                      onClick={() => moveToPage(offset + pageSize)}
                     >
                       下一页
                     </button>
@@ -584,7 +699,7 @@ export function AssociationReview({
                     <div className="association-review-item-actions">
                       {!single && (
                         <button
-                          disabled={saved || saving || !!regenerating}
+                          disabled={saved || saving || currentRetrying}
                           onClick={() =>
                             setExcluded(
                               (previous) =>
@@ -597,7 +712,11 @@ export function AssociationReview({
                       )}
                     </div>
                   </header>
-                  {rowError(current) && <p role="alert">{rowError(current)}</p>}
+                  {(retryErrors[current.item_id] || rowError(current)) && (
+                    <p role="alert">
+                      {retryErrors[current.item_id] || rowError(current)}
+                    </p>
+                  )}
                   {reading && !value && <p role="status">正在读取完整预览…</p>}
                   {value ? (
                     <>
@@ -656,6 +775,7 @@ export function AssociationReview({
                         aria-label="本项关联方向"
                         rows={2}
                         maxLength={4000}
+                        disabled={currentRetrying || saved || saving}
                         value={directions[current.item_id] ?? instruction}
                         onChange={(event) =>
                           setDirections((previous) => ({
@@ -672,13 +792,15 @@ export function AssociationReview({
                       disabled={
                         saved ||
                         saving ||
-                        !!regenerating ||
-                        current.status === "pending"
+                        currentRetrying ||
+                        (current.status === "pending" &&
+                          (!job || !settled(job.state)))
                       }
                     >
-                      {regenerating === current.item_id
+                      {currentRetrying
                         ? "正在重新生成…"
-                        : current.status === "failed"
+                        : current.status === "failed" ||
+                            current.status === "pending"
                           ? "重试本项"
                           : "按本项方向重新生成"}
                     </button>
@@ -703,7 +825,8 @@ export function AssociationReview({
               saved ||
               saving ||
               generating ||
-              !!regenerating ||
+              !!regenerating.size ||
+              showUnresolved ||
               !remaining ||
               (single ? !current?.can_confirm : !job || !settled(job.state))
             }

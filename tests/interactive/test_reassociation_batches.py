@@ -108,6 +108,55 @@ def test_batch_confirm_rolls_back_all_on_second_write(assistant, monkeypatch):
     assert not test_reassociation_preview.bindings(web, pid, aid, grant) and len(calls) == 2
 
 
+def test_results_filter_across_pages_and_exclude_only_from_this_view(assistant):
+    (web, service, _, pid, aid, grant, _, _, _), body, calls = assistant
+    items = [
+        {
+            **body,
+            "target": {**body["target"], "route": f"/billing/{i}", "label": f"功能{i}"},
+            "context": {**body["context"], "page_title": "智能计费"},
+        }
+        for i in range(30)
+    ]
+    job_id = post(web, pid, grant, "/reassociate/batch-preview", {"analysis_set_id": aid, "items": items})["job_id"]
+    with service.db() as s:
+        job = s.get(Job, job_id)
+        ids = [item["item_id"] for item in job.input_json["items"]]
+        job.state = "succeeded"
+        job.result_json = {
+            "items": {
+                ids[26]: {"status": "failed", "error_code": "VKS_MODEL_FAILED"},
+                ids[28]: {"status": "failed", "error_code": "VKS_MODEL_FAILED"},
+                ids[29]: {"status": "insufficient"},
+            }
+        }
+    path = "/reassociate/batch-preview/" + job_id
+    failed = post(web, pid, grant, path + "/results", {"status": "failed", "limit": 1})
+    assert (failed["total"], failed["matched_total"], failed["next_offset"]) == (30, 2, 1)
+    assert failed["items"][0]["item_id"] == ids[26]
+    assert failed["items"][0]["request"]["batch_id"] == job_id
+    other = post(web, pid, grant, path + "/results", {"status": "failed", "q": "BILLING/28"})
+    assert other["matched_total"] == 1
+    assert other["items"][0]["item_id"] == ids[28]
+    filtered = post(
+        web,
+        pid,
+        grant,
+        path + "/results",
+        {
+            "status": "insufficient",
+            "excluded_item_ids": [ids[29]],
+            "insufficient_item_ids": [ids[28]],
+        },
+    )
+    assert filtered["matched_total"] == 1 and filtered["unresolved_total"] == 29
+    assert filtered["items"][0]["item_id"] == ids[28]
+    assert filtered["items"][0]["status"] == "insufficient" and not filtered["items"][0]["can_confirm"]
+    legacy = get(web, pid, grant, path, offset=28)
+    assert [item["status"] for item in legacy["items"]] == ["failed", "insufficient"]
+    assert "matched_total" not in legacy and not calls
+
+
 def test_targets_metadata_and_cancelled_job_never_generate(assistant):
     (web, service, _, pid, aid, grant, _, _, _), body, calls = assistant
     targets = get(

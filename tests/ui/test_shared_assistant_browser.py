@@ -57,31 +57,38 @@ def test_continuous_reverse_resize_survives_context_updates_and_restores(reader_
             browser.close()
 
 
-def test_large_model_catalog_is_compact_searchable_paged_and_keeps_current(reader_file):
+@pytest.mark.parametrize("official", [True, False])
+def test_large_model_catalog_is_compact_searchable_paged_and_keeps_current(reader_file, official):
     ids = [f"gpt-{generation}.{minor}" for generation in range(1, 7) for minor in range(15)]
-    ids += ["text-embedding-3-small", "gpt-audio", "custom-current-model"]
+    ids += ["text-embedding-3-small", "gpt-audio", "custom-current-model", "chatgpt-4o-latest", "gpt-4o-2024-11-20"]
+    endpoint = "https://api.openai.com/v1" if official else "https://api.example.test/v1"
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
         page = browser.new_page()
         page.route(
-            "https://api.example.test/v1/models",
+            endpoint + "/models",
             lambda route: route.fulfill(
                 json={"data": [{"id": value} for value in ids]}, headers={"Access-Control-Allow-Origin": "*"}
             ),
         )
         try:
             open_settings(page, reader_file)
+            page.get_by_label("接口地址", exact=True).fill(endpoint)
             page.get_by_label("自定义模型 ID", exact=True).fill("custom-current-model")
             page.get_by_role("button", name="获取模型", exact=True).click()
             picker = page.get_by_label("可用模型", exact=True)
             expect(picker).to_have_value("custom-current-model")
             assert picker.locator("option").count() <= 9
             assert "gpt-audio" not in picker.inner_text()
-            page.get_by_role("button", name="查看全部模型", exact=False).click()
+            page.get_by_role("button", name="查看全部候选", exact=False).click()
             assert picker.locator("option").count() <= 23
             page.get_by_role("button", name="下一页", exact=True).click()
             assert picker.locator("option").count() <= 23
             expect(picker).to_have_value("custom-current-model")
+            page.get_by_label("搜索模型", exact=True).fill("4o")
+            expect(picker.locator('option[value="chatgpt-4o-latest"]')).to_have_count(0 if official else 1)
+            page.get_by_label("搜索模型", exact=True).fill("embedding")
+            expect(picker.locator('option[value="text-embedding-3-small"]')).to_have_count(0 if official else 1)
             page.get_by_label("搜索模型", exact=True).fill("gpt-6.14")
             expect(picker.locator('option[value="gpt-6.14"]')).to_have_count(1)
             picker.select_option("gpt-6.14")
