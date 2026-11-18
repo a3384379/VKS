@@ -20,6 +20,7 @@ from .documents import DocumentService
 from .exports import allow_artifact, canonical, digest, document_export_choices, read_original
 from .interactive import InteractiveKnowledgeService
 from .models import Analysis, Artifact, Evidence, Job, Project, Release, Revision
+from .prototype_edit import ordered_citation_edges
 from .service import DomainError
 
 
@@ -176,6 +177,10 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
             for eid in edge.get("evidence_ids", [])
         )
     ]
+    citation_edges = {}
+    for edge in edges:
+        if edge["relation_type"] == "supported_by_section" and edge["to_revision_id"] in section_ids:
+            citation_edges.setdefault(edge["from_revision_id"], []).append(edge)
     bindings, relation_ids, evidence_ids = [], set(), set()
     for edge in edges:
         if edge["relation_type"] != "has_business_point":
@@ -185,13 +190,7 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
         if anchor.get("package_id") not in package_ids:
             continue
         point = rows[edge["to_revision_id"]][1]
-        citations = [
-            citation
-            for citation in edges
-            if citation["relation_type"] == "supported_by_section"
-            and citation["from_revision_id"] == point.id
-            and citation["to_revision_id"] in section_ids
-        ]
+        citations = ordered_citation_edges(point, citation_edges.get(point.id, []))
         if not citations:
             continue
         bindings.append(
@@ -297,6 +296,7 @@ def html_library(payload):
     """Embed data as inert gzip/base64 and platform-owned runtime as inline code."""
     assets = Path(__file__).with_name("reader_assets")
     from .document_assistant import embedded_assistant
+    from .interactive_ai import EXPLANATION_GUIDANCE
 
     template = (assets / "template.html").read_text()
     encoded = base64.b64encode(gzip.compress(canonical(payload), compresslevel=9, mtime=0)).decode()
@@ -311,6 +311,7 @@ def html_library(payload):
         )
         .replace("/* VKS_HANDBOOK_CSS */", (assets / "handbook.css").read_text())
         .replace("/* VKS_MARKDOWN_CSS */", (assets / "markdown-vendor.css").read_text())
+        .replace("VKS_EXPLANATION_GUIDANCE", json.dumps(EXPLANATION_GUIDANCE, ensure_ascii=False).replace("<", "\\u003c"))
         .replace("VKS_READER_PAYLOAD", encoded)
         .replace("VKS_DOCUMENT_AI_SOURCE", embedded_assistant())
         .replace("/* VKS_READER_JS */", (assets / "reader.js").read_text())

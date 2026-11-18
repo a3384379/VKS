@@ -363,7 +363,7 @@ class AiService:
         evidence = [e for e in w["evidence"] if e["id"] in evidence_ids]
         return w, evidence
 
-    def reserve(self, actor, pid, config, input_bound):
+    def reserve(self, actor, pid, config, input_bound, *, prototype_target=None):
         out = config["max_output_tokens"]
         tokens = input_bound + out
         cost = math.ceil(input_bound * config["input_rate_micro_per_million"] / 1000000) + math.ceil(
@@ -415,7 +415,10 @@ class AiService:
             # reservation and audit together instead of flushing twice.
             if not s.info.get("vks_completion_batch"):
                 s.flush()
-            self.service.audit(s, actor, pid, "model.reserve", usage.id)
+            self.service.audit(
+                s, actor, pid, "model.reserve", usage.id,
+                metadata={"prototype_target": prototype_target} if prototype_target else None,
+            )
             return usage.id
 
     def settle(self, usage_id, config, input_tokens, output_tokens, state, error=""):

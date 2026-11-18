@@ -5,6 +5,8 @@ import json
 from playwright.sync_api import expect, sync_playwright
 from vks_api import ai_gateway
 from vks_api.association_inference import response_for
+from vks_api.materials import MaterialService
+from vks_api.readonly_export import projection
 
 from tests.interactive import test_assistant, test_knowledge
 from tests.interactive.test_association_text import BODY, TITLE
@@ -19,7 +21,7 @@ assistant = test_assistant.assistant
 
 
 def test_diff_markdown_and_confirmation_keep_title_out_of_generated_body(assistant, tmp_path, monkeypatch):
-    (web, _service, _owner, pid, aid, grant, package, section, _), _request, calls = assistant
+    (web, service, owner, pid, aid, grant, package, section, _), _request, calls = assistant
     initial = test_knowledge.form(aid, package, section)
     initial["target"]["frame_path"] = []
     result = web.post(
@@ -30,14 +32,18 @@ def test_diff_markdown_and_confirmation_keep_title_out_of_generated_body(assista
     assert result.status_code == 200
     old = bindings(web, pid, aid, grant)
 
+    model_refs = []
+
     def model(config, payload):
         data = json.loads(payload["input"][1]["content"])
         calls.append(data)
+        model_refs[:] = [row["revision_id"] for row in reversed(data["chapters"][:3])]
+        assert len(model_refs) == 3
         return response_for(
             {
                 "title": TITLE,
-                "explanation": f"# {TITLE}\n\n# {TITLE}\n\n" + BODY,
-                "section_revision_ids": [data["chapters"][0]["revision_id"]],
+                "explanation": f"# {TITLE}\n\n# {TITLE}\n\n" + BODY + "核对其他两条依据。[2][3]",
+                "section_revision_ids": model_refs,
                 "confidence": 0.95,
                 "unknowns": [],
             },
@@ -82,7 +88,23 @@ def test_diff_markdown_and_confirmation_keep_title_out_of_generated_body(assista
             expect(panel.locator(".related-results > h2")).to_have_text(TITLE)
             expect(panel.locator(".related-results .markdown h1")).to_have_count(0)
             saved = bindings(web, pid, aid, grant)[0]
-            assert saved["title"] == TITLE and saved["summary"] == BODY
+            assert saved["title"] == TITLE and saved["summary"] == BODY + "核对其他两条依据。[2][3]"
+            assert [row["revision_id"] for row in saved["sections"]] == model_refs
+            panel.get_by_role("button", name="编辑知识", exact=True).click()
+            expect(panel.get_by_text("保留其余 2 条原文依据", exact=True)).to_be_visible()
+            edited = saved["summary"].replace("核对计划和正式账单", "核对租赁计划和正式账单")
+            panel.get_by_label("业务说明", exact=True).fill(edited)
+            panel.get_by_role("button", name="保存关联", exact=True).click()
+            expect(panel.get_by_role("button", name="原文引用 3", exact=True)).to_be_visible()
+            updated = bindings(web, pid, aid, grant)[0]
+            assert updated["summary"] == edited
+            assert [row["revision_id"] for row in updated["sections"]] == model_refs
+            release = MaterialService(service).checkpoint(owner, pid, aid, "验证原文编号顺序", "citation-order")
+            caps = {"allowed_source": True, "allowed_confidential": True, "allowed_trace": True}
+            with service.db() as session:
+                payload, _, _ = projection(service, session, owner, pid, release["id"], caps)
+            assert payload["bindings"][0]["section_ids"] == model_refs
+            assert payload["bindings"][0]["summary"] == edited
             assert len(calls) == 1 and not errors
         finally:
             browser.close()

@@ -145,3 +145,27 @@ def test_title_only_result_is_rejected_without_replacing_knowledge(assistant, mo
     response = web.post(root(pid) + "/reassociate", json=request, headers=_headers(grant, 0, "empty"))
     assert response.status_code == 422 and "缺少正文" in response.text
     assert points(service) == before
+
+
+@pytest.mark.parametrize("text, status", [("缺少原文的正文 [2]。", 422), ("正文 [1]。示例代码 `[12]`。", 200)])
+def test_numbered_citations_in_generated_prose_need_matching_sections(assistant, monkeypatch, text, status):
+    (web, service, _owner, pid, _aid, grant, _package, _section, _), request, _calls = assistant
+    before = points(service)
+
+    def model(config, payload):
+        data = json.loads(payload["input"][1]["content"])
+        answer = {
+            "title": TITLE,
+            "explanation": text,
+            "section_revision_ids": [data["chapters"][0]["revision_id"]],
+            "confidence": 0.95,
+            "unknowns": [],
+        }
+        return response_for(answer, "responses", (100, 50), [])
+
+    monkeypatch.setattr(ai_gateway, "request_model", model)
+    response = web.post(root(pid) + "/reassociate", json=request, headers=_headers(grant, 0, "mapped-refs"))
+    assert response.status_code == status, response.text
+    assert points(service) == before
+    if status == 422:
+        assert "无对应原文的引用编号" in response.text

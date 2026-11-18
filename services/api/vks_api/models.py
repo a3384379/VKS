@@ -176,6 +176,9 @@ class Relation(Identified, Base):
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     __mapper_args__ = {"version_id_col": row_version}
 
+    def citation_order(self):
+        return self.created_at, (self.metadata_json or {}).get("citation_source_id", self.id)
+
 
 class Job(Identified, Base):
     __tablename__ = "job"

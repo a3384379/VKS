@@ -225,6 +225,15 @@ def _repoint(edges, previous, updated, *, stale):
                 edge.causal_basis = "not_established"
 
 
+def ordered_citation_edges(point, edges):
+    """Order only surviving, authorized edges by their immutable body numbering."""
+    ids = point.metadata_json.get("citation_revision_ids")
+    if not ids:
+        return edges
+    positions = {rid: index for index, rid in enumerate(ids)}
+    return sorted(edges, key=lambda edge: positions.get(edge["to_revision_id"], len(positions)))
+
+
 def _require_edges(s, service, actor, pid, edges):
     for edge in edges:
         if (
@@ -779,6 +788,11 @@ class PrototypeEditor:
             "application/json",
             meta,
         )
+        citation_ids = (
+            [row.id for row in refs]
+            if form.section_revision_ids is not None
+            else (prior.metadata_json.get("citation_revision_ids") if prior else None)
+        )
         return self.documents._revision(
             s,
             entity,
@@ -788,6 +802,7 @@ class PrototypeEditor:
             {"kind": "file", "relative_path": art.relative_path},
             {
                 **{key: wording[key] for key in ("applicability", "outcome", "exceptions")},
+                **({"citation_revision_ids": citation_ids} if citation_ids is not None else {}),
                 **({k: generation[k] for k in ("origin", "model_id", "confidence")} if generation else {}),
             },
         )

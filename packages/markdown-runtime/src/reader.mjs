@@ -425,13 +425,17 @@ function render(source, options = {}) {
   };
   collect(tree);
   const renderText = (value) => {
-    if (!options.citations?.length || !options.openSection)
+    if (
+      !options.openSection ||
+      (!options.citations?.length && !options.markMissingCitations)
+    )
       return document.createTextNode(value);
     const result = document.createDocumentFragment();
     let index = 0;
     for (const match of value.matchAll(/\[(\d+)\]/g)) {
       result.append(document.createTextNode(value.slice(index, match.index)));
-      const reference = options.citations[Number(match[1]) - 1];
+      const number = Number(match[1]);
+      const reference = options.citations?.[number - 1];
       if (reference) {
         const link = element(
           "button",
@@ -440,6 +444,14 @@ function render(source, options = {}) {
         );
         link.addEventListener("click", () => options.openSection(reference.id));
         result.append(link);
+      } else if (options.markMissingCitations && number > 0) {
+        result.append(
+          element(
+            "span",
+            { class: "citation-missing" },
+            match[0] + "（原文缺失）",
+          ),
+        );
       } else result.append(document.createTextNode(match[0]));
       index = match.index + match[0].length;
     }

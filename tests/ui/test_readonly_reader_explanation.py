@@ -67,11 +67,11 @@ def configure(page, protocol="chat_completions"):
     apply_connection(page, protocol)
 
 
-def test_exported_explanation_is_offline_and_settings_use_header_icon(reader_file):
+def test_saved_associations_stay_in_documents_and_do_not_block_lecture_generation(reader_file):
     def update(payload):
         original = payload["bindings"][0]
         original["origin"] = "manual"
-        payload["bindings"].append({**original, "id": "ai", "origin": "model", "summary": "已有 AI 讲解 [1]。"})
+        payload["bindings"].append({**original, "id": "ai", "origin": "model", "summary": "已保存的 AI 关联正文 [1]。"})
 
     reader_tests.rewrite_library(reader_file, update)
     with sync_playwright() as p:
@@ -81,25 +81,25 @@ def test_exported_explanation_is_offline_and_settings_use_header_icon(reader_fil
         try:
             page.goto(reader_file.as_uri())
             open_explanation(page)
-            expect(page.get_by_text("AI 讲解 · 已缓存", exact=True)).to_be_visible()
-            expect(page.locator(".explanation-intro")).to_have_count(0)
-            expect(page.locator(".assistant-body .primary")).to_have_count(0)
-            expect(page.locator(".assistant-body")).not_to_contain_text("按用途、操作步骤、注意事项组织")
-            expect(page.locator(".assistant-footer #vks-generate-explanation")).to_be_visible()
+            body = page.locator(".assistant-body")
+            expect(body).to_contain_text("暂无讲解")
+            expect(body).not_to_contain_text("已保存的 AI 关联正文")
+            expect(page.get_by_role("button", name="配置模型连接", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="编辑知识", exact=True)).to_have_count(0)
             expect(page.get_by_role("tablist", name="助手功能").get_by_role("tab")).to_have_count(3)
             assert not calls
             configure(page)
-            page.wait_for_timeout(400)
-            assert not calls
-            expect(page.locator(".exported-explanation")).to_have_count(2)
-            page.get_by_role("button", name="重新生成讲解", exact=True).click()
             expect(page.get_by_text("讲解已完成 · 仅本次会话", exact=True)).to_be_visible()
             assert len(calls) == 1
-            expect(page.locator(".exported-explanation")).to_have_count(0)
+            expect(body).not_to_contain_text("已保存的 AI 关联正文")
+            page.get_by_role("tab", name="文档", exact=True).click()
+            expect(body).to_contain_text("已保存的 AI 关联正文")
+            page.get_by_role("tab", name="AI 讲解", exact=True).click()
+            expect(body).not_to_contain_text("已保存的 AI 关联正文")
             expect(
                 page.locator(".assistant-footer").get_by_role("button", name="重新生成讲解", exact=True)
             ).to_be_visible()
+            assert len(calls) == 1
         finally:
             browser.close()
 
@@ -122,6 +122,8 @@ def test_configure_automatically_explains_and_reuses_result_without_chat_history
             assert len(calls) == 1
             posted = calls[0].post_data_json
             assert posted["model"] == "deployment/reader+2026.11"
+            instructions = posted.get("instructions") or posted["messages"][0]["content"]
+            assert "当前页面的操作指引" in instructions and "如何核对结果" in instructions
             conversation = posted.get("input") or posted["messages"][1:]
             assert len(conversation) == 1 and '"selector":"#taskcreate"' in conversation[0]["content"]
             assert "保留未发送草稿" not in conversation[0]["content"]

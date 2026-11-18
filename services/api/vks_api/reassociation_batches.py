@@ -37,6 +37,19 @@ class BatchConfirmInput(Input):
     preview_ids: list[Ref] = Field(min_length=1, max_length=10000)
 
 
+class BatchResultQuery(Input):
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=200)
+    q: str = Field(default="", max_length=200)
+    status: Literal["all", "needs_attention", "failed", "insufficient", "generated", "pending"] = "all"
+    excluded_item_ids: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
+        default_factory=list, max_length=10000
+    )
+    insufficient_item_ids: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
+        default_factory=list, max_length=10000
+    )
+
+
 class ReassociationBatchService:
     def __init__(self, service):
         self.service = service
@@ -204,7 +217,7 @@ class ReassociationBatchService:
             visible.append(item)
         return visible
 
-    def listing(self, actor, pid, jid, offset=0, limit=50):
+    def listing(self, actor, pid, jid, offset=0, limit=50, *, filters=None):
         if offset < 0 or not 1 <= limit <= 200:
             raise DomainError("VKS_INVALID_INPUT", "分页范围无效", 422)
         with ReadingService(self.service).db() as s:
@@ -242,32 +255,60 @@ class ReassociationBatchService:
                 else:
                     hidden.add(identity)
             visible = [item for item in visible if item["item_id"] not in hidden]
-            wanted = visible[offset : offset + limit]
             outcomes = job.result_json.get("items", {})
-            prepared = []
-            for item in wanted:
-                identity = item["item_id"]
-                outcome = deepcopy(outcomes.get(identity, {"status": "pending"}))
-                preview_id = newest.get(identity) or outcome.get("preview_id")
-                prepared.append((item, outcome, preview_id))
             state = job.state
             done = sum(item["item_id"] in outcomes for item in visible)
+            excluded = set(filters.excluded_item_ids) if filters else set()
+            insufficient = set(filters.insufficient_item_ids) if filters else set()
+            status_filter = filters.status if filters else "all"
+            needle = filters.q.strip().casefold() if filters else ""
+            unresolved = 0
+            prepared = []
+            for item in visible:
+                identity = item["item_id"]
+                if identity in excluded:
+                    continue
+                outcome = outcomes.get(identity, {})
+                preview_id = newest.get(identity) or outcome.get("preview_id")
+                if identity in insufficient:
+                    preview_id, status = None, "insufficient"
+                else:
+                    status = "generated" if preview_id else outcome.get("status", "pending")
+                needs_attention = not preview_id
+                unresolved += needs_attention
+                if status_filter == "needs_attention":
+                    if not needs_attention:
+                        continue
+                elif status_filter != "all" and status_filter != status:
+                    continue
+                form = item["form"]
+                if (
+                    needle
+                    and needle
+                    not in " ".join(
+                        [
+                            form["target"]["label"],
+                            form["target"]["route"],
+                            form["context"].get("page_title", ""),
+                            form["context"].get("section_title", ""),
+                        ]
+                    ).casefold()
+                ):
+                    continue
+                prepared.append((item, outcome, status, preview_id))
         rows = []
-        for item, outcome, preview_id in prepared:
+        for item, outcome, status, preview_id in prepared[offset : offset + limit]:
             value = item["form"]
             row = {
                 "item_id": item["item_id"],
                 "label": value["target"]["label"],
                 "module_label": value["context"].get("page_title") or value["target"]["label"],
-                "status": outcome.get("status", "pending"),
-                "preview_id": None,
-                "can_confirm": False,
+                "status": status,
+                "preview_id": preview_id,
+                "can_confirm": bool(preview_id),
                 "request": {**value, "batch_id": jid, "item_id": item["item_id"]},
             }
-            if preview_id:
-                # Candidate bodies are loaded only on click, by view_preview.
-                row.update(preview_id=preview_id, can_confirm=True, status="generated")
-            elif outcome.get("status") == "failed":
+            if status == "failed":
                 row["error"] = {
                     "code": outcome.get("error_code", "VKS_MODEL_FAILED"),
                     "message": "本项预览未完成，可修改方向后重试。",
@@ -281,7 +322,8 @@ class ReassociationBatchService:
             "processed": done,
             "total": len(visible),
             "items": rows,
-            "next_offset": offset + limit if offset + limit < len(visible) else None,
+            "next_offset": offset + limit if offset + limit < len(prepared) else None,
+            **({"matched_total": len(prepared), "unresolved_total": unresolved} if filters else {}),
         }
 
     def confirm(self, actor, pid, form):
@@ -436,6 +478,10 @@ def install_reassociation_batches(app, service, actor, envelope):
         limit: int = Query(default=50, ge=1, le=200),
     ):
         return envelope(request, shared.listing(a, pid, jid, offset, limit))
+
+    @app.post(prefix + "/batch-preview/{jid}/results", response_model=PrototypeEnvelope[dict])
+    def query_results(pid: str, jid: str, payload: BatchResultQuery, request: Request, a: ActorDep):
+        return envelope(request, shared.listing(a, pid, jid, payload.offset, payload.limit, filters=payload))
 
     @app.post(prefix + "/batch-confirm", response_model=PrototypeEnvelope[dict])
     def confirm(pid: str, payload: BatchConfirmInput, request: Request, a: ActorDep):

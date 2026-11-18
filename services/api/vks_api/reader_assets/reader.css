@@ -991,10 +991,6 @@ a {
 .explanation-current:empty {
   display: none;
 }
-.exported-explanation {
-  margin: 0 0 18px;
-}
-.exported-explanation .eyebrow,
 .explanation-current > .eyebrow {
   margin-bottom: 12px;
 }

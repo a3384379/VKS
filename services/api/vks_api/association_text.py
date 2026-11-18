@@ -6,6 +6,25 @@ import unicodedata
 from markdown_it import MarkdownIt
 
 
+def has_unmapped_citations(body: str, count: int) -> bool:
+    """Check numbered Markdown prose citations, excluding code and links."""
+    if not re.search(r"\[\d+\]", body):
+        return False
+    for block in MarkdownIt("commonmark").parse(body):
+        link_depth = 0
+        for token in block.children or []:
+            if token.type == "link_open":
+                link_depth += 1
+            elif token.type == "link_close":
+                link_depth -= 1
+            elif token.type == "text" and not link_depth:
+                for number in re.findall(r"\[([0-9]+)\]", token.content):
+                    digits = number.lstrip("0")
+                    if not digits or len(digits) > 2 or int(digits) > count:
+                        return True
+    return False
+
+
 def association_body_without_title(body: str, title: str, *aliases: str) -> str:
     """Remove only leading standalone titles, preserving the remaining bytes.
 

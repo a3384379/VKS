@@ -50,8 +50,13 @@ def test_materials_progressive_loading_deduplication_and_recycle_ui(materials, t
             row = page.locator(".material-history article").filter(has_text="Saved original")
             expect(row).to_be_visible()
             assert abs(history_frame.bounding_box()["height"] - loading_height) < 1
+            page.clock.install()
             row.get_by_role("button", name="删除", exact=False).click()
             expect(row).to_have_count(0)
+            notice = page.locator(".banner.success")
+            expect(notice).to_contain_text("已移入回收站")
+            page.clock.fast_forward(3000)
+            expect(notice).to_be_visible()
             recycle = page.locator("details").filter(has=page.locator("summary").filter(has_text="回收站"))
             recycle.locator("summary").click()
             removed = recycle.locator("article").filter(has_text="Saved original")
@@ -59,6 +64,11 @@ def test_materials_progressive_loading_deduplication_and_recycle_ui(materials, t
             removed.get_by_role("button", name="从回收站恢复 Saved original", exact=True).click()
             expect(row).to_be_visible()
             expect(removed).to_have_count(0)
+            expect(notice).to_contain_text("已从回收站恢复")
+            page.clock.fast_forward(3100)
+            expect(notice).to_be_visible()
+            page.clock.fast_forward(3000)
+            expect(notice).to_have_count(0)
 
             # Reimporting unchanged content is an immediate no-op, and does not
             # perform a full list fetch before uploading or stage another copy.
@@ -70,6 +80,8 @@ def test_materials_progressive_loading_deduplication_and_recycle_ui(materials, t
             expect(
                 page.get_by_text("资料内容未变化，已保留当前版本，没有重复导入或重建知识库。", exact=True)
             ).to_be_visible()
+            notice.get_by_role("button", name="关闭提示", exact=True).click()
+            expect(notice).to_have_count(0)
             expect(page.locator(".material-staging")).to_have_count(0)
             assert len(gets) == before + 1
             page.get_by_label("导入方式", exact=True).select_option("")

@@ -33,6 +33,7 @@ from .prototype_edit import (
     _select,
     _write_relation,
     draft,
+    ordered_citation_edges,
     version,
 )
 from .prototype_read import PrototypeReader, missing, selected_id
@@ -580,7 +581,7 @@ class InteractiveKnowledgeService:
                 edges = {**bindings, **{edge.id: edge for rid in points for edge in cached[(analysis.id, rid)]
                                       if edge.from_revision_id == rid and edge.relation_type in kinds}}
                 return [self.service.relation_dto(edge)
-                        for edge in sorted(edges.values(), key=lambda row: (row.created_at, row.id))]
+                        for edge in sorted(edges.values(), key=Relation.citation_order)]
         if release:
             relations = [r for r in self.service._relations(s, analysis, release) if r["relation_type"] in kinds]
             if action_ids is not None:
@@ -600,7 +601,7 @@ class InteractiveKnowledgeService:
             )
             query = query.where(Relation.from_revision_id.in_(action_ids) | Relation.from_revision_id.in_(points))
         # Full and targeted projections expose the same deterministic citation order.
-        return [self.service.relation_dto(r) for r in s.scalars(query.order_by(Relation.created_at, Relation.id))]
+        return [self.service.relation_dto(r) for r in sorted(s.scalars(query), key=Relation.citation_order)]
 
     def binding(self, actor, pid, aid, release_id, package_id, target, *, session=None):
         with nullcontext(session) if session is not None else self.reader.reading.db() as s:
@@ -697,7 +698,7 @@ class InteractiveKnowledgeService:
             point = rows[edge["to_revision_id"]][1]
             citations = []
             missing_citation = point.id in missing_points or not section_edges.get(point.id)
-            for citation in section_edges.get(point.id, []):
+            for citation in ordered_citation_edges(point, section_edges.get(point.id, [])):
                 section = rows[citation["to_revision_id"]][1]
                 document = documents.get(section.id)
                 if document:

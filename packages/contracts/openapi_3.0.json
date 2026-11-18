@@ -1590,6 +1590,81 @@
         }
       }
     },
+    "/api/v3/projects/{pid}/model-usage/summary": {
+      "get": {
+        "summary": "Token Usage",
+        "operationId": "token_usage_api_v3_projects__pid__model_usage_summary_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 96
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 96
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_ProjectTokenUsage_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/projects/{pid}/interactive/related": {
       "post": {
         "summary": "Related",
@@ -3577,6 +3652,64 @@
         }
       }
     },
+    "/api/v3/projects/{pid}/interactive/reassociate/batch-preview/{jid}/results": {
+      "post": {
+        "summary": "Query Results",
+        "operationId": "query_results_api_v3_projects__pid__interactive_reassociate_batch_preview__jid__results_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "jid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Jid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchResultQuery"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/projects/{pid}/interactive/reassociate/batch-confirm": {
       "post": {
         "summary": "Confirm",
@@ -4878,6 +5011,65 @@
         ],
         "title": "BatchPreviewInput"
       },
+      "BatchResultQuery": {
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset",
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "default": 50
+          },
+          "q": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Q",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "all",
+              "needs_attention",
+              "failed",
+              "insufficient",
+              "generated",
+              "pending"
+            ],
+            "title": "Status",
+            "default": "all"
+          },
+          "excluded_item_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 160,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "title": "Excluded Item Ids"
+          },
+          "insufficient_item_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 160,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "title": "Insufficient Item Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "BatchResultQuery"
+      },
       "BindingEdit": {
         "properties": {
           "analysis_set_id": {
@@ -5415,6 +5607,40 @@
         ],
         "title": "ExplanationInput",
         "description": "Generate a reading explanation without creating or rewriting links."
+      },
+      "FunctionTokenUsage": {
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "package_id": {
+            "type": "string",
+            "title": "Package Id"
+          },
+          "route": {
+            "type": "string",
+            "title": "Route"
+          },
+          "page_title": {
+            "type": "string",
+            "title": "Page Title"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "route",
+          "page_title"
+        ],
+        "title": "FunctionTokenUsage"
       },
       "HTTPValidationError": {
         "properties": {
@@ -6829,6 +7055,36 @@
         ],
         "title": "PreviewInput"
       },
+      "ProjectTokenUsage": {
+        "properties": {
+          "model": {
+            "$ref": "#/components/schemas/TokenCounts"
+          },
+          "embedding_tokens": {
+            "type": "integer",
+            "title": "Embedding Tokens"
+          },
+          "unattributed": {
+            "$ref": "#/components/schemas/TokenCounts"
+          },
+          "functions": {
+            "items": {
+              "$ref": "#/components/schemas/FunctionTokenUsage"
+            },
+            "type": "array",
+            "title": "Functions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model",
+          "embedding_tokens",
+          "unattributed",
+          "functions"
+        ],
+        "title": "ProjectTokenUsage"
+      },
       "PrototypeAnchor": {
         "properties": {
           "anchorKey": {
@@ -7198,6 +7454,24 @@
           "meta"
         ],
         "title": "PrototypeEnvelope[PresentationOutput]"
+      },
+      "PrototypeEnvelope_ProjectTokenUsage_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ProjectTokenUsage"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[ProjectTokenUsage]"
       },
       "PrototypeEnvelope_PrototypeAnchorsResult_": {
         "properties": {
@@ -8698,6 +8972,23 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SettingsEdit"
+      },
+      "TokenCounts": {
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TokenCounts"
       },
       "TrashMaterial": {
         "properties": {

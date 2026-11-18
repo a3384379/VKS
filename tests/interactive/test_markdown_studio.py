@@ -239,7 +239,7 @@ def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(m
                         )
                         selected = article.locator("#section-" + chapter["revision_id"])
                         selected.hover()
-                        selected.get_by_role("button", name="关联操作", exact=True).click()
+                        selected.get_by_role("button", name="将本章关联到原型", exact=True).click()
                         picker = page.get_by_role("dialog", name="选择关联模块", exact=True)
                         expect(picker).to_be_visible()
                         picker.get_by_role("button", name="取消", exact=True).click()
@@ -253,7 +253,11 @@ def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(m
                         )
                         # Existing linked knowledge is opened from the related
                         # operation; the chapter action now selects a module.
-                        page.locator(".related-sidebar").get_by_role("button").first.click()
+                        selected.get_by_role("button", name="查看原型入口", exact=True).click()
+                        entries = page.get_by_role("dialog", name="原型入口", exact=True)
+                        entries.get_by_text("关联控件（1）", exact=True).click()
+                        entries.get_by_role("listitem").first.get_by_role("button", name="打开原型").click()
+                        page.get_by_role("button", name="打开知识助手", exact=True).click()
                         panel = page.get_by_role("complementary", name="知识助手")
                         expect(panel.locator("strong").filter(has_text="必须填写名称")).to_be_visible()
                         expect(panel.get_by_alt_text("助手图片", exact=True)).to_be_visible()

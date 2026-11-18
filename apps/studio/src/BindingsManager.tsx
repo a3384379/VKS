@@ -32,6 +32,29 @@ type ManagedBinding = {
   sections: { revision_id: string; document_name: string; name: string }[];
 };
 type Filter = "current" | "pending" | "linked" | "removed";
+const categoryLabels = {
+  menu: "菜单模块",
+  component: "组件页面",
+  control: "页面控件",
+} as const;
+type Category = keyof typeof categoryLabels;
+const batchPreviewLimit = 10_000;
+const menuSelector =
+  /(?:^|[\s>])(?:#businessMenu(?=$|[\s>])|nav(?=$|[:\s>]))|\[role=["']?menuitem["']?\]|\[data-vks-page[=\]]/;
+const isPage = (b: ManagedBinding) =>
+  b.scope === "module" || b.target.selector === "body";
+
+function controlCategory(b: ManagedBinding, format?: string): Category {
+  if (isPage(b)) {
+    const route = b.target.route.split(/[?#]/)[0];
+    return format === "charge-prototype" &&
+      route.split("/").includes("components")
+      ? "component"
+      : "menu";
+  }
+  return menuSelector.test(b.target.selector) ? "menu" : "control";
+}
+
 const status = (b: ManagedBinding) =>
   b.excluded ? "removed" : b.validity_status === "valid" ? "linked" : "pending";
 const statusLabel = (b: ManagedBinding) =>
@@ -61,7 +84,7 @@ export function BindingsManager<T extends ManagedBinding>({
   onReview,
 }: {
   bindings: T[];
-  packages?: { id: string; name: string }[];
+  packages?: { id: string; name: string; format?: string }[];
   inventoryUrl?: string;
   ready: boolean;
   editable: boolean;
@@ -76,6 +99,7 @@ export function BindingsManager<T extends ManagedBinding>({
 }) {
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState<Filter>("current"),
+    [category, setCategory] = useState<Category | "">(""),
     [module, setModule] = useState(""),
     [selected, setSelected] = useState(""),
     [page, setPage] = useState(0),
@@ -179,10 +203,7 @@ export function BindingsManager<T extends ManagedBinding>({
         open_steps: binding.target.open_steps || [],
       },
       context: {
-        scope:
-          binding.scope === "module" || binding.target.selector === "body"
-            ? "module"
-            : "control",
+        scope: isPage(binding) ? "module" : "control",
         page_title:
           tree.byPage.get(bindingPageKey(binding))?.label ||
           binding.target.label,
@@ -195,11 +216,15 @@ export function BindingsManager<T extends ManagedBinding>({
       title: binding.title,
     };
   }
-  function toggleReview(binding: ManagedBinding, checked: boolean) {
+  function setReviewChecked(rows: ManagedBinding[], checked: boolean) {
     setReviewSelection((previous) => {
       const next = new Map(previous);
-      if (checked) next.set(binding.id, reviewTarget(binding));
-      else next.delete(binding.id);
+      for (const binding of rows) {
+        if (checked) {
+          if (!next.has(binding.id))
+            next.set(binding.id, reviewTarget(binding));
+        } else next.delete(binding.id);
+      }
       return next;
     });
   }
@@ -236,32 +261,34 @@ export function BindingsManager<T extends ManagedBinding>({
     () => bindingModuleTree(bindings, packages, pages),
     [bindings, packages, pages],
   );
+  const categories = useMemo(() => {
+    const formats = new Map(packages.map((pack) => [pack.id, pack.format]));
+    return new Map(
+      bindings.map((b) => [
+        b.id,
+        controlCategory(b, formats.get(b.package_id)),
+      ]),
+    );
+  }, [bindings, packages]);
   const selectedModule = tree.nodes.get(module);
   useEffect(() => {
     if (ready && module && !tree.nodes.has(module)) {
       setModule("");
       setPage(0);
+      setReviewSelection(new Map());
     }
   }, [ready, module, tree]);
-  const counts = useMemo(
-    () => ({
-      current: bindings.filter((b) => !b.excluded).length,
-      linked: bindings.filter((b) => status(b) === "linked").length,
-      pending: bindings.filter((b) => status(b) === "pending").length,
-      removed: bindings.filter((b) => b.excluded).length,
-    }),
-    [bindings],
-  );
-  const visible = useMemo(() => {
+  const matchingBindings = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return bindings.filter(
       (b) =>
-        (filter === "current" ? !b.excluded : status(b) === filter) &&
+        (!category || category === categories.get(b.id)) &&
         (!selectedModule || selectedModule.bindingIds.has(b.id)) &&
         (!needle ||
           [
             b.title,
             b.target.label,
+            categoryLabels[categories.get(b.id)!],
             tree.byPage.get(bindingPageKey(b))?.path.join(" "),
             b.summary,
             ...b.sections.map((c) => c.document_name),
@@ -270,13 +297,35 @@ export function BindingsManager<T extends ManagedBinding>({
             .toLocaleLowerCase()
             .includes(needle)),
     );
-  }, [bindings, filter, selectedModule, query, tree]);
+  }, [bindings, category, categories, selectedModule, query, tree]);
+  const counts = useMemo(() => {
+    const byStatus = { pending: 0, linked: 0, removed: 0 };
+    for (const binding of matchingBindings) byStatus[status(binding)]++;
+    return { ...byStatus, current: byStatus.pending + byStatus.linked };
+  }, [matchingBindings]);
+  const visible = useMemo(
+    () =>
+      matchingBindings.filter((binding) =>
+        filter === "current" ? !binding.excluded : status(binding) === filter,
+      ),
+    [matchingBindings, filter],
+  );
   const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   const currentPage = Math.min(page, pageCount - 1);
   const pageBindings = visible.slice(
     currentPage * pageSize,
     (currentPage + 1) * pageSize,
   );
+  const selectableResults = visible.filter((b) => !b.excluded);
+  const selectablePage = pageBindings.filter((b) => !b.excluded);
+  const selectableIds = new Set(selectableResults.map((b) => b.id));
+  const selectedResults = [...reviewSelection]
+    .filter(([id]) => selectableIds.has(id))
+    .map(([, target]) => target);
+  const exceedsBatchLimit = selectedResults.length > batchPreviewLimit;
+  const waitingForResults =
+    (filter === "current" || filter === "pending") &&
+    (pendingLoading || !!pendingError);
   const current =
     pageBindings.find((b) => b.id === selected) || pageBindings[0];
   useEffect(() => {
@@ -292,14 +341,14 @@ export function BindingsManager<T extends ManagedBinding>({
     setSelected("");
     setJump("");
   }
+  function resetForFilter() {
+    resetPage();
+    setReviewSelection(new Map());
+  }
   return (
     <section className="binding-manager" aria-label="关联管理">
       <header className="binding-management-heading">
-        <div>
-          <span className="eyebrow">知识与业务操作</span>
-          <h1>关联管理</h1>
-          <p>按模块查找关联，选中后查看完整说明与原文。</p>
-        </div>
+        <h1>关联管理</h1>
       </header>
       <div className="binding-filters">
         <div
@@ -319,8 +368,9 @@ export function BindingsManager<T extends ManagedBinding>({
               key={key}
               aria-pressed={filter === key}
               onClick={() => {
+                if (filter === key) return;
                 setFilter(key);
-                resetPage();
+                resetForFilter();
               }}
             >
               {label}
@@ -328,47 +378,79 @@ export function BindingsManager<T extends ManagedBinding>({
             </button>
           ))}
         </div>
-        <div className="binding-search">
-          <Search size={16} />
-          <input
-            aria-label="搜索关联"
-            placeholder="搜索模块、控件或说明…"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              resetPage();
+        <div
+          className="binding-filter-fields"
+          role="group"
+          aria-label="查找关联"
+        >
+          <div className="binding-search">
+            <Search size={16} />
+            <input
+              aria-label="搜索关联"
+              placeholder="搜索模块、控件或说明"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                resetForFilter();
+              }}
+            />
+          </div>
+          <BindingModulePicker
+            roots={tree.roots}
+            selected={selectedModule}
+            onOpen={() => setLoadPages(true)}
+            onSelect={(id) => {
+              if (module === id) return;
+              setModule(id);
+              resetForFilter();
             }}
           />
+          <select
+            className="binding-category-filter"
+            aria-label="控件类别"
+            value={category}
+            onChange={(event) => {
+              setCategory(event.target.value as Category | "");
+              resetForFilter();
+            }}
+          >
+            <option value="">全部控件类别</option>
+            {Object.entries(categoryLabels).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
         </div>
-        <BindingModulePicker
-          roots={tree.roots}
-          selected={selectedModule}
-          onOpen={() => setLoadPages(true)}
-          onSelect={(id) => {
-            setModule(id);
-            resetPage();
-          }}
-        />
       </div>
       {onReview && (
         <div className="binding-review-actions">
           <span className="binding-review-selection" role="status">
-            已选 {reviewSelection.size} 项，跨页保留
+            已选 {selectedResults.length} 项，跨页保留
           </span>
           <button
             className="primary"
-            disabled={!editable || !ready || !reviewSelection.size}
-            onClick={() => onReview([...reviewSelection.values()])}
+            disabled={
+              !editable ||
+              !ready ||
+              !selectedResults.length ||
+              exceedsBatchLimit
+            }
+            onClick={() => onReview(selectedResults)}
           >
             批量 AI 关联
           </button>
           <button
-            disabled={!reviewSelection.size}
+            disabled={!selectedResults.length}
             onClick={() => setReviewSelection(new Map())}
           >
             清空本次选择
           </button>
-          <small>先预览生成内容，确认后统一保存。</small>
+          <small>
+            {exceedsBatchLimit
+              ? "一次最多预览 10,000 项，请缩小筛选范围。"
+              : "先预览生成内容，确认后统一保存。"}
+          </small>
         </div>
       )}
       <p
@@ -391,39 +473,55 @@ export function BindingsManager<T extends ManagedBinding>({
             {!!visible.length &&
               ` · 当前 ${currentPage * pageSize + 1}–${Math.min((currentPage + 1) * pageSize, visible.length)} 条`}
           </div>
+          {onReview && (
+            <div
+              className="binding-select-scope"
+              role="group"
+              aria-label="批量选择范围"
+            >
+              {(
+                [
+                  ["选择当前页", selectablePage, false],
+                  ["选择全部筛选结果", selectableResults, waitingForResults],
+                ] as const
+              ).map(([label, rows, waiting]) => {
+                const checkedCount = rows.filter((b) =>
+                  reviewSelection.has(b.id),
+                ).length;
+                return (
+                  <label key={label}>
+                    <input
+                      type="checkbox"
+                      aria-label={label}
+                      checked={checkedCount > 0 && checkedCount === rows.length}
+                      disabled={!ready || !editable || !rows.length || waiting}
+                      ref={(input) => {
+                        if (input)
+                          input.indeterminate =
+                            checkedCount > 0 && checkedCount < rows.length;
+                      }}
+                      onChange={(event) =>
+                        setReviewChecked(rows, event.target.checked)
+                      }
+                    />
+                    {label}
+                  </label>
+                );
+              })}
+            </div>
+          )}
           <div className="binding-table-wrap">
             <table className="binding-table">
+              <colgroup>
+                {onReview && <col className="binding-check-column" />}
+                <col />
+                <col className="binding-status-column" />
+                <col className="binding-citation-column" />
+                {onReview && <col className="binding-ai-column" />}
+              </colgroup>
               <thead>
                 <tr>
-                  {onReview && (
-                    <th>
-                      <input
-                        type="checkbox"
-                        aria-label="选择本页可关联项"
-                        checked={
-                          !!pageBindings.filter((b) => !b.excluded).length &&
-                          pageBindings
-                            .filter((b) => !b.excluded)
-                            .every((b) => reviewSelection.has(b.id))
-                        }
-                        disabled={!editable || !ready}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setReviewSelection((previous) => {
-                            const next = new Map(previous);
-                            for (const binding of pageBindings.filter(
-                              (b) => !b.excluded,
-                            )) {
-                              if (checked)
-                                next.set(binding.id, reviewTarget(binding));
-                              else next.delete(binding.id);
-                            }
-                            return next;
-                          });
-                        }}
-                      />
-                    </th>
-                  )}
+                  {onReview && <th scope="col" aria-label="选择关联" />}
                   <th>模块 / 操作</th>
                   <th>状态</th>
                   <th>引用</th>
@@ -443,10 +541,10 @@ export function BindingsManager<T extends ManagedBinding>({
                           type="checkbox"
                           aria-label={`选择关联：${b.title}`}
                           checked={reviewSelection.has(b.id)}
-                          disabled={!editable || b.excluded}
+                          disabled={!editable || !ready || b.excluded}
                           onClick={(event) => event.stopPropagation()}
                           onChange={(event) =>
-                            toggleReview(b, event.target.checked)
+                            setReviewChecked([b], event.target.checked)
                           }
                         />
                       </td>
@@ -461,10 +559,7 @@ export function BindingsManager<T extends ManagedBinding>({
                         <span>{b.title}</span>
                         <small>
                           {tree.byPage.get(bindingPageKey(b))?.path.join(" / ")}{" "}
-                          ·{" "}
-                          {b.scope === "module" || b.target.selector === "body"
-                            ? "模块"
-                            : "控件"}
+                          · {categoryLabels[categories.get(b.id)!]}
                         </small>
                       </button>
                     </td>
@@ -473,7 +568,9 @@ export function BindingsManager<T extends ManagedBinding>({
                         {statusLabel(b)}
                       </span>
                     </td>
-                    <td>{b.sections.length} 章</td>
+                    <td className="binding-citation-count">
+                      {b.sections.length} 章
+                    </td>
                     {onReview && (
                       <td>
                         <button

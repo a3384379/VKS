@@ -216,6 +216,13 @@ class VectorStore:
                     (row[0] if used is None else used, state, key),
                 )
 
+    def used_tokens(self, pid):
+        with self.db() as db:
+            return db.execute(
+                "SELECT COALESCE(SUM(used), 0) FROM usage WHERE project=? AND state IN ('succeeded', 'failed')",
+                (pid,),
+            ).fetchone()[0]
+
     def count(self, pid, space, revisions):
         with self.db() as db:
             return db.execute(

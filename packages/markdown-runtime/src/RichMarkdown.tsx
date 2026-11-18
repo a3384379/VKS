@@ -60,6 +60,7 @@ export type MarkdownSection = {
   start_line?: number;
   end_line?: number;
   render_start_line?: number;
+  heading_level?: number;
 };
 type AstNode = {
   type: string;
@@ -68,6 +69,7 @@ type AstNode = {
   properties?: Record<string, unknown>;
   position?: { start: { line: number } };
   children?: AstNode[];
+  data?: { chapterHeading?: string };
 };
 export type ReadingContext = {
   projectId?: string;
@@ -150,6 +152,7 @@ export const RichMarkdown = memo(function RichMarkdown({
   sections,
   selectedSection,
   sectionActions,
+  sectionHeadingActions,
   streaming = false,
 }: {
   children: string;
@@ -165,6 +168,7 @@ export const RichMarkdown = memo(function RichMarkdown({
     section: MarkdownSection,
     position: "before" | "after",
   ) => ReactNode;
+  sectionHeadingActions?: (section: MarkdownSection) => ReactNode;
 }) {
   const reading = useContext(MarkdownReadingContext);
   const root = useRef<HTMLDivElement>(null);
@@ -221,6 +225,7 @@ export const RichMarkdown = memo(function RichMarkdown({
     onReference,
     sections,
     sectionActions,
+    sectionHeadingActions,
     omitInitialTitle,
     referenceDocuments,
     streaming,
@@ -233,6 +238,7 @@ export const RichMarkdown = memo(function RichMarkdown({
     onReference,
     sections,
     sectionActions,
+    sectionHeadingActions,
     omitInitialTitle,
     referenceDocuments,
     streaming,
@@ -408,6 +414,9 @@ export const RichMarkdown = memo(function RichMarkdown({
                 children: [],
               };
               children.push(current);
+              if (child.tagName && /^h[1-6]$/.test(child.tagName)) {
+                child.data = { ...child.data, chapterHeading: selected };
+              }
             }
             (current?.children || children).push(child);
           }
@@ -441,23 +450,38 @@ export const RichMarkdown = memo(function RichMarkdown({
         tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
       ): NonNullable<Components["h1"]> =>
       ({ node, children, ...props }) => {
-        const { omitInitialTitle, sections } = latest.current;
+        const { omitInitialTitle, sections, sectionHeadingActions } =
+          latest.current;
         const title = sections?.find(
           (section) =>
             section.name === omitInitialTitle &&
             /^ {0,3}#\s/.test(section.content),
         );
         const titleLine = title?.render_start_line ?? title?.start_line ?? 1;
-        return tag === "h1" &&
+        if (
+          tag === "h1" &&
           node?.position?.start.line === titleLine &&
           typeof children === "string" &&
           children.trim() === omitInitialTitle?.trim()
-          ? null
-          : createElement(
-              tag,
-              { ...props, "data-source-line": node?.position?.start.line },
-              children,
-            );
+        )
+          return null;
+        const chapter = (node as AstNode | undefined)?.data?.chapterHeading;
+        const heading = createElement(
+          tag,
+          { ...props, "data-source-line": node?.position?.start.line },
+          children,
+        );
+        const section =
+          chapter && sections?.find((item) => item.revision_id === chapter);
+        const actions = section && sectionHeadingActions?.(section);
+        return actions ? (
+          <div className="chapter-heading">
+            {heading}
+            {actions}
+          </div>
+        ) : (
+          heading
+        );
       };
     return {
       section: ({ node, children, ...props }) => {
