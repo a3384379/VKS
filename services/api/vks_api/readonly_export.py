@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 from markdown_it import MarkdownIt
 
 from .documents import DocumentService
-from .exports import allow_artifact, canonical, digest, read_original
+from .exports import allow_artifact, canonical, digest, document_export_choices, read_original
 from .interactive import InteractiveKnowledgeService
 from .models import Analysis, Artifact, Evidence, Job, Project, Release, Revision
 from .service import DomainError
@@ -69,12 +69,13 @@ def capabilities(service, s, actor, job):
     }
 
 
-def projection(service, s, actor, pid, release_id, caps, document_mode="project"):
+def projection(service, s, actor, pid, release_id, caps, document_mode="project", document_ids=None):
     """Read an immutable release using the same closure as Studio, before names."""
     from .materials import ROOT, roots
 
     links = InteractiveKnowledgeService(service)
     _, release, choices, _ = links.reader.scope(s, actor, pid, None, release_id)
+    choices = document_export_choices(s, choices, document_ids)
     if document_mode not in {"project", "original"}:
         raise DomainError("VKS_INVALID_INPUT", "文档导出方式无效", 422)
     from .document_presentation import presentation_for_release
@@ -296,6 +297,7 @@ def html_library(payload):
     """Embed data as inert gzip/base64 and platform-owned runtime as inline code."""
     assets = Path(__file__).with_name("reader_assets")
     from .document_assistant import embedded_assistant
+
     template = (assets / "template.html").read_text()
     encoded = base64.b64encode(gzip.compress(canonical(payload), compresslevel=9, mtime=0)).decode()
     # Replacement markers occur only in platform-owned template, never in data.
@@ -303,7 +305,10 @@ def html_library(payload):
         template.replace(
             "<title>VKS 成品知识库</title>", "<title>" + escape(payload["project"]["name"]) + " · 成品知识库</title>"
         )
-        .replace("/* VKS_READER_CSS */", (assets / "reader.css").read_text() + (assets / "assistant-composer.css").read_text())
+        .replace(
+            "/* VKS_READER_CSS */",
+            (assets / "reader.css").read_text() + (assets / "assistant-composer.css").read_text(),
+        )
         .replace("/* VKS_HANDBOOK_CSS */", (assets / "handbook.css").read_text())
         .replace("/* VKS_MARKDOWN_CSS */", (assets / "markdown-vendor.css").read_text())
         .replace("VKS_READER_PAYLOAD", encoded)
@@ -331,7 +336,8 @@ def prepare_job(service, jid, validate_scope=None):
         caps = capabilities(service, s, actor, job)
         pid, release_id = job.project_id, job.input_json["release_id"]
         mode = job.input_json.get("document_mode", "project")
-        payload, deps, section_ids = projection(service, s, actor, pid, release_id, caps, mode)
+        document_ids = job.input_json.get("document_ids")
+        payload, deps, section_ids = projection(service, s, actor, pid, release_id, caps, mode, document_ids)
         before = digest(canonical([payload, deps]))
     if validate_scope:
         validate_scope()
@@ -342,7 +348,7 @@ def prepare_job(service, jid, validate_scope=None):
         job = s.get(Job, jid)
         actor = current_actor(service, job.created_by, pid, session=s, job=job)
         caps_now = capabilities(service, s, actor, job)
-        latest, current_deps, _ = projection(service, s, actor, pid, release_id, caps_now, mode)
+        latest, current_deps, _ = projection(service, s, actor, pid, release_id, caps_now, mode, document_ids)
         if caps != caps_now or before != digest(canonical([latest, current_deps])):
             raise DomainError("VKS_VERSION_CONFLICT", "导出期间资料或权限发生变化，请重新导出", 409)
     if validate_scope:
@@ -371,6 +377,7 @@ def finalize(service, s, job, prepared):
         job.input_json["release_id"],
         caps,
         job.input_json.get("document_mode", "project"),
+        job.input_json.get("document_ids"),
     )
     if caps != prepared["caps"] or digest(canonical([payload, deps])) != prepared["projection_hash"]:
         raise DomainError("VKS_VERSION_CONFLICT", "导出期间资料或权限发生变化，请重新导出", 409)

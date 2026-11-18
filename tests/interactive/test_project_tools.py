@@ -446,3 +446,114 @@ def test_scoped_document_exports_do_not_include_other_document(materials, fmt, m
     assert "FIRST_ONLY_MARKER" in text and "SECOND_MUST_BE_ABSENT" not in text
     with service.db() as s:
         assert s.get(Analysis, aid).state != "frozen"
+
+
+def configure_synthetic_export_index(service, owner, pid, monkeypatch):
+    from vks_api.ai_gateway import ModelPolicy, PolicyInput
+    from vks_api.interactive_ai import InteractiveAssistant
+    from vks_api.models import uid
+    from vks_api.vector_rag import RagSettings
+
+    with service.db() as s:
+        s.add(
+            ModelPolicy(
+                id=uid(),
+                project_id=pid,
+                settings=PolicyInput(
+                    enabled=True, allow_external=True, model_id="synthetic", endpoint="https://api.openai.com/v1"
+                ).model_dump(),
+            )
+        )
+    InteractiveAssistant(service).rag.save(owner, pid, RagSettings(enabled=True, dimensions=64))
+    monkeypatch.setattr(
+        ai_gateway,
+        "request_model",
+        lambda _config, body: {
+            "data": [
+                {"index": i, "embedding": [1.0] + [0.0] * (body["dimensions"] - 1)} for i in range(len(body["input"]))
+            ],
+            "usage": {"total_tokens": 10},
+        },
+    )
+
+
+@pytest.mark.parametrize("fmt", ["markdown_bundle", "pdf", "readonly_html"])
+def test_release_document_export_needs_no_edit_permission_or_new_snapshot(materials, fmt, monkeypatch):
+    from vks_api.models import Release
+    from vks_api.project_tools import ProjectTools, WorkspaceExport
+
+    _web, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    configure_synthetic_export_index(service, owner, pid, monkeypatch)
+    package = test_materials.stage(service, owner, manager, pid, aid, "documents", "# 可导出的文档\n\n选定版本的正文。")
+    test_materials.activate(service, owner, manager, pid, aid, [package])
+    release = manager.checkpoint(owner, pid, aid, "导出权限基线", "read-export-baseline")
+    document = InteractiveKnowledgeService(service).catalog(owner, pid, release_id=release["id"])["documents"][0]
+    token = service.create_token(owner, pid, {"name": "export-only", "scopes": ["knowledge:read", "knowledge:export"]})
+    reader = service.authenticate(token["token"], "token")
+    with service.db() as s:
+        before = (set(s.scalars(select(Analysis.id))), set(s.scalars(select(Release.id))))
+    tools = ProjectTools(service)
+    request = WorkspaceExport(release_id=release["id"], document_ids=[document["id"]], format=fmt)
+    job = tools.export(reader, pid, request, "export-only-" + fmt)
+    assert tools.export(reader, pid, request, "export-only-" + fmt)["id"] == job["id"]
+    service.process_job(job["id"])
+    outcome = service.get_job(reader, job["id"])
+    assert outcome["state"] == "succeeded", json.dumps(outcome, ensure_ascii=False)
+    assert service.download_export(reader, pid, job["id"])[0]
+    with service.db() as s:
+        assert before == (set(s.scalars(select(Analysis.id))), set(s.scalars(select(Release.id))))
+
+
+@pytest.mark.parametrize("baseline", ["draft", "release"])
+def test_selected_document_export_keeps_updated_attachment_without_other_documents(materials, baseline, monkeypatch):
+    import base64
+    import gzip
+    import re
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    from PIL import Image
+    from vks_api.project_tools import ProjectTools, WorkspaceExport
+
+    _web, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    configure_synthetic_export_index(service, owner, pid, monkeypatch)
+
+    def package(color):
+        image, archive = BytesIO(), BytesIO()
+        Image.new("RGB", (3, 2), color).save(image, "PNG")
+        with ZipFile(archive, "w") as files:
+            files.writestr("guide.md", "# Selected\n\n![selected diagram](assets/flow.png)")
+            files.writestr("other.md", "# Other\n\nUNSELECTED_DOCUMENT_MUST_NOT_BE_EXPORTED")
+            files.writestr("assets/flow.png", image.getvalue())
+        return archive.getvalue(), image.getvalue()
+
+    first, _old_image = package("red")
+    initial = test_materials.stage(service, owner, manager, pid, aid, "documents", first, filename="docs.zip")
+    test_materials.activate(service, owner, manager, pid, aid, [initial])
+    links = InteractiveKnowledgeService(service)
+    previous = next(row for row in links.catalog(owner, pid, aid)["documents"] if row["name"] == "Selected")
+    second, image = package("blue")
+    updated = test_materials.stage(
+        service, owner, manager, pid, aid, "documents", second, filename="docs.zip", package_id=initial["package_id"]
+    )
+    test_materials.activate(service, owner, manager, pid, aid, [updated])
+    current = next(row for row in links.catalog(owner, pid, aid)["documents"] if row["name"] == "Selected")
+    assert previous["revision_id"] == current["revision_id"]
+    scope = {"analysis_set_id": aid}
+    if baseline == "release":
+        scope = {"release_id": manager.checkpoint(owner, pid, aid, "附件版本基线", "asset-baseline")["id"]}
+    job = ProjectTools(service).export(
+        owner, pid, WorkspaceExport(**scope, document_ids=[current["id"]]), "selected-asset-" + baseline
+    )
+    service.process_job(job["id"])
+    outcome = service.get_job(owner, job["id"])
+    assert outcome["state"] == "succeeded", json.dumps(outcome, ensure_ascii=False)
+    raw, _ = service.download_export(owner, pid, job["id"])
+    packed = re.search(rb'<script\b[^>]*\bid="vks-payload"[^>]*>([^<]+)</script>', raw)
+    payload = json.loads(gzip.decompress(base64.b64decode(packed[1].strip())))
+    assert len(payload["documents"]) == 1
+    assert "UNSELECTED_DOCUMENT_MUST_NOT_BE_EXPORTED" not in json.dumps(payload)
+    images = payload["documents"][0]["images"]
+    assert images and all(base64.b64decode(value.split(",", 1)[1]) == image for value in images.values())

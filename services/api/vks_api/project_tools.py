@@ -104,18 +104,16 @@ class ProjectTools:
             return result
 
     def document_snapshot(self, actor, pid, form, key):
-        from sqlalchemy import select
-
+        """Pin the baseline; the export projection filters exact document IDs."""
         from .documents import DocumentService
-        from .knowledge import KnowledgeService
-        from .models import Entity, Relation, Release, Revision, Selection
+        from .materials import MaterialService
+        from .models import Entity, Revision
 
         with self.service.db() as s:
-            analysis, _release, choices, _ = self.links.reader.scope(
+            analysis, release, choices, _ = self.links.reader.scope(
                 s, actor, pid, form.analysis_set_id, form.release_id
             )
             document_ids = set(form.document_ids)
-            keep = set()
             for eid in document_ids:
                 row = s.get(Revision, choices.get(eid)) if choices.get(eid) else None
                 entity = s.get(Entity, eid)
@@ -126,30 +124,13 @@ class ProjectTools:
                     or not self.service._visible_revision(s, actor, pid, row)
                 ):
                     raise DomainError("VKS_NOT_FOUND", "所选版本中没有可导出的文档", 404)
-                keep.add(eid)
                 for section in DocumentService(self.service)._sections(s, entity, row, analysis.id):
                     if not self.service._visible_revision(s, actor, pid, section):
                         raise DomainError("VKS_NOT_FOUND", "文档章节不可访问", 404)
-                    keep.add(section.entity_id)
+            if release:
+                return release.id
             aid = analysis.id
-        cloned = KnowledgeService(self.service).clone(actor, pid, aid, "指定文档导出", "document-export." + key)
-        with self.service.db() as s:
-            self.service.require(s, actor, pid, "knowledge:export")
-            existing = s.scalar(select(Release).where(Release.analysis_set_id == cloned["id"]))
-            if existing:
-                self.service._saved_snapshot(s, actor, existing)
-                return existing.id
-            selected = list(s.scalars(select(Selection).where(Selection.analysis_set_id == cloned["id"])))
-            kept_revisions = {r.entity_revision_id for r in selected if r.entity_id in keep}
-            for row in selected:
-                if row.entity_id not in keep:
-                    s.delete(row)
-            for edge in s.scalars(select(Relation).where(Relation.analysis_set_id == cloned["id"])):
-                if edge.from_revision_id not in kept_revisions or edge.to_revision_id not in kept_revisions:
-                    s.delete(edge)
-        return self.service.save_snapshot(
-            actor, pid, {"analysis_set_id": cloned["id"], "change_note": "指定文档导出"}, "document-snapshot." + key
-        )["id"]
+        return MaterialService(self.service).checkpoint(actor, pid, aid, "指定文档导出", key)["id"]
 
     def export(self, actor, pid, form, key):
         from .materials import MaterialService
@@ -181,6 +162,7 @@ class ProjectTools:
                 "format": form.format,
                 "include_source": form.include_source,
                 "document_mode": form.document_mode,
+                **({"document_ids": list(form.document_ids)} if form.document_ids else {}),
                 **({"documents_only": True} if form.document_ids else {}),
             },
             operation_key,
