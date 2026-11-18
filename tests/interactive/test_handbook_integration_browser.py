@@ -84,7 +84,7 @@ def test_template_persistence_indexed_search_document_only_ai_and_update(materia
             dialog = page.get_by_role("dialog", name="手册全文搜索")
             dialog.get_by_label("手册搜索内容", exact=True).fill("secret-jellyfish")
             dialog.locator(".hb-search-results button").first.click()
-            expect(book.locator(".hb-article .document-reader > h1")).to_have_text("Overview")
+            expect(book.locator(".document-reader").get_by_role("heading", name="Overview", level=1, exact=True)).to_be_visible()
             expect(book.locator(".hb-article strong").get_by_text("Source emphasis.", exact=True)).to_be_visible()
             assert any("/document-presentation/search" in request.url for request in requests)
             book.get_by_role("button", name="总览", exact=True).click()
