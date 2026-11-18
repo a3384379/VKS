@@ -374,8 +374,10 @@ def test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_na
                 },
             )
             assert saved.ok, saved.text()
-            page.goto(url + f"/#view=documents&project={pid}&entity={doc}")
-            page.reload()  # Reload the revision saved through the fixture API.
+            # Force one full load of the fixture API's saved revision. A hash
+            # navigation immediately followed by reload races same-document
+            # history commits and can reload the previous overview instead.
+            page.goto(url + f"/?fixture=isolated-diagram#view=documents&project={pid}&entity={doc}")
             # Establish the fresh document before inspecting its render job;
             # cold browser/module startup is separate from diagram timeout.
             expect(page.get_by_role("heading", name="Isolated timeout", level=1, exact=True)).to_be_visible(timeout=15000)
