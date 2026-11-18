@@ -119,6 +119,12 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
             "Content-Disposition": 'attachment; filename="vks-handbook-template.html"',
         })
 
+    @app.get("/api/v3/document-templates/handbook/assistant", response_class=HTMLResponse)
+    def document_assistant(a: Actor = Depends(actor)):
+        from .document_assistant import assistant_html
+
+        return HTMLResponse(assistant_html(), headers={"Cache-Control": "private, no-store"})
+
     @app.post("/api/v2/projects/{pid}/snapshots", status_code=201)
     def save_snapshot(
         pid: str,
@@ -565,6 +571,9 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     from .document_presentation import install_document_presentation
 
     install_bulk_association(app, service, actor, envelope)
+    from .reassociation_batches import install_reassociation_batches
+
+    install_reassociation_batches(app, service, actor, envelope)
     install_document_presentation(app, service, actor, envelope)
     from .prototype_scan import install_prototype_scan
 

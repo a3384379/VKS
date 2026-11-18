@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { api, mutation } from "../../web/src/api";
 import {
   OriginalRuntime,
+  isTarget,
   type RuntimeEvent,
   type RuntimeHandle,
 } from "./runtime";
@@ -57,7 +58,13 @@ export function InventoryScanWorker({
     source: InventoryPackage;
     token: string;
   } | null>(null);
-  const ready = useRef<{ token: string; resolve: () => void } | null>(null);
+  const ready = useRef<{
+    token: string;
+    resolve: () => void;
+    materialLoaded: boolean;
+    pageReady: boolean;
+    source: InventoryPackage;
+  } | null>(null);
   const pending = useRef<{
     id: string;
     task: InventoryTask;
@@ -121,7 +128,20 @@ export function InventoryScanWorker({
             if (loaded !== key) {
               const token = crypto.randomUUID();
               const loading = wait<void>((resolve) => {
-                ready.current = { token, resolve };
+                const waitsForPage =
+                  ["charge-prototype", "static-site"].includes(
+                    source.format || "",
+                  ) &&
+                  source.pages.some((item) =>
+                    item.frame_path.includes("actualPage"),
+                  );
+                ready.current = {
+                  token,
+                  resolve,
+                  materialLoaded: false,
+                  pageReady: !waitsForPage,
+                  source,
+                };
               }, 30000);
               setRuntime({ source, token });
               await loading;
@@ -230,9 +250,38 @@ export function InventoryScanWorker({
     onFatal,
   ]);
   const event = (message: RuntimeEvent, token: string) => {
-    if (message.type === "material.loaded" && ready.current?.token === token) {
-      ready.current.resolve();
-      ready.current = null;
+    const loading = ready.current;
+    if (loading?.token === token) {
+      if (message.type === "material.loaded") loading.materialLoaded = true;
+      if (message.type === "context.changed") {
+        const context = message.payload as {
+          route?: unknown;
+          frame_path?: unknown;
+          module?: { target?: unknown };
+        };
+        // The wrapper initializes its default page asynchronously after srcdoc
+        // assignment. Navigating earlier can be overwritten by that startup.
+        // Accept an observed page in the declared child frame. A resumed scan
+        // can omit the already captured default route from its remaining plan.
+        // Keep the existing material-load timeout and cancellation scope.
+        if (
+          loading.source.pages.some(
+            (item) =>
+              item.frame_path.includes("actualPage") &&
+              typeof context.route === "string" &&
+              context.route.startsWith("/") &&
+              context.route !== "/" &&
+              isTarget(context.module?.target) &&
+              JSON.stringify(context.frame_path) ===
+                JSON.stringify(item.frame_path),
+          )
+        )
+          loading.pageReady = true;
+      }
+      if (loading.materialLoaded && loading.pageReady) {
+        loading.resolve();
+        ready.current = null;
+      }
     }
     const current = pending.current;
     if (

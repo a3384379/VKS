@@ -114,7 +114,7 @@ def test_analysis_source_token_ignores_binding_counter_but_rejects_changed_docum
 
 
 @pytest.mark.parametrize("lanes", [1, 4])
-def test_pipeline_claim_obeys_same_configured_lane_count_as_scan(materials, monkeypatch, lanes):
+def test_pipeline_claim_obeys_configured_request_budget(materials, monkeypatch, lanes):
     service, actor, _, pid, _, bulk, _, version, run, _ = audit.setup(materials, monkeypatch, pipeline=True)
     with service.db() as s:
         row = s.get(PrototypeScanRun, run["id"])
@@ -123,10 +123,13 @@ def test_pipeline_claim_obeys_same_configured_lane_count_as_scan(materials, monk
         audit.capture(bulk, actor, pid, run, version, page)
     with service.db() as s:
         jobs = list(s.scalars(select(Job).where(Job.kind == "associate_all").order_by(Job.created_at)))
-        for index, job in enumerate(jobs[: lanes + 1]):
+        from vks_api.association_limits import request_concurrency
+
+        capacity = request_concurrency(lanes)
+        for index, job in enumerate(jobs[: capacity + 1]):
             assert job.input_json["pipeline_concurrency"] == lanes
-            assert claim(service, s, job) == (index < lanes)
-            if index < lanes:
+            assert claim(service, s, job) == (index < capacity)
+            if index < capacity:
                 job.state, job.lease_until = "running", future(60)
             s.flush()
 
@@ -189,9 +192,8 @@ def test_explicit_continuation_changes_scan_and_queued_association_lanes_without
         jobs = list(s.scalars(select(Job).where(Job.kind == "associate_all").order_by(Job.created_at)))
         assert {j.id: j.input_json for j in jobs} == payloads
         for index, job in enumerate(jobs[:4]):
-            assert claim(service, s, job) == (index < 3)
-            if index < 3:
-                job.state, job.lease_until = "running", future(60)
+            assert claim(service, s, job)
+            job.state, job.lease_until = "running", future(60)
             s.flush()
 
 

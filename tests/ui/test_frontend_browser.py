@@ -294,11 +294,17 @@ def test_local_diagrams_math_errors_zoom_and_no_external_requests(site):
                     "async image => new DOMParser().parseFromString(await (await fetch(image.src)).text(), 'image/svg+xml').documentElement.textContent"
                 )
                 assert ("导入文档", "打开文档", "文档中心", "Document")[index] in text
-                before_zoom = diagram.locator("img").bounding_box()["width"]
-                diagram.get_by_role("button", name="放大图表").click()
-                expect(diagram.get_by_role("button", name="重置图表缩放")).to_have_text("125%")
-                assert diagram.locator("img").bounding_box()["width"] > before_zoom * 1.2
-                diagram.get_by_role("button", name="重置图表缩放").click()
+                thumbnail_width = diagram.locator("img").bounding_box()["width"]
+                diagram.get_by_role("button", name="查看图表大图").click()
+                viewer = page.locator(".md-image-dialog")
+                expect(viewer).to_be_visible()
+                viewer.get_by_role("button", name="图片缩放比例", exact=True).click()
+                before_zoom = viewer.locator("img").bounding_box()["width"]
+                viewer.get_by_role("button", name="放大图片", exact=True).click()
+                expect(viewer.get_by_role("button", name="图片缩放比例", exact=True)).to_have_text("125%")
+                assert viewer.locator("img").bounding_box()["width"] > before_zoom * 1.2
+                viewer.get_by_role("button", name="关闭大图", exact=True).click()
+                assert abs(diagram.locator("img").bounding_box()["width"] - thumbnail_width) < 1
                 with page.expect_download() as download:
                     diagram.get_by_role("link", name="下载 SVG").click()
                 assert download.value.suggested_filename.endswith(".svg")
@@ -368,8 +374,10 @@ def test_failed_diagram_frame_is_isolated_readable_retryable_and_cancelled_on_na
                 },
             )
             assert saved.ok, saved.text()
-            page.goto(url + f"/#view=documents&project={pid}&entity={doc}")
-            page.reload()  # Reload the revision saved through the fixture API.
+            # Force one full load of the fixture API's saved revision. A hash
+            # navigation immediately followed by reload races same-document
+            # history commits and can reload the previous overview instead.
+            page.goto(url + f"/?fixture=isolated-diagram#view=documents&project={pid}&entity={doc}")
             # Establish the fresh document before inspecting its render job;
             # cold browser/module startup is separate from diagram timeout.
             expect(page.get_by_role("heading", name="Isolated timeout", level=1, exact=True)).to_be_visible(timeout=15000)

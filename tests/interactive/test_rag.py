@@ -310,3 +310,68 @@ def test_embedding_usage_is_recorded_without_daily_token_quota(tmp_path):
         store.settle(key, 18000, "succeeded")
     with store.db() as db:
         assert db.execute("SELECT SUM(used),SUM(reserved) FROM usage").fetchone() == (79000, 0)
+
+
+def test_parallel_local_scans_preserve_exact_ranking_and_embedding_parallelism(assistant, monkeypatch):
+    from array import array
+    from math import sqrt
+
+    from vks_api.vector_rag import split
+
+    (_web, service, owner, pid, _aid, _grant, _package, _section, _raw), body, _calls = assistant
+    settings = RagSettings(enabled=True, dimensions=64)
+    config = {"model_id": "local-ranking-test"}
+    space = "exact-local-ranking"
+    engine = InteractiveAssistant(service)
+    monkeypatch.setattr(engine.rag, "config", lambda *args: (settings, config, space))
+    chapters = [
+        {
+            "revision_id": f"authorized-{index:03d}", "name": f"Section {index}",
+            "document_revision_id": f"document-{index//5}", "document_name": f"Document {index//5}",
+            "content": f"Complete immutable section evidence {index}.",
+        }
+        for index in range(40)
+    ]
+    hidden = [
+        {**chapters[0], "revision_id": f"hidden-{index:03d}", "content": f"Unavailable section {index}"}
+        for index in range(50)
+    ]
+    rows = []
+    for index, chapter in enumerate(chapters + hidden):
+        score = 0.3 + index/100 if index < len(chapters) else 0.999
+        embedding = array("f", [score, sqrt(1-score*score)] + [0.0]*62).tobytes()
+        chunk = next(split([chapter]))
+        rows.append((pid, space, chunk["id"], chunk["revision"], chunk["start"], chunk["content"], embedding))
+    with engine.rag.store.db() as db:
+        db.executemany("INSERT INTO chunks VALUES (?,?,?,?,?,?,?)", rows)
+    query = array("f", [1.0] + [0.0]*63).tobytes()
+    reference = AssistanceInput.model_validate(body).model_copy(
+        update={"target": AssistanceInput.model_validate(body).target.model_copy(update={"label": "reference query"})}
+    )
+    lexical = [chapters[1], chapters[0]]
+    monkeypatch.setattr(engine.rag, "embed", lambda *args: [query])
+    expected = engine.rag.hybrid(owner, pid, reference, chapters, "current-corpus", lexical)
+    assert len(expected) == RagSettings().candidate_limit
+    assert all(row["revision_id"].startswith("authorized-") for row in expected)
+    # Higher scoring hidden chunks outnumber the 36 nearest-match limit. The
+    # authorized SQL filter must still return genuine dense candidates.
+    assert {row["revision_id"] for row in expected} - {row["revision_id"] for row in lexical}
+    ready = threading.Barrier(4)
+    embedded = []
+
+    def embed(*args):
+        embedded.append(1)
+        ready.wait(timeout=5)
+        return [query]
+
+    def run(index):
+        fresh = InteractiveAssistant(service)
+        monkeypatch.setattr(fresh.rag, "config", lambda *args: (settings, config, space))
+        monkeypatch.setattr(fresh.rag, "embed", embed)
+        form = reference.model_copy(update={"target": reference.target.model_copy(update={"label": f"query {index}"})})
+        return fresh.rag.hybrid(owner, pid, form, chapters, "current-corpus", lexical)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(run, range(4)))
+    assert len(embedded) == 4
+    assert all(result == expected for result in results)

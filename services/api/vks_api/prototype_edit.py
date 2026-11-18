@@ -63,7 +63,7 @@ class SettingsEdit(Input):
 
 class PointText(Input):
     title: Label
-    summary: str = Field(min_length=1, max_length=8000, pattern=r"\S")
+    summary: str = Field(min_length=1, max_length=512000, pattern=r"\S")
     applicability: str = Field(default="", max_length=2000)
     outcome: str = Field(default="", max_length=2000)
     exceptions: str = Field(default="", max_length=2000)
@@ -90,17 +90,20 @@ def _require_mutable(analysis):
 
 def draft(s, service, actor, pid, aid, capability="knowledge:edit", *, allow_frozen=False):
     service.require(s, actor, pid, capability)
-    s.scalar(select(Project.id).where(Project.id == pid).with_for_update())
-    analysis = s.scalar(select(Analysis).where(Analysis.project_id == pid, Analysis.id == aid).with_for_update())
-    if not analysis:
+    batched = s.info.get("vks_completion_batch") and s.bind.dialect.name == "sqlite"
+    if not batched:
+        s.scalar(select(Project.id).where(Project.id == pid).with_for_update())
+    analysis = (
+        s.get(Analysis, aid) if batched else
+        s.scalar(select(Analysis).where(Analysis.project_id == pid, Analysis.id == aid).with_for_update())
+    )
+    if not analysis or analysis.project_id != pid:
         raise missing()
     if not allow_frozen:
         _require_mutable(analysis)
-    choices = dict(
-        s.execute(
-            select(Selection.entity_id, Selection.entity_revision_id).where(Selection.analysis_set_id == aid)
-        ).all()
-    )
+    from .reading import ReadingService
+
+    choices, _index = ReadingService(service).selections(s, analysis, None)
     return analysis, choices
 
 
@@ -113,6 +116,23 @@ def _artifact(s, service, pid, snapshot, prefix, raw, kind, media, metadata):
     digest = sha(raw)
     fingerprint = sha(canonical({"sha256": digest, "metadata": metadata}))
     path = f"{prefix}/{fingerprint}.{'png' if kind == 'screenshot' else 'json'}"
+    known = s.info.get("vks_known_artifacts", {}).get((pid, snapshot, path))
+    if known is not None:
+        return known
+    if s.info.get("vks_completion_batch") and s.bind.dialect.name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+
+        created = s.scalar(insert(Artifact).values(
+            id=uid(), project_id=pid, snapshot_id=snapshot, relative_path=path,
+            sha256=digest, size_bytes=len(raw), kind=kind, media_type=media,
+            sensitivity="internal", object_key=service._put_object(raw), metadata_json=metadata,
+        ).on_conflict_do_nothing(
+            index_elements=["project_id", "snapshot_id", "relative_path"]
+        ).returning(Artifact))
+        if created is not None:
+            s.info.setdefault("vks_new_artifact_ids", set()).add(created.id)
+            s.info.setdefault("vks_known_artifacts", {})[(pid, snapshot, path)] = created
+            return created
     artifact = s.scalar(
         select(Artifact).where(
             Artifact.project_id == pid, Artifact.snapshot_id == snapshot, Artifact.relative_path == path
@@ -138,6 +158,24 @@ def _artifact(s, service, pid, snapshot, prefix, raw, kind, media, metadata):
 
 
 def _select(s, analysis, revision):
+    if s.info.get("vks_completion_batch") and s.bind.dialect.name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+
+        loaded = s.identity_map.get((Selection, (analysis.id, revision.entity_id), None))
+        if loaded is not None:
+            loaded.entity_revision_id = revision.id
+        else:
+            statement = insert(Selection).values(
+                analysis_set_id=analysis.id, entity_id=revision.entity_id, entity_revision_id=revision.id
+            )
+            s.execute(statement.on_conflict_do_update(
+                index_elements=["analysis_set_id", "entity_id"],
+                set_={"entity_revision_id": revision.id},
+            ))
+        choices = s.info.get("vks_selection_maps", {}).get(analysis.id)
+        if choices is not None:
+            choices[revision.entity_id] = revision.id
+        return
     choice = s.get(Selection, (analysis.id, revision.entity_id))
     if choice:
         choice.entity_revision_id = revision.id
@@ -146,6 +184,9 @@ def _select(s, analysis, revision):
 
 
 def _identity(s, pid, kind, key):
+    cached = s.info.get("vks_ready_entities", {})
+    if (pid, kind, key) in cached:
+        return cached[(pid, kind, key)]
     return s.scalar(select(Entity).where(Entity.project_id == pid, Entity.type == kind, Entity.stable_key == key))
 
 
@@ -153,10 +194,15 @@ def _new_entity(s, pid, kind, key):
     entity = Entity(id=uid(), project_id=pid, type=kind, stable_key=key)
     s.add(entity)
     s.flush()
+    if "vks_ready_entities" in s.info:
+        s.info["vks_ready_entities"][(pid, kind, key)] = entity
     return entity
 
 
 def _edges(s, analysis, rid):
+    cached = s.info.get("vks_ready_edges", {}).get((analysis.id, rid))
+    if cached is not None:
+        return [edge for edge in cached if rid in (edge.from_revision_id, edge.to_revision_id)]
     return list(
         s.scalars(
             select(Relation).where(
@@ -197,7 +243,15 @@ def _require_edges(s, service, actor, pid, edges):
 
 def _evidence(s, analysis, revision, artifact):
     key = "prototype." + revision.id
-    current = s.scalar(
+    cache = s.info.setdefault("vks_evidence_rows", {}) if s.info.get("vks_completion_batch") else {}
+    identity = (analysis.id, key, artifact.id, artifact.sha256)
+    if identity in cache:
+        return cache[identity].id
+    queried = (
+        (analysis.id, key) in s.info.get("vks_evidence_queried", set())
+        or artifact.id in s.info.get("vks_new_artifact_ids", set())
+    )
+    current = None if queried else s.scalar(
         select(Evidence).where(
             Evidence.analysis_set_id == analysis.id,
             Evidence.stable_key == key,
@@ -206,6 +260,7 @@ def _evidence(s, analysis, revision, artifact):
         )
     )
     if current:
+        cache[identity] = current
         return current.id
     row = Evidence(
         id=uid(),
@@ -229,6 +284,7 @@ def _evidence(s, analysis, revision, artifact):
     )
     s.add(row)
     s.flush()
+    cache[identity] = row
     return row.id
 
 
@@ -249,7 +305,12 @@ def _write_relation(s, analysis, source, target, kind, evidence, current=None, *
     edge.evidence_ids = [evidence]
     edge.metadata_json = {**edge.metadata_json, **metadata} if edge.metadata_json else metadata
     s.add(edge)
-    s.flush()
+    cached = s.info.get("vks_ready_edges", {})
+    for rid in (source.id, target.id):
+        if (analysis.id, rid) in cached and edge not in cached[(analysis.id, rid)]:
+            cached[(analysis.id, rid)].append(edge)
+    if not s.info.get("vks_completion_batch"):
+        s.flush()
     return edge
 
 
@@ -733,6 +794,18 @@ class PrototypeEditor:
 
     @staticmethod
     def _citations(s, analysis, point, edges, refs):
+        if s.info.get("vks_completion_batch") and refs:
+            # One query for the ready target's evidence; subsequent targets in
+            # this transaction reuse exact artifact/digest identities.
+            cache = s.info.setdefault("vks_evidence_rows", {})
+            queried = s.info.setdefault("vks_evidence_queried", set())
+            keys = {"prototype." + section.id for section in refs
+                    if (analysis.id, "prototype." + section.id) not in queried}
+            for row in s.scalars(
+                select(Evidence).where(Evidence.analysis_set_id == analysis.id, Evidence.stable_key.in_(keys))
+            ) if keys else ():
+                cache[(analysis.id, row.stable_key, row.artifact_id, row.content_sha256)] = row
+            queried.update((analysis.id, key) for key in keys)
         prior = {row.to_revision_id: row for row in edges if row.relation_type == "supported_by_section"}
         selected = {row.id for row in refs}
         for rid, edge in prior.items():

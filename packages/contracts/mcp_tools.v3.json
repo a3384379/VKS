@@ -2,6 +2,716 @@
   "schema_version": "3.0-dev",
   "tools": [
     {
+      "name": "get_interactive_context",
+      "title": "读取交互目标的关联与文档",
+      "description": "读取准确草稿或保存版本的控件关联、可见文档和章节候选；返回保存所需的版本。",
+      "inputSchema": {
+        "$defs": {
+          "ControlContext": {
+            "additionalProperties": false,
+            "properties": {
+              "scope": {
+                "default": "control",
+                "enum": [
+                  "control",
+                  "module"
+                ],
+                "title": "Scope",
+                "type": "string"
+              },
+              "page_title": {
+                "default": "",
+                "maxLength": 200,
+                "title": "Page Title",
+                "type": "string"
+              },
+              "section_title": {
+                "default": "",
+                "maxLength": 200,
+                "title": "Section Title",
+                "type": "string"
+              },
+              "nearby_labels": {
+                "items": {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Nearby Labels",
+                "type": "array"
+              }
+            },
+            "title": "ControlContext",
+            "type": "object"
+          },
+          "DOMTarget": {
+            "additionalProperties": false,
+            "properties": {
+              "route": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "pattern": "^/",
+                "title": "Route",
+                "type": "string"
+              },
+              "frame_path": {
+                "items": {
+                  "maxLength": 160,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Frame Path",
+                "type": "array"
+              },
+              "selector": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Selector",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 160,
+                "minLength": 1,
+                "title": "Label",
+                "type": "string"
+              },
+              "state": {
+                "default": "",
+                "maxLength": 500,
+                "title": "State",
+                "type": "string"
+              },
+              "open_steps": {
+                "items": {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Open Steps",
+                "type": "array"
+              }
+            },
+            "required": [
+              "route",
+              "frame_path",
+              "selector",
+              "label"
+            ],
+            "title": "DOMTarget",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Release Id"
+          },
+          "package_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Package Id",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/$defs/DOMTarget"
+          },
+          "context": {
+            "$ref": "#/$defs/ControlContext"
+          },
+          "mode": {
+            "default": "explain",
+            "enum": [
+              "documents",
+              "explain"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "refresh": {
+            "default": false,
+            "title": "Refresh",
+            "type": "boolean"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "package_id",
+          "target",
+          "project_id"
+        ],
+        "title": "AssistanceInput",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[dict]",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "save_interactive_binding",
+      "title": "保存交互目标的关联文案",
+      "description": "共用 Studio 保存服务；修改时必须提交读取所得 binding_id、binding_version、point_revision_id 和 selection_version。保留不可变历史，相同幂等键可重试。",
+      "inputSchema": {
+        "$defs": {
+          "DOMTarget": {
+            "additionalProperties": false,
+            "properties": {
+              "route": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "pattern": "^/",
+                "title": "Route",
+                "type": "string"
+              },
+              "frame_path": {
+                "items": {
+                  "maxLength": 160,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Frame Path",
+                "type": "array"
+              },
+              "selector": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Selector",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 160,
+                "minLength": 1,
+                "title": "Label",
+                "type": "string"
+              },
+              "state": {
+                "default": "",
+                "maxLength": 500,
+                "title": "State",
+                "type": "string"
+              },
+              "open_steps": {
+                "items": {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Open Steps",
+                "type": "array"
+              }
+            },
+            "required": [
+              "route",
+              "frame_path",
+              "selector",
+              "label"
+            ],
+            "title": "DOMTarget",
+            "type": "object"
+          },
+          "PointText": {
+            "additionalProperties": false,
+            "properties": {
+              "title": {
+                "maxLength": 160,
+                "minLength": 1,
+                "pattern": "\\S",
+                "title": "Title",
+                "type": "string"
+              },
+              "summary": {
+                "maxLength": 512000,
+                "minLength": 1,
+                "pattern": "\\S",
+                "title": "Summary",
+                "type": "string"
+              },
+              "applicability": {
+                "default": "",
+                "maxLength": 2000,
+                "title": "Applicability",
+                "type": "string"
+              },
+              "outcome": {
+                "default": "",
+                "maxLength": 2000,
+                "title": "Outcome",
+                "type": "string"
+              },
+              "exceptions": {
+                "default": "",
+                "maxLength": 2000,
+                "title": "Exceptions",
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "summary"
+            ],
+            "title": "PointText",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "analysis_set_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id",
+            "type": "string"
+          },
+          "package_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Package Id",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/$defs/DOMTarget"
+          },
+          "point": {
+            "$ref": "#/$defs/PointText"
+          },
+          "section_revision_ids": {
+            "items": {
+              "maxLength": 96,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Section Revision Ids",
+            "type": "array"
+          },
+          "binding_id": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Binding Id"
+          },
+          "binding_version": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Binding Version"
+          },
+          "point_revision_id": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Point Revision Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "selection_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "analysis_set_id",
+          "package_id",
+          "target",
+          "point",
+          "section_revision_ids",
+          "project_id",
+          "idempotency_key",
+          "selection_version"
+        ],
+        "title": "InteractiveBinding",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[dict]",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "get_workspace_document",
+      "title": "读取准确版本的完整文档",
+      "description": "读取所选草稿或保存版本中的准确文档 Markdown、章节及 row_version。",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Release Id"
+          },
+          "document_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Document Id",
+            "type": "string"
+          },
+          "revision_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "document_id",
+          "revision_id",
+          "project_id"
+        ],
+        "title": "DocumentRead",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[dict]",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "save_workspace_document",
+      "title": "保存文档新修订",
+      "description": "按 base_revision_id 和 row_version 保存新 Markdown；保留原始文件、历史修订与人工章节锁，相同幂等键可重试。",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_set_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id",
+            "type": "string"
+          },
+          "document_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Document Id",
+            "type": "string"
+          },
+          "base_revision_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Base Revision Id",
+            "type": "string"
+          },
+          "row_version": {
+            "minimum": 1,
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "markdown": {
+            "maxLength": 1000000,
+            "title": "Markdown",
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "analysis_set_id",
+          "document_id",
+          "base_revision_id",
+          "row_version",
+          "markdown",
+          "project_id",
+          "idempotency_key"
+        ],
+        "title": "DocumentWrite",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[dict]",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "export_workspace_documents",
+      "title": "导出当前项目文档",
+      "description": "从草稿复制不可变导出快照，不冻结当前工作区；或导出指定保存版本。返回任务，使用 get_job 查看并取得下载地址。",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Release Id"
+          },
+          "format": {
+            "default": "readonly_html",
+            "enum": [
+              "markdown_bundle",
+              "pdf",
+              "vksbundle",
+              "readonly_html"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "include_source": {
+            "default": false,
+            "title": "Include Source",
+            "type": "boolean"
+          },
+          "document_ids": {
+            "items": {
+              "maxLength": 96,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Document Ids",
+            "type": "array"
+          },
+          "document_mode": {
+            "default": "project",
+            "enum": [
+              "project",
+              "original"
+            ],
+            "title": "Document Mode",
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "title": "WorkspaceExport",
+        "type": "object",
+        "required": [
+          "project_id",
+          "idempotency_key"
+        ]
+      },
+      "outputSchema": {
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[dict]",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "idempotentHint": true
+      }
+    },
+    {
       "name": "get_prototype_action_context",
       "title": "读取原型动作与业务说明",
       "description": "读取准确版本、页面及触发状态中的可见业务点和原文章节。",
@@ -329,7 +1039,7 @@
                 "type": "string"
               },
               "summary": {
-                "maxLength": 8000,
+                "maxLength": 512000,
                 "minLength": 1,
                 "pattern": "\\S",
                 "title": "Summary",

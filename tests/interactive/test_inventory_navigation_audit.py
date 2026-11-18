@@ -55,7 +55,7 @@ def test_three_route_pipeline_survives_navigation_and_refresh_without_duplicate_
             page.on("request", observe)
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("分析与关联并发", exact=True).select_option("1")
+            browser_inventory.select_scan_lanes(page, 1)
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"
@@ -63,7 +63,7 @@ def test_three_route_pipeline_survives_navigation_and_refresh_without_duplicate_
                     and response.status == 200
                 )
             ):
-                page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+                browser_inventory.start_legacy_pipeline(page, service, owner, pid, aid, concurrency=1)
             endpoint = f"{url}/api/v3/projects/{pid}/associations/scans?analysis_set_id={aid}"
             before = page.request.get(endpoint).json()["data"]["run"]
             assert before["pages_completed"] >= 1 and before["pages_total"] == 3
@@ -140,7 +140,7 @@ def test_partial_pipeline_refresh_keeps_failures_and_only_admits_captured_page_c
             )
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+            browser_inventory.start_legacy_pipeline(page, service, owner, pid, aid)
             saved = page.get_by_label("已保存的预扫描进度", exact=True)
             expect(saved.get_by_text("预扫描部分完成", exact=True)).to_be_visible(timeout=20000)
             expect(saved).to_contain_text("1 / 2 页")
@@ -148,18 +148,23 @@ def test_partial_pipeline_refresh_keeps_failures_and_only_admits_captured_page_c
             endpoint = f"{url}/api/v3/projects/{pid}/associations/scans?analysis_set_id={aid}"
             current = page.request.get(endpoint).json()["data"]["run"]
             admitted = pipeline_jobs(service, current["id"])
-            assert current["pipeline"] and current["ai"]["targets"] == len(admitted) >= 1
+            assert (
+                current["pipeline"]
+                and current["ai"]["targets"] == sum(len(payload["items"]) for _, payload in admitted) >= 1
+            )
             assert not batches and not calls
             assert all(item["target"]["route"] == "/a.html" for _, payload in admitted for item in payload["items"]), (
                 "a permanently busy page must not send static or unseen controls to AI"
             )
+            expected_calls = len(admitted[0][1]["groups"])
             service.process_job(admitted[0][0])
-            assert service.get_job(owner, admitted[0][0])["state"] == "succeeded" and len(calls) == 1
+            assert service.get_job(owner, admitted[0][0])["state"] == "succeeded" and len(calls) == expected_calls
             page.reload()
+            page.locator(".batch-task-details > summary").click()
             expect(saved.get_by_text("预扫描部分完成", exact=True)).to_be_visible()
             expect(saved).to_contain_text("1 / 2 页")
             expect(page.locator('iframe[title="预扫描原型"]')).to_have_count(0)
-            assert not batches and len(calls) == 1
+            assert not batches and len(calls) == expected_calls
             assert len(pipeline_jobs(service, current["id"])) == len(admitted)
             expect(page.get_by_role("button", name="重试未完成页面", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="仅关联已采集内容", exact=True)).to_have_count(0)
@@ -202,8 +207,8 @@ def test_three_parallel_workers_have_distinct_storage_origins_and_stop_before_la
             login(page, url, pid, aid)
             page.evaluate("localStorage.setItem('audit-worker-isolation','USER')")
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_label("分析与关联并发", exact=True).select_option("3")
-            page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+            browser_inventory.select_scan_lanes(page, 3)
+            browser_inventory.start_legacy_pipeline(page, service, owner, pid, aid)
             frames = page.locator('iframe[title="预扫描原型"]')
             expect(frames).to_have_count(3)
             page.wait_for_function(
@@ -226,6 +231,9 @@ def test_three_parallel_workers_have_distinct_storage_origins_and_stop_before_la
             page.get_by_label("动态原型预扫描", exact=True).get_by_role("button", name="停止任务", exact=True).click()
             expect(frames).to_have_count(0)
             saved = page.get_by_label("已保存的预扫描进度", exact=True)
+            expect(saved).to_contain_text("任务已停止")
+            if page.locator(".batch-task-details").get_attribute("open") is None:
+                page.locator(".batch-task-details > summary").click()
             expect(saved.get_by_text("任务已停止", exact=True)).to_be_visible()
             page.wait_for_timeout(4700)
             run = page.request.get(f"{url}/api/v3/projects/{pid}/associations/scans?analysis_set_id={aid}").json()[

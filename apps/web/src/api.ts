@@ -23,10 +23,10 @@ export type ApiMeta = {
   request_id?: string;
   [key: string]: unknown;
 };
-async function request<T>(
+export async function apiResponse(
   path: string,
   init: RequestInit = {},
-): Promise<{ data?: T; meta?: ApiMeta }> {
+): Promise<Response> {
   const headers = new Headers(init.headers);
   if (
     init.body &&
@@ -49,8 +49,8 @@ async function request<T>(
     target.startsWith("/api/") ? target : `/api/v1${target}`,
     { ...init, headers, credentials: "same-origin" },
   );
-  const json = await response.json().catch(() => ({}));
-  if (!response.ok)
+  if (!response.ok) {
+    const json = await response.json().catch(() => ({}));
     throw new ApiError(
       json.error?.message ||
         json.detail?.message ||
@@ -61,7 +61,15 @@ async function request<T>(
       json.error?.code || "VKS_REQUEST_FAILED",
       json.error?.details || json.detail,
     );
-  return json;
+  }
+  return response;
+}
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ data?: T; meta?: ApiMeta }> {
+  const response = await apiResponse(path, init);
+  return response.json().catch(() => ({}));
 }
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const json = await request<T>(path, init);

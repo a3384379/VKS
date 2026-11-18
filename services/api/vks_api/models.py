@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
-from sqlalchemy import String, Integer, Text, JSON, ForeignKey, UniqueConstraint, Boolean
+from sqlalchemy import String, Integer, Text, JSON, ForeignKey, UniqueConstraint, Boolean, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -15,6 +15,12 @@ def now():
 
 class Base(DeclarativeBase):
     pass
+
+
+class InputEpoch(Base):
+    __tablename__ = "input_epoch"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token: Mapped[str] = mapped_column(String(32))
 
 
 class Identified:
@@ -97,7 +103,10 @@ class Artifact(Identified, Base):
 
 class Entity(Identified, Base):
     __tablename__ = "entity"
-    __table_args__ = (UniqueConstraint("project_id", "type", "stable_key"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "type", "stable_key"),
+        Index("ix_entity_scope_facts", "id", "project_id", "type", "stable_key"),
+    )
     project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
     type: Mapped[str] = mapped_column(String(20))
     stable_key: Mapped[str] = mapped_column(String(1000))
@@ -105,7 +114,18 @@ class Entity(Identified, Base):
 
 class Revision(Identified, Base):
     __tablename__ = "entity_revision"
-    __table_args__ = (UniqueConstraint("entity_id", "content_sha256"),)
+    __table_args__ = (
+        UniqueConstraint("entity_id", "content_sha256"),
+        Index(
+            "ix_revision_scope_inputs",
+            "id",
+            "project_id",
+            "entity_id",
+            "artifact_id",
+            "content_sha256",
+            "semantic_content_sha256",
+        ),
+    )
     entity_id: Mapped[str] = mapped_column(ForeignKey("entity.id"), index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
     artifact_id: Mapped[str | None] = mapped_column(ForeignKey("artifact.id"), nullable=True)
@@ -119,6 +139,7 @@ class Revision(Identified, Base):
 
 class Selection(Base):
     __tablename__ = "analysis_set_entity"
+    __table_args__ = (Index("ix_selection_revision_inputs", "analysis_set_id", "entity_revision_id", "entity_id"),)
     analysis_set_id: Mapped[str] = mapped_column(ForeignKey("analysis_set.id"), primary_key=True)
     entity_id: Mapped[str] = mapped_column(ForeignKey("entity.id"), primary_key=True)
     entity_revision_id: Mapped[str] = mapped_column(ForeignKey("entity_revision.id"))

@@ -160,7 +160,9 @@ def test_rag_probe_does_not_continue_after_switching_version(assistant, tmp_path
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             login(page, url, pid, aid)
             page.get_by_role("button", name="AI 设置", exact=True).click()
+            page.get_by_role("tab", name="知识检索", exact=True).click()
             panel = page.get_by_role("region", name="RAG 向量知识库")
+            panel.locator(".rag-parameters > summary").click()
             expect(panel.get_by_role("button", name="测试嵌入连接", exact=True)).to_be_enabled()
 
             def intercept(route):

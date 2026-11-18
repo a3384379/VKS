@@ -58,12 +58,42 @@ def visible_export_sources(s, pid, snapshot_ids, capabilities):
     return visible - restricted
 
 
+def document_export_choices(s, choices, document_ids):
+    """Keep exact documents, chapters and their selected attachment roots."""
+    if not document_ids:
+        return choices
+    from .documents import DocumentService
+    from .service import DomainError
+
+    keep, packages = set(), set()
+    for eid in set(document_ids):
+        revision = s.get(Revision, choices[eid]) if eid in choices else None
+        entity = s.get(Entity, eid)
+        if not revision or not entity or entity.type != "document":
+            raise DomainError("VKS_NOT_FOUND", "所选版本中没有可导出的文档", 404)
+        keep.add(eid)
+        packages.add(revision.metadata_json.get("material_package_id"))
+        for section in DocumentService._sections(s, entity, revision):
+            if choices.get(section.entity_id) != section.id:
+                raise DomainError("VKS_DOCUMENT_SECTIONS_UNRESOLVED", "文档章节与所选版本不一致", 409)
+            keep.add(section.entity_id)
+    # A root pins attachments even when unchanged Markdown reuses old revisions.
+    # Its other members are not added to the export selection.
+    keep.update(eid for eid in packages if eid in choices)
+    return {eid: rid for eid, rid in choices.items() if eid in keep}
+
+
 def visible_release(s, release, capabilities):
     from .reading import relation_is_visible
 
     rows = []
-    for choice in release.manifest_json["selections"]:
-        rev = s.get(Revision, choice["entity_revision_id"])
+    choices = document_export_choices(
+        s,
+        {row["entity_id"]: row["entity_revision_id"] for row in release.manifest_json["selections"]},
+        capabilities.get("document_ids"),
+    )
+    for rid in choices.values():
+        rev = s.get(Revision, rid)
         entity = s.get(Entity, rev.entity_id)
         art = s.get(Artifact, rev.artifact_id) if rev.artifact_id else None
         if allow_artifact(art, capabilities, s) and (
@@ -152,7 +182,7 @@ def markdown_zip(service, release, capabilities, rows, relations, evidence):
     originals = set()
     for entity, rev, art in rows:
         if entity.type == "document":
-            if art and art.id not in originals:
+            if art and art.id not in originals and not capabilities.get("documents_only"):
                 raw = safe_original(service, art)
                 if raw is not None:
                     path = f"originals/{art.snapshot_id}/{art.relative_path}"

@@ -45,6 +45,58 @@ def test_outbox_can_redeliver_but_worker_commits_only_once(setup):
     assert len(service.workspace(owner, p["id"])["analysis_sets"]) == 1
 
 
+def test_publisher_completion_preserves_fast_worker_capacity_deferral(setup):
+    from vks_api.association_limits import GLOBAL_REQUEST_LIMIT, active_request_slots
+    from vks_api.models import Outbox
+    from vks_api.service import future
+
+    service, owner, project = setup
+    with service.db() as session:
+        occupied = service._new_job(session, owner, project["id"], "associate_all", {"concurrency": 3})
+        occupied.state, occupied.lease_until = "running", future(60)
+        candidate = service._new_job(session, owner, project["id"], "associate_all", {"concurrency": 1})
+        candidate.attempt, candidate.progress, candidate.stage = 4, 37, "RECOVERED"
+        candidate.result_json = {"processing_epoch": 4, "processed": 1, "saved": 1}
+        session.add(Checkpoint(
+            job_id=candidate.id, stage="ASSOCIATE", input_hash="preserved-target", processor_version="source-controls-v2",
+            result_json={"status": "linked", "saved": True, "attempt": 4},
+        ))
+        jid = candidate.id
+        session.flush()
+        assert active_request_slots(session) == GLOBAL_REQUEST_LIMIT
+    deferred = []
+
+    def immediate_delivery(job_id, kind):
+        assert (job_id, kind) == (jid, "associate_all")
+        service.process_job(job_id)
+        with service.db() as session:
+            entry = session.scalar(select(DispatchState).where(DispatchState.job_id == jid))
+            assert entry.state == "pending" and entry.attempt == 1
+            deferred.append(entry.next_attempt_at)
+
+    assert dispatch_pending(service, immediate_delivery) == 1
+    with service.db() as session:
+        entry = session.scalar(select(DispatchState).where(DispatchState.job_id == jid))
+        job = session.get(Job, jid)
+        assert entry.state == "pending" and entry.attempt == 1
+        assert entry.next_attempt_at == deferred[0]
+        assert not session.scalar(select(Outbox).where(Outbox.job_id == jid)).dispatched
+        assert (job.state, job.attempt, job.progress, job.stage) == ("queued", 4, 37, "RECOVERED")
+        assert job.result_json == {"processing_epoch": 4, "processed": 1, "saved": 1}
+        assert session.scalar(select(Checkpoint).where(Checkpoint.job_id == jid)).result_json == {
+            "status": "linked", "saved": True, "attempt": 4,
+        }
+    make_due(service, jid)
+    sent = []
+    assert dispatch_pending(service, lambda *args: sent.append(args)) == 1
+    assert sent == [(jid, "associate_all")]
+    with service.db() as session:
+        entry = session.scalar(select(DispatchState).where(DispatchState.job_id == jid))
+        assert entry.state == "published" and entry.attempt == 2
+        assert session.scalar(select(Outbox).where(Outbox.job_id == jid)).dispatched
+        assert session.get(Job, jid).attempt == 4
+
+
 def test_broker_unavailable_backoff_is_bounded_and_explicit_retry_recovers(setup):
     service, owner, p = setup
     job = service.demo_import(owner, p["id"], "demo")

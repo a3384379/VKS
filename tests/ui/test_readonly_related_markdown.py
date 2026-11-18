@@ -91,7 +91,7 @@ def test_unbound_local_matches_render_complete_safe_markdown_and_open_original(r
                 button="right"
             )
             page.get_by_role("button", name="查看关联文档", exact=False).click()
-            expect(page.get_by_role("tab", name="相关知识", exact=True)).to_have_attribute("aria-selected", "true")
+            expect(page.get_by_role("tab", name="文档", exact=True)).to_have_attribute("aria-selected", "true")
             expect(page.locator(".assistant-body > .eyebrow")).to_have_text("本地自动匹配")
             card = page.locator(".knowledge-match").first
             title = card.locator(".knowledge-match-title")
@@ -130,11 +130,15 @@ def test_unbound_local_matches_render_complete_safe_markdown_and_open_original(r
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             preview.get_by_role("link", name="跨文章引用", exact=True).click()
             expect(page.locator(".document > h1")).to_have_text("其他文档")
-            expect(page.locator(".chapter-link[aria-current='location']")).to_have_text("负责人设置")
+            assert page.url.endswith("#section=s2")
             page.get_by_role("button", name="交互原型", exact=True).click()
-            page.get_by_role("tab", name="相关知识", exact=True).click()
+            page.get_by_role("tab", name="文档", exact=True).click()
             card = page.locator(".knowledge-match").first
             card.get_by_role("button", name="▤ 任务操作手册", exact=True).click()
+            source_preview = page.get_by_role("dialog", name="引用原文预览", exact=True)
+            expect(source_preview).to_be_visible()
+            expect(page.get_by_role("button", name="交互原型", exact=True)).to_have_attribute("aria-pressed", "true")
+            source_preview.get_by_role("button", name="打开文档原文", exact=True).click()
             expect(page.locator(".document > h1")).to_have_text("任务操作手册")
             assert page.url.endswith("#section=s1")
             expect(page.locator(".document .rich-markdown strong").first).to_have_text("创建任务")

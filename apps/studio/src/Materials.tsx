@@ -535,6 +535,47 @@ export function Materials({
       );
     });
   }
+  const recycleItems = [
+    ...new Map(
+      [...(data?.trash || []), ...(history?.trash || [])].map((item) => [
+        item.kind + ":" + item.id,
+        item,
+      ]),
+    ).values(),
+  ];
+  async function purge(items: Library["trash"]) {
+    if (!data || !items.length) return;
+    const label =
+      items.length === 1
+        ? `删除“${items[0].name}”`
+        : `清空回收站中的 ${items.length} 项`;
+    if (
+      !window.confirm(
+        `${label}？删除后无法从回收站恢复，原始修订与历史版本引用仍会保留。`,
+      )
+    )
+      return;
+    await work("正在删除回收站内容…", async () => {
+      await api(
+        `${prefix}/trash/purge`,
+        mutation(
+          "POST",
+          {
+            analysis_set_id: analysis,
+            targets: items.map((item) => ({
+              kind: item.kind,
+              target_id: item.id,
+            })),
+          },
+          data.selection_version,
+        ),
+      );
+      await Promise.all([load(true), loadHistory()]);
+      setNotice(
+        `已删除 ${items.length} 项回收站记录。历史引用和原始修订保持不变。`,
+      );
+    });
+  }
   const currentJobs = (data?.jobs || []).filter(
     (j) => j.current_scope !== false,
   );
@@ -1012,7 +1053,11 @@ export function Materials({
                 保存版本
               </button>
             </form>
-            <div className="material-history">
+            <div
+              className="material-history"
+              role="region"
+              aria-label="完整版本列表"
+            >
               {history?.versions.map((v) => (
                 <article key={v.id}>
                   <div>
@@ -1048,54 +1093,75 @@ export function Materials({
                   </button>
                 </article>
               ))}
+              {!history && !historyError && (
+                <p className="management-description" role="status">
+                  正在读取历史版本，可先管理资料包…
+                </p>
+              )}
+              {historyError && (
+                <p role="alert">
+                  {historyError}{" "}
+                  <button onClick={() => void loadHistory()}>
+                    重新读取版本
+                  </button>
+                </p>
+              )}
+              {history && !history.versions.length && (
+                <p className="management-empty">
+                  保存第一个完整版本，或在替换资料时自动保存。
+                </p>
+              )}
             </div>
-            {!history && !historyError && (
-              <p className="management-description" role="status">
-                正在读取历史版本，可先管理资料包…
-              </p>
-            )}
-            {historyError && (
-              <p role="alert">
-                {historyError}{" "}
-                <button onClick={() => void loadHistory()}>重新读取版本</button>
-              </p>
-            )}
-            {history && !history.versions.length && (
-              <p className="management-empty">
-                保存第一个完整版本，或在替换资料时自动保存。
-              </p>
-            )}
           </section>
           <section className="management-panel">
             <details>
               <summary>
                 <Trash2 size={17} /> 回收站（
-                {(data?.trash.length || 0) + (history?.trash.length || 0)}）
+                {recycleItems.length}）
               </summary>
               <p className="management-description">
-                删除的资料包和完整版本可在这里恢复。原始资料与历史引用保留；这项操作不会清理磁盘文件。
+                可以恢复资料，或删除回收站记录。删除后无法在回收站恢复；历史引用与原始修订保留，不清理磁盘文件。
               </p>
+              <div className="material-recycle-actions">
+                <button
+                  disabled={
+                    !!busy ||
+                    !data?.editable ||
+                    !history ||
+                    !recycleItems.length
+                  }
+                  onClick={() => void purge(recycleItems)}
+                >
+                  <Trash2 size={15} /> 清空回收站
+                </button>
+                {!recycleItems.length && history && <span>回收站为空</span>}
+              </div>
               <div className="material-recycle-list">
-                {[...(data?.trash || []), ...(history?.trash || [])].map(
-                  (item) => (
-                    <article key={item.kind + item.id}>
-                      <div>
-                        <b>{item.name}</b>
-                        <small>
-                          {item.kind === "package" ? "资料包" : "完整版本"} ·{" "}
-                          {date(item.deleted_at)}
-                        </small>
-                      </div>
-                      <button
-                        disabled={!!busy || !data?.editable}
-                        onClick={() => void trash(item.kind, item.id, false)}
-                        aria-label={`从回收站恢复 ${item.name}`}
-                      >
-                        <RotateCcw size={15} /> 恢复
-                      </button>
-                    </article>
-                  ),
-                )}
+                {recycleItems.map((item) => (
+                  <article key={item.kind + item.id}>
+                    <div>
+                      <b>{item.name}</b>
+                      <small>
+                        {item.kind === "package" ? "资料包" : "完整版本"} ·{" "}
+                        {date(item.deleted_at)}
+                      </small>
+                    </div>
+                    <button
+                      disabled={!!busy || !data?.editable}
+                      onClick={() => void trash(item.kind, item.id, false)}
+                      aria-label={`从回收站恢复 ${item.name}`}
+                    >
+                      <RotateCcw size={15} /> 恢复
+                    </button>
+                    <button
+                      disabled={!!busy || !data?.editable}
+                      onClick={() => void purge([item])}
+                      aria-label={`删除回收站记录 ${item.name}`}
+                    >
+                      <Trash2 size={15} /> 删除
+                    </button>
+                  </article>
+                ))}
               </div>
             </details>
           </section>

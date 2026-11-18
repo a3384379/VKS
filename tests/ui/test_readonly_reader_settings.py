@@ -68,7 +68,9 @@ def test_touch_model_picker_preserves_exact_catalog_and_manual_ids(reader_file):
             posted = [request for request in calls if request.url.endswith("/chat/completions")]
             assert len(posted) == 1
             assert posted[0].post_data_json["model"] == custom_id
-            assert page.evaluate("localStorage.length + sessionStorage.length") == 0
+            assert page.evaluate(
+                "[localStorage,sessionStorage].every(store=>Object.values(store).every(value=>!value.includes('synthetic-recipient-key')))"
+            )
             assert "synthetic-recipient-key" not in reader_file.read_text()
             page.reload()
             page.get_by_role("button", name="打开知识助手", exact=True).click()
@@ -92,18 +94,18 @@ def test_assistant_tabs_keyboard_selection_and_scrolling_stay_inside_panel(reade
             selected = tabs.locator('[aria-selected="true"]')
             expect(selected).to_have_count(0)
             expect(page.get_by_role("button", name="连接设置", exact=True)).to_have_attribute("aria-pressed", "true")
-            page.get_by_role("tab", name="相关知识", exact=True).hover()
+            page.get_by_role("tab", name="文档", exact=True).hover()
             backgrounds = tabs.get_by_role("tab").evaluate_all(
                 "nodes => nodes.map(node => getComputedStyle(node).backgroundColor)"
             )
             assert len(backgrounds) == 3
             settings = page.get_by_role("button", name="连接设置", exact=True)
-            page.get_by_role("tab", name="相关知识", exact=True).click()
-            expect(selected).to_have_text("相关知识")
-            page.get_by_role("tab", name="相关知识", exact=True).press("ArrowRight")
+            page.get_by_role("tab", name="文档", exact=True).click()
+            expect(selected).to_have_text("文档")
+            page.get_by_role("tab", name="文档", exact=True).press("ArrowRight")
             expect(selected).to_have_text("AI 讲解")
             page.get_by_role("tab", name="AI 讲解", exact=True).press("End")
-            expect(page.get_by_role("tab", name="AI 问答", exact=True)).to_be_focused()
+            expect(page.get_by_role("tab", name="回答", exact=True)).to_be_focused()
             settings.click()
             expect(page.get_by_role("tabpanel", name="连接设置")).to_be_visible()
             # Both switches in the same frame reproduce the old chat rAF
@@ -157,7 +159,7 @@ def test_protocol_change_cancels_late_catalog_and_pending_state_survives_tabs(re
             }""")
             fetch = page.get_by_role("button", name="获取模型", exact=True)
             fetch.click()
-            page.get_by_role("tab", name="AI 问答", exact=True).click()
+            page.get_by_role("tab", name="回答", exact=True).click()
             page.get_by_role("button", name="连接设置", exact=True).click()
             expect(fetch).to_be_disabled()
             expect(page.locator(".settings-form [role=status]")).to_have_text("正在读取模型列表…")

@@ -28,7 +28,13 @@ def test_preassociated_ids_labels_and_table_rows_match_runtime_clicks(materials,
         data = calls[-1]
         content = answer["output"][0]["content"][0]
         text = json.loads(content["text"])
-        text["title"] = "说明：" + data["control"]["label"]
+        payload = json.loads(body["input"][1]["content"])
+        if "targets" in payload:
+            by_task = {target["task_id"]: target for target in payload["targets"]}
+            for task, result in text["answers"].items():
+                result["title"] = "说明：" + by_task[task]["control"]["label"]
+        else:
+            text["title"] = "说明：" + data["control"]["label"]
         content["text"] = json.dumps(text)
         return answer
 

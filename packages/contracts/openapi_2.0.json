@@ -2253,6 +2253,45 @@
             "title": "Max Output Tokens",
             "default": 2500
           },
+          "max_input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1050000.0,
+                "minimum": 1000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Input Tokens"
+          },
+          "association_max_input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1050000.0,
+                "minimum": 1000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Association Max Input Tokens"
+          },
+          "association_max_output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 128000.0,
+                "minimum": 100.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Association Max Output Tokens"
+          },
           "daily_token_limit": {
             "type": "integer",
             "maximum": 100000000.0,
@@ -4626,7 +4665,7 @@
           },
           "max_input_tokens": {
             "type": "integer",
-            "maximum": 128000.0,
+            "maximum": 1050000.0,
             "minimum": 1000.0,
             "title": "Max Input Tokens",
             "default": 12000
@@ -4637,6 +4676,32 @@
             "minimum": 100.0,
             "title": "Max Output Tokens",
             "default": 2000
+          },
+          "association_max_input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1050000.0,
+                "minimum": 1000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Association Max Input Tokens"
+          },
+          "association_max_output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 128000.0,
+                "minimum": 100.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Association Max Output Tokens"
           },
           "daily_token_limit": {
             "type": "integer",

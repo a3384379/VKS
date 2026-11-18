@@ -1,2 +1,2 @@
-// Share the isolated, credential-free diagram engine with the Web reader.
-import "../../web/src/diagram-frame";
+// Share the isolated, credential-free diagram engine.
+import "../../../packages/markdown-runtime/src/diagram-frame";

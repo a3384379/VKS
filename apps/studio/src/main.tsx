@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { DetachedPortal, useDetachedAssistant } from "./DetachedAssistant";
 import {
   BookOpen,
   ChevronRight,
@@ -15,6 +16,7 @@ import {
   GripHorizontal,
   LogOut,
   Sparkles,
+  MessageSquareText,
   LoaderCircle,
   Settings2,
   Folders,
@@ -31,16 +33,27 @@ import "./style.css";
 import { AISettings } from "./AISettings";
 import { Projects } from "./Projects";
 import { DocumentCache } from "./DocumentCache";
-import { KnowledgeChat, useKnowledgeChat } from "./KnowledgeChat";
+import {
+  KnowledgeChat,
+  SourcePreview,
+  useKnowledgeChat,
+} from "./KnowledgeChat";
+import { DocumentAssistant } from "./DocumentAssistant";
 import { chatSourceFingerprint } from "./chatSourceFingerprint";
 import { Materials } from "./Materials";
 import { BindingsManager } from "./BindingsManager";
 import { BatchAssociations } from "./BatchAssociations";
+import { AssociationReview, type ReviewTarget } from "./AssociationReview";
+import {
+  DocumentAssociation,
+  type AssociationChapter,
+} from "./DocumentAssociation";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import {
   HandbookTemplate,
   type HandbookSearchResult,
 } from "./HandbookTemplate";
-import { DocumentAppearance, type Presentation } from "./DocumentAppearance";
+import type { Presentation } from "./DocumentAppearance";
 import { useFloatingWindow, type ResizeDirection } from "./useFloatingWindow";
 import { NativeDocumentPane, NativeNetworkSettings } from "./NativeDocument";
 import type { NativeDocument, NativeLocation } from "./NativeDocument";
@@ -118,10 +131,13 @@ type Assistance = {
   binding_id: string | null;
   sections: Citation[];
   selection_version: number;
+  preview_id?: string | null;
+  can_confirm?: boolean;
 };
 type Related = {
   title: string;
   sections: Citation[];
+  related_sections?: Citation[];
   binding_id: string | null;
   excluded: boolean;
   origin: "retrieval" | "binding";
@@ -340,6 +356,10 @@ function App() {
   const [launcherDragging, setLauncherDragging] = useState(false);
   const launcherMoved = useRef(false),
     launcherCleanup = useRef<(() => void) | null>(null);
+  const detached = useDetachedAssistant(
+    `vks.assistant.detached:${accountId}:${route.project}:${scope}`,
+    setNotice,
+  );
   const floating = useFloatingWindow(docked);
   const { ref: windowRef, setPosition } = floating;
   const prototype = useRef<RuntimeHandle | null>(null),
@@ -352,11 +372,18 @@ function App() {
   const [related, setRelated] = useState<Related | null>(null),
     [retrieving, setRetrieving] = useState(false);
   const [assistant, setAssistant] = useState<Assistance | null>(null),
+    [explanationStale, setExplanationStale] = useState(false),
     [assisting, setAssisting] = useState(false),
     [assistantMode, setAssistantMode] = useState<
       "documents" | "explain" | "chat"
-    >("explain"),
+    >("documents"),
     [assistantError, setAssistantError] = useState(""),
+    [associationReviewTarget, setAssociationReviewTarget] = useState<{
+      items?: ReviewTarget[];
+      mode?: "missing" | "all";
+      prototype: boolean;
+      addedChapter?: { name: string; document: string };
+    } | null>(null),
     [automatic, setAutomatic] = useState(
       () => localStorage.getItem("vks.studio.auto-associate") !== "off",
     ),
@@ -366,6 +393,18 @@ function App() {
     );
   const moduleControl = useRef<Control | null>(null),
     control = useRef<Control | null>(null),
+    controlIdentity = useRef(""),
+    explanations = useRef(
+      new Map<string, { answer: Assistance; point: string | null }>(),
+    ),
+    explanationRequest = useRef<{
+      key: string;
+      controller: AbortController;
+    } | null>(null),
+    lastAssist = useRef<{
+      control: Control;
+      mode: "documents" | "explain";
+    } | null>(null),
     assistEpoch = useRef(0),
     confirmedEpoch = useRef(-1),
     assistAbort = useRef<AbortController | null>(null),
@@ -383,16 +422,55 @@ function App() {
     sourceFingerprint: string;
   } | null>(null);
   const chatSources = useMemo(() => chatSourceFingerprint(catalog), [catalog]);
+  const [sourcePreview, setSourcePreview] = useState<{
+    reference: Citation;
+    binding?: Pick<Binding, "id">;
+  } | null>(null);
+  useEffect(
+    () => setSourcePreview(null),
+    [
+      accountId,
+      route.project,
+      scope,
+      chatSources,
+      target,
+      assistantMode,
+      knowledge,
+      editing,
+      detached.open,
+    ],
+  );
+  function previewSource(reference: Citation, binding?: Pick<Binding, "id">) {
+    setSourcePreview({ reference, binding });
+  }
+  useEffect(() => {
+    const previous = explanations.current.get(controlIdentity.current);
+    if (previous && assistant === previous.answer)
+      setExplanationStale(
+        previous.point !== (active?.point_revision_id || null),
+      );
+  }, [active?.point_revision_id, assistant]);
   const citationOrigin =
     route.view === "documents" &&
     citationChat?.scope === route.project + scope &&
     citationChat.sourceFingerprint === chatSources
       ? citationChat
       : null;
-  const [documentKnowledge, setDocumentKnowledge] = useState(false);
+  const [associationChapter, setAssociationChapter] =
+    useState<AssociationChapter | null>(null);
   const documentChat =
-    citationOrigin?.documentChat ??
-    (route.view === "documents" && !documentKnowledge);
+    citationOrigin?.documentChat ?? route.view === "documents";
+  useEffect(() => {
+    if (route.view === "documents" || route.view === "prototype")
+      detached.controller.show(documentChat);
+  }, [detached.open, documentChat, route.view, detached.controller]);
+  async function detachAssistant() {
+    if (await detached.controller.open()) {
+      detached.controller.show(documentChat);
+      setKnowledge(true);
+    }
+  }
+
   const prototypeAssistantMode = useRef(assistantMode),
     inDocumentChat = useRef(false);
   const documentChatLabel =
@@ -424,16 +502,15 @@ function App() {
     citationOrigin?.key ||
     JSON.stringify([
       accountId,
-      auth,
       route.project,
       scope,
       p?.id,
-      chatSources,
-      documentChat ? route.doc || "project-documents" : null,
-      chatContext && {
-        target: chatContext.target,
-        context: chatContext.context,
-      },
+      documentChat ? documentRef?.id || "project-documents" : null,
+      !documentChat &&
+        chatContext && {
+          target: chatContext.target,
+          context: chatContext.context,
+        },
     ]);
   const chatPackage = citationOrigin?.packageId ?? p?.id ?? "";
   const chatDocument = documentChat
@@ -452,10 +529,48 @@ function App() {
     chatPackage,
     chatContext,
     chatDocument,
+    chatSources,
+    async (operations) => {
+      const [c, b] = await Promise.all([
+        api<Catalog>(`${prefix}/catalog?${scope}`),
+        api<Binding[]>(`${prefix}/bindings?${scope}`),
+      ]);
+      const changed = operations.find(
+        (operation) => operation.kind === "document",
+      );
+      if (
+        changed?.revision_id &&
+        documentChat &&
+        documentRef?.id === changed.document_id
+      )
+        navigate({ doc: changed.revision_id, section: "" }, true);
+      setCitationChat((previous) =>
+        previous
+          ? {
+              ...previous,
+              sourceFingerprint: chatSourceFingerprint(c),
+              documentId:
+                changed?.revision_id &&
+                previous.documentId === documentRef?.revision_id
+                  ? changed.revision_id
+                  : previous.documentId,
+            }
+          : null,
+      );
+      setCatalog(c);
+      setBindings(b);
+      setBindingsReady(true);
+      if (operations.some((operation) => operation.kind === "binding")) {
+        if (assistant) setExplanationStale(true);
+        setRelated(null);
+      }
+      if (active)
+        setActive(b.find((binding) => binding.id === active.id) || null);
+    },
   );
   useEffect(() => {
-    setDocumentKnowledge(false);
-  }, [route.project, scope, route.doc]);
+    setAssociationChapter(null);
+  }, [route.project, scope, route.doc, route.view]);
   const navigate = useCallback((patch: Partial<Route>, replace = false) => {
     const next = { ...getRoute(), ...patch };
     const p = new URLSearchParams(Object.entries(next).filter(([, v]) => v));
@@ -545,6 +660,9 @@ function App() {
     assistAbort.current?.abort();
     cancelAutomatic();
     control.current = null;
+    controlIdentity.current = "";
+    explanations.current.clear();
+    explanationRequest.current = null;
     moduleControl.current = null;
     setModuleTitle("");
     setDocQuery("");
@@ -559,6 +677,7 @@ function App() {
     setRetrieving(false);
     setAssisting(false);
     setAssistantError("");
+    setAssociationReviewTarget(null);
     setMenu(null);
     setKnowledge(false);
     setAssistantOptions(false);
@@ -688,6 +807,20 @@ function App() {
     }
   }, [route.binding, bindings]);
   useEffect(() => {
+    if (!bindingsReady || editing || !p || !control.current) return;
+    const current = control.current.target;
+    // Catalog/runtime may be ready before the binding list. Reconcile the
+    // displayed saved summary once that exact authorized list arrives.
+    setActive(
+      bindings.find(
+        (binding) =>
+          binding.package_id === p.id &&
+          sameTarget(binding.target, current) &&
+          !binding.excluded,
+      ) || null,
+    );
+  }, [bindingsReady, bindings, p?.id, editing]);
+  useEffect(() => {
     if (!catalog || !route.doc) return;
     const epoch = ++docEpoch.current;
     setDocumentError("");
@@ -772,7 +905,9 @@ function App() {
   }, []);
   useEffect(() => {
     if (!menu) return;
-    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    menuRef.current
+      ?.querySelector<HTMLButtonElement>("button")
+      ?.focus({ preventScroll: true });
     const dismiss = (e: PointerEvent) => {
       if (!menuRef.current?.contains(e.target as Node)) setMenu(null);
     };
@@ -807,17 +942,22 @@ function App() {
     }
   }
   function collapseAssistant() {
-    if (editing) {
-      setNotice("请先保存或取消当前编辑");
-      return;
-    }
+    if (saving) return;
+    if (detached.open) detached.controller.attach();
+    setEditing(false);
     setKnowledge(false);
     setAssistantOptions(false);
+    setAssociationReviewTarget(null);
     requestAnimationFrame(() =>
       assistantTrigger.current?.focus({ preventScroll: true }),
     );
   }
   function toggleAssistant() {
+    if (detached.open) {
+      detached.controller.open();
+      setKnowledge(true);
+      return;
+    }
     if (knowledge) {
       collapseAssistant();
       return;
@@ -828,6 +968,7 @@ function App() {
       switchKnowledge("chat");
       return;
     }
+    setAssistantMode("documents");
     if (!target && moduleControl.current)
       void assist(moduleControl.current, "documents", false, false);
   }
@@ -853,30 +994,78 @@ function App() {
       },
     };
   }
-  function chooseControl(c: Control) {
+  function explanationIdentity(c: Control) {
+    return JSON.stringify([
+      accountId,
+      route.project,
+      scope,
+      p?.id,
+      chatSources,
+      c.target.route,
+      c.target.frame_path,
+      c.target.selector,
+      c.target.label,
+      c.target.state,
+    ]);
+  }
+  function chooseControl(
+    c: Control,
+    preserveMode = false,
+    keepExplanation = false,
+  ) {
+    const identity = explanationIdentity(c);
+    if (
+      control.current &&
+      controlIdentity.current === identity &&
+      sameTarget(control.current.target, c.target)
+    ) {
+      // Nearby labels and repeated runtime notices are not a new target.
+      control.current = c;
+      return;
+    }
     assistEpoch.current++;
     assistAbort.current?.abort();
     cancelAutomatic();
     control.current = c;
-    setAssistantMode((previous) => (previous === "chat" ? "chat" : "explain"));
+    controlIdentity.current = identity;
+    if (!preserveMode) setAssistantMode("documents");
+    lastAssist.current = null;
     setTarget(c.target);
-    setActive(
+    const selectedBinding =
       bindings.find(
         (b) =>
           b.package_id === p?.id &&
           sameTarget(b.target, c.target) &&
           !b.excluded,
-      ) || null,
-    );
-    setAssistant(null);
+      ) || null;
+    setActive(selectedBinding);
+    if (route.binding && selectedBinding?.id !== route.binding)
+      navigate({ binding: "" }, true);
+    const previousExplanation = explanations.current.get(identity);
+    if (previousExplanation) {
+      setAssistant(previousExplanation.answer);
+      setExplanationStale(
+        previousExplanation.point !==
+          (selectedBinding?.point_revision_id || null),
+      );
+    } else if (!keepExplanation) {
+      setAssistant(null);
+      setExplanationStale(false);
+    }
     setRelated(null);
     setRetrieving(false);
     setAssistantError("");
+    setAssociationReviewTarget(null);
     setAssisting(false);
   }
   function switchKnowledge(mode: "documents" | "explain" | "chat") {
     setAssistantMode(mode);
     if (mode === "chat") {
+      if (
+        explanationRequest.current &&
+        !explanationRequest.current.controller.signal.aborted
+      )
+        return;
       assistEpoch.current++;
       assistAbort.current?.abort();
       cancelAutomatic();
@@ -885,13 +1074,13 @@ function App() {
       return;
     }
     if (!control.current) return;
-    if (mode === "documents" && (related || active)) return;
-    if (
-      mode === "explain" &&
-      (assistant || assisting || active?.origin === "model")
-    )
-      return;
-    void assist(control.current, mode, active?.validity_status !== "valid");
+    if (mode === "documents" && related) return;
+    if (mode === "explain" && (assistant || assisting)) return;
+    void assist(
+      control.current,
+      mode,
+      mode === "documents" && active?.validity_status !== "valid",
+    );
   }
   useEffect(() => {
     if (!documentChat) {
@@ -922,7 +1111,23 @@ function App() {
       setNotice("请先保存或取消当前编辑");
       return;
     }
-    chooseControl(c);
+    const identity = explanationIdentity(c);
+    if (
+      mode === "explain" &&
+      !refresh &&
+      explanationRequest.current?.key === identity &&
+      !explanationRequest.current.controller.signal.aborted
+    ) {
+      setAssistantMode("explain");
+      if (revealPanel) setKnowledge(true);
+      return;
+    }
+    const sameControl =
+      !!control.current &&
+      sameTarget(control.current.target, c.target) &&
+      controlIdentity.current === identity;
+    chooseControl(c, false, sameControl);
+    lastAssist.current = { control: c, mode };
     setAssistantMode((previous) =>
       !revealPanel && previous === "chat" ? "chat" : mode,
     );
@@ -940,17 +1145,24 @@ function App() {
       );
       return;
     }
-    if (
-      existing &&
-      existing.validity_status === "valid" &&
-      !refresh &&
-      (mode === "documents" || existing.origin === "model")
-    )
+    const previousExplanation = explanations.current.get(identity);
+    if (mode === "explain" && !refresh && previousExplanation) {
+      setAssistant(previousExplanation.answer);
+      setExplanationStale(
+        previousExplanation.point !== (existing?.point_revision_id || null),
+      );
       return;
-    const epoch = assistEpoch.current,
+    }
+    assistAbort.current?.abort();
+    cancelAutomatic();
+    const epoch = ++assistEpoch.current,
       controller = new AbortController();
     assistAbort.current = controller;
-    const payload = {
+    if (mode === "explain") {
+      explanationRequest.current = { key: identity, controller };
+      setAssisting(true);
+    }
+    const lookupPayload = {
       ...(route.release
         ? { release_id: route.release }
         : { analysis_set_id: route.analysis }),
@@ -960,8 +1172,11 @@ function App() {
       mode,
       refresh,
     };
+    const payload = lookupPayload;
     let matches: Related | null =
-      existing && existing.validity_status === "valid"
+      existing &&
+      existing.validity_status === "valid" &&
+      existing.sections.length > 0
         ? {
             title: existing.title,
             sections: existing.sections,
@@ -978,14 +1193,14 @@ function App() {
       setRetrieving(true);
       try {
         matches = await api<Related>(`${prefix}/related`, {
-          ...mutation("POST", payload),
+          ...mutation("POST", lookupPayload),
           signal: controller.signal,
         });
         if (epoch !== assistEpoch.current) return;
         setRelated(matches);
         if (matches.vector_available && matches.origin !== "binding") {
           void api<Related>(`${prefix}/semantic`, {
-            ...mutation("POST", payload),
+            ...mutation("POST", lookupPayload),
             signal: controller.signal,
           })
             .then((result) => {
@@ -998,17 +1213,35 @@ function App() {
             .catch(() => {});
         }
       } catch (e) {
-        if (epoch === assistEpoch.current && !controller.signal.aborted)
+        if (explanationRequest.current?.controller === controller)
+          explanationRequest.current = null;
+        if (epoch === assistEpoch.current && !controller.signal.aborted) {
           setAssistantError(text(e));
+          setAssisting(false);
+        }
         return;
       } finally {
         if (epoch === assistEpoch.current) setRetrieving(false);
       }
     }
     if (matches.excluded) {
+      if (explanationRequest.current?.controller === controller)
+        explanationRequest.current = null;
       setAssistantError("此关联已被移除，自动关联不会恢复它。");
+      setAssisting(false);
       return;
     }
+    if (
+      mode === "documents" &&
+      // The authorized related response can arrive before the much larger
+      // binding list. Reuse that exact saved identity rather than generating
+      // again because this render's local list is still empty.
+      ((matches.origin === "binding" &&
+        !!matches.binding_id &&
+        matches.sections.length > 0) ||
+        (existing?.origin === "manual" && !existing.excluded))
+    )
+      return;
     if (
       mode === "documents" &&
       (!automatic || !matches.model_available || !matches.sections.length)
@@ -1018,14 +1251,29 @@ function App() {
       if (epoch !== assistEpoch.current || controller.signal.aborted) return;
       setAssisting(true);
       try {
-        const result = await api<Assistance>(`${prefix}/assist`, {
-          ...mutation("POST", payload),
-          signal: controller.signal,
-        });
+        const result = await api<Assistance>(
+          `${prefix}/${mode === "explain" ? "explain" : "assist"}`,
+          {
+            ...mutation("POST", payload),
+            signal: controller.signal,
+          },
+        );
         if (epoch !== assistEpoch.current) return;
         confirmedEpoch.current = epoch;
-        setAssistant(result);
-        setAssisting(false);
+        if (mode === "explain") {
+          explanations.current.set(identity, {
+            answer: result,
+            point: existing?.point_revision_id || null,
+          });
+          while (explanations.current.size > 32)
+            explanations.current.delete(
+              explanations.current.keys().next().value!,
+            );
+          setAssistant(result);
+          setExplanationStale(false);
+        }
+        if (result.saved && assistant) setExplanationStale(true);
+        if (mode === "explain") return;
         if (result.sections.length && (!existing || result.saved))
           setRelated((previous) =>
             previous
@@ -1038,17 +1286,27 @@ function App() {
                 }
               : previous,
           );
-        const updated = await reload();
+        // Read back the committed binding without clearing the current list
+        // or temporarily replacing it with the pre-request binding.
+        ++loadEpoch.current;
+        const [c, b] = await Promise.all([
+          api<Catalog>(`${prefix}/catalog?${scope}`),
+          api<Binding[]>(`${prefix}/bindings?${scope}`),
+        ]);
         if (epoch !== assistEpoch.current) return;
-        setActive(
-          updated?.b.find((b) => b.id === result.binding_id && !b.excluded) ||
-            existing ||
-            null,
+        const savedBinding = b.find(
+          (binding) => binding.id === result.binding_id && !binding.excluded,
         );
+        setCatalog(c);
+        setBindings(b);
+        setBindingsReady(true);
+        setActive(savedBinding || existing || null);
       } catch (e) {
         if (epoch === assistEpoch.current && !controller.signal.aborted)
           setAssistantError(text(e));
       } finally {
+        if (explanationRequest.current?.controller === controller)
+          explanationRequest.current = null;
         if (epoch === assistEpoch.current) setAssisting(false);
       }
     };
@@ -1059,6 +1317,75 @@ function App() {
         void runModel();
       }, 350);
     } else await runModel();
+  }
+  function openReassociation() {
+    const selected = control.current;
+    if (!selected || !p || !catalog?.editable || !bindingsReady) return;
+    const current = bindings.find(
+      (binding) =>
+        binding.package_id === p.id &&
+        sameTarget(binding.target, selected.target),
+    );
+    if (current?.excluded) return;
+    setAssistantMode("documents");
+    setAssistantOptions(false);
+    setAssistantError("");
+    setAssociationReviewTarget({
+      prototype: true,
+      items: [
+        {
+          package_id: p.id,
+          target: selected.target,
+          context: selected.context,
+          binding_id: current?.id,
+          binding_version: current?.binding_version,
+          point_revision_id: current?.point_revision_id,
+          title: current?.title || selected.target.label,
+        },
+      ],
+    });
+  }
+  async function associationSaved() {
+    const selected = associationReviewTarget;
+    const loaded = await reload();
+    if (!loaded)
+      throw new Error("关联已保存，但最新内容尚未读回，请重新读取。");
+    const item = selected?.items?.length === 1 ? selected.items[0] : null;
+    const saved = item
+      ? loaded.b.find(
+          (binding) =>
+            binding.package_id === item.package_id &&
+            sameTarget(binding.target, {
+              ...item.target,
+              state: item.target.state || "",
+              open_steps: item.target.open_steps || [],
+            }) &&
+            !binding.excluded,
+        )
+      : null;
+    if (item && !saved)
+      throw new Error("关联已保存，但最新内容尚未读回，请刷新关联列表。");
+    if (
+      saved &&
+      saved.package_id === p?.id &&
+      control.current &&
+      sameTarget(saved.target, control.current.target)
+    ) {
+      setActive(saved);
+      setRelated({
+        title: saved.title,
+        sections: saved.sections,
+        binding_id: saved.id,
+        excluded: false,
+        origin: "binding",
+        model_available: true,
+        selection_version: loaded.c.selection_version,
+        elapsed_ms: 0,
+      });
+      if (assistant) setExplanationStale(true);
+    }
+    setAssociationReviewTarget(null);
+    setNotice("已确认保存关联并读取最新内容");
   }
   async function login(e: React.FormEvent) {
     e.preventDefault();
@@ -1123,6 +1450,7 @@ function App() {
           (route.view || "prototype") === "prototype" &&
           !bindings.some(
             (b) =>
+              b.package_id === p?.id &&
               sameTarget(b.target, c.target) &&
               (b.excluded || b.validity_status === "valid"),
           )
@@ -1132,6 +1460,32 @@ function App() {
       return;
     }
     if (event.type === "context.changed") {
+      const unchanged = event.payload as {
+        module?: Control;
+        route?: string;
+        frame_path?: string[];
+      };
+      if (
+        !pendingReveal.current &&
+        !picking &&
+        !editing &&
+        control.current &&
+        controlIdentity.current === explanationIdentity(control.current) &&
+        ((unchanged.module &&
+          moduleControl.current &&
+          isTarget(unchanged.module.target) &&
+          sameTarget(unchanged.module.target, moduleControl.current.target)) ||
+          (!unchanged.module &&
+            unchanged.route === control.current.target.route &&
+            JSON.stringify(unchanged.frame_path) ===
+              JSON.stringify(control.current.target.frame_path)))
+      ) {
+        if (unchanged.module) {
+          moduleControl.current = unchanged.module;
+          setModuleTitle(unchanged.module.target.label);
+        }
+        return;
+      }
       assistEpoch.current++;
       assistAbort.current?.abort();
       cancelAutomatic();
@@ -1161,6 +1515,7 @@ function App() {
         setRelated(null);
         setRetrieving(false);
         setAssistantError("");
+        setAssociationReviewTarget(null);
         control.current = null;
         setActive(null);
         setTarget(null);
@@ -1267,9 +1622,10 @@ function App() {
         binding: b?.id || "",
         reader: "",
       });
-      setKnowledge(false);
+      setKnowledge(detached.open);
+      if (detached.open) window.focus();
     },
-    [navigate],
+    [navigate, detached.open],
   );
   function reveal(b: Binding) {
     chooseControl({
@@ -1305,6 +1661,7 @@ function App() {
     setRelated(null);
     setRetrieving(false);
     setAssistantError("");
+    setAssociationReviewTarget(null);
     setAssisting(false);
     control.current = controlForTarget(b.target, b.package_id === p?.id);
     setActive(b);
@@ -1316,6 +1673,10 @@ function App() {
     setEditing(true);
     setKnowledge(true);
     setAssistantOptions(false);
+    if (detached.open) {
+      detached.controller.show(false);
+      detached.controller.open();
+    }
   }
   async function save() {
     if (!target || !catalog || !sectionId || !summary.trim() || !title.trim())
@@ -1381,7 +1742,8 @@ function App() {
     }
   }
   function drag(e: React.PointerEvent<HTMLElement>) {
-    if ((e.target as HTMLElement).closest("button") || docked) return;
+    if ((e.target as HTMLElement).closest("button") || docked || detached.open)
+      return;
     floating.begin(e, "move");
   }
   function dragLauncher(e: React.PointerEvent<HTMLButtonElement>) {
@@ -1601,19 +1963,23 @@ function App() {
                   s.content.trim() === "# " + viewDoc.name ? null : (
                     <div className="chapter-actions">
                       <button
+                        disabled={!catalog?.editable}
+                        title={
+                          catalog?.editable
+                            ? "选择目标模块并预览新的关联说明"
+                            : "请切换到可编辑草稿关联模块"
+                        }
                         onClick={() => {
+                          if (editing) {
+                            setNotice("请先保存或取消当前编辑");
+                            return;
+                          }
                           navigate({ section: s.revision_id });
-                          setDocumentKnowledge(true);
-                          setKnowledge(true);
-                          setActive(
-                            bindings.find(
-                              (b) =>
-                                !b.excluded &&
-                                b.sections.some(
-                                  (c) => c.revision_id === s.revision_id,
-                                ),
-                            ) || null,
-                          );
+                          setAssociationChapter({
+                            revision: s.revision_id,
+                            name: s.name,
+                            document: viewDoc.name,
+                          });
                         }}
                       >
                         <Link2 size={13} />
@@ -1621,25 +1987,7 @@ function App() {
                       </button>
                     </div>
                   )
-                ) : (
-                  bindings
-                    .filter(
-                      (b) =>
-                        !b.excluded &&
-                        b.sections.some((c) => c.revision_id === s.revision_id),
-                    )
-                    .map((b) => (
-                      <button
-                        key={b.id}
-                        className="reverse-link"
-                        onClick={() => reveal(b)}
-                      >
-                        <MousePointer2 size={15} />
-                        打开原型 · {b.target.label}
-                        <ArrowUpRight size={14} />
-                      </button>
-                    ))
-                )
+                ) : null
               }
             >
               {viewDoc.content ??
@@ -1658,6 +2006,7 @@ function App() {
       bindings,
       catalog,
       p?.id,
+      editing,
       navigate,
     ],
   );
@@ -1761,6 +2110,10 @@ function App() {
       .catch((e) => setError(text(e)));
   }
   const currentView = route.view || "prototype";
+  const assistantPage =
+    currentView === "prototype" || currentView === "documents";
+  const inlineKnowledgeVisible =
+    assistantPage || (currentView === "links" && editing);
   function nativeLocation(location: NativeLocation) {
     if (!nativePackage || !originalBook || currentView !== "documents") return;
     const candidates =
@@ -1864,7 +2217,6 @@ function App() {
                 }
                 if (v === "documents") {
                   setCitationChat(null);
-                  setDocumentKnowledge(false);
                 }
                 navigate({ view: v });
                 if (
@@ -1998,43 +2350,24 @@ function App() {
             >
               <FileText size={14} />
               {originalBook
-                ? "标准阅读"
+                ? "返回文档"
                 : nativeDetail && !nativeDetail.matches_index
                   ? "查看导入原件"
-                  : "原样文档"}
+                  : "查看原文"}
             </button>
           )}
-          {currentView === "documents" && catalog && (
-            <DocumentAppearance
-              key={route.project + scope}
-              project={route.project}
-              analysis={route.analysis}
-              settings={{
-                ...presentation,
-                mode: ["standard", "handbook", "original"].includes(
-                  readerChoice,
-                )
-                  ? (readerChoice as Presentation["mode"])
-                  : readerChoice === "source"
-                    ? "original"
-                    : presentation.mode,
-              }}
-              version={catalog.selection_version}
-              editable={catalog.editable}
-              onSaved={async () => {
-                navigate({ reader: "" }, true);
-                await reload();
-                setNotice("文档阅读方式已保存，完整版本会保留当前模板选择。");
-              }}
-            />
-          )}
           {currentView === "documents" && nativePackage && accountId && (
-            <NativeNetworkSettings
-              account={accountId}
-              project={route.project}
-              packageId={nativePackage.package_key || nativePackage.id}
-              onOrigins={(origins) => setNetwork({ key: networkKey, origins })}
-            />
+            <details className="document-advanced-tools">
+              <summary>高级</summary>
+              <NativeNetworkSettings
+                account={accountId}
+                project={route.project}
+                packageId={nativePackage.package_key || nativePackage.id}
+                onOrigins={(origins) =>
+                  setNetwork({ key: networkKey, origins })
+                }
+              />
+            </details>
           )}
           {currentView === "documents" && originalBook && (
             <button onClick={toggleAssistant}>
@@ -2084,7 +2417,14 @@ function App() {
       <main
         className={
           "workspace " +
-          (knowledge && docked && currentView !== "ai" ? "with-dock" : "")
+          (currentView === "links" ? "links-workspace " : "") +
+          (knowledge &&
+          docked &&
+          !detached.open &&
+          !documentChat &&
+          inlineKnowledgeVisible
+            ? "with-dock"
+            : "")
         }
       >
         <section
@@ -2168,7 +2508,6 @@ function App() {
                 return;
               }
               setCitationChat(null);
-              setDocumentKnowledge(false);
               setKnowledge(true);
               setAssistantOptions(false);
               switchKnowledge("chat");
@@ -2222,7 +2561,9 @@ function App() {
                   </button>
                 ))
               ) : (
-                <p>选中原型控件并保存关联后，可在这里跳回对应操作。</p>
+                <p>
+                  点击章节旁的“关联操作”选择目标模块，预览并确认后，可在这里跳回对应操作。
+                </p>
               )}
             </aside>
           </DocumentLibrary>
@@ -2278,6 +2619,10 @@ function App() {
               visible={currentView === "links"}
               editable={!!catalog.editable && !route.release}
               onChanged={reload}
+              refreshVersion={catalog.selection_version}
+              onReview={(mode) =>
+                setAssociationReviewTarget({ mode, prototype: false })
+              }
             />
           </div>
         )}
@@ -2286,12 +2631,21 @@ function App() {
             <BindingsManager
               key={"bindings:" + route.project + scope}
               bindings={bindings}
+              packages={catalog?.packages}
+              inventoryUrl={
+                !route.release && route.analysis
+                  ? `/api/v3/projects/${route.project}/associations/inventory?analysis_set_id=${encodeURIComponent(route.analysis)}`
+                  : undefined
+              }
               ready={bindingsReady}
               editable={!!catalog?.editable}
               canCreate={!!p}
               onCreate={startPicker}
               onReveal={reveal}
               onEdit={editBinding}
+              onReview={(items) =>
+                setAssociationReviewTarget({ items, prototype: false })
+              }
               onToggle={(b) => void exclude(b)}
               onSource={(b, i) => openDoc(b.sections[i], b)}
               renderSummary={(b) => (
@@ -2386,479 +2740,773 @@ function App() {
               }
             }}
           >
+            <Link2 size={16} />
             手动补充关联
           </button>
         </div>
       )}
-      {catalog &&
-        ["prototype", "documents", "links"].includes(currentView) &&
-        !(currentView === "documents" && originalBook) &&
-        !(knowledge && docked) && (
-          <button
-            ref={assistantTrigger}
-            className={
-              "assistant-launcher" +
-              (knowledge ? " expanded" : "") +
-              (launcherDragging ? " dragging" : "")
-            }
-            style={
-              launcherPosition
-                ? {
-                    left: launcherPosition.left,
-                    top: launcherPosition.top,
-                    right: "auto",
-                    bottom: "auto",
-                  }
-                : undefined
-            }
-            aria-label={knowledge ? "收起知识助手" : "打开知识助手"}
-            aria-expanded={knowledge}
-            aria-controls="knowledge-assistant"
-            onPointerDown={dragLauncher}
-            onClick={(e) => {
-              if (launcherMoved.current && e.detail !== 0) {
-                launcherMoved.current = false;
-                e.preventDefault();
-                return;
-              }
-              launcherMoved.current = false;
-              toggleAssistant();
-            }}
-            title={retrieving || assisting ? "正在整理相关知识" : "知识助手"}
-          >
-            {knowledge ? <X size={23} /> : <Sparkles size={24} />}
-            {!knowledge &&
-              (related?.sections.length ||
-                active?.sections.length ||
-                assistant?.sections.length ||
-                0) > 0 && (
-                <span className="assistant-badge">
-                  {Math.min(
-                    9,
-                    related?.sections.length ||
-                      active?.sections.length ||
-                      assistant?.sections.length ||
-                      0,
-                  )}
-                </span>
-              )}
-            {!knowledge && (retrieving || assisting) && (
-              <span className="assistant-activity" aria-label="正在整理知识" />
-            )}
-            <span className="assistant-launcher-label">
-              {knowledge ? "收起助手" : "知识助手"}
-            </span>
-          </button>
-        )}
-      {knowledge && catalog && currentView !== "ai" && (
-        <aside
-          ref={windowRef}
-          id="knowledge-assistant"
-          aria-label="知识助手"
-          className={"knowledge-window " + (docked ? "docked" : "")}
-          style={floating.style}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && !editing) {
-              e.stopPropagation();
-              if (assistantOptions) setAssistantOptions(false);
-              else collapseAssistant();
-            }
-          }}
-        >
-          <div className="knowledge-header" onPointerDown={drag}>
-            <div>
-              <Sparkles size={17} />
-              <b>{editing ? "补充关联" : "知识助手"}</b>
-              <GripHorizontal size={14} />
-            </div>
-            <div>
-              <button
-                className={"icon " + (assistantOptions ? "enabled" : "")}
-                aria-label="助手选项"
-                aria-pressed={assistantOptions}
-                disabled={editing}
-                onClick={() => setAssistantOptions(!assistantOptions)}
-              >
-                <Settings2 size={16} />
-              </button>
-              <button
-                className="icon"
-                aria-label="收起助手面板"
-                onClick={collapseAssistant}
-              >
-                <X size={16} />
-              </button>
-            </div>
-          </div>
-          {assistantOptions && (
-            <section className="assistant-options" aria-label="助手选项">
-              <div className="assistant-options-heading">
-                <span className="eyebrow">偏好与工具</span>
-                <h3>让助手按你的方式工作</h3>
-              </div>
-              <button
-                className="assistant-option-link"
-                aria-label="模块知识"
-                disabled={!moduleTitle}
-                onClick={() =>
-                  prototype.current?.send("knowledge.request", {
-                    scope: "module",
-                    mode: "documents",
-                  })
+      {catalog && assistantPage && !(knowledge && docked && !detached.open) && (
+        <button
+          ref={assistantTrigger}
+          className={
+            "assistant-launcher" +
+            (currentView === "documents" && originalBook
+              ? " native-reader-launcher"
+              : "") +
+            (knowledge ? " expanded" : "") +
+            (launcherDragging ? " dragging" : "")
+          }
+          style={
+            launcherPosition
+              ? {
+                  left: launcherPosition.left,
+                  top: launcherPosition.top,
+                  right: "auto",
+                  bottom: "auto",
                 }
-              >
-                <BookOpen size={18} />
-                <span>
-                  <b>模块知识</b>
-                  <small>
-                    {moduleTitle
-                      ? moduleTitle.split(" · ")[0]
-                      : "等待当前模块加载"}
-                  </small>
-                </span>
-                <ChevronRight size={16} />
-              </button>
-              <label className="assistant-option-toggle">
-                <span>
-                  <b>自动关联模块与控件</b>
-                  <small>在后台整理，收起时以图标提示</small>
-                </span>
-                <input
-                  type="checkbox"
-                  aria-label="自动关联模块与控件"
-                  checked={automatic}
-                  onChange={(e) => automaticPreference(e.target.checked)}
-                />
-              </label>
-              <label className="assistant-option-toggle">
-                <span>
-                  <b>
-                    <Pin size={13} /> 固定当前知识
-                  </b>
-                  <small>保留当前内容，暂停跟随页面操作</small>
-                </span>
-                <input
-                  type="checkbox"
-                  aria-label="固定当前知识"
-                  checked={pinned}
-                  onChange={(e) => setPinned(e.target.checked)}
-                />
-              </label>
-              <div className="assistant-layout">
-                <span>展开方式</span>
-                <div>
-                  <button
-                    aria-pressed={!docked}
-                    onClick={() => {
-                      setDocked(false);
-                      setPosition(null);
-                    }}
-                  >
-                    浮动小窗
-                  </button>
-                  <button
-                    aria-pressed={docked}
-                    onClick={() => {
-                      setDocked(true);
-                      setPosition(null);
-                    }}
-                  >
-                    <PanelRight size={14} />
-                    侧边展开
-                  </button>
-                </div>
+              : undefined
+          }
+          aria-label={
+            knowledge && !detached.open ? "收起知识助手" : "打开知识助手"
+          }
+          aria-expanded={knowledge}
+          aria-controls="knowledge-assistant"
+          onPointerDown={dragLauncher}
+          onClick={(e) => {
+            if (launcherMoved.current && e.detail !== 0) {
+              launcherMoved.current = false;
+              e.preventDefault();
+              return;
+            }
+            launcherMoved.current = false;
+            toggleAssistant();
+          }}
+          title={
+            detached.open
+              ? "打开独立窗口"
+              : retrieving || assisting
+                ? "正在整理相关知识"
+                : "知识助手"
+          }
+        >
+          {detached.open ? (
+            <ArrowUpRight size={20} />
+          ) : knowledge ? (
+            <X size={20} />
+          ) : (
+            <MessageSquareText size={21} strokeWidth={1.75} />
+          )}
+          {!knowledge &&
+            (related?.sections.length ||
+              active?.sections.length ||
+              assistant?.sections.length ||
+              0) > 0 && (
+              <span className="assistant-badge">
+                {Math.min(
+                  9,
+                  related?.sections.length ||
+                    active?.sections.length ||
+                    assistant?.sections.length ||
+                    0,
+                )}
+              </span>
+            )}
+          {!knowledge && (retrieving || assisting) && (
+            <span className="assistant-activity" aria-label="正在整理知识" />
+          )}
+          <span className="assistant-launcher-label">
+            {detached.open ? "独立窗口" : knowledge ? "收起助手" : "知识助手"}
+          </span>
+        </button>
+      )}
+      {catalog && (
+        <DocumentAssistant
+          key={accountId + route.project + scope}
+          visible={knowledge && documentChat && assistantPage}
+          reading={currentView === "documents"}
+          detachedWindow={detached.controller}
+          detachedOpen={detached.open}
+          onDetach={detachAssistant}
+          scopeKey={accountId + route.project + scope + chatSources}
+          prefix={prefix}
+          baseline={
+            route.release
+              ? { release_id: route.release }
+              : { analysis_set_id: route.analysis }
+          }
+          document={documentRef || undefined}
+          documents={catalog.documents.length}
+          onClose={collapseAssistant}
+          onAskSelection={() => {
+            setCitationChat(null);
+            setKnowledge(true);
+            setAssistantOptions(false);
+            switchKnowledge("chat");
+            if (detached.open) detached.controller.open();
+          }}
+          onSettings={() => navigate({ view: "ai" })}
+          onIndex={() => navigate({ view: "ai" })}
+          onCitation={openDoc}
+          onUpdated={async (operations) => {
+            const c = await api<Catalog>(`${prefix}/catalog?${scope}`);
+            const changed = operations.find(
+              (operation) => operation.kind === "document",
+            );
+            if (changed?.revision_id)
+              navigate({ doc: changed.revision_id, section: "" }, true);
+            setCatalog(c);
+          }}
+        />
+      )}
+      {knowledge && !documentChat && catalog && (
+        <DetachedPortal
+          target={detached.open ? detached.controller.prototypeMount : null}
+        >
+          <aside
+            ref={windowRef}
+            id="knowledge-assistant"
+            aria-label="知识助手"
+            hidden={!inlineKnowledgeVisible && !detached.open}
+            className={"knowledge-window " + (docked ? "docked" : "")}
+            style={floating.style}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                if (assistantOptions) setAssistantOptions(false);
+                else collapseAssistant();
+              }
+            }}
+          >
+            <div className="knowledge-header" onPointerDown={drag}>
+              <div>
+                <Sparkles size={17} />
+                <b>{editing ? "补充关联" : "知识助手"}</b>
+                <GripHorizontal size={14} />
               </div>
-              <button
-                className="assistant-options-back"
-                onClick={() => {
-                  floating.reset();
-                  setDocked(false);
-                }}
-              >
-                恢复默认位置与大小
-              </button>
-              <div className="assistant-option-tools">
+              <div>
                 <button
-                  onClick={() => {
-                    navigate({ view: "ai" });
-                    collapseAssistant();
-                  }}
+                  className="icon assistant-detach-open"
+                  aria-label="弹出独立窗口"
+                  onClick={detachAssistant}
+                >
+                  <ArrowUpRight size={16} />
+                </button>
+                <button
+                  className={"icon " + (assistantOptions ? "enabled" : "")}
+                  aria-label="助手选项"
+                  aria-pressed={assistantOptions}
+                  disabled={editing}
+                  onClick={() => setAssistantOptions(!assistantOptions)}
                 >
                   <Settings2 size={16} />
-                  模型与知识库设置
-                  <ChevronRight size={15} />
                 </button>
                 <button
-                  onClick={() => {
-                    navigate({ view: "links" });
-                    collapseAssistant();
-                  }}
+                  className="icon"
+                  aria-label={editing ? "关闭关联编辑" : "收起助手面板"}
+                  disabled={saving}
+                  onClick={collapseAssistant}
                 >
-                  <Link2 size={16} />
-                  关联管理
-                  <ChevronRight size={15} />
-                </button>
-                <button
-                  disabled={!catalog?.editable || !p || !bindingsReady}
-                  onClick={startPicker}
-                >
-                  <MousePointer2 size={16} />
-                  手动补充关联
-                  <ChevronRight size={15} />
+                  <X size={16} />
                 </button>
               </div>
-              <p className="assistant-option-help">
-                操作原型时，助手会跟随当前模块和按钮。右键页面或控件，可直接查看文档或呼出
-                AI 讲解。
-              </p>
-              <button
-                className="assistant-options-back"
-                onClick={() => setAssistantOptions(false)}
-              >
-                返回知识内容
-                <ChevronRight size={14} />
-              </button>
-            </section>
-          )}
-          {!assistantOptions && (
-            <>
-              <div className="knowledge-context">
-                <MousePointer2 size={14} />
-                <span>
-                  {documentChat
-                    ? documentChatLabel
-                    : target?.label || "请选择一个原型操作"}
-                </span>
-                <span className="pill">
-                  {documentChat
-                    ? "文档问答"
-                    : editing
-                      ? "维护关联"
-                      : target?.selector === "body"
-                        ? "模块知识"
-                        : "控件知识"}
-                </span>
-              </div>
-              {!editing && (target || documentChat) && (
-                <div
-                  className="knowledge-tabs"
-                  role="tablist"
-                  aria-label="知识内容"
-                >
-                  {!documentChat && (
-                    <button
-                      role="tab"
-                      aria-selected={assistantMode === "documents"}
-                      onClick={() => switchKnowledge("documents")}
-                    >
-                      相关文档
-                    </button>
-                  )}
-                  {!documentChat && (
-                    <button
-                      role="tab"
-                      aria-selected={assistantMode === "explain"}
-                      onClick={() => switchKnowledge("explain")}
-                    >
-                      AI 讲解
-                    </button>
-                  )}
-                  <button
-                    role="tab"
-                    aria-selected={assistantMode === "chat"}
-                    onClick={() => switchKnowledge("chat")}
-                  >
-                    AI 问答
-                  </button>
+            </div>
+            {assistantOptions && (
+              <section className="assistant-options" aria-label="助手选项">
+                <div className="assistant-options-heading">
+                  <span className="eyebrow">偏好与工具</span>
+                  <h3>让助手按你的方式工作</h3>
                 </div>
-              )}
-              <div
-                className={
-                  "knowledge-body" +
-                  (assistantMode === "chat" && !editing ? " chat-body" : "")
-                }
-              >
-                {!editing &&
-                  assistantMode === "chat" &&
-                  (target || documentChat) && (
-                    <KnowledgeChat
-                      chat={chat}
-                      label={documentChat ? documentChatLabel : target!.label}
-                      onCitation={(reference) => {
-                        setCitationChat({
-                          scope: route.project + scope,
-                          key: chatKey,
-                          documentChat,
-                          context: chatContext,
-                          documentId: chatDocument?.revision_id,
-                          packageId: chatPackage,
-                          sourceFingerprint: chatSources,
-                        });
-                        openDoc(reference);
-                      }}
-                      onSettings={() => navigate({ view: "ai" })}
-                    />
-                  )}
-                <div
-                  hidden={
-                    documentChat || (!editing && assistantMode === "chat")
+                <button
+                  className="assistant-option-link"
+                  aria-label="模块知识"
+                  disabled={!moduleTitle}
+                  onClick={() =>
+                    prototype.current?.send("knowledge.request", {
+                      scope: "module",
+                      mode: "documents",
+                    })
                   }
                 >
-                  {!editing && active && active.validity_status !== "valid" && (
-                    <p className="assistant-background">
-                      资料已更新，原有关联正在重新核对；可先查看检索结果。
-                    </p>
-                  )}
-                  {!editing && retrieving && !related && (
-                    <div className="assistant-loading" role="status">
-                      <LoaderCircle size={18} className="spinning" />
-                      <b>正在查找本地章节…</b>
-                    </div>
-                  )}
-                  {!editing && assisting && (
-                    <div className="assistant-background" role="status">
-                      <LoaderCircle size={14} className="spinning" />
-                      {assistantMode === "documents"
-                        ? "相关章节已显示，AI 正在后台核对关联…"
-                        : "AI 正在生成讲解，可先切换查看相关文档…"}
-                    </div>
-                  )}
+                  <BookOpen size={18} />
+                  <span>
+                    <b>模块知识</b>
+                    <small>
+                      {moduleTitle
+                        ? moduleTitle.split(" · ")[0]
+                        : "等待当前模块加载"}
+                    </small>
+                  </span>
+                  <ChevronRight size={16} />
+                </button>
+                <label className="assistant-option-toggle">
+                  <span>
+                    <b>自动关联模块与控件</b>
+                    <small>在后台整理，收起时以图标提示</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    aria-label="自动关联模块与控件"
+                    checked={automatic}
+                    onChange={(e) => automaticPreference(e.target.checked)}
+                  />
+                </label>
+                <label className="assistant-option-toggle">
+                  <span>
+                    <b>
+                      <Pin size={13} /> 固定当前知识
+                    </b>
+                    <small>保留当前内容，暂停跟随页面操作</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    aria-label="固定当前知识"
+                    checked={pinned}
+                    onChange={(e) => setPinned(e.target.checked)}
+                  />
+                </label>
+                <div className="assistant-layout">
+                  <span>展开方式</span>
+                  <div>
+                    <button
+                      aria-pressed={!docked}
+                      onClick={() => {
+                        setDocked(false);
+                        setPosition(null);
+                      }}
+                    >
+                      浮动小窗
+                    </button>
+                    <button
+                      aria-pressed={docked}
+                      onClick={() => {
+                        setDocked(true);
+                        setPosition(null);
+                      }}
+                    >
+                      <PanelRight size={14} />
+                      侧边展开
+                    </button>
+                  </div>
+                </div>
+                <button
+                  className="assistant-options-back"
+                  onClick={() => {
+                    floating.reset();
+                    setDocked(false);
+                  }}
+                >
+                  恢复默认位置与大小
+                </button>
+                <div className="assistant-option-tools">
+                  <button
+                    onClick={() => {
+                      navigate({ view: "ai" });
+                      collapseAssistant();
+                    }}
+                  >
+                    <Settings2 size={16} />
+                    模型与知识库设置
+                    <ChevronRight size={15} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      navigate({ view: "links" });
+                      collapseAssistant();
+                    }}
+                  >
+                    <Link2 size={16} />
+                    关联管理
+                    <ChevronRight size={15} />
+                  </button>
+                  <button
+                    disabled={!catalog?.editable || !p || !bindingsReady}
+                    onClick={startPicker}
+                  >
+                    <MousePointer2 size={16} />
+                    手动补充关联
+                    <ChevronRight size={15} />
+                  </button>
+                </div>
+                <p className="assistant-option-help">
+                  操作原型时，助手会跟随当前模块和按钮。右键页面或控件，可直接查看文档或呼出
+                  AI 讲解。
+                </p>
+                <button
+                  className="assistant-options-back"
+                  onClick={() => setAssistantOptions(false)}
+                >
+                  返回知识内容
+                  <ChevronRight size={14} />
+                </button>
+              </section>
+            )}
+            {!assistantOptions && (
+              <>
+                <div className="knowledge-context">
+                  <MousePointer2 size={14} />
+                  <span>
+                    {documentChat
+                      ? documentChatLabel
+                      : target?.label || "请选择一个原型操作"}
+                  </span>
+                  <span className="pill">
+                    {documentChat
+                      ? "文档问答"
+                      : editing
+                        ? "维护关联"
+                        : target?.selector === "body"
+                          ? "模块知识"
+                          : "控件知识"}
+                  </span>
+                </div>
+                {!editing && (target || documentChat) && (
+                  <div
+                    className="knowledge-tabs"
+                    role="tablist"
+                    aria-label="知识内容"
+                  >
+                    {!documentChat && (
+                      <button
+                        role="tab"
+                        aria-selected={assistantMode === "documents"}
+                        onClick={() => switchKnowledge("documents")}
+                      >
+                        文档
+                      </button>
+                    )}
+                    {!documentChat && (
+                      <button
+                        role="tab"
+                        aria-selected={assistantMode === "explain"}
+                        onClick={() => switchKnowledge("explain")}
+                      >
+                        AI 讲解
+                      </button>
+                    )}
+                    <button
+                      role="tab"
+                      aria-selected={assistantMode === "chat"}
+                      onClick={() => switchKnowledge("chat")}
+                    >
+                      回答
+                    </button>
+                  </div>
+                )}
+                <div
+                  className={
+                    "knowledge-body" +
+                    (assistantMode === "chat" && !editing ? " chat-body" : "")
+                  }
+                >
                   {!editing &&
-                    related &&
-                    (assistantMode === "documents" || !assistant) && (
+                    assistantMode === "chat" &&
+                    (target || documentChat) && (
+                      <KnowledgeChat
+                        chat={chat}
+                        prefix={prefix}
+                        label={documentChat ? documentChatLabel : target!.label}
+                        onCitation={(reference) => {
+                          setCitationChat({
+                            scope: route.project + scope,
+                            key: chatKey,
+                            documentChat,
+                            context: chatContext,
+                            documentId: chatDocument?.revision_id,
+                            packageId: chatPackage,
+                            sourceFingerprint: chatSources,
+                          });
+                          openDoc(reference);
+                        }}
+                        onSettings={() => navigate({ view: "ai" })}
+                      />
+                    )}
+                  <div
+                    hidden={
+                      documentChat || (!editing && assistantMode === "chat")
+                    }
+                  >
+                    {!editing &&
+                      active &&
+                      active.validity_status !== "valid" && (
+                        <p className="assistant-background">
+                          资料已更新，原有关联正在重新核对；可先查看检索结果。
+                        </p>
+                      )}
+                    {!editing && retrieving && !related && (
+                      <div className="assistant-loading" role="status">
+                        <LoaderCircle size={18} className="spinning" />
+                        <b>正在查找本地章节…</b>
+                      </div>
+                    )}
+                    {!editing && assisting && (
+                      <div className="assistant-background" role="status">
+                        <LoaderCircle size={14} className="spinning" />
+                        {assistantMode === "documents"
+                          ? "相关章节已显示，AI 正在后台核对关联…"
+                          : "AI 正在生成讲解，可先切换查看相关文档…"}
+                      </div>
+                    )}
+                    {!editing && assistantError && (
+                      <div
+                        className={
+                          related?.sections.length
+                            ? "assistant-error assistant-note"
+                            : "assistant-error"
+                        }
+                        role="alert"
+                      >
+                        <b>
+                          {lastAssist.current?.mode === "explain"
+                            ? "暂未完成讲解"
+                            : "暂未完成关联"}
+                        </b>
+                        <p>{assistantError}</p>
+                        <button
+                          onClick={() => {
+                            const previous = lastAssist.current;
+                            if (previous)
+                              void assist(
+                                previous.control,
+                                previous.mode,
+                                true,
+                                true,
+                              );
+                            else if (control.current)
+                              void assist(control.current, "explain", true);
+                          }}
+                        >
+                          重试
+                        </button>
+                        <button onClick={() => navigate({ view: "ai" })}>
+                          AI 设置
+                        </button>
+                      </div>
+                    )}
+                    {!editing &&
+                      related &&
+                      (assistantMode === "documents" || !assistant) && (
+                        <section
+                          className="related-results"
+                          aria-label="相关文档检索结果"
+                        >
+                          <span className="eyebrow">
+                            {related.origin === "binding"
+                              ? "已保存的准确引用"
+                              : related.retrieval === "hybrid"
+                                ? "RAG 向量 + 关键词匹配 · 待 AI 核对"
+                                : "本地章节匹配 · 待 AI 核对"}
+                          </span>
+                          <h2>{related.title}</h2>
+                          {assistantMode === "documents" && active?.summary && (
+                            <section aria-label="关联说明">
+                              <span className="eyebrow">关联说明</span>
+                              <Markdown
+                                references={active.sections}
+                                onReference={(reference) =>
+                                  previewSource(reference, active)
+                                }
+                              >
+                                {active.summary}
+                              </Markdown>
+                            </section>
+                          )}
+                          {!related.sections.length && (
+                            <p>尚未找到相关章节，可在文档页搜索或补充资料。</p>
+                          )}
+                          {related.sections.length > 0 && (
+                            <ReferenceDisclosure
+                              key={`related:${JSON.stringify(target)}`}
+                              count={related.sections.length}
+                            >
+                              <details className="inline-preview">
+                                <summary>
+                                  {related.origin === "retrieval"
+                                    ? "查看匹配片段"
+                                    : "在小窗查看原文"}
+                                </summary>
+                                {related.sections.map((c) => (
+                                  <div key={c.revision_id}>
+                                    <h4>{c.name}</h4>
+                                    <Markdown
+                                      documentId={
+                                        catalog?.documents.find(
+                                          (d) =>
+                                            d.revision_id ===
+                                            c.document_revision_id,
+                                        )?.id
+                                      }
+                                      revisionId={c.document_revision_id}
+                                    >
+                                      {c.content}
+                                    </Markdown>
+                                  </div>
+                                ))}
+                              </details>
+                              {related.sections.map((c) => (
+                                <button
+                                  key={c.revision_id}
+                                  className="citation"
+                                  onClick={() =>
+                                    previewSource(
+                                      c,
+                                      related.binding_id
+                                        ? { id: related.binding_id }
+                                        : undefined,
+                                    )
+                                  }
+                                >
+                                  <FileText size={18} />
+                                  <span>
+                                    {c.document_name}
+                                    <small>{c.name}</small>
+                                  </span>
+                                  <ArrowUpRight size={15} />
+                                </button>
+                              ))}
+                            </ReferenceDisclosure>
+                          )}
+                          {!!related.related_sections?.length && (
+                            <details className="more-related-sections">
+                              <summary>
+                                更多本地相关章节 ·{" "}
+                                {related.related_sections.length}
+                              </summary>
+                              <p className="assistant-provenance">
+                                以下是检索候选，可查看核对；尚未保存为当前关联。
+                              </p>
+                              {related.related_sections.map((c) => (
+                                <button
+                                  key={c.revision_id}
+                                  className="citation"
+                                  onClick={() => previewSource(c)}
+                                >
+                                  <FileText size={18} />
+                                  <span>
+                                    {c.document_name}
+                                    <small>{c.name}</small>
+                                  </span>
+                                  <ArrowUpRight size={15} />
+                                </button>
+                              ))}
+                            </details>
+                          )}
+                        </section>
+                      )}
+                    {!editing && assistant && assistantMode === "explain" && (
                       <section
-                        className="related-results"
-                        aria-label="相关文档检索结果"
+                        className="assistant-answer"
+                        aria-label="AI 功能讲解"
                       >
                         <span className="eyebrow">
-                          {related.origin === "binding"
-                            ? "已保存的准确引用"
-                            : related.retrieval === "hybrid"
-                              ? "RAG 向量 + 关键词匹配 · 待 AI 核对"
-                              : "本地章节匹配 · 待 AI 核对"}
+                          <Sparkles size={13} /> AI 讲解 ·{" "}
+                          {assistant.model_id || "章节检索"}
+                          {assistant.cached ? " · 已缓存" : ""}
                         </span>
-                        <h2>{related.title}</h2>
-                        {!related.sections.length && (
-                          <p>尚未找到相关章节，可在文档页搜索或补充资料。</p>
+                        <div className="assistant-answer-title">
+                          <h2>{assistant.title}</h2>
+                        </div>
+                        {explanationStale && (
+                          <p className="assistant-background">
+                            关联已更新，可点击“重新讲解”生成新的讲解。
+                          </p>
                         )}
-                        {related.sections.length > 0 && (
-                          <details
-                            className="inline-preview"
-                            open={assistantMode === "documents"}
-                          >
-                            <summary>
-                              {related.origin === "retrieval"
-                                ? "查看匹配片段"
-                                : "在小窗查看原文"}
-                            </summary>
-                            {related.sections.map((c) => (
-                              <div key={c.revision_id}>
-                                <h4>{c.name}</h4>
-                                <Markdown
-                                  documentId={
-                                    catalog?.documents.find(
-                                      (d) =>
-                                        d.revision_id ===
-                                        c.document_revision_id,
-                                    )?.id
-                                  }
-                                  revisionId={c.document_revision_id}
-                                >
-                                  {c.content}
-                                </Markdown>
-                              </div>
-                            ))}
-                          </details>
-                        )}
-                        {related.sections.map((c) => (
-                          <button
-                            key={c.revision_id}
-                            className="citation"
-                            onClick={() =>
-                              openDoc(
-                                c,
-                                related.binding_id
-                                  ? { id: related.binding_id }
+                        {assistantMode === "explain" && (
+                          <Markdown
+                            references={assistant.sections}
+                            onReference={(reference) =>
+                              previewSource(
+                                reference,
+                                assistant.binding_id
+                                  ? { id: assistant.binding_id }
                                   : undefined,
                               )
                             }
                           >
-                            <FileText size={18} />
-                            <span>
-                              {c.document_name}
-                              <small>{c.name}</small>
-                            </span>
-                            <ArrowUpRight size={15} />
-                          </button>
-                        ))}
+                            {assistant.explanation}
+                          </Markdown>
+                        )}
+                        {assistant.unknowns.length > 0 && (
+                          <details open>
+                            <summary>尚需确认</summary>
+                            <ul>
+                              {assistant.unknowns.map((u, i) => (
+                                <li key={i}>{u}</li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                        <p className="assistant-provenance">
+                          {active
+                            ? "根据已关联章节生成讲解"
+                            : "根据当前检索章节生成讲解"}
+                        </p>
+                        {assistant.sections.length > 0 && (
+                          <ReferenceDisclosure
+                            key={`explain:${JSON.stringify(target)}`}
+                            count={assistant.sections.length}
+                          >
+                            <details className="inline-preview">
+                              <summary>在小窗查看原文</summary>
+                              {assistant.sections.map((c) => (
+                                <div key={c.revision_id}>
+                                  <h4>{c.name}</h4>
+                                  <Markdown
+                                    documentId={
+                                      catalog?.documents.find(
+                                        (d) =>
+                                          d.revision_id ===
+                                          c.document_revision_id,
+                                      )?.id
+                                    }
+                                    revisionId={c.document_revision_id}
+                                  >
+                                    {c.content}
+                                  </Markdown>
+                                </div>
+                              ))}
+                            </details>
+                            {assistant.sections.map((c) => (
+                              <button
+                                key={c.revision_id}
+                                className="citation"
+                                onClick={() =>
+                                  previewSource(
+                                    c,
+                                    assistant.binding_id
+                                      ? { id: assistant.binding_id }
+                                      : undefined,
+                                  )
+                                }
+                              >
+                                <FileText size={18} />
+                                <span>
+                                  {c.document_name}
+                                  <small>{c.name}</small>
+                                </span>
+                                <ArrowUpRight size={15} />
+                              </button>
+                            ))}
+                          </ReferenceDisclosure>
+                        )}
                       </section>
                     )}
-                  {!editing && assistantError && (
-                    <div
-                      className={
-                        related?.sections.length
-                          ? "assistant-error assistant-note"
-                          : "assistant-error"
-                      }
-                      role="alert"
-                    >
-                      <b>暂未完成关联</b>
-                      <p>{assistantError}</p>
-                      <button
-                        onClick={() =>
-                          control.current &&
-                          void assist(control.current, "explain", true)
-                        }
-                      >
-                        重试
-                      </button>
-                      <button onClick={() => navigate({ view: "ai" })}>
-                        AI 设置
-                      </button>
-                    </div>
-                  )}
-                  {!editing && assistant && assistantMode === "explain" && (
-                    <section
-                      className="assistant-answer"
-                      aria-label="AI 功能讲解"
-                    >
-                      <span className="eyebrow">
-                        <Sparkles size={13} /> AI 讲解 ·{" "}
-                        {assistant.model_id || "章节检索"}
-                        {assistant.cached ? " · 已缓存" : ""}
-                      </span>
-                      <h2>{assistant.title}</h2>
-                      {assistantMode === "explain" && (
-                        <Markdown references={assistant.sections}>
-                          {assistant.explanation}
-                        </Markdown>
-                      )}
-                      {assistant.unknowns.length > 0 && (
-                        <details open>
-                          <summary>尚需确认</summary>
-                          <ul>
-                            {assistant.unknowns.map((u, i) => (
-                              <li key={i}>{u}</li>
+                    {editing ? (
+                      <>
+                        <label>
+                          知识标题
+                          <input
+                            aria-label="知识标题"
+                            value={title}
+                            maxLength={160}
+                            onChange={(e) => setTitle(e.target.value)}
+                          />
+                        </label>
+                        <label>
+                          业务说明
+                          <textarea
+                            aria-label="业务说明"
+                            placeholder="描述业务规则、适用条件和操作结果…"
+                            value={summary}
+                            maxLength={512000}
+                            onChange={(e) => setSummary(e.target.value)}
+                            rows={4}
+                          />
+                        </label>
+                        <label>
+                          关联文档
+                          <div className="search">
+                            <Search size={14} />
+                            <input
+                              aria-label="搜索关联文档"
+                              placeholder="搜索文档…"
+                              value={popupQuery}
+                              onChange={(e) => setPopupQuery(e.target.value)}
+                            />
+                          </div>
+                          <select
+                            aria-label="关联文档"
+                            value={editDocId}
+                            onChange={(e) => {
+                              setEditDocId(e.target.value);
+                              setSectionId("");
+                            }}
+                          >
+                            <option value="">请选择文档</option>
+                            {catalog?.documents
+                              .filter(
+                                (d) =>
+                                  d.name.includes(popupQuery) ||
+                                  d.revision_id === editDocId,
+                              )
+                              .map((d) => (
+                                <option key={d.id} value={d.revision_id}>
+                                  {d.name}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                        <label>
+                          准确章节
+                          <select
+                            aria-label="关联章节"
+                            value={sectionId}
+                            onChange={(e) => setSectionId(e.target.value)}
+                          >
+                            <option value="">请选择章节</option>
+                            {editDoc?.sections.map((s) => (
+                              <option key={s.id} value={s.revision_id}>
+                                {s.name}
+                              </option>
                             ))}
-                          </ul>
-                        </details>
-                      )}
-                      <p className="assistant-provenance">
-                        {assistant.saved
-                          ? "关联已保存，可从文档跳回此控件"
-                          : active
-                            ? "本次讲解保留原有关联，未覆盖已保存的知识"
-                            : assistant.confidence < 0.7
-                              ? "匹配依据不足，未自动保存关联"
-                              : "当前版本只读，讲解未写入"}
-                      </p>
-                      {assistant.sections.length > 0 && (
-                        <details className="inline-preview" open={false}>
-                          <summary>在小窗查看原文</summary>
-                          {assistant.sections.map((c) => (
-                            <div key={c.revision_id}>
-                              <h4>{c.name}</h4>
+                          </select>
+                        </label>
+                        {selectedSection && (
+                          <div className="section-preview">
+                            <span className="eyebrow">原文预览</span>
+                            <Markdown
+                              documentId={editDoc?.id}
+                              revisionId={editDoc?.revision_id}
+                            >
+                              {selectedSection.content}
+                            </Markdown>
+                          </div>
+                        )}
+                      </>
+                    ) : assistant ||
+                      assisting ||
+                      related ||
+                      retrieving ? null : assistantMode === "documents" &&
+                      active &&
+                      !active.excluded &&
+                      active.validity_status === "valid" ? (
+                      <>
+                        <div className="knowledge-title">
+                          <span className="eyebrow">
+                            {active.origin === "model"
+                              ? "AI 自动关联 · " + active.model_id
+                              : "业务知识"}
+                          </span>
+                          <h2>{active.title}</h2>
+                        </div>
+                        {assistantMode === "documents" && (
+                          <Markdown
+                            references={active.sections}
+                            onReference={(reference) =>
+                              previewSource(reference, active)
+                            }
+                          >
+                            {active.summary}
+                          </Markdown>
+                        )}
+                        <ReferenceDisclosure
+                          key={`saved:${active.id}:${active.point_revision_id}`}
+                          count={active.sections.length}
+                        >
+                          <details className="inline-preview">
+                            <summary>在小窗查看原文</summary>
+                            {active.sections.map((c) => (
                               <Markdown
+                                key={c.revision_id}
                                 documentId={
                                   catalog?.documents.find(
                                     (d) =>
@@ -2869,293 +3517,227 @@ function App() {
                               >
                                 {c.content}
                               </Markdown>
-                            </div>
+                            ))}
+                          </details>
+                          {active.sections.map((c) => (
+                            <button
+                              key={c.revision_id}
+                              className="citation"
+                              onClick={() => previewSource(c, active)}
+                            >
+                              <FileText size={18} />
+                              <span>
+                                {c.document_name}
+                                <small>{c.name}</small>
+                              </span>
+                              <ArrowUpRight size={15} />
+                            </button>
                           ))}
-                        </details>
-                      )}
-                      <h4>
-                        相关原文 <span>{assistant.sections.length}</span>
-                      </h4>
-                      {assistant.sections.map((c) => (
-                        <button
-                          key={c.revision_id}
-                          className="citation"
-                          onClick={() =>
-                            openDoc(
-                              c,
-                              assistant.binding_id
-                                ? { id: assistant.binding_id }
-                                : undefined,
-                            )
-                          }
-                        >
-                          <FileText size={18} />
-                          <span>
-                            {c.document_name}
-                            <small>{c.name}</small>
-                          </span>
-                          <ArrowUpRight size={15} />
-                        </button>
-                      ))}
-                    </section>
-                  )}
+                        </ReferenceDisclosure>
+                      </>
+                    ) : (
+                      <div className="knowledge-empty">
+                        <div>
+                          <Link2 size={27} />
+                        </div>
+                        <h3>
+                          {target?.selector === "body"
+                            ? "这个模块还没有关联知识"
+                            : target
+                              ? "这个操作还没有关联知识"
+                              : "边操作，边查看知识"}
+                        </h3>
+                        <p>
+                          {target
+                            ? target.selector === "body"
+                              ? "AI 会检索模块职责、主要业务流程及相关文档；也可以右键页面空白处呼出。"
+                              : "右键这个控件，或点击 AI 讲解，查看相关文档与功能说明。"
+                            : "在原型中打开模块或点击按钮，助手会自动整理相关知识。也可以右键选择查看文档或 AI 讲解。"}
+                        </p>
+                        {target && assistantMode === "explain" && (
+                          <button
+                            className="primary"
+                            onClick={() =>
+                              control.current &&
+                              void assist(control.current, "explain")
+                            }
+                          >
+                            <Sparkles size={15} />
+                            生成 AI 讲解
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <footer className="knowledge-footer">
                   {editing ? (
                     <>
-                      <label>
-                        知识标题
-                        <input
-                          aria-label="知识标题"
-                          value={title}
-                          maxLength={160}
-                          onChange={(e) => setTitle(e.target.value)}
-                        />
-                      </label>
-                      <label>
-                        业务说明
-                        <textarea
-                          aria-label="业务说明"
-                          placeholder="描述业务规则、适用条件和操作结果…"
-                          value={summary}
-                          maxLength={8000}
-                          onChange={(e) => setSummary(e.target.value)}
-                          rows={4}
-                        />
-                      </label>
-                      <label>
-                        关联文档
-                        <div className="search">
-                          <Search size={14} />
-                          <input
-                            aria-label="搜索关联文档"
-                            placeholder="搜索文档…"
-                            value={popupQuery}
-                            onChange={(e) => setPopupQuery(e.target.value)}
-                          />
-                        </div>
-                        <select
-                          aria-label="关联文档"
-                          value={editDocId}
-                          onChange={(e) => {
-                            setEditDocId(e.target.value);
-                            setSectionId("");
-                          }}
-                        >
-                          <option value="">请选择文档</option>
-                          {catalog?.documents
-                            .filter(
-                              (d) =>
-                                d.name.includes(popupQuery) ||
-                                d.revision_id === editDocId,
-                            )
-                            .map((d) => (
-                              <option key={d.id} value={d.revision_id}>
-                                {d.name}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
-                      <label>
-                        准确章节
-                        <select
-                          aria-label="关联章节"
-                          value={sectionId}
-                          onChange={(e) => setSectionId(e.target.value)}
-                        >
-                          <option value="">请选择章节</option>
-                          {editDoc?.sections.map((s) => (
-                            <option key={s.id} value={s.revision_id}>
-                              {s.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {selectedSection && (
-                        <div className="section-preview">
-                          <span className="eyebrow">原文预览</span>
-                          <Markdown
-                            documentId={editDoc?.id}
-                            revisionId={editDoc?.revision_id}
-                          >
-                            {selectedSection.content}
-                          </Markdown>
-                        </div>
-                      )}
-                    </>
-                  ) : assistant ||
-                    assisting ||
-                    related ||
-                    retrieving ? null : active &&
-                    !active.excluded &&
-                    active.validity_status === "valid" ? (
-                    <>
-                      <div className="knowledge-title">
-                        <span className="eyebrow">
-                          {active.origin === "model"
-                            ? "AI 自动关联 · " + active.model_id
-                            : "业务知识"}
-                        </span>
-                        <h2>{active.title}</h2>
-                      </div>
-                      {assistantMode === "explain" && (
-                        <Markdown references={active.sections}>
-                          {active.summary}
-                        </Markdown>
-                      )}
-                      <details
-                        className="inline-preview"
-                        open={assistantMode === "documents"}
+                      <span>保存到当前草稿</span>
+                      <button disabled={saving} onClick={collapseAssistant}>
+                        取消
+                      </button>
+                      <button
+                        className="primary"
+                        disabled={
+                          saving ||
+                          !summary.trim() ||
+                          !title.trim() ||
+                          !sectionId
+                        }
+                        onClick={() => void save()}
                       >
-                        <summary>在小窗查看原文</summary>
-                        {active.sections.map((c) => (
-                          <Markdown
-                            key={c.revision_id}
-                            documentId={
-                              catalog?.documents.find(
-                                (d) => d.revision_id === c.document_revision_id,
-                              )?.id
-                            }
-                            revisionId={c.document_revision_id}
-                          >
-                            {c.content}
-                          </Markdown>
-                        ))}
-                      </details>
-                      <h4 className="source-label">
-                        原文引用 <span>{active.sections.length}</span>
-                      </h4>
-                      {active.sections.map((c) => (
-                        <button
-                          key={c.revision_id}
-                          className="citation"
-                          onClick={() => openDoc(c, active)}
-                        >
-                          <FileText size={18} />
-                          <span>
-                            {c.document_name}
-                            <small>{c.name}</small>
-                          </span>
-                          <ArrowUpRight size={15} />
-                        </button>
-                      ))}
+                        {saving ? "保存中…" : "保存关联"}
+                      </button>
                     </>
                   ) : (
-                    <div className="knowledge-empty">
-                      <div>
-                        <Link2 size={27} />
-                      </div>
-                      <h3>
-                        {target?.selector === "body"
-                          ? "这个模块还没有关联知识"
-                          : target
-                            ? "这个操作还没有关联知识"
-                            : "边操作，边查看知识"}
-                      </h3>
-                      <p>
-                        {target
-                          ? target.selector === "body"
-                            ? "AI 会检索模块职责、主要业务流程及相关文档；也可以右键页面空白处呼出。"
-                            : "右键这个控件，或点击 AI 讲解，查看相关文档与功能说明。"
-                          : "在原型中打开模块或点击按钮，助手会自动整理相关知识。也可以右键选择查看文档或 AI 讲解。"}
-                      </p>
-                      {target && (
-                        <button
-                          className="primary"
-                          onClick={() =>
-                            control.current &&
-                            void assist(control.current, "explain")
-                          }
-                        >
-                          <Sparkles size={15} />
-                          AI 自动关联并讲解
-                        </button>
-                      )}
-                    </div>
+                    <>
+                      <span>
+                        <i className="status-dot" />
+                        {documentChat
+                          ? "根据项目文档回答"
+                          : assistantMode === "explain"
+                            ? assistant
+                              ? "讲解已生成"
+                              : "功能讲解"
+                            : active
+                              ? assistantError
+                                ? "已有关联已保留"
+                                : "关联已保存"
+                              : "跟随原型操作"}
+                      </span>
+                      {!documentChat &&
+                        target &&
+                        assistantMode !== "chat" &&
+                        (assistantMode === "explain" || catalog?.editable) && (
+                          <button
+                            disabled={
+                              assisting || !bindingsReady || active?.excluded
+                            }
+                            onClick={() =>
+                              assistantMode === "explain"
+                                ? control.current &&
+                                  void assist(control.current, "explain", true)
+                                : openReassociation()
+                            }
+                          >
+                            <Sparkles size={14} />{" "}
+                            {assistantMode === "explain"
+                              ? "重新讲解"
+                              : active
+                                ? "AI 重新关联"
+                                : "AI 关联"}
+                          </button>
+                        )}
+                      {!documentChat &&
+                        active &&
+                        assistantMode === "documents" && (
+                          <button
+                            disabled={!catalog?.editable || !bindingsReady}
+                            onClick={() => editBinding(active)}
+                          >
+                            编辑知识
+                          </button>
+                        )}
+                    </>
                   )}
-                </div>
-              </div>
-              <footer className="knowledge-footer">
-                {editing ? (
-                  <>
-                    <span>保存到当前草稿</span>
-                    <button disabled={saving} onClick={() => setEditing(false)}>
-                      取消
-                    </button>
-                    <button
-                      className="primary"
-                      disabled={
-                        saving || !summary.trim() || !title.trim() || !sectionId
-                      }
-                      onClick={() => void save()}
-                    >
-                      {saving ? "保存中…" : "保存关联"}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <span>
-                      <i className="status-dot" />
-                      {documentChat
-                        ? "根据项目文档回答"
-                        : active
-                          ? "关联已保存"
-                          : "跟随原型操作"}
-                    </span>
-                    {!documentChat && target && assistantMode !== "chat" && (
-                      <button
-                        disabled={assisting}
-                        onClick={() =>
-                          control.current &&
-                          void assist(control.current, "explain")
-                        }
-                      >
-                        <Sparkles size={14} /> AI 讲解
-                      </button>
-                    )}
-                    {!documentChat && active && (
-                      <button
-                        disabled={!catalog?.editable || !bindingsReady}
-                        onClick={() => editBinding(active)}
-                      >
-                        编辑知识
-                      </button>
-                    )}
-                  </>
-                )}
-              </footer>
-            </>
-          )}
-          {!docked &&
-            (
-              ["n", "s", "e", "w", "nw", "ne", "sw", "se"] as ResizeDirection[]
-            ).map((direction) => (
-              <button
-                key={direction}
-                type="button"
-                className={"knowledge-resize knowledge-resize-" + direction}
-                tabIndex={direction === "se" ? 0 : -1}
-                aria-label={
-                  direction === "se"
-                    ? "调整助手大小"
-                    : `调整助手大小 ${direction}`
-                }
-                title="按住拖动调整大小，或使用方向键"
-                onPointerDown={(event) => floating.begin(event, direction)}
-                onKeyDown={(event) => {
-                  const delta: Record<string, [number, number]> = {
-                    ArrowLeft: [-20, 0],
-                    ArrowRight: [20, 0],
-                    ArrowUp: [0, -20],
-                    ArrowDown: [0, 20],
-                  };
-                  if (delta[event.key]) {
-                    event.preventDefault();
-                    floating.keyboardResize(...delta[event.key]);
+                </footer>
+              </>
+            )}
+            {!docked &&
+              (
+                [
+                  "n",
+                  "s",
+                  "e",
+                  "w",
+                  "nw",
+                  "ne",
+                  "sw",
+                  "se",
+                ] as ResizeDirection[]
+              ).map((direction) => (
+                <button
+                  key={direction}
+                  type="button"
+                  className={"knowledge-resize knowledge-resize-" + direction}
+                  tabIndex={direction === "se" ? 0 : -1}
+                  aria-label={
+                    direction === "se"
+                      ? "调整助手大小"
+                      : `调整助手大小 ${direction}`
                   }
+                  title="按住拖动调整大小，或使用方向键"
+                  onPointerDown={(event) => floating.begin(event, direction)}
+                  onKeyDown={(event) => {
+                    const delta: Record<string, [number, number]> = {
+                      ArrowLeft: [-20, 0],
+                      ArrowRight: [20, 0],
+                      ArrowUp: [0, -20],
+                      ArrowDown: [0, 20],
+                    };
+                    if (delta[event.key]) {
+                      event.preventDefault();
+                      floating.keyboardResize(...delta[event.key]);
+                    }
+                  }}
+                />
+              ))}
+            {sourcePreview && (
+              <SourcePreview
+                reference={sourcePreview.reference}
+                returnLabel="返回"
+                onClose={() => setSourcePreview(null)}
+                onOpen={() => {
+                  openDoc(sourcePreview.reference, sourcePreview.binding);
+                  setSourcePreview(null);
                 }}
               />
-            ))}
-        </aside>
+            )}
+          </aside>
+        </DetachedPortal>
       )}
+      {associationReviewTarget && (
+        <DetachedPortal
+          target={
+            associationReviewTarget.prototype && detached.open
+              ? detached.controller.prototypeMount
+              : null
+          }
+        >
+          <AssociationReview
+            project={route.project}
+            analysis={route.analysis}
+            items={associationReviewTarget.items}
+            mode={associationReviewTarget.mode}
+            addedChapter={associationReviewTarget.addedChapter}
+            onClose={() => setAssociationReviewTarget(null)}
+            onSaved={associationSaved}
+          />
+        </DetachedPortal>
+      )}
+      {associationChapter &&
+        catalog?.editable &&
+        route.view === "documents" && (
+          <DocumentAssociation
+            key={route.project + scope + route.doc}
+            project={route.project}
+            analysis={route.analysis}
+            chapter={associationChapter}
+            onClose={() => setAssociationChapter(null)}
+            onSelect={(target) => {
+              setAssociationReviewTarget({
+                prototype: false,
+                items: [target],
+                addedChapter: {
+                  name: associationChapter.name,
+                  document: associationChapter.document,
+                },
+              });
+              setAssociationChapter(null);
+            }}
+          />
+        )}
     </div>
   );
   return (

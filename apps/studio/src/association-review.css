@@ -1,0 +1,707 @@
+.association-review {
+  width: min(1600px, calc(100vw - 24px));
+  height: min(1000px, calc(100dvh - 32px));
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 1px solid #d8e5df;
+  border-radius: 12px;
+  background: white;
+  color: #244238;
+  overflow: hidden;
+}
+.association-review[open] {
+  display: flex;
+  flex-direction: column;
+}
+.association-review::backdrop {
+  background: #193c347a;
+}
+.association-review-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 22px;
+  border-bottom: 1px solid #dfe9e3;
+  flex: none;
+}
+.association-review-head h2 {
+  margin: 0;
+  font-size: 19px;
+}
+.association-review-head p {
+  margin: 7px 0 0;
+  font-size: 12px;
+  color: #6d8278;
+}
+.association-review-head > button {
+  font-size: 25px;
+  line-height: 1;
+  background: none;
+  border: 0;
+  padding: 2px 8px;
+}
+.association-review-error {
+  margin: 10px 20px;
+  padding: 10px 13px;
+  background: #fff1e9;
+  color: #964520;
+  border: 1px solid #efd0bc;
+  flex: none;
+}
+.association-review-prompt {
+  padding: 22px;
+  overflow: auto;
+  flex: 1;
+}
+.association-review label {
+  display: block;
+  font-size: 13px;
+}
+.association-review textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  resize: vertical;
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px solid #cdded4;
+  border-radius: 7px;
+  font: inherit;
+  line-height: 1.6;
+}
+.association-review .association-review-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+.association-added-chapter {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border: 1px solid #dbe7df;
+  border-radius: 8px;
+  background: #f4f9f6;
+  font-size: 13px;
+}
+.association-review-prompt .association-added-chapter {
+  display: block;
+  margin: 14px 0;
+}
+.association-added-chapter p {
+  margin: 5px 0;
+}
+.association-added-chapter small {
+  color: #617c6c;
+}
+.document-association {
+  width: min(720px, calc(100vw - 24px));
+  height: min(720px, calc(100dvh - 32px));
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 1px solid #d8e5df;
+  border-radius: 12px;
+  color: #244238;
+  overflow: hidden;
+}
+.document-association[open] {
+  display: flex;
+  flex-direction: column;
+}
+.document-association::backdrop {
+  background: #193c347a;
+}
+.document-association > .association-added-chapter {
+  margin: 16px 20px 0;
+  flex: none;
+}
+.document-association-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 20px;
+  border: 1px solid #cdded4;
+  border-radius: 7px;
+  padding: 0 12px;
+}
+.document-association-search input {
+  width: 100%;
+  border: 0;
+  min-width: 0;
+  padding: 12px 0;
+  outline: none;
+  font: inherit;
+  background: transparent;
+}
+.document-association-search:focus-within {
+  outline: 2px solid #89b3a1;
+}
+.document-association-modules {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 20px;
+  scrollbar-gutter: stable;
+}
+.document-association-modules label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e2ebe6;
+  border-radius: 7px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.document-association-modules label.selected {
+  background: #eaf5ee;
+  border-color: #8bb4a0;
+}
+.document-association-modules label > span {
+  flex: 1;
+  min-width: 0;
+}
+.document-association-modules b,
+.document-association-modules small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.document-association-modules small {
+  color: #6d8278;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.document-association-paging {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 20px;
+  flex: none;
+  font-size: 12px;
+}
+.document-association-paging span {
+  margin-right: auto;
+}
+.document-association footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid #dfe9e3;
+  flex: none;
+}
+.document-association footer span {
+  margin-right: auto;
+  min-width: 0;
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .document-association footer {
+    flex-wrap: wrap;
+  }
+  .document-association footer span {
+    width: 100%;
+  }
+}
+.association-review-progress {
+  padding: 10px 20px;
+  background: #f3f8f5;
+  font-size: 12px;
+  flex: none;
+}
+.association-review-workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, 30%) minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.association-review.single .association-review-workspace {
+  display: block;
+  overflow: auto;
+}
+.association-review-list {
+  border-right: 1px solid #e0e9e3;
+  overflow: auto;
+  padding: 12px;
+  min-width: 0;
+}
+.association-review-list > p {
+  font-size: 12px;
+  color: #658073;
+}
+.association-review-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.association-review-list li > button {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+  padding: 11px;
+  border: 1px solid #e0e8e3;
+  background: white;
+  border-radius: 7px;
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+}
+.association-review-list li > button.selected {
+  background: #eef7f2;
+  border-color: #8dbba6;
+}
+.association-review-list small,
+.association-review-list span {
+  font-size: 11px;
+  color: #6a8175;
+}
+.association-review-list nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 12px;
+}
+.association-review-detail {
+  padding: 18px 22px;
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+}
+.association-review-detail h3 {
+  margin: 0;
+}
+.association-review-detail header p {
+  font-size: 12px;
+  color: #6b8276;
+}
+.association-review-item-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.association-review-item-direction {
+  border-top: 1px solid #e0e9e3;
+  padding-top: 16px;
+  margin-top: 18px;
+}
+.association-review-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid #dfe9e3;
+  padding: 12px 20px;
+  flex: none;
+}
+.association-review-footer > span {
+  margin-right: auto;
+  font-size: 12px;
+  color: #6a8175;
+}
+.association-review button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.association-review .muted {
+  color: #6f8379;
+  font-size: 12px;
+}
+@media (max-width: 700px) {
+  .association-review {
+    height: calc(100dvh - 12px);
+    width: calc(100vw - 12px);
+  }
+  .association-review-head,
+  .association-review-detail {
+    padding: 12px;
+  }
+  .association-review-head p {
+    line-height: 1.6;
+  }
+  .association-review-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(100px, 30%) minmax(0, 1fr);
+  }
+  .association-review-list {
+    border-right: 0;
+    border-bottom: 1px solid #e0e9e3;
+  }
+  .association-review-list li > button {
+    padding: 7px;
+  }
+  .association-review-list small {
+    display: none;
+  }
+  .association-review-footer {
+    padding: 10px;
+    gap: 7px;
+  }
+  .association-review-footer > span {
+    font-size: 11px;
+  }
+  .association-review.single .association-review-workspace {
+    overflow: auto;
+  }
+}
+.binding-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.binding-table input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+.binding-row-ai {
+  white-space: nowrap;
+  font-size: 12px;
+}
+.binding-review-selection {
+  font-size: 12px;
+  color: #688174;
+}
+.association-review-sources {
+  border-top: 1px solid #e0e9e3;
+  margin-top: 18px;
+  padding-top: 10px;
+}
+.association-review-sources h4 {
+  font-size: 13px;
+}
+.association-review-sources > button {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 9px 12px;
+  margin: 6px 0;
+  text-align: left;
+  background: #f6faf7;
+  border: 1px solid #d8e6dc;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.association-review-source {
+  width: min(1000px, calc(100vw - 32px));
+  height: min(800px, calc(100dvh - 40px));
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 1px solid #cedfd3;
+  border-radius: 10px;
+  background: white;
+  color: #244238;
+  overflow: hidden;
+}
+.association-review-source[open] {
+  display: flex;
+  flex-direction: column;
+}
+.association-review-source::backdrop {
+  background: #193c3490;
+}
+.association-review-source > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 15px 20px;
+  border-bottom: 1px solid #dce7df;
+  flex: none;
+}
+.association-review-source h3,
+.association-review-source p {
+  margin: 0 0 6px;
+}
+.association-review-source-content {
+  padding: 16px 22px;
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+/* Content changes scroll inside stable list/detail frames. */
+.binding-manager .binding-workspace {
+  height: clamp(480px, calc(100dvh - 310px), 900px);
+  align-items: stretch;
+  grid-template-columns: minmax(0, 0.46fr) minmax(0, 0.54fr);
+}
+.binding-manager .binding-list-panel,
+.binding-manager .binding-detail-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.binding-manager .binding-list-caption,
+.binding-manager .binding-pagination,
+.binding-manager .binding-detail-panel > header {
+  flex: none;
+}
+.binding-manager .binding-table-wrap {
+  min-height: 0;
+  overflow: auto;
+  flex: 1;
+}
+.binding-manager .binding-table th:first-child {
+  width: auto;
+}
+.binding-manager .binding-table td {
+  padding: 10px;
+}
+.binding-manager .binding-table th {
+  padding: 10px;
+}
+.binding-manager .binding-row-title {
+  min-width: 110px;
+}
+.binding-manager .binding-detail-scroll {
+  overflow: visible;
+  flex: none;
+}
+/* One native scroll owner covers the card title, actions and body. This avoids
+   wheel dead zones over its header and scroll chaining into the whole page. */
+.binding-manager .binding-detail-panel {
+  overflow: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.binding-manager .binding-table-wrap {
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.binding-manager .binding-detail-panel > header h2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.8em;
+  max-height: 2.8em;
+  overflow-wrap: anywhere;
+}
+.binding-manager .binding-detail-panel > header > p {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.binding-inventory-status {
+  height: 18px;
+  margin: 0 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: #6d8278;
+}
+.association-review-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.association-review-list > p,
+.association-review-list > nav {
+  flex: none;
+}
+.association-review-list > ul {
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+.association-review-error {
+  max-height: 85px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.association-review-detail header h3,
+.association-review-detail header p,
+.association-review-source header {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 960px) {
+  .binding-manager .binding-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 0.46fr) minmax(0, 0.54fr);
+    gap: 12px;
+    height: max(760px, calc(100dvh - 280px));
+  }
+  .binding-manager .binding-detail-panel > header {
+    padding: 12px 16px;
+  }
+  .binding-manager .binding-detail-panel > header h2 {
+    font-size: 17px;
+    margin: 8px 0;
+  }
+  .binding-manager .binding-detail-panel > header p {
+    margin-bottom: 8px;
+  }
+  .binding-manager .binding-detail-body,
+  .binding-manager .binding-detail-sources {
+    padding: 12px 16px;
+  }
+  .binding-manager .binding-search {
+    min-width: 0;
+  }
+  .binding-manager .binding-pagination {
+    gap: 6px;
+    padding: 8px;
+  }
+  .binding-manager .binding-pagination-controls {
+    margin-left: 0;
+  }
+}
+@media (min-width: 961px) {
+  .links-workspace {
+    height: auto;
+    min-height: calc(100dvh - 114px);
+  }
+  .links-workspace .binding-workspace {
+    /* Keep a full reading frame; page scroll moves the setup tools above it.
+       Content length does not change the frame, or squeeze it below toolbars. */
+    height: max(600px, calc(100dvh - 160px));
+  }
+}
+
+.association-comparison {
+  min-width: 0;
+  margin: 12px 0;
+}
+.association-comparison-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.association-comparison-toolbar [role="tablist"] {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  background: #f0f5f2;
+  border-radius: 7px;
+  margin-right: auto;
+}
+.association-comparison-toolbar button {
+  border: 0;
+  background: transparent;
+  padding: 7px 10px;
+  font: inherit;
+}
+.association-comparison-toolbar button[aria-selected="true"] {
+  background: white;
+  color: #175b43;
+  box-shadow: 0 1px 3px #213a3020;
+  border-radius: 5px;
+}
+.association-diff-head,
+.association-diff-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.association-diff-head {
+  background: #f5f7f6;
+  border: 1px solid #dce4df;
+  font-size: 12px;
+}
+.association-diff-head strong {
+  padding: 9px 12px;
+  font-weight: 600;
+}
+.association-diff-lines {
+  border: 1px solid #dce4df;
+  border-top: 0;
+}
+.association-diff-row > div {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 7px 2px 0;
+  line-height: 1.7;
+}
+.association-diff-row > div:first-child {
+  border-right: 1px solid #dce4df;
+}
+.association-diff-row code {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    12px/1.7 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+.association-diff-row .association-diff-deleted {
+  background: #ffebe9;
+  color: #6f2520;
+}
+.association-diff-row .association-diff-inserted {
+  background: #dafbe1;
+  color: #164a29;
+}
+.association-diff-number {
+  flex: 0 0 32px;
+  text-align: right;
+  color: #77877f;
+  font:
+    11px/1.85 ui-monospace,
+    monospace;
+  user-select: none;
+}
+.association-diff-sign {
+  flex: 0 0 10px;
+  user-select: none;
+}
+.association-diff-fold {
+  display: block;
+  width: 100%;
+  text-align: center;
+  border: 0;
+  border-radius: 0;
+  background: #eff5fa;
+  color: #3c6884;
+  padding: 7px;
+  font-size: 12px;
+}
+.association-diff-added {
+  color: #1c6b35;
+}
+.association-diff-removed {
+  color: #aa322b;
+}
+.association-comparison-reference-count {
+  color: #6b8276;
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .association-diff-number {
+    flex-basis: 22px;
+  }
+  .association-diff-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .association-diff-row > div:first-child {
+    border-right: 0;
+  }
+  .association-diff-row > div:has(code:empty) {
+    display: none;
+  }
+  .association-diff-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -19,7 +19,12 @@ export default defineConfig(({ mode }) => ({
           ...["diagram-frame.ts", "diagram-policy.ts"].map(
             (name) =>
               "/@fs" +
-              fileURLToPath(new URL("../web/src/" + name, import.meta.url)),
+              fileURLToPath(
+                new URL(
+                  "../../packages/markdown-runtime/src/" + name,
+                  import.meta.url,
+                ),
+              ),
           ),
         ]);
         server.middlewares.use((request, response, next) => {

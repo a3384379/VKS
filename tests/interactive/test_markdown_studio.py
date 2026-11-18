@@ -15,6 +15,7 @@ from vks_api.interactive import InteractiveBinding, InteractiveKnowledgeService
 from vks_api.models import uid
 
 from tests.interactive import test_materials
+from tests.ui.diagram_assertions import assert_clear_mermaid_zoom
 from tests.ui.test_frontend_browser import chromium_path, live_api
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -216,6 +217,21 @@ def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(m
                             diagram = article.get_by_role("figure", name=label)
                             diagram.scroll_into_view_if_needed()
                             expect(diagram.get_by_role("img", name=label)).to_be_visible(timeout=45000)
+                            if label == "Mermaid 图表":
+                                assert_clear_mermaid_zoom(diagram)
+                            else:
+                                image = diagram.get_by_role("img", name=label)
+                                assert image.bounding_box()["height"] <= 481
+                                image.click()
+                                viewer = page.get_by_role("dialog", name=label, exact=True)
+                                expect(viewer).to_be_visible()
+                                viewer.get_by_role("button", name="图片缩放比例", exact=True).click()
+                                expect(viewer.get_by_role("button", name="图片缩放比例", exact=True)).to_have_text("100%")
+                                assert viewer.locator("img").evaluate("n=>Math.abs(n.getBoundingClientRect().width-n.naturalWidth)<1")
+                                viewer.get_by_role("button", name="按宽度", exact=True).click()
+                                expect(viewer.get_by_role("button", name="按宽度", exact=True)).to_have_attribute("aria-pressed", "true")
+                                viewer.get_by_role("button", name="关闭大图", exact=True).click()
+                                expect(viewer).to_have_count(0)
                         first_diagram_url = (
                             article.get_by_role("figure", name="Mermaid 图表")
                             .first.get_by_role("img", name="Mermaid 图表")
@@ -224,13 +240,22 @@ def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(m
                         selected = article.locator("#section-" + chapter["revision_id"])
                         selected.hover()
                         selected.get_by_role("button", name="关联操作", exact=True).click()
-                        panel = page.get_by_role("complementary", name="知识助手")
-                        expect(panel.locator("strong").filter(has_text="必须填写名称")).to_be_visible()
+                        picker = page.get_by_role("dialog", name="选择关联模块", exact=True)
+                        expect(picker).to_be_visible()
+                        picker.get_by_role("button", name="取消", exact=True).click()
                         expect(
                             article.get_by_role("figure", name="Mermaid 图表").first.get_by_role(
                                 "img", name="Mermaid 图表"
                             )
                         ).to_have_attribute("src", first_diagram_url)
+                        expect(page.locator(".chapter-selected")).to_have_attribute(
+                            "id", "section-" + chapter["revision_id"]
+                        )
+                        # Existing linked knowledge is opened from the related
+                        # operation; the chapter action now selects a module.
+                        page.locator(".related-sidebar").get_by_role("button").first.click()
+                        panel = page.get_by_role("complementary", name="知识助手")
+                        expect(panel.locator("strong").filter(has_text="必须填写名称")).to_be_visible()
                         expect(panel.get_by_alt_text("助手图片", exact=True)).to_be_visible()
                         expect(panel.get_by_alt_text("引用网络图片", exact=True)).to_be_visible()
                         expect(
@@ -246,10 +271,8 @@ def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(m
                         assert "非引用章节的其他正文" not in panel.inner_text()
                         assert not any("ai-image.invalid" in url for url in remote_requests)
                         expect(panel.get_by_role("img", name="Mermaid 图表")).to_be_visible(timeout=45000)
-                        expect(page.locator(".chapter-selected")).to_have_attribute(
-                            "id", "section-" + chapter["revision_id"]
-                        )
                         panel.get_by_role("button", name="收起助手面板", exact=True).click()
+                        page.get_by_role("button", name="文档", exact=True).click()
                         article.get_by_role("link", name="包内链接", exact=True).click()
                         expect(article.get_by_role("heading", name="包一其他资料", exact=True)).to_be_visible()
                         expect(article.locator(".chapter-selected")).to_contain_text("目标段落")

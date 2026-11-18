@@ -25,6 +25,8 @@ dependencies = [
   "reportlab>=4,<5",
   "Pillow>=12,<14",
   "markdownify>=1.2,<2",
+  "numpy>=2,<3",
+  "tiktoken>=0.12,<1",
 ]
 [dependency-groups]
 dev = ["pytest>=8.3,<10", "pytest-asyncio>=0.25,<2", "openapi-spec-validator>=0.7,<1", "ruff>=0.11,<1", "pypdf>=6,<7"]

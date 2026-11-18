@@ -38,10 +38,10 @@ def test_partial_scan_can_analyse_then_associate_new_targets_while_old_ai_runs(m
             page.get_by_role("button", name="关联管理", exact=True).click()
             panel = page.get_by_role("region", name="AI 预关联", exact=True)
             expect(panel.get_by_role("button", name="重试未完成页面", exact=True)).to_be_enabled()
-            expect(panel.get_by_role("button", name="继续扫描分析", exact=True)).to_be_enabled()
+            expect(panel.get_by_role("button", name="继续扫描页面", exact=True)).to_be_enabled()
             expect(panel.get_by_label("分析与关联并发", exact=True)).to_have_value("3")
-            expect(panel).to_contain_text("扫描 3 路 · 关联 3 路")
-            panel.get_by_role("button", name="继续扫描分析", exact=True).click()
+            expect(panel).to_contain_text("扫描 3 路 · AI 最多 128 个并发请求")
+            panel.get_by_role("button", name="继续扫描页面", exact=True).click()
             expect(panel).to_contain_text("已采集 3 / 3 页", timeout=20000)
             expect(panel.get_by_role("button", name="开始 AI 关联", exact=True)).to_be_enabled()
             assert len(uploads) == 2 and not resumes[0]["pipeline"] and not whole_batches
@@ -92,7 +92,7 @@ def test_legacy_association_can_stop_while_scan_acknowledgement_is_pending(mater
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
             panel = page.get_by_role("region", name="AI 预关联", exact=True)
-            panel.get_by_role("button", name="继续扫描分析", exact=True).click()
+            panel.get_by_role("button", name="继续扫描页面", exact=True).click()
             expect(panel.get_by_role("button", name="暂停扫描", exact=True)).to_be_visible()
             stop = panel.get_by_role("button", name="停止任务", exact=True).last
             expect(stop).to_be_enabled()
@@ -107,6 +107,34 @@ def test_legacy_association_can_stop_while_scan_acknowledgement_is_pending(mater
             for route in held:
                 route.continue_()
             expect(panel).to_contain_text("已采集 3 / 3 页", timeout=20000)
+            assert not calls
+        finally:
+            browser.close()
+
+
+def test_cancelled_scan_starts_new_scan_and_buttons_explain_their_scope(materials, tmp_path, monkeypatch):
+    _service, actor, _, pid, aid, _, scans, _, run, calls, _, _ = partial_with_batch(materials, monkeypatch)
+    scans.cancel(actor, pid, run["id"], run["client_id"])
+    with native_studio(materials[0].app, tmp_path, monkeypatch) as url, sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+        posted = []
+        page.on("request", lambda r: posted.append((r.url, r.post_data_json)) if r.method == "POST" and "/associations/scans" in r.url else None)
+        try:
+            login(page, url, pid, aid)
+            page.get_by_role("button", name="关联管理", exact=True).click()
+            panel = page.get_by_role("region", name="AI 预关联", exact=True)
+            scan = panel.get_by_role("group", name="页面扫描", exact=True)
+            ai = panel.get_by_role("group", name="AI 关联文档", exact=True)
+            expect(scan).to_contain_text("只采集页面和控件，不调用 AI")
+            expect(ai).to_contain_text("仅为未关联内容生成预览，确认后保存")
+            expect(ai).to_contain_text("先生成预览，确认后再统一替换")
+            expect(panel.get_by_role("button", name="继续扫描页面", exact=True)).to_have_count(0)
+            scan.get_by_role("button", name="重新扫描页面", exact=True).click()
+            expect(panel).to_contain_text("已采集 3 / 3 页", timeout=20000)
+            assert posted and posted[0][0].endswith("/associations/scans")
+            assert posted[0][1]["pipeline"] is False
+            assert not any(url.endswith("/resume") for url, _ in posted)
             assert not calls
         finally:
             browser.close()

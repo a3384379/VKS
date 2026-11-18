@@ -5,12 +5,15 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from contextvars import ContextVar
 from threading import Event, Thread
 
 from sqlalchemy import JSON, ForeignKey, Integer, String, UniqueConstraint, func, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .models import Base, Credential, Identified, Job, Outbox, now, uid
+
+PERSONAL_TASK = ContextVar("vks_personal_task", default=None)
 
 
 class DispatchState(Identified, Base):
@@ -38,6 +41,11 @@ def current_actor(service, actor_id, pid, session=None, *, job=None):
     from .identity import UserIdentity, ensure_owner, human_scopes
     from .service import Actor, DomainError
 
+    if service.personal_mode and job is not None and job.kind in {"associate_all", "material_migrate"}:
+        from .service import ALL_SCOPES
+
+        return Actor(service.owner_id, frozenset(ALL_SCOPES), True)
+
     if session is None:
         with service.db() as s:
             return current_actor(service, actor_id, pid, s, job=job)
@@ -57,7 +65,18 @@ def current_actor(service, actor_id, pid, session=None, *, job=None):
         if authorization is None:
             return actor  # Legacy human/platform-token jobs retain their existing checks.
         scopes = set(actor.scopes) & set(authorization["scopes"])
-        scopes = {scope for scope in scopes if service._can(session, actor, pid, scope)}
+        if scopes:
+            # All requested scopes belong to the same current principal/project.
+            # Evaluate that grant set once inside this call, instead of querying
+            # identity, membership and project separately for every scope. This
+            # is not retained across calls/transactions or grant mutations.
+            from .identity import project_grants
+
+            try:
+                _project, granted = project_grants(service, session, actor, pid)
+                scopes &= granted
+            except DomainError:
+                scopes = set()
         return replace(actor, scopes=frozenset(scopes))
 
     ensure_owner(service, session)
@@ -167,6 +186,7 @@ def run_pending(service):
     # Browser-produced page jobs must not block the dispatcher while a model
     # responds. Keep a bounded local pool; the database claim still fences
     # duplicate workers and enforces the per-run limit in every dispatch mode.
+    from .association_limits import GLOBAL_REQUEST_LIMIT, request_concurrency
     from .prototype_scan import PrototypeScanRun
 
     with service.pipeline_lock:
@@ -175,7 +195,7 @@ def run_pending(service):
         service.pipeline_futures = {
             jid: future for jid, future in service.pipeline_futures.items() if not future.done()
         }
-        if len(service.pipeline_futures) < 4:
+        if len(service.pipeline_futures) < GLOBAL_REQUEST_LIMIT:
             with service.db() as s:
                 candidates = list(
                     s.execute(
@@ -189,19 +209,21 @@ def run_pending(service):
                         .outerjoin(PrototypeScanRun, PrototypeScanRun.id == Job.input_json["scan_run_id"].as_string())
                         .where(
                             Job.state == "queued",
-                            Job.kind == "associate_all",
-                            Job.input_json["scan_pipeline"].as_boolean().is_(True),
+                            ((Job.kind == "associate_all") & Job.input_json["scan_pipeline"].as_boolean().is_(True))
+                            | (Job.kind == "reassociation_preview"),
                             Job.id.not_in(list(service.pipeline_futures)),
                         )
                         .order_by(Job.created_at, Job.id)
-                        .limit(4)
+                        .limit(GLOBAL_REQUEST_LIMIT)
                     )
                 )
-            configured = max((min(4, max(1, lanes or 3)) for _, lanes in candidates), default=3)
+            configured = max((request_concurrency(lanes) for _, lanes in candidates), default=1)
             capacity = max(0, configured - len(service.pipeline_futures))
             pipeline_ids = [jid for jid, _ in candidates[:capacity]]
             if pipeline_ids and service.pipeline_executor is None:
-                service.pipeline_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vks-page-association")
+                service.pipeline_executor = ThreadPoolExecutor(
+                    max_workers=GLOBAL_REQUEST_LIMIT, thread_name_prefix="vks-page-association"
+                )
             for jid in pipeline_ids:
                 service.pipeline_futures[jid] = service.pipeline_executor.submit(execute_job, service, jid)
     with service.db() as s:
@@ -210,6 +232,7 @@ def run_pending(service):
                 select(Job.id)
                 .where(
                     Job.state == "queued",
+                    Job.kind != "reassociation_preview",
                     (Job.kind != "associate_all") | Job.input_json["scan_pipeline"].as_boolean().is_not(True),
                 )
                 .order_by(Job.created_at)
@@ -228,7 +251,7 @@ def publish_job(job_id, kind):
         "vks-browser"
         if kind == "capture"
         else "vks-model"
-        if kind in ("generate_documents", "knowledge_task", "material_migrate", "associate_all")
+        if kind in ("generate_documents", "knowledge_task", "material_migrate", "associate_all", "reassociation_preview")
         else "vks-index"
     )
     celery.send_task("vks.execute_job", args=[job_id], queue=queue, serializer="json", retry=False)
@@ -278,7 +301,9 @@ def dispatch_pending(service, publisher=None, limit=10):
         with service.db() as s:
             entry = s.scalar(select(DispatchState).where(DispatchState.job_id == jid).with_for_update())
             job = s.get(Job, jid)
-            if not entry or entry.attempt != attempt:
+            if not entry or entry.attempt != attempt or entry.state != "sending":
+                # A fast worker can defer an admitted broker delivery before
+                # publisher() returns. Preserve its pending/short retry state.
                 continue
             out = s.scalar(select(Outbox).where(Outbox.job_id == jid))
             if success:
@@ -431,6 +456,21 @@ def save_parse_checkpoint(service, job_id, attempt, input_hash, parsed):
 
 
 def execute_job(service, jid):
+    if service.personal_mode:
+        from .reading import ReadingService
+
+        with ReadingService(service).db() as session:
+            row = session.execute(select(Job.kind, Job.project_id).where(Job.id == jid)).first()
+        if row and row.kind in {"associate_all", "material_migrate"}:
+            token = PERSONAL_TASK.set((service, row.project_id))
+            try:
+                return _execute_job(service, jid)
+            finally:
+                PERSONAL_TASK.reset(token)
+    return _execute_job(service, jid)
+
+
+def _execute_job(service, jid):
     from .knowledge import ImportService, persist_bundle
     from .models import Outbox, Project, Upload
     from .prototype_import import finish_batch, finish_preview, prepare_batch
@@ -445,6 +485,11 @@ def execute_job(service, jid):
             from .scan_pipeline import claim
 
             if not claim(service, s, job):
+                return
+        elif job.kind in ("associate_all", "reassociation_preview"):
+            from .association_limits import claim_full_association
+
+            if not claim_full_association(service, s, job):
                 return
         job.attempt += 1
         attempt = job.attempt
@@ -491,12 +536,27 @@ def execute_job(service, jid):
         # a current permission/cancellation read, so taking a second SQLite
         # writer transaction here would deadlock the outer projection.
         with ReadingService(service).db() as session:
-            active = session.get(Job, jid)
+            from types import SimpleNamespace
+
+            from sqlalchemy.orm import defer
+
+            row = session.execute(
+                select(Job, Job.input_json["_authorization"])
+                .options(defer(Job.input_json), defer(Job.result_json))
+                .where(Job.id == jid)
+            ).first()
+            active, authorization = row if row else (None, None)
             if not active or active.attempt != attempt or active.state not in ("running", "cancelling"):
                 raise DomainError("VKS_CANCELLED", "任务 attempt 已失效，停止解析", 409)
             if active.cancel_requested or (active.lease_until and active.lease_until <= now()):
                 raise DomainError("VKS_CANCELLED", "任务取消或租约失效，停止解析", 409)
-            principal = current_actor(service, owner, pid, session, job=active)
+            principal = current_actor(
+                service,
+                owner,
+                pid,
+                session,
+                job=SimpleNamespace(kind=active.kind, input_json={"_authorization": authorization}),
+            )
             service.require(session, principal, pid, JOB_SCOPES[kind])
             if kind in ("index", "suggest_links"):
                 service.require(session, principal, pid, "source:read")
@@ -528,6 +588,10 @@ def execute_job(service, jid):
                     from .bulk_association import run_batch
 
                     association_output = run_batch(service, jid, preserve_processed=recovered)
+                if kind == "reassociation_preview":
+                    from .reassociation_batches import run_reassociation_batch
+
+                    reassociation_output = run_reassociation_batch(service, jid)
                 if kind == "export" and payload["format"] == "readonly_html":
                     from .readonly_export import prepare_job
 
@@ -624,6 +688,8 @@ def execute_job(service, jid):
                     result = material_output
                 elif kind == "associate_all":
                     result = association_output
+                elif kind == "reassociation_preview":
+                    result = reassociation_output
                 elif kind == "export":
                     result = (
                         service._perform_export(s, job, readonly_output)

@@ -8,6 +8,7 @@ from threading import Barrier
 import pytest
 from sqlalchemy import func, select
 from vks_api import ai_gateway
+from vks_api.association_limits import GLOBAL_REQUEST_LIMIT
 from vks_api.bulk_association import InventoryPageInput, PrototypeInventoryPage
 from vks_api.models import Analysis, Job, Outbox, uid
 from vks_api.prototype_scan import PrototypeScanRun, ScanClient
@@ -225,28 +226,33 @@ def test_new_rows_in_an_active_operation_group_wait_for_immutable_work_and_reuse
     assert len(bulk.links.bindings(actor, pid, aid)) == 3
 
 
-def test_cancelling_inflight_models_still_occupy_the_persistent_global_three_slot_cap(materials, monkeypatch):
+def test_cancelling_inflight_models_still_occupy_the_persistent_global_sixteen_slot_cap(materials, monkeypatch):
     service, actor, _, pid, _aid, bulk, _scans, version, run, calls = audit.setup(materials, monkeypatch, pipeline=True)
     pages = run["manifest"]["packages"][0]["pages"]
     for page in pages[:2]:
         audit.capture(bulk, actor, pid, run, version, page)
     produced = jobs(service, run["id"])
     assert len(produced) == 4
+    candidate, _ = produced.pop()
     with service.db() as s:
-        for index, (jid, _) in enumerate(produced[:3]):
+        template = deepcopy(s.get(Job, produced[0][0]).input_json)
+        while len(produced) < GLOBAL_REQUEST_LIMIT:
+            cloned = service._new_job(s, actor, pid, "associate_all", deepcopy(template))
+            produced.append((cloned.id, deepcopy(template)))
+        for index, (jid, _) in enumerate(produced[:GLOBAL_REQUEST_LIMIT]):
             row = s.get(Job, jid)
             row.state = "cancelling" if index == 0 else "running"
             row.cancel_requested = index == 0
             row.lease_until = future(60)
-    service.process_job(produced[3][0])
+    service.process_job(candidate)
     with service.db() as s:
-        waiting = s.get(Job, produced[3][0])
+        waiting = s.get(Job, candidate)
         assert waiting.state == "queued" and waiting.attempt == 0
         stopped = s.get(Job, produced[0][0])
         stopped.state, stopped.lease_until = "cancelled", None
     assert not calls
-    service.process_job(produced[3][0])
-    assert service.get_job(actor, produced[3][0])["state"] == "succeeded" and len(calls) == 1
+    service.process_job(candidate)
+    assert service.get_job(actor, candidate)["state"] == "succeeded" and len(calls) == 1
 
 
 def test_source_changes_reject_queued_ai_and_old_browser_captures_before_model_submission(materials, monkeypatch):

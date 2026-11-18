@@ -10,6 +10,8 @@ from .models import Analysis, Base, Job, Outbox, now
 from .service import DomainError
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
+from .association_limits import CLAIM_LOCK, GLOBAL_REQUEST_LIMIT, request_concurrency
+
 ACTIVE = {"queued", "running", "retry_wait", "cancelling"}
 
 
@@ -41,7 +43,7 @@ def source_version(run):
 def set_parallelism(service, s, actor, run, requested):
     """Change scheduling on explicit continuation, without changing target snapshots."""
     if service.engine.dialect.name == "postgresql":
-        s.execute(text("SELECT pg_advisory_xact_lock(851392741)"))
+        s.execute(text(f"SELECT pg_advisory_xact_lock({CLAIM_LOCK})"))
     previous = run.plan.get("concurrency", 3)
     legacy = s.get(Job, run.batch_job_id) if run.batch_job_id else None
     live_legacy = legacy and legacy.state in ACTIVE
@@ -75,6 +77,10 @@ def check_version(run, expected):
 
 def authorize(service, s, actor, run):
     """Deferred admissions retain the initiating request's permission ceiling."""
+    if service.personal_mode:
+        from .service import Actor, ALL_SCOPES
+
+        return Actor(service.owner_id, frozenset(ALL_SCOPES), True)
     scopes = run.plan.get("_pipeline_scopes")
     if not isinstance(scopes, list) or any(not isinstance(value, str) for value in scopes):
         raise DomainError("VKS_UNAUTHENTICATED", "流水线授权快照无效，请明确继续以重新授权", 401)
@@ -287,6 +293,41 @@ def _schedule(service, s, actor, run, group, coverage=None):
                 "message": "同操作的依据或模型任务尚未完成，可独立重试 AI",
             }
         return
+    cohorts = [pending]
+    if canonical_row is None:
+        # Newly observed operation groups on one page can share inference while
+        # their immutable group IDs and per-target consumption records remain.
+        anchor = pending[0].item
+        page = (anchor["package_id"], anchor["target"]["route"], anchor["target"]["frame_path"])
+        candidates = list(
+            s.scalars(
+                select(PrototypeScanTarget)
+                .where(
+                    PrototypeScanTarget.run_id == run.id,
+                    PrototypeScanTarget.state == "waiting",
+                    PrototypeScanTarget.job_id.is_(None),
+                )
+                .limit(512)
+            )
+        )
+        groups = {}
+        for candidate in candidates:
+            item = candidate.item
+            if (
+                candidate.group_key == group
+                or (item["package_id"], item["target"]["route"], item["target"]["frame_path"]) != page
+            ):
+                continue
+            groups.setdefault(candidate.group_key, []).append(candidate)
+        for sibling, members in groups.items():
+            if len(cohorts) == 8:
+                break
+            complete_group = _rows(s, run.id, sibling)
+            if all(row.state == "waiting" and row.job_id is None for row in complete_group):
+                cohorts.append(complete_group)
+        if len(cohorts) < 4:
+            cohorts = [pending]
+    pending = [row for cohort in cohorts for row in cohort]
     items = [deepcopy(row.item) for row in pending]
     needs_model = any(
         item["state"] == "pending"
@@ -300,7 +341,8 @@ def _schedule(service, s, actor, run, group, coverage=None):
         "composition": run.composition,
         "mode": run.mode,
         "items": items,
-        "groups": [[item["id"] for item in items]],
+        "groups": [[row.target_id for row in cohort] for cohort in cohorts],
+        "batched_page": len(cohorts) > 1,
         "coverage": coverage or {"limitations": []},
         "processor": "source-controls-v2",
         "concurrency": 1,
@@ -461,7 +503,7 @@ def claim(service, s, job):
     from .prototype_scan import PrototypeScanRun
 
     if service.engine.dialect.name == "postgresql":
-        s.execute(text("SELECT pg_advisory_xact_lock(851392741)"))
+        s.execute(text(f"SELECT pg_advisory_xact_lock({CLAIM_LOCK})"))
     run = s.get(PrototypeScanRun, job.input_json["scan_run_id"])
     analysis = s.get(Analysis, job.input_json["analysis_set_id"])
     workspace = s.get(StudioWorkspace, job.project_id)
@@ -499,12 +541,12 @@ def claim(service, s, job):
     )
     total_used, run_used = 0, 0
     for jid, pipeline, lanes, run_id in active:
-        used = 1 if pipeline else min(4, max(1, lanes or 3))
+        used = 1 if pipeline else request_concurrency(lanes)
         total_used += used
         if run_id == run.id or jid == run.batch_job_id:
             run_used += used
-    limit = min(4, max(1, run.plan.get("concurrency", 3)))
-    if total_used >= 4 or run_used >= limit:
+    limit = request_concurrency(run.plan.get("concurrency", 3))
+    if total_used >= GLOBAL_REQUEST_LIMIT or run_used >= limit:
         out = s.scalar(select(Outbox).where(Outbox.job_id == job.id))
         if out:
             out.dispatched = False

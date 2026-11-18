@@ -37,7 +37,7 @@ def test_continuous_reverse_resize_survives_context_updates_and_restores(reader_
             assert after["width"] == pytest.approx(before["width"] + 120)
             assert after["height"] == pytest.approx(before["height"] + 30)
             assert after["x"] + after["width"] == pytest.approx(before["x"] + before["width"])
-            expect(page.get_by_role("tab", name="AI 问答", exact=True)).to_have_attribute("aria-selected", "true")
+            expect(page.get_by_role("tab", name="回答", exact=True)).to_have_attribute("aria-selected", "true")
             page.get_by_role("button", name="收起知识助手", exact=True).click()
             page.reload()
             page.get_by_role("button", name="打开知识助手", exact=True).click()

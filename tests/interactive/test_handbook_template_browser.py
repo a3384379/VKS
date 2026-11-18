@@ -84,16 +84,23 @@ def test_handbook_cover_exact_navigation_fulltext_callbacks_and_readonly(tmp_pat
             expect(
                 book.get_by_role("navigation", name="手册文章目录").get_by_role("button", name="Overview", exact=True)
             ).to_be_visible()
-            expect(
-                book.get_by_role("navigation", name="手册文章目录").get_by_role(
-                    "button", name="Introduction", exact=True
-                )
-            ).to_be_visible()
+            tree = book.get_by_role("navigation", name="手册文章目录")
+            expect(tree.get_by_role("button", name="Introduction", exact=True)).to_have_count(0)
+            expect(tree.get_by_role("button", name="展开章节 Overview", exact=True)).to_have_attribute("aria-expanded", "false")
+            tree.get_by_role("button", name="Overview", exact=True).click()
+            expect(tree.get_by_role("button", name="展开章节 Overview", exact=True)).to_have_attribute("aria-expanded", "false")
+            tree.get_by_role("button", name="展开章节 Overview", exact=True).click()
+            expect(tree.get_by_role("button", name="Introduction", exact=True)).to_be_visible()
             expect(book.get_by_text("Markdown emphasis retained", exact=True)).to_be_visible()
             expect(book.get_by_role("img", name="Inline asset")).to_be_visible()
             page.screenshot(path=str(tmp_path / "handbook-article.png"))
             book.get_by_role("navigation", name="文章翻页").get_by_role("button", name="下一篇 Rules").click()
             expect(book.get_by_role("heading", name="Rules", exact=True)).to_be_visible()
+            expect(tree.get_by_role("button", name="展开章节 Rules", exact=True)).to_have_attribute("aria-expanded", "false")
+            book.get_by_role("navigation", name="文章翻页").get_by_role("button", name="上一篇 Overview").click()
+            expect(tree.get_by_role("button", name="收起章节 Overview", exact=True)).to_have_attribute("aria-expanded", "true")
+            book.get_by_role("navigation", name="文章翻页").get_by_role("button", name="下一篇 Rules").click()
+            expect(tree.get_by_role("button", name="展开章节 Rules", exact=True)).to_have_attribute("aria-expanded", "false")
             expect(book.get_by_role("navigation", name="文章翻页").get_by_text("Other", exact=True)).to_have_count(0)
             book.get_by_role("button", name="向手册 AI 提问", exact=True).click()
             expect(page.get_by_label("Host event", exact=True)).to_have_text("ai:b")
@@ -141,6 +148,7 @@ def test_handbook_mobile_directory_and_keyboard_search(tmp_path):
             dialog.get_by_label("手册搜索内容", exact=True).fill("Rules")
             dialog.get_by_role("button", name="Rules", exact=False).click()
             expect(book.get_by_role("heading", name="Rules", exact=True)).to_be_visible()
+            expect(dialog).not_to_be_visible()
             page.keyboard.press("Control+k")
             expect(dialog).to_be_visible()
             # The previous native close event may arrive after a new opening.

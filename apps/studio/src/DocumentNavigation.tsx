@@ -243,9 +243,7 @@ export function DocumentLibrary({
     location?.category.id || tree.packages[0]?.categories[0]?.id || "",
   );
   const [folders, setFolders] = useState<Set<string>>(new Set());
-  const [articles, setArticles] = useState<Set<string>>(
-    new Set(selectedDocument ? [selectedDocument] : []),
-  );
+  const [articles, setArticles] = useState<Set<string>>(new Set());
   const [chapters, setChapters] = useState<Set<string>>(new Set());
   const [cache, setCache] = useState<Record<string, NavigationArticle>>({});
   const [pending, setPending] = useState<Set<string>>(new Set());
@@ -284,7 +282,6 @@ export function DocumentLibrary({
       (previous) =>
         new Set([...previous, ...location.folders.map((folder) => folder.id)]),
     );
-    setArticles((previous) => new Set([...previous, selectedDocument]));
   }, [selectedDocument, entryPath]);
   useEffect(() => {
     if (

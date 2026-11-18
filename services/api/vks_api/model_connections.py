@@ -36,6 +36,9 @@ class ConnectionForm(BaseModel):
     model_id: str = Field(default="", max_length=160)
     api_key: SecretStr | None = None
     max_output_tokens: int = Field(default=2500, ge=100, le=16000)
+    max_input_tokens: int | None = Field(default=None, ge=1000, le=1050000)
+    association_max_input_tokens: int | None = Field(default=None, ge=1000, le=1050000)
+    association_max_output_tokens: int | None = Field(default=None, ge=100, le=128000)
     daily_token_limit: int = Field(default=100000, ge=1000, le=100000000, deprecated=True)
     enabled: bool = True
     allow_external: bool = True
@@ -340,6 +343,12 @@ class ConnectionService:
                 enabled=form.enabled,
                 allow_external=form.allow_external,
             )
+            # Omitted fields from historical clients must preserve saved caps.
+            for field in ("max_input_tokens", "association_max_input_tokens", "association_max_output_tokens"):
+                if field in form.model_fields_set:
+                    value = getattr(form, field)
+                    if value is not None or field != "max_input_tokens":
+                        config[field] = value
             if config["enabled"]:
                 endpoint_policy(config)
             provider = next(r for r in PROVIDERS if r["id"] == form.provider)

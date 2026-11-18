@@ -146,7 +146,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 <button id="fh-ai-selection-ask" class="fh-ai-selection-ask" hidden>\u2726 \u89E3\u91CA\u9009\u4E2D\u6587\u5B57</button>
 <div id="fh-ai-toast" class="fh-ai-toast" role="status" hidden></div>
 `,e.querySelector("#fh-ai-index").textContent=JSON.stringify(r),e.querySelector("body").classList.remove("fh-ai-open"),e.querySelectorAll(".fh-ai-target").forEach(s=>s.classList.remove("fh-ai-target")),e.querySelectorAll(".prose .table-scroll").forEach(s=>s.replaceWith(...s.childNodes)),e.querySelectorAll("[id^=dfhchatgraph]").forEach(s=>s.remove());e.querySelectorAll("dialog").forEach(s=>s.removeAttribute("open"));for(let s of["search-results","diagram-zoom-content","original-content"])e.querySelector("#"+s)?.replaceChildren();e.querySelectorAll("input").forEach(s=>{s.removeAttribute("value"),s.removeAttribute("checked"),s.value=""}),e.querySelectorAll("textarea").forEach(s=>{s.value="",s.textContent=""}),e.querySelector("#fh-ai-top")?.remove(),[...e.querySelector("#fh-ai-model").options].forEach(s=>s.toggleAttribute("selected",s.value===vw));window.fhBookPages.cleanExport(e);if(update)update.apply(e);let n=`<!doctype html>
-`+e.outerHTML;if(fhProviderUpgrade.hasSecret(n))throw new Error("\u5BFC\u51FA\u68C0\u67E5\u53D1\u73B0\u654F\u611F\u5185\u5BB9\uFF0C\u5DF2\u963B\u6B62\u4E0B\u8F7D\u3002");return await window.fhPortablePack.encode(n)}async function Xh(){if(At)return;try{await Fc()}catch(r){return re(Le(r))}if(De?.completed!==Me.length)return re("\u8BF7\u5148\u5B8C\u6210\u6216\u5BFC\u5165\u5B8C\u6574\u5411\u91CF\u7D22\u5F15\u3002");kt(!0,"export"),Tt();try{Zh("项目知识手册_AI问答版_免建库_单文件压缩版.html",await qA(),"text/html"),Fa="downloaded",re("\u514D\u5EFA\u5E93 HTML \u5DF2\u53D1\u8D77\u4E0B\u8F7D\u3002\u4EE5\u540E\u8BF7\u6253\u5F00\u4E0B\u8F7D\u540E\u7684\u6587\u4EF6\uFF0C\u4E0D\u542B Key \u6216\u4F1A\u8BDD\u3002")}catch(r){re(Le(r))}finally{kt(!1),Tt()}}async function mT(){if(At)return;try{await Fc()}catch(r){return re(Le(r))}if(De?.completed!==Me.length)return re("\u8BF7\u5148\u5B8C\u6210\u6216\u5BFC\u5165\u5B8C\u6574\u5411\u91CF\u7D22\u5F15\u3002");if(!window.showSaveFilePicker)return Xh();kt(!0,"export"),Tt();let saving=false;try{let e=await window.showSaveFilePicker({suggestedName:"项目知识手册_AI问答版_免建库_单文件压缩版.html",types:[{description:"\u514D\u5EFA\u5E93\u77E5\u8BC6\u624B\u518C HTML",accept:{"text/html":[".html"]}}]});if(["项目知识手册.html", "项目知识手册_AI问答版_免建库.html", "项目知识手册_AI问答版_免建库_流式阅读版.html","项目知识手册_AI问答版_免建库_体验优化版.html"].includes(e.name))throw new Error("\u4E0D\u80FD\u8986\u76D6\u539F\u59CB\u624B\u518C\uFF0C\u8BF7\u4E3A AI \u514D\u5EFA\u5E93\u526F\u672C\u9009\u62E9\u5176\u4ED6\u6587\u4EF6\u540D\u3002");let expected=await fhDirectoryUpdate.checkSaveTarget(e),t=await qA();saving=true,await fhDirectoryUpdate.commitSave(e,t,expected),Fa="saved",re("\u514D\u5EFA\u5E93\u526F\u672C\u5DF2\u4FDD\u5B58\u3002\u4E0B\u6B21\u6253\u5F00\u4FDD\u5B58\u540E\u7684\u6587\u4EF6\uFF0C\u65E0\u9700\u91CD\u5EFA\u7D22\u5F15\u3002")}catch(e){if(!saving&&["SecurityError","NotSupportedError"].includes(e?.name)){kt(!1),await Xh();return}re(e?.name==="AbortError"?"\u5DF2\u53D6\u6D88\u4FDD\u5B58\uFF0C\u672A\u4FEE\u6539\u6587\u4EF6\u3002\u7D22\u5F15\u4ECD\u53EF\u5728\u672C\u9875\u4F7F\u7528\u3002":Le(e))}finally{kt(!1),Tt()}}function $A(r){window.fhBookPages.ensure(r.anchor);let e=document.getElementById(r.anchor);if(!e)return re("\u5F53\u524D\u624B\u518C\u4E2D\u627E\u4E0D\u5230\u8BE5\u5F15\u7528\u4F4D\u7F6E\u3002");location.hash=r.anchor,setTimeout(()=>{e.scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"start"}),e.classList.add("fh-ai-target"),setTimeout(()=>e.classList.remove("fh-ai-target"),2800)},150),innerWidth<900&&Yh()}function Lc(r,e){P("fh-ai-welcome").hidden=!0;let t=Re("article","fh-ai-message "+r),n=Re("div","fh-ai-message-label",r==="user"?"\u4F60":r==="error"?"\u64CD\u4F5C\u672A\u5B8C\u6210":"\u77e5\u8bc6\u52a9\u624b"),s=Re("div","fh-ai-bubble",e);return t.append(n,s),P("fh-ai-messages").append(t),fhReadingUpgrade.messageAdded(t,r),{article:t,label:n,bubble:s}}function zA(r,e,t){let n=Re("details","fh-ai-sources"),s=t?e.filter(o=>t.has(o.sourceId)):e;n.append(Re("summary","",`\u67E5\u770B ${s.length} \u5904\u539F\u6587\u4F9D\u636E`));for(let o of s){let i=Re("button","fh-ai-source");i.type="button",i.dataset.sourceAnchor=o.anchor,i.append(Re("strong","",o.sourceId+" \xB7 "+o.title),Re("small","",o.docTitle+(o.parts>1?` \xB7 \u7247\u6BB5 ${o.part}/${o.parts}`:"")),Re("small","",o.text.slice(0,125)+(o.text.length>125?"\u2026":""))),i.addEventListener("click",()=>$A(o)),n.append(i)}return r.append(n),n}function SA(r){return r.blocks.map(e=>e.text+(e.sourceIds.length?" ["+e.sourceIds.join(", ")+"]":"")).join(`
+`+e.outerHTML;if(fhProviderUpgrade.hasSecret(n))throw new Error("\u5BFC\u51FA\u68C0\u67E5\u53D1\u73B0\u654F\u611F\u5185\u5BB9\uFF0C\u5DF2\u963B\u6B62\u4E0B\u8F7D\u3002");return await window.fhPortablePack.encode(n)}async function Xh(){if(At)return;try{await Fc()}catch(r){return re(Le(r))}if(De?.completed!==Me.length)return re("\u8BF7\u5148\u5B8C\u6210\u6216\u5BFC\u5165\u5B8C\u6574\u5411\u91CF\u7D22\u5F15\u3002");kt(!0,"export"),Tt();try{Zh("项目知识手册_AI问答版_免建库_单文件压缩版.html",await qA(),"text/html"),Fa="downloaded",re("\u514D\u5EFA\u5E93 HTML \u5DF2\u53D1\u8D77\u4E0B\u8F7D\u3002\u4EE5\u540E\u8BF7\u6253\u5F00\u4E0B\u8F7D\u540E\u7684\u6587\u4EF6\uFF0C\u4E0D\u542B Key \u6216\u4F1A\u8BDD\u3002")}catch(r){re(Le(r))}finally{kt(!1),Tt()}}async function mT(){if(At)return;try{await Fc()}catch(r){return re(Le(r))}if(De?.completed!==Me.length)return re("\u8BF7\u5148\u5B8C\u6210\u6216\u5BFC\u5165\u5B8C\u6574\u5411\u91CF\u7D22\u5F15\u3002");if(!window.showSaveFilePicker)return Xh();kt(!0,"export"),Tt();let saving=false;try{let e=await window.showSaveFilePicker({suggestedName:"项目知识手册_AI问答版_免建库_单文件压缩版.html",types:[{description:"\u514D\u5EFA\u5E93\u77E5\u8BC6\u624B\u518C HTML",accept:{"text/html":[".html"]}}]});if(["项目知识手册.html", "项目知识手册_AI问答版_免建库.html", "项目知识手册_AI问答版_免建库_流式阅读版.html","项目知识手册_AI问答版_免建库_体验优化版.html"].includes(e.name))throw new Error("\u4E0D\u80FD\u8986\u76D6\u539F\u59CB\u624B\u518C\uFF0C\u8BF7\u4E3A AI \u514D\u5EFA\u5E93\u526F\u672C\u9009\u62E9\u5176\u4ED6\u6587\u4EF6\u540D\u3002");let expected=await fhDirectoryUpdate.checkSaveTarget(e),t=await qA();saving=true,await fhDirectoryUpdate.commitSave(e,t,expected),Fa="saved",re("\u514D\u5EFA\u5E93\u526F\u672C\u5DF2\u4FDD\u5B58\u3002\u4E0B\u6B21\u6253\u5F00\u4FDD\u5B58\u540E\u7684\u6587\u4EF6\uFF0C\u65E0\u9700\u91CD\u5EFA\u7D22\u5F15\u3002")}catch(e){if(!saving&&["SecurityError","NotSupportedError"].includes(e?.name)){kt(!1),await Xh();return}re(e?.name==="AbortError"?"\u5DF2\u53D6\u6D88\u4FDD\u5B58\uFF0C\u672A\u4FEE\u6539\u6587\u4EF6\u3002\u7D22\u5F15\u4ECD\u53EF\u5728\u672C\u9875\u4F7F\u7528\u3002":Le(e))}finally{kt(!1),Tt()}}function $A(r){window.fhBookPages.ensure(r.anchor);let e=document.getElementById(r.anchor);if(!e)return re("\u5F53\u524D\u624B\u518C\u4E2D\u627E\u4E0D\u5230\u8BE5\u5F15\u7528\u4F4D\u7F6E\u3002");location.hash=r.anchor,setTimeout(()=>{e.scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"start"}),e.classList.add("fh-ai-target"),setTimeout(()=>e.classList.remove("fh-ai-target"),2800)},150),innerWidth<900&&Yh()}function Lc(r,e){P("fh-ai-welcome").hidden=!0;let t=Re("article","fh-ai-message "+r),n=Re("div","fh-ai-message-label",r==="user"?"\u4F60":r==="error"?"\u64CD\u4F5C\u672A\u5B8C\u6210":"\u77e5\u8bc6\u52a9\u624b"),s=Re("div","fh-ai-bubble",e);return t.append(n,s),P("fh-ai-messages").append(t),fhReadingUpgrade.messageAdded(t,r),{article:t,label:n,bubble:s}}function zA(r,e,t){let n=Re("details","fh-ai-sources"),s=t?e.filter(o=>t.has(o.sourceId)):e;n.append(Re("summary","",`\u67E5\u770B ${s.length} \u5904\u539F\u6587\u4F9D\u636E`));for(let o of s){let i=Re("button","fh-ai-source");i.type="button",i.dataset.sourceAnchor=o.anchor,i.append(Re("strong","",o.sourceId+" \xB7 "+o.title),Re("small","",o.docTitle+(o.parts>1?` \xB7 \u7247\u6BB5 ${o.part}/${o.parts}`:""))),i.addEventListener("click",()=>$A(o)),n.append(i)}return r.append(n),n}function SA(r){return r.blocks.map(e=>e.text+(e.sourceIds.length?" ["+e.sourceIds.join(", ")+"]":"")).join(`
 
 `)+(r.missingInformation.length?`
 
@@ -164,11 +164,11 @@ function installChatUpgrade() {
   const elementMessages = new WeakMap();
   let state = {schema:SCHEMA, version:1, knowledgeVersion:Vt.corpusHash, activeSessionId:'', sessions:[]};
   let directory = null, restoring = false, initialized = false, awaitingAnswer = false, database;
-  let timer, saveChain = Promise.resolve(), storageBusy = false, diskFault = false;
+  let timer, saveChain = Promise.resolve(), storageBusy = false, diskFault = false, sealed = false;
   let sequence = 0, diagramChain = Promise.resolve();
 
   const historyBar = Re('div', 'fh-ai-historybar');
-  historyBar.innerHTML = '<label for="fh-ai-history-select">历史会话</label><select id="fh-ai-history-select" aria-label="选择历史会话" disabled><option>正在读取历史…</option></select><button type="button" id="fh-ai-history-folder" title="设置聊天记录保存目录">保存目录</button>';
+  historyBar.innerHTML = '<label for="fh-ai-history-select">历史会话</label><select id="fh-ai-history-select" aria-label="选择历史会话" disabled><option>正在读取历史…</option></select><button type="button" id="fh-ai-history-folder" title="设置可选的本地文件备份">记录备份</button>';
   P('fh-ai-tab-chat').insertBefore(historyBar, P('fh-ai-messages'));
   const historyStatus = Re('p', 'fh-ai-history-status', '正在读取本地聊天记录…');
   historyStatus.id = 'fh-ai-history-status';
@@ -176,10 +176,27 @@ function installChatUpgrade() {
   historyBar.after(historyStatus);
   const card = Re('div', 'fh-ai-card fh-ai-history-card');
   card.id = 'fh-ai-history-settings';
-  card.innerHTML = '<h4>聊天记录与本地目录</h4><p>选择一个本地文件夹后，会话将自动保存到该目录；下次打开时可恢复并继续聊天。</p><label class="fh-ai-field" for="fh-ai-history-path">保存位置<input id="fh-ai-history-path" type="text" readonly value="尚未选择目录（当前自动保存在本浏览器）"></label><div class="fh-ai-row"><button type="button" id="fh-ai-pick-history-dir">选择本地目录</button><button type="button" id="fh-ai-reconnect-history-dir">恢复目录访问 / 读取</button><button type="button" id="fh-ai-save-history-now">立即保存</button><button type="button" id="fh-ai-disconnect-history-dir">断开目录</button></div><p class="fh-ai-small">文件名：知识助手_聊天历史.json。浏览器仅允许访问您选择并授权的目录；目录标签显示文件夹名称。未选择目录时，历史仍自动保存在本浏览器中。</p><div class="fh-ai-row"><button type="button" id="fh-ai-import-history">导入历史 JSON</button><input id="fh-ai-import-history-file" type="file" accept=".json,application/json" hidden></div><p id="fh-ai-disk-history-status" class="fh-ai-small" role="status"></p>';
+  card.innerHTML = `<h4>聊天记录</h4>
+    <p id="fh-ai-browser-history-status" class="fh-ai-small" role="status">正在读取浏览器记录…</p>
+    <details id="fh-ai-history-backup" class="fh-ai-history-backup">
+      <summary>本地文件备份（可选）</summary>
+      <div class="fh-ai-history-backup-content">
+        <p class="fh-ai-small">需要文件副本或迁移会话时，再选择目录或导入 JSON。</p>
+        <label class="fh-ai-field" for="fh-ai-history-path">保存目录<input id="fh-ai-history-path" type="text" readonly value="尚未选择本地目录"></label>
+        <div class="fh-ai-row fh-ai-history-backup-actions">
+          <button type="button" id="fh-ai-pick-history-dir">选择本地目录</button>
+          <button type="button" id="fh-ai-reconnect-history-dir">恢复目录访问 / 读取</button>
+          <button type="button" id="fh-ai-save-history-now">立即保存</button>
+          <button type="button" id="fh-ai-disconnect-history-dir">断开目录</button>
+        </div>
+        <p class="fh-ai-small">仅访问你选择并授权的目录，文件名为“知识助手_聊天历史.json”。</p>
+        <div class="fh-ai-row"><button type="button" id="fh-ai-import-history">导入历史 JSON</button><input id="fh-ai-import-history-file" type="file" accept=".json,application/json" hidden></div>
+        <p id="fh-ai-disk-history-status" class="fh-ai-small" role="status"></p>
+      </div>
+    </details>`;
   P('fh-ai-tab-settings').prepend(card);
   const selector = P('fh-ai-history-select');
-  const status = text => {historyStatus.textContent = text; P('fh-ai-disk-history-status').textContent = text;};
+  const status = text => {historyStatus.textContent = text; P('fh-ai-browser-history-status').textContent = text; P('fh-ai-disk-history-status').textContent = text;};
 
   function scrub(value) {
     let json = JSON.stringify(value);
@@ -255,7 +272,7 @@ function installChatUpgrade() {
     }
     selector.value = state.activeSessionId;
     selector.disabled = At || awaitingAnswer || !initialized || storageBusy;
-    P('fh-ai-history-path').value = directory ? `${directory.name} / ${FILE_NAME}` : '尚未选择目录（当前自动保存在本浏览器）';
+    P('fh-ai-history-path').value = directory ? `${directory.name} / ${FILE_NAME}` : '尚未选择本地目录';
     for (const id of ['fh-ai-pick-history-dir','fh-ai-reconnect-history-dir','fh-ai-disconnect-history-dir','fh-ai-save-history-now','fh-ai-import-history']) P(id).disabled = At || awaitingAnswer || !initialized || storageBusy;
     P('fh-ai-reconnect-history-dir').disabled ||= !directory;
     P('fh-ai-disconnect-history-dir').disabled ||= !directory;
@@ -282,6 +299,7 @@ function installChatUpgrade() {
   }
   async function put(key, value) {
     const database = await db();
+    if (sealed && key === 'history') return;
     return new Promise((resolve, reject) => {
       const tx = database.transaction('data', 'readwrite');
       const store = tx.objectStore('data');
@@ -290,6 +308,7 @@ function installChatUpgrade() {
     });
   }
   async function saveLocal() {
+    if (sealed) return;
     const snapshot = scrub(state);
     try {await put('history', snapshot);}
     catch (error) {
@@ -307,28 +326,36 @@ function installChatUpgrade() {
   }
   async function saveDisk() {
     const handle = directory;
-    if (!handle || diskFault) return;
+    if (!handle || diskFault || sealed) return;
     if (await handle.queryPermission({mode:'readwrite'}) !== 'granted') {
       status('已保存到本浏览器；目录需要授权，请点击“恢复目录访问 / 读取”。'); return;
     }
     const incoming = await readDirectory(handle);
-    if (handle !== directory) return;
+    if (handle !== directory || sealed) return;
     if (incoming) state = merge(state, incoming);
     const snapshot = scrub({...state, exportedAt:now()});
     const file = await handle.getFileHandle(FILE_NAME, {create:true});
-    if (handle !== directory) return;
+    if (handle !== directory || sealed) return;
     let writable;
-    try {writable = await file.createWritable(); await writable.write(JSON.stringify(snapshot, null, 2)); await writable.close();}
+    try {
+      writable = await file.createWritable();
+      if (sealed) {await writable.abort(); return;}
+      await writable.write(JSON.stringify(snapshot, null, 2));
+      if (sealed) {await writable.abort(); return;}
+      await writable.close();
+    }
     catch (error) {try {await writable?.abort();} catch {} throw error;}
     status(`已自动保存到 ${handle.name} / ${FILE_NAME} · ${new Date().toLocaleTimeString('zh-CN')}`);
   }
   function flush() {
+    if (sealed) return Promise.resolve();
     clearTimeout(timer);
     saveChain = saveChain.catch(() => {}).then(async () => {
+      if (sealed) return;
       try {
         await saveLocal();
-        if (directory && !diskFault) {await saveDisk(); await saveLocal();}
-        else if (!directory) status('历史已自动保存在本浏览器，可在“保存目录”中配置本地文件夹。');
+        if (!sealed && directory && !diskFault) {await saveDisk(); await saveLocal();}
+        else if (!directory) status('记录已自动保存在当前浏览器。');
       } catch (error) {diskFault = Boolean(directory); status(`保存未完成：${error.message}。浏览器中的记录仍保留，可导出备份。`);}
     });
     return saveChain;
@@ -358,7 +385,7 @@ function installChatUpgrade() {
         const result = base.message(message.role, message.role === 'assistant' ? '' : message.text);
         if (message.role === 'assistant') {
           result.bubble.append(fhChatPresentation.renderMarkdown(message.text || '这条回答未完成，您可以继续提问。', (message.sources || []).map(source => source.sourceId), message.sources || []));
-          if (message.kind === 'local' && message.sources?.length) base.sources(result.bubble, message.sources).open = true;
+          if (message.kind === 'local' && message.sources?.length) base.sources(result.bubble, message.sources);
           if (message.context) za.push(contextRecord(message.context));
         }
       }
@@ -448,7 +475,7 @@ function installChatUpgrade() {
     if (At || awaitingAnswer || !initialized || storageBusy) return;
     newSession(); renderSession(); changed(); P('fh-ai-question').focus();
   }, true);
-  P('fh-ai-history-folder').addEventListener('click', () => {qc('settings'); card.scrollIntoView({block:'start'});});
+  P('fh-ai-history-folder').addEventListener('click', () => {qc('settings'); P('fh-ai-history-backup').open = true; card.scrollIntoView({block:'start'});});
   P('fh-ai-pick-history-dir').addEventListener('click', () => storageAction(async () => {
     if (!window.showDirectoryPicker) throw new Error('当前浏览器不支持直接选择保存目录；请使用 Chrome / Edge，或导入、导出历史 JSON。');
     const handle = await window.showDirectoryPicker({id:'standalone-handbook-2-chat-history', mode:'readwrite'});
@@ -509,7 +536,7 @@ function installChatUpgrade() {
     }
     if (!current()) newSession();
     initialized = true; renderSession();
-    if (!directory) status('历史自动保存在本浏览器；可选择本地目录持久保存。');
+    if (!directory) status('记录自动保存在当前浏览器。');
     await saveLocal().catch(error => status(error.message));
     P('fh-ai-panel').dataset.historyReady = 'true';
   })();
@@ -573,7 +600,21 @@ function installChatUpgrade() {
     return fragment;
   }
 
-  return {ready, renderDiagrams, waitForDiagrams:() => diagramChain};
+  return {ready, renderDiagrams, waitForDiagrams:() => diagramChain,
+    snapshot() {
+      const session = current();
+      if (session) session.draft = P('fh-ai-question').value;
+      return copy(scrub(state));
+    },
+    async restore(snapshot) {
+      await ready;
+      state = validate(snapshot); renderSession(); void flush();
+    },
+    seal() {
+      const session=current();if(session)session.draft=P('fh-ai-question').value;
+      try {localStorage.setItem(FALLBACK_KEY,JSON.stringify(scrub(state)));}catch{}
+      sealed=true;initialized=false;clearTimeout(timer);
+    }};
 }
 const fhChatUpgrade = installChatUpgrade();
 // A clarification asks the reader for context; a suggested question asks the assistant for help.
@@ -1852,7 +1893,8 @@ const fhLayoutUpgrade = installFhLayoutUpgrade();
 
 // Install inside the existing runtime closure, after reading/stream/layout upgrades.
 // $A receives the source captured by each individual answer; S1 is never a global identity.
-// Source content is text only. This module does not touch Markdown sanitization or persistence.
+// Source previews use the same sanitized Markdown renderer as answers.
+// Rendering never changes the captured source text or persisted history.
 function installFhSourceUpgrade() {
   const panel = P('fh-ai-panel');
   const messages = P('fh-ai-messages');
@@ -1893,7 +1935,7 @@ function installFhSourceUpgrade() {
   const badges = element('div', 'fh-ai-source-badges');
   const qualification = element('p', 'fh-ai-source-qualification');
   const textLabel = element('p', 'fh-ai-source-text-label', '检索命中的原文片段');
-  const text = element('div', 'fh-ai-source-original');
+  const text = element('div', 'fh-ai-source-original fh-ai-markdown');
   const metadata = element('details', 'fh-ai-source-metadata');
   metadata.append(element('summary', '', '资料版本与位置'));
   const metadataList = element('dl');
@@ -1971,7 +2013,7 @@ function installFhSourceUpgrade() {
     }
     const read = key => string(source[key]) || string(corpusSource?.[key]);
     current = {source, trigger:trigger instanceof HTMLElement ? trigger : null};
-    setText(eyebrow, read('sourceId') ? '本轮引用 ' + read('sourceId') + ' · 原文预览' : '原文预览');
+    setText(eyebrow, read('sourceId') ? '本轮引用 ' + read('sourceId').replace(/^S(?=\d+$)/, '') + ' · 原文预览' : '原文预览');
     setText(title, read('docTitle') || '来源文章');
     setText(section, read('title') || '原文片段');
     setText(context, read('context'));
@@ -1985,7 +2027,15 @@ function installFhSourceUpgrade() {
     }
     badges.hidden = !badges.childElementCount;
     const originalText = read('text');
-    setText(text, originalText || '该来源未附可预览的原文文本，请打开完整原文核对。');
+    text.classList.remove('is-plain');
+    if (originalText) {
+      try {
+        text.replaceChildren(_A(originalText));
+      } catch {
+        text.classList.add('is-plain');
+        setText(text, originalText);
+      }
+    } else setText(text, '该来源未附可预览的原文文本，请打开完整原文核对。');
     const qualified = source.qualified === true || corpusSource?.qualified === true;
     const pending = originalText.includes('待确认');
     setText(qualification, pending

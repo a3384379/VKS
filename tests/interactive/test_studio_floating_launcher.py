@@ -110,6 +110,7 @@ def test_window_resize_continues_without_releasing_pointer_and_remembers_size(ma
                 page.get_by_role("button", name="打开知识助手", exact=True).click()
             panel = page.get_by_role("complementary", name="知识助手")
             expect(panel).to_be_visible()
+            panel.locator(".source-disclosure > summary").click()
             expect(panel.locator(".markdown table tbody tr")).to_have_count(160)
             box = panel.bounding_box()
             handle = page.get_by_role("button", name="调整助手大小 nw", exact=True).bounding_box()

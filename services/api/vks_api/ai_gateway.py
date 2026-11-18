@@ -11,7 +11,6 @@ import http.client
 import json
 import math
 import os
-import ssl
 from contextlib import contextmanager
 from datetime import datetime
 from urllib.parse import urlsplit, urlunsplit
@@ -110,8 +109,10 @@ class PolicyInput(Input):
     secret_ref: str | None = Field(default=None, pattern=r"^(model-default|model-connection-[0-9a-f-]{36})$")
     allow_external: bool = False
     allow_source: bool = False
-    max_input_tokens: int = Field(default=12000, ge=1000, le=128000)
+    max_input_tokens: int = Field(default=12000, ge=1000, le=1050000)
     max_output_tokens: int = Field(default=2000, ge=100, le=16000)
+    association_max_input_tokens: int | None = Field(default=None, ge=1000, le=1050000)
+    association_max_output_tokens: int | None = Field(default=None, ge=100, le=128000)
     # Accept historical clients/settings without enforcing project quotas.
     daily_token_limit: int = Field(default=100000, ge=1000, le=100000000, deprecated=True)
     per_request_cost_limit_micro: int = Field(default=1000000, ge=0, le=1000000000, deprecated=True)
@@ -191,7 +192,17 @@ def endpoint_policy(config):
 
 
 def request_model(config, body):
+    from .model_stream import CURRENT_MODEL_STREAM, request_stream
+
+    stream = CURRENT_MODEL_STREAM.get()
+    if stream is not None and config["protocol"] in {"responses", "chat_completions"}:
+        return request_stream(config, body, stream)
     with _model_preflight():
+        # Internal multi-target transports may need proportionally more output
+        # time. Public policy/input schemas do not expose this transient hint.
+        request_timeout = config.get("_request_timeout_seconds", 30)
+        if type(request_timeout) is not int or not 30 <= request_timeout <= 900:
+            failure("VKS_INVALID_INPUT", "模型请求等待上限无效")
         policy, url = endpoint_policy(config)
         try:
             p, ip, port = policy.resolve(url)
@@ -204,11 +215,20 @@ def request_model(config, body):
             failure("VKS_DEPENDENCY_UNAVAILABLE", "模型凭证引用未配置", 503)
     # From connection construction onward any unclassified error is uncertain.
     # In particular, never infer not-sent from an HTTP status or exception code.
-    conn = http.client.HTTPConnection(ip, port, timeout=30)
-    try:
+    from .model_transport import MODEL_CONNECTIONS, PinnedTLSConnection
+
+    # Include the freshly validated pinned address and credential identity.
+    # A rotated secret/changed DNS result never borrows the previous socket.
+    pool_key = (p.scheme, p.hostname, ip, port, hashlib.sha256((key or "").encode()).digest())
+
+    def connect():
         if p.scheme == "https":
-            conn.connect()
-            conn.sock = ssl.create_default_context().wrap_socket(conn.sock, server_hostname=p.hostname)
+            return PinnedTLSConnection(ip, port, p.hostname, request_timeout)
+        return http.client.HTTPConnection(ip, port, timeout=request_timeout)
+
+    conn = MODEL_CONNECTIONS.take(pool_key, connect, request_timeout)
+    reusable = False
+    try:
         host = (f"[{p.hostname}]" if ":" in p.hostname else p.hostname) + (f":{port}" if port not in (80, 443) else "")
         headers = {
             "Host": host,
@@ -227,13 +247,48 @@ def request_model(config, body):
             failure("VKS_DEPENDENCY_UNAVAILABLE", "模型服务暂时不可用，请稍后重试", 503, True)
         if response.status != 200:
             failure("VKS_INVALID_INPUT", "模型服务拒绝请求或发生重定向")
-        return json.loads(raw)
+        result = json.loads(raw)
+        reusable = not getattr(response, "will_close", True) and getattr(conn, "sock", None) is not None
+        return result
+    except TimeoutError as exc:
+        raise DomainError(
+            "VKS_DEPENDENCY_UNAVAILABLE",
+            "模型响应超时，尚未确认生成结果；已有内容已保留，可手动重试",
+            503,
+            details={"failure_class": "timeout", "timeout_seconds": request_timeout},
+            retryable=True,
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise DomainError(
+            "VKS_DEPENDENCY_UNAVAILABLE",
+            "模型服务返回了无效的 JSON 响应；已有内容已保留",
+            503,
+            details={"failure_class": "invalid_json"},
+            retryable=True,
+        ) from exc
+    except http.client.HTTPException as exc:
+        raise DomainError(
+            "VKS_DEPENDENCY_UNAVAILABLE",
+            "模型连接在响应完成前断开，尚未确认生成结果；已有内容已保留",
+            503,
+            details={"failure_class": "connection_closed"},
+            retryable=True,
+        ) from exc
     except (OSError, ValueError) as exc:
         if isinstance(exc, DomainError):
             raise
-        failure("VKS_DEPENDENCY_UNAVAILABLE", "模型连接或响应格式错误", 503, True)
+        raise DomainError(
+            "VKS_DEPENDENCY_UNAVAILABLE",
+            "模型连接失败；已有内容已保留，请稍后手动重试",
+            503,
+            details={"failure_class": "connection_error"},
+            retryable=True,
+        ) from exc
     finally:
-        conn.close()
+        if reusable:
+            MODEL_CONNECTIONS.put(pool_key, conn)
+        else:
+            conn.close()
 
 
 class AiService:
@@ -317,10 +372,15 @@ class AiService:
         day = datetime.now(ZoneInfo(config["timezone"])).date().isoformat()
         with self.service.db() as s:
             self.service.require(s, actor, pid, "knowledge:read")
-            s.scalar(select(Project).where(Project.id == pid).with_for_update())
-            ledger = s.scalar(
-                select(ModelLedger).where(ModelLedger.project_id == pid, ModelLedger.day == day).with_for_update()
-            )
+            batched = s.info.get("vks_completion_batch") and s.bind.dialect.name == "sqlite"
+            if not batched:
+                s.scalar(select(Project).where(Project.id == pid).with_for_update())
+            ledgers = s.info.setdefault("vks_ledgers", {}) if batched else {}
+            ledger = ledgers.get((pid, day))
+            if ledger is None:
+                ledger = s.scalar(
+                    select(ModelLedger).where(ModelLedger.project_id == pid, ModelLedger.day == day).with_for_update()
+                )
             if not ledger:
                 ledger = ModelLedger(
                     id=uid(),
@@ -333,6 +393,7 @@ class AiService:
                 )
                 s.add(ledger)
                 s.flush()
+            ledgers[(pid, day)] = ledger
             ledger.reserved_tokens += tokens
             ledger.reserved_cost_micro += cost
             usage = ModelUsage(
@@ -349,16 +410,28 @@ class AiService:
                 cost_micro=0,
             )
             s.add(usage)
-            s.flush()
+            # Internal completion futures wake only after their outer commit.
+            # The ID is already assigned; the savepoint flush can insert the
+            # reservation and audit together instead of flushing twice.
+            if not s.info.get("vks_completion_batch"):
+                s.flush()
             self.service.audit(s, actor, pid, "model.reserve", usage.id)
             return usage.id
 
     def settle(self, usage_id, config, input_tokens, output_tokens, state, error=""):
         with self.service.db() as s:
-            usage = s.scalar(select(ModelUsage).where(ModelUsage.id == usage_id).with_for_update())
+            usage = (
+                s.get(ModelUsage, usage_id)
+                if s.info.get("vks_completion_batch") and s.bind.dialect.name == "sqlite"
+                else s.scalar(select(ModelUsage).where(ModelUsage.id == usage_id).with_for_update())
+            )
             if usage.state != "reserved":
                 return
-            ledger = s.scalar(select(ModelLedger).where(ModelLedger.id == usage.ledger_id).with_for_update())
+            ledger = (
+                s.get(ModelLedger, usage.ledger_id)
+                if s.info.get("vks_completion_batch") and s.bind.dialect.name == "sqlite"
+                else s.scalar(select(ModelLedger).where(ModelLedger.id == usage.ledger_id).with_for_update())
+            )
             ledger.reserved_tokens -= usage.reservation_tokens
             ledger.reserved_cost_micro -= usage.reservation_cost_micro
             # On uncertain transport failure keep a conservative reservation charge.

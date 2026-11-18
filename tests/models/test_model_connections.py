@@ -203,3 +203,45 @@ def test_model_catalog_rechecks_project_permission_after_network_response(site, 
     result = web.post(f"/api/v1/projects/{pid}/model-connections/models", json=form(endpoint), headers=headers)
     assert result.status_code in {403, 404}, result.text
     assert "PRIVATE_ACCOUNT_MODEL_MUST_NOT_LEAK" not in result.text
+
+
+def test_purpose_budgets_save_hot_and_legacy_client_preserves_them(site, upstream):
+    from vks_api.token_budget import association_policy
+
+    web, _service, _, pid, headers = site
+    endpoint, requests, _ = upstream
+    base = f"/api/v1/projects/{pid}/model-connections"
+    payload = form(
+        endpoint,
+        model_id="gpt-6-luna",
+        max_output_tokens=8000,
+        max_input_tokens=32000,
+        association_max_input_tokens=128000,
+        association_max_output_tokens=16000,
+    )
+    response = web.post(base, json=payload, headers={**headers, "If-Match": "1"})
+    assert response.status_code == 200, response.text
+    saved = response.json()["data"]
+    payload.update(
+        connection_id=saved["connections"][0]["id"],
+        association_max_input_tokens=256000,
+        association_max_output_tokens=32000,
+    )
+    payload.pop("api_key")
+    updated = web.post(base, json=payload, headers={**headers, "If-Match": str(saved["policy"]["row_version"])})
+    assert updated.status_code == 200, updated.text
+    current = updated.json()["data"]["policy"]
+    assert (current["max_input_tokens"], current["max_output_tokens"]) == (32000, 8000)
+    assert (association_policy(current)["max_input_tokens"], association_policy(current)["max_output_tokens"]) == (
+        256000,
+        32000,
+    )
+    for field in ("max_input_tokens", "association_max_input_tokens", "association_max_output_tokens"):
+        payload.pop(field)
+    legacy = web.post(base, json=payload, headers={**headers, "If-Match": str(current["row_version"])})
+    assert legacy.status_code == 200, legacy.text
+    assert all(
+        legacy.json()["data"]["policy"][key] == current[key]
+        for key in ("max_input_tokens", "association_max_input_tokens", "association_max_output_tokens")
+    )
+    assert not requests  # Saving settings never probes a model or embeds content.

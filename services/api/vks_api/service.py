@@ -48,6 +48,7 @@ JOB_SCOPES = {
     "import_preview": "source:import",
     "material_migrate": "knowledge:edit",
     "associate_all": "knowledge:edit",
+    "reassociation_preview": "knowledge:edit",
     "index": "analysis:run",
     "generate_documents": "analysis:run",
     "suggest_links": "analysis:run",
@@ -126,6 +127,7 @@ class Service:
         )
 
         self.data_dir = Path(data_dir or os.getenv("VKS_DATA_DIR", ".vks")).resolve()
+        self.personal_mode = os.getenv("VKS_PERSONAL_MODE", "0") == "1"
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir.chmod(0o700)
         (self.data_dir / "objects").mkdir(exist_ok=True)
@@ -147,6 +149,7 @@ class Service:
             @event.listens_for(self.engine, "connect")
             def sqlite_config(conn, record):
                 conn.execute("PRAGMA foreign_keys=ON")
+                conn.execute("PRAGMA synchronous=FULL")
                 conn.create_function(
                     "vks_casefold",
                     1,
@@ -164,9 +167,22 @@ class Service:
             with self.engine.connect() as connection:
                 from .personal_migration import migrate_sqlite
 
+                # WAL lets permission-scoped readers proceed while a short
+                # writer transaction commits. FULL retains durable fsync;
+                # in-memory SQLite retains its native journal mode.
+                if url not in ("sqlite://", "sqlite:///:memory:"):
+                    connection.exec_driver_sql("PRAGMA journal_mode=WAL")
                 migrate_sqlite(connection)
                 connection.exec_driver_sql("BEGIN IMMEDIATE")
+                from .query_indexes import ensure_sqlite_query_indexes
+
+                # Existing SQLite tables need additive indexes before create_all
+                # (which only creates indexes for newly created tables).
+                ensure_sqlite_query_indexes(connection)
                 Base.metadata.create_all(connection)
+                from .input_versions import install_sqlite
+
+                install_sqlite(connection)
                 if "metadata_json" not in {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(relation)")}:
                     connection.exec_driver_sql(
                         "ALTER TABLE relation ADD COLUMN metadata_json JSON NOT NULL DEFAULT '{}'"
@@ -212,6 +228,12 @@ class Service:
 
     @contextmanager
     def db(self):
+        from .inference_pipeline import WRITE_SESSION
+
+        shared = WRITE_SESSION.get()
+        if shared is not None and shared[0] is self:
+            yield shared[1]
+            return
         with self.lock:
             try:
                 with self.Session.begin() as s:
@@ -286,6 +308,17 @@ class Service:
                 c.revoked = True
 
     def require(self, s, actor, pid, scope=READ):
+        from .inference_pipeline import CURRENT_PIPELINE
+        from .jobs import PERSONAL_TASK
+
+        pipeline = CURRENT_PIPELINE.get()
+        if self.personal_mode and (
+            PERSONAL_TASK.get() == (self, pid) or pipeline is not None and pipeline.service is self
+        ):
+            project = s.get(Project, pid)
+            if project is None:
+                raise DomainError("VKS_NOT_FOUND", "未找到对象", 404)
+            return project
         return team_identity.authorize_project(self, s, actor, pid, scope)
 
     def _can(self, s, actor, pid, scope):
@@ -320,7 +353,9 @@ class Service:
             )
             s.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
         h = sha(canonical(payload))
-        row = s.scalar(
+        ready = s.info.get("vks_ready_idempotency", {}) if operation == "interactive.binding.save" else {}
+        identity = (pid, actor.id, operation, key)
+        row = ready[identity] if identity in ready else s.scalar(
             select(Idempotency).where(
                 Idempotency.project_id == pid,
                 Idempotency.actor_id == actor.id,
@@ -347,11 +382,12 @@ class Service:
             return row.response_json
         result = fn()
         s.flush()
-        s.add(
-            Idempotency(
-                project_id=pid, actor_id=actor.id, operation=operation, key=key, payload_hash=h, response_json=result
-            )
+        row = Idempotency(
+            project_id=pid, actor_id=actor.id, operation=operation, key=key, payload_hash=h, response_json=result
         )
+        s.add(row)
+        if identity in ready:
+            ready[identity] = row
         return result
 
     def _check_sensitive_replay(self, s, actor, pid, response):
@@ -1167,7 +1203,7 @@ class Service:
                 j.state = "cancelling"
                 j.cancel_requested = True
             self.audit(s, actor, j.project_id, "job.cancel", jid, metadata={"reason": reason[:500]})
-            if j.kind == "import_preview" or j.input_json.get("_prototype_batch"):
+            if j.kind in ("import_preview", "reassociation_preview") or j.input_json.get("_prototype_batch"):
                 from .reading import ReadingService
 
                 return ReadingService(self).job_dto(s, actor, j)
@@ -1193,6 +1229,10 @@ class Service:
             if j.kind == "associate_all":
                 j.result_json = {**j.result_json, "processing_epoch": j.attempt + 1}
             self.audit(s, actor, j.project_id, "job.retry", jid)
+            if j.kind == "reassociation_preview":
+                from .reading import ReadingService
+
+                return ReadingService(self).job_dto(s, actor, j)
             return self.job_dto(j)
 
     def set_relation_state(self, actor, rid, payload, version):

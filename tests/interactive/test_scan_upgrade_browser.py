@@ -50,6 +50,7 @@ def test_completed_legacy_scan_uses_origin_version_to_upgrade_without_rescanning
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
+            page.locator(".batch-task-details > summary").click()
             page.get_by_role("button", name="开始 AI 关联", exact=True).click()
             expect(page.get_by_label("后台 AI 关联进度", exact=True)).to_contain_text("排队")
             assert resumes and resumes[0]["pipeline"] is True

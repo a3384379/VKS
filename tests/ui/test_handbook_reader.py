@@ -167,7 +167,8 @@ def test_handbook_export_keeps_framework_markdown_exact_links_and_readonly(handb
             expect(page).to_have_url(re.compile(r"#section=s1$"))
             expect(book.locator(".hb-article h1")).to_have_text("Overview")
             book.get_by_role("button", name="向手册 AI 提问", exact=True).click()
-            expect(page.get_by_role("tab", name="AI 问答", exact=True)).to_be_visible()
+            assistant = page.frame_locator('iframe[title="知识手册 AI 助手"]')
+            expect(assistant.locator("#fh-ai-question")).to_be_visible()
             assert not errors, errors
             assert not [url for url in requests if url.startswith("http")]
         finally:

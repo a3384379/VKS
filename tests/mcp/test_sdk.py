@@ -20,7 +20,7 @@ async def test_official_sdk_stdio_handshake_and_schema_permissions():
             initialized = await client.initialize()
             assert initialized.serverInfo.name == "visual-knowledge-studio"
             tools = (await client.list_tools()).tools
-            assert len(tools) == 25
+            assert len(tools) == 30
             assert not {"approve", "publish"}.intersection({t.name for t in tools})
             for tool in tools:
                 assert tool.outputSchema and '"$ref"' not in str(tool.outputSchema)

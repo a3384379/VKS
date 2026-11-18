@@ -360,9 +360,11 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 #fh-ai-source-preview .fh-ai-source-qualification.has-pending {border-color:#c8aa67; background:#faf7ee; color:#7b663d;}
 #fh-ai-source-preview .fh-ai-source-text-label {margin:0 0 8px; color:#779181; font-size:11px;}
 #fh-ai-source-preview .fh-ai-source-original {
-  white-space:pre-wrap; overflow-wrap:anywhere; word-break:normal; line-height:1.9;
+  white-space:normal; overflow-wrap:anywhere; word-break:normal; line-height:1.9;
   color:#2f4037; font-size:14px; user-select:text;
 }
+#fh-ai-source-preview .fh-ai-source-original.is-plain {white-space:pre-wrap;}
+#fh-ai-source-preview .fh-ai-source-original>:first-child {margin-top:0;}
 #fh-ai-source-preview .fh-ai-source-metadata {margin-top:20px; padding-top:12px; border-top:1px dashed #dce8df; color:#6a7b70; font-size:12px;}
 #fh-ai-source-preview .fh-ai-source-metadata summary {cursor:pointer; line-height:1.8;}
 #fh-ai-source-preview .fh-ai-source-metadata dl {display:grid; grid-template-columns:auto minmax(0,1fr); gap:7px 12px; margin:12px 0 0; line-height:1.7;}
@@ -472,7 +474,9 @@ body .diagram-canvas.fh-diagram-preview > svg {
   min-height: 0;
   height: auto;
   padding: 12px;
-  overflow: auto;
+  /* Keep observer-driven fitting independent of scrollbar appearance. */
+  overflow: scroll;
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
   touch-action: none;
   scroll-behavior: auto;
@@ -700,6 +704,15 @@ body .diagram-canvas.fh-diagram-preview > svg {
   #fh-ai-panel .fh-ai-message.error .fh-ai-bubble { max-width: calc(100% - 12px); }
   #fh-ai-panel .fh-ai-composer textarea { font-size: 16px; }
 }
+</style>
+<style id="fh-ai-history-backup-style">
+.fh-ai-history-backup{border:1px solid #e0e9e2;border-radius:8px;margin-top:10px;background:#f8faf8}
+.fh-ai-history-backup>summary{padding:10px 12px;font-size:12px;cursor:pointer;color:#3e6751}
+.fh-ai-history-backup-content{padding:0 12px 12px}
+.fh-ai-history-backup-content .fh-ai-field{margin-top:10px}
+.fh-ai-history-backup-actions{display:flex;flex-wrap:wrap;gap:7px}
+.fh-ai-history-backup-actions button{white-space:normal}
+#fh-ai-browser-history-status{overflow-wrap:anywhere}
 </style>
 </head>
 <body>

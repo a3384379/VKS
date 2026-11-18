@@ -111,32 +111,33 @@ export function NativeNetworkSettings({
         aria-expanded={open}
         aria-controls="native-network-settings"
       >
-        <Settings2 size={14} /> 文档设置
+        <Settings2 size={14} /> 外部资源访问
       </button>
       {open && (
         <section
           id="native-network-settings"
           className="native-settings-panel"
-          aria-label="原样文档设置"
+          aria-label="外部资源访问"
           onKeyDown={(event) => {
             if (event.key === "Escape") setOpen(false);
           }}
         >
           <div className="native-settings-title">
             <b>
-              <Globe size={16} /> 文档联网地址
+              <Globe size={16} /> 外部资源访问
             </b>
             <button
               type="button"
-              aria-label="关闭文档设置"
+              aria-label="关闭外部资源访问"
               onClick={() => setOpen(false)}
             >
               <X size={16} />
             </button>
           </div>
           <p>
-            原文档的 AI、字体或外部资源可访问这些地址。API Key
-            在原文档自己的设置中填写。
+            原样 HTML
+            需要加载外部字体、图片或页面接口时，可在此允许对应地址。平台 AI
+            连接请在“AI 设置”中配置。
           </p>
           <label>
             允许的 HTTPS 服务地址，每行一个
@@ -210,6 +211,7 @@ export function NativeDocumentPane({
   onLocation: (location: NativeLocation) => void;
   onFailure: (message: string) => void;
 }) {
+  const container = useRef<HTMLElement>(null);
   const handle = useRef<RuntimeHandle | null>(null);
   const [ready, setReady] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -272,6 +274,32 @@ export function NativeDocumentPane({
     if (event.type === "material.loaded") {
       sent.current = "";
       setReady(true);
+    } else if (event.type === "document.selection_menu" && visible) {
+      const data = event.payload as {
+        text?: string;
+        x?: number;
+        y?: number;
+      } | null;
+      const bounds = container.current
+        ?.querySelector("iframe")
+        ?.getBoundingClientRect();
+      if (
+        bounds &&
+        typeof data?.text === "string" &&
+        Number.isFinite(data.x) &&
+        Number.isFinite(data.y)
+      )
+        window.dispatchEvent(
+          new CustomEvent("vks-document-selection-menu", {
+            detail: {
+              text: data.text.slice(0, 4000),
+              x: bounds.left + Math.max(0, Math.min(bounds.width, data.x!)),
+              y: bounds.top + Math.max(0, Math.min(bounds.height, data.y!)),
+            },
+          }),
+        );
+    } else if (event.type === "document.selection_dismiss" && visible) {
+      document.dispatchEvent(new Event("vks-close-selection-menu"));
     } else if (event.type === "document.changed") {
       const data = event.payload as Partial<NativeLocation> | null;
       if (
@@ -309,6 +337,7 @@ export function NativeDocumentPane({
   }
   return (
     <section
+      ref={container}
       className="handbook-space native-document-space"
       hidden={!visible}
       aria-label="原样文档"

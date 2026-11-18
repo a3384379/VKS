@@ -28,6 +28,17 @@ def test_association_list_detail_search_remove_restore_and_reveal(materials, tmp
             expect(row).to_be_visible()
             detail = page.get_by_role("article", name="关联详情")
             expect(detail).to_contain_text("必须保留的人工说明")
+            expect(page.get_by_role("button", name="打开知识助手", exact=True)).to_have_count(0)
+            summary = page.get_by_role("status", name="关联任务摘要", exact=True)
+            expect(summary).to_contain_text("当前无运行任务")
+            tasks = page.locator(".batch-task-details")
+            expect(tasks).not_to_have_attribute("open", "")
+            tasks.locator(":scope > summary").click()
+            expect(tasks).to_have_attribute("open", "")
+            expect(tasks).to_contain_text("已发现 2")
+            expect(tasks).to_contain_text("人工维护 1")
+            tasks.locator(":scope > summary").click()
+            expect(tasks).not_to_have_attribute("open", "")
             expect(page.locator(".binding-list-panel .markdown")).to_have_count(0)
             page.get_by_label("搜索关联", exact=True).fill("missing-test-value")
             expect(row).to_have_count(0)
@@ -38,7 +49,18 @@ def test_association_list_detail_search_remove_restore_and_reveal(materials, tmp
             detail.get_by_role("button", name="编辑", exact=True).click()
             assistant = page.get_by_role("complementary", name="知识助手")
             expect(assistant.get_by_label("知识标题", exact=True)).to_have_value("新增收费项说明")
+            # All three dismissal paths close the editor without saving.
+            assistant.get_by_label("知识标题", exact=True).fill("Unsaved title")
+            assistant.get_by_role("button", name="关闭关联编辑", exact=True).click()
+            expect(assistant).to_have_count(0)
+            detail.get_by_role("button", name="编辑", exact=True).click()
+            expect(assistant.get_by_label("知识标题", exact=True)).to_have_value("新增收费项说明")
             assistant.get_by_role("button", name="取消", exact=True).click()
+            expect(assistant).to_have_count(0)
+            detail.get_by_role("button", name="编辑", exact=True).click()
+            assistant.get_by_label("知识标题", exact=True).press("Escape")
+            expect(assistant).to_have_count(0)
+            expect(detail).to_contain_text("必须保留的人工说明")
             detail.get_by_role("button", name="移除关联", exact=True).click()
             expect(row).to_have_count(0)
             page.get_by_role("group", name="关联状态筛选").get_by_role("button", name=re.compile("^已移除")).click()
@@ -100,6 +122,7 @@ def test_association_pagination_filters_and_background_refresh_preserve_current_
             ]
             route.fulfill(response=response, json=payload)
 
+        page.route("**/interactive/reassociate/targets?*", lambda route: route.fulfill(json={"data": {"items": [], "total": 0, "next_offset": None}}))
         page.route("**/api/v3/projects/*/interactive/bindings?*", bindings)
         page.route("**/associations/batch?*", batch)
         try:
@@ -135,9 +158,9 @@ def test_association_pagination_filters_and_background_refresh_preserve_current_
             panel.get_by_label("每页关联条数", exact=True).select_option("20")
             expect(rows).to_have_count(20)
             expect(nav).to_contain_text("第 1 / 2 页")
-            assert panel.locator(".binding-table-wrap").evaluate("el=>el.scrollHeight<=el.clientHeight+1")
+            assert panel.locator(".binding-table-wrap").evaluate("el=>el.clientHeight>100&&getComputedStyle(el).overflowY==='auto'")
             page.set_viewport_size({"width": 390, "height": 720})
-            assert panel.locator(".binding-table-wrap").evaluate("el=>el.scrollHeight<=el.clientHeight+1")
+            assert panel.locator(".binding-table-wrap").evaluate("el=>el.clientHeight>100&&getComputedStyle(el).overflowY==='auto'")
             assert not errors
         finally:
             browser.close()
@@ -208,6 +231,7 @@ def test_result_totals_jump_and_global_search_with_status_filter(materials, tmp_
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
+            page.locator(".batch-task-details > summary").click()
             page.get_by_text("查看逐项结果", exact=True).click()
             nav = page.get_by_role("navigation", name="逐项结果分页", exact=True)
             rows = page.locator(".batch-result-list li")
@@ -229,5 +253,195 @@ def test_result_totals_jump_and_global_search_with_status_filter(materials, tmp_
             assert page.locator(".batch-result-viewport").evaluate("el=>el.scrollHeight<=el.clientHeight+1")
             assert any(request.get("offset") == ["230"] for request in requests)
             assert any(request.get("q") == ["控件235"] for request in requests)
+        finally:
+            browser.close()
+
+
+def test_module_tree_parent_feature_search_keyboard_and_mobile(materials, tmp_path, monkeypatch):
+    web, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    prototype, _ = test_materials.install(service, owner, manager, pid, aid)
+    test_materials.bind(service, owner, pid, aid, prototype)
+    with native_studio(web.app, tmp_path, monkeypatch) as url, sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        fetched = []
+        page.add_init_script("localStorage.setItem('vks.studio.auto-associate','off')")
+
+        def bindings(route):
+            response = route.fetch()
+            payload = response.json()
+            original = payload["data"][0]
+            rows = []
+            for key, path, label, selector, frames in [
+                ("fee", "/actual/物业缴费/items.html", "收费项目管理", "body", ["actualPage"]),
+                ("add", "/actual/物业缴费/items.html", "新增", "#add", ["actualPage"]),
+                ("embedded", "/actual/物业缴费/items.html", "确定", "#ok", ["actualPage", "dialog"]),
+                ("reduce", "/actual/物业缴费/reduce.html", "减免类型", "body", ["actualPage"]),
+                ("report", "/actual/物业报表/stat.html", "应收统计", "body", ["actualPage"]),
+                ("download", "/actual/物业报表/stat.html", "下载", "#download", ["actualPage"]),
+            ]:
+                row = deepcopy(original)
+                row.update(
+                    id=key,
+                    title=label,
+                    validity_status="outdated" if key == "add" else "valid",
+                    scope="module" if selector == "body" else "control",
+                )
+                row["target"].update(route=path, label=label, selector=selector, frame_path=frames)
+                rows.append(row)
+            payload["data"] = rows
+            route.fulfill(response=response, json=payload)
+
+        def inventory(route):
+            fetched.append(route.request.url)
+            route.fulfill(
+                json={
+                    "data": {
+                        "packages": [
+                            {
+                                "package_id": prototype["artifact_id"],
+                                "pages": [
+                                    {
+                                        "route": "/actual/物业缴费/items.html",
+                                        "label": "收费项目管理",
+                                        "frame_path": ["actualPage"],
+                                    },
+                                    {
+                                        "route": "/actual/隐藏/private.html",
+                                        "label": "不可展示的未关联页面",
+                                        "frame_path": [],
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+
+        page.route("**/interactive/reassociate/targets?*", lambda route: route.fulfill(json={"data": {"items": [], "total": 0, "next_offset": None}}))
+        page.route("**/interactive/bindings?*", bindings)
+        page.route("**/associations/inventory?*", inventory)
+        try:
+            login(page, url, pid, aid)
+            page.get_by_role("button", name="关联管理", exact=True).click()
+            caption = page.locator(".binding-list-caption")
+            expect(caption).to_contain_text("6 条关联")
+            trigger = page.get_by_role("button", name="筛选关联模块", exact=True)
+            trigger.click()
+            tree = page.get_by_role("tree", name="关联模块与功能", exact=True)
+            expect(tree.get_by_role("treeitem")).to_have_count(2)
+            fees = tree.get_by_role("treeitem", name="物业缴费", exact=True)
+            expect(fees).to_have_attribute("aria-expanded", "false")
+            tree.get_by_role("button", name="展开物业缴费", exact=True).click()
+            expect(fees.get_by_role("treeitem")).to_have_count(2)
+            expect(tree.get_by_role("treeitem", name="新增", exact=True)).to_have_count(0)
+            expect(tree.get_by_role("treeitem", name="不可展示的未关联页面", exact=True)).to_have_count(0)
+            fees.focus()
+            fees.press("Enter")
+            expect(caption).to_contain_text("4 条关联")
+            expect(trigger).to_contain_text("物业缴费")
+            trigger.click()
+            feature = tree.get_by_role("treeitem", name="收费项目管理", exact=True)
+            feature.focus()
+            feature.press("Enter")
+            expect(caption).to_contain_text("3 条关联")
+            expect(trigger).to_contain_text("物业缴费 / 收费项目管理")
+            page.get_by_role("group", name="关联状态筛选").get_by_role("button", name=re.compile("^待处理")).click()
+            expect(caption).to_contain_text("1 条关联")
+            page.get_by_role("group", name="关联状态筛选").get_by_role("button", name=re.compile("^全部当前")).click()
+            expect(caption).to_contain_text("3 条关联")
+            trigger.click()
+            search = page.get_by_label("搜索模块或功能", exact=True)
+            search.fill("统计")
+            expect(tree.get_by_role("treeitem", name="物业报表", exact=True)).to_be_visible()
+            stats = tree.get_by_role("treeitem", name="应收统计", exact=True)
+            expect(stats).to_be_visible()
+            stats.focus()
+            stats.press("Enter")
+            expect(caption).to_contain_text("2 条关联")
+            trigger.click()
+            page.get_by_role("button", name="全部模块", exact=True).click()
+            expect(caption).to_contain_text("6 条关联")
+            trigger.press("ArrowDown")
+            search.press("ArrowDown")
+            fees.focus()
+            fees.press("ArrowRight")
+            expect(fees).to_have_attribute("aria-expanded", "true")
+            fees.press("ArrowDown")
+            page.keyboard.press("ArrowLeft")
+            expect(fees).to_be_focused()
+            page.keyboard.press("Escape")
+            expect(tree).to_have_count(0)
+            expect(trigger).to_be_focused()
+            page.set_viewport_size({"width": 390, "height": 720})
+            trigger.click()
+            popover = page.locator(".binding-module-popover")
+            box = popover.bounding_box()
+            assert box and box["x"] >= 0 and box["x"] + box["width"] <= 390
+            page.get_by_role("heading", name="关联管理", exact=True).click()
+            expect(tree).to_have_count(0)
+            assert len(fetched) == 1 and not errors
+        finally:
+            browser.close()
+
+
+def test_detached_document_draft_can_switch_to_binding_edit_and_return(materials, tmp_path, monkeypatch):
+    from vks_api import ai_gateway
+
+    web, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    prototype, _ = test_materials.install(service, owner, manager, pid, aid)
+    test_materials.bind(service, owner, pid, aid, prototype)
+    monkeypatch.setattr(
+        ai_gateway, "request_model", lambda *args: (_ for _ in ()).throw(AssertionError("No inference expected"))
+    )
+    with native_studio(web.app, tmp_path, monkeypatch) as url, sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+        errors, writes = [], []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.on(
+            "request",
+            lambda r: (
+                writes.append(r.url)
+                if r.method in ("POST", "PUT", "PATCH", "DELETE")
+                and (r.url.endswith("/conversation") or "/interactive/bindings" in r.url)
+                else None
+            ),
+        )
+        try:
+            login(page, url, pid, aid)
+            page.get_by_role("button", name="打开知识助手", exact=True).click()
+            document = page.frame_locator('iframe[title="知识手册 AI 助手"]')
+            field = document.locator("#fh-ai-question")
+            expect(field).to_be_visible()
+            field.fill("保持未发送的文档草稿")
+            with page.expect_popup() as opened:
+                document.get_by_role("button", name="弹出独立窗口", exact=True).click()
+            popup = opened.value
+            popup.on("pageerror", lambda error: errors.append(str(error)))
+            detached_document = popup.frame_locator('iframe[title="知识手册 AI 助手"]')
+            expect(detached_document.locator("#fh-ai-question")).to_have_value("保持未发送的文档草稿")
+            page.get_by_role("button", name="关联管理", exact=True).click()
+            expect(page.get_by_role("button", name="打开知识助手", exact=True)).to_have_count(0)
+            detail = page.get_by_role("article", name="关联详情")
+            detail.get_by_role("button", name="编辑", exact=True).click()
+            editor = popup.get_by_role("complementary", name="知识助手", exact=True)
+            expect(editor).to_be_visible()
+            expect(editor.locator("..")).to_be_visible()
+            expect(editor.get_by_label("知识标题", exact=True)).to_have_value("新增收费项说明")
+            editor.get_by_label("知识标题", exact=True).fill("不应保存的编辑草稿")
+            with popup.expect_event("close"):
+                editor.get_by_role("button", name="取消", exact=True).click()
+            assert popup.is_closed()
+            expect(detail).to_contain_text("新增收费项说明")
+            expect(detail).to_contain_text("必须保留的人工说明")
+            page.get_by_role("button", name="文档", exact=True).click()
+            page.get_by_role("button", name="打开知识助手", exact=True).click()
+            expect(field).to_have_value("保持未发送的文档草稿")
+            assert not writes and not errors
         finally:
             browser.close()

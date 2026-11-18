@@ -5,7 +5,7 @@ import json
 from playwright.sync_api import expect, sync_playwright
 from vks_api import ai_gateway
 from vks_api.ai_gateway import ModelPolicy, PolicyInput
-from vks_api.document_presentation import PresentationService
+from vks_api.document_presentation import DocumentPresentation, PresentationService
 from vks_api.interactive import InteractiveKnowledgeService
 from vks_api.models import uid
 
@@ -43,6 +43,7 @@ def test_template_persistence_indexed_search_document_only_ai_and_update(materia
     before = links.catalog(owner, pid, aid)
     assert not [item for item in before["packages"] if item.get("kind") == "prototype"]
     with service.db() as db:
+        db.add(DocumentPresentation(analysis_set_id=aid, settings={"mode": "handbook"}))
         db.add(
             ModelPolicy(
                 id=uid(),
@@ -71,14 +72,14 @@ def test_template_persistence_indexed_search_document_only_ai_and_update(materia
         page.on("pageerror", lambda error: errors.append(str(error)))
         try:
             login(page, url, pid, aid)
-            page.get_by_label("文档阅读方式", exact=True).select_option("handbook")
+            expect(page.get_by_label("文档阅读方式", exact=True)).to_have_count(0)
             book = page.get_by_role("region", name="知识手册阅读模板")
             expect(book).to_be_visible()
             assert PresentationService(service).get(owner, pid, aid)["settings"]["mode"] == "handbook"
             assert links.catalog(owner, pid, aid)["documents"] == before["documents"]
             page.reload()
             expect(book).to_be_visible()
-            expect(page.get_by_label("文档阅读方式", exact=True)).to_have_value("handbook")
+            expect(page.get_by_label("文档阅读方式", exact=True)).to_have_count(0)
             book.get_by_role("button", name="搜索全文", exact=True).click()
             dialog = page.get_by_role("dialog", name="手册全文搜索")
             dialog.get_by_label("手册搜索内容", exact=True).fill("secret-jellyfish")
@@ -89,17 +90,17 @@ def test_template_persistence_indexed_search_document_only_ai_and_update(materia
             book.get_by_role("button", name="总览", exact=True).click()
             expect(book.locator(".hb-cover")).to_be_visible()
             book.get_by_role("button", name="向手册 AI 提问", exact=True).click()
-            panel = page.get_by_role("complementary", name="知识助手")
-            panel.get_by_role("textbox", name="向知识助手提问", exact=True).fill("What should I verify before billing?")
-            panel.get_by_role("button", name="发送问题", exact=True).click()
-            expect(panel.locator(".chat-answer strong")).to_have_text("Document-only answer.")
+            panel = page.frame_locator('iframe[title="知识手册 AI 助手"]')
+            panel.locator("#fh-ai-question").fill("What should I verify before billing?")
+            panel.locator("#fh-ai-send").click()
+            expect(panel.locator(".fh-ai-message.assistant strong").first).to_have_text("Document-only answer.")
             assert len(model_calls) == 1 and model_calls[0]["chapters"]
             assert not links.bindings(owner, pid, aid)
             question = next(
-                request.post_data_json for request in requests if request.url.endswith("/interactive/questions")
+                request.post_data_json for request in requests if request.url.endswith("/interactive/conversation")
             )
-            assert question["package_id"] is None and "document_revision_id" not in question
-            page.get_by_role("button", name="收起助手面板", exact=True).click()
+            assert question["package_id"] is None and question["document_scope"] == "all"
+            panel.locator("#fh-ai-close").click()
             book.get_by_role("button", name="更新文档", exact=True).click()
             expect(page.get_by_role("heading", name="原型与文档", exact=True)).to_be_visible()
             export_mode = page.get_by_label("导出文档呈现", exact=True)

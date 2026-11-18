@@ -167,12 +167,12 @@ def test_native_handbook_home_controls_fake_ai_storage_reader_switch_and_exact_l
             expect(page).to_have_url(re.compile(r"(?:[#&])section=" + re.escape(exact["revision_id"]) + r"(?:&|$)"))
             expect(page.locator(".document-reader")).to_have_count(0)
             expect(page.locator(".document-library .markdown")).to_have_count(0)
-            page.get_by_role("button", name="标准阅读", exact=True).click()
+            page.get_by_role("button", name="返回文档", exact=True).click()
             expect(page.locator(".document-reader .chapter-selected")).to_have_attribute(
                 "id", "section-" + exact["revision_id"]
             )
             expect(page.locator(".document-reader .markdown")).to_be_visible()
-            page.get_by_role("button", name="原样文档", exact=True).click()
+            page.get_by_role("button", name="查看原文", exact=True).click()
             expect(source.get_by_role("heading", name="Exact rule", exact=True)).to_be_in_viewport()
             expect(page.locator(".document-reader")).to_have_count(0)
             expect(page.locator(".document-library .markdown")).to_have_count(0)
@@ -195,9 +195,9 @@ def test_native_handbook_home_controls_fake_ai_storage_reader_switch_and_exact_l
             original_frame = source.locator("body").evaluate(
                 "()=>{window.instanceMarker=crypto.randomUUID();return window.instanceMarker}"
             )
-            page.get_by_role("button", name="标准阅读", exact=True).click()
+            page.get_by_role("button", name="返回文档", exact=True).click()
             expect(page.locator(".document-reader")).to_be_visible()
-            page.get_by_role("button", name="原样文档", exact=True).click()
+            page.get_by_role("button", name="查看原文", exact=True).click()
             expect(source.get_by_label("Original note", exact=True)).to_have_value("Keep native form state")
             assert source.locator("body").evaluate("()=>window.instanceMarker") == original_frame
             page.reload()
@@ -207,11 +207,13 @@ def test_native_handbook_home_controls_fake_ai_storage_reader_switch_and_exact_l
                 "()=>({local:Object.entries(localStorage),session:Object.entries(sessionStorage),html:document.documentElement.outerHTML})"
             )
             assert PLATFORM_KEY not in json.dumps(runtime_storage)
-            page.get_by_role("button", name="标准阅读", exact=True).click()
-            sidebar = page.locator(".doc-sidebar")
-            sidebar.get_by_role("button", name="Exact rule", exact=True).click()
+            page.get_by_role("button", name="返回文档", exact=True).click()
+            toc = page.locator(".article-toc")
+            if toc.get_attribute("open") is None:
+                toc.locator("summary").click()
+            toc.get_by_role("link", name="Exact rule", exact=True).click()
             expect(page.locator(".document-reader .chapter-selected")).to_contain_text("Exact rule")
-            page.get_by_role("button", name="原样文档", exact=True).click()
+            page.get_by_role("button", name="查看原文", exact=True).click()
             expect(source.get_by_role("heading", name="Exact rule", exact=True)).to_be_in_viewport()
             external = f"project={pid}&analysis={aid}&view=documents&doc={document['revision_id']}&section={no_id['revision_id']}"
             page.evaluate("hash=>{location.hash=hash}", external)
@@ -283,8 +285,9 @@ def test_modified_index_defaults_standard_with_source_notice_and_markdown_stays_
             page.goto(url + f"/#project={other_pid}&analysis={other_aid}&view=documents")
             expect(page.locator(".document-reader")).to_contain_text("Plain Markdown guide")
             expect(page.locator(".native-document-space")).not_to_be_visible()
-            expect(page.get_by_role("button", name="原样文档", exact=True)).to_have_count(0)
-            expect(page.get_by_role("button", name="文档设置", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="查看原文", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="外部资源访问", exact=True)).to_have_count(0)
+            expect(page.locator(".document-advanced-tools")).to_have_count(0)
         finally:
             context.close()
             browser.close()

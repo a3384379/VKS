@@ -36,7 +36,7 @@ def test_scanning_current_single_html_never_invokes_source_named_navigation_api(
             )
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+            page.get_by_role("button", name="扫描页面变更", exact=True).click()
             expect(page.get_by_label("动态原型预扫描", exact=True)).to_be_visible()
             page.wait_for_function("!document.querySelector('[aria-label=\"动态原型预扫描\"]')", timeout=18000)
             assert page.evaluate("businessClicks") == 0, (
@@ -68,7 +68,7 @@ def test_ambiguous_child_frame_identities_are_never_reported_as_complete(materia
             )
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+            page.get_by_role("button", name="扫描页面变更", exact=True).click()
             expect(page.get_by_label("动态原型预扫描", exact=True)).to_be_visible()
             page.wait_for_function("!document.querySelector('[aria-label=\"动态原型预扫描\"]')", timeout=18000)
             assert len(uploads) == 1
@@ -107,7 +107,7 @@ def test_prescan_has_separate_persistent_origin_and_blocks_source_network(materi
             expect(original.get_by_role("heading", name="Storage default page", exact=True)).to_be_visible()
             original.locator("body").evaluate("() => localStorage.setItem('inventory-marker','CURRENT_USER_SETTING')")
             page.get_by_role("button", name="关联管理", exact=True).click()
-            page.get_by_role("button", name="全量 AI 关联", exact=True).click()
+            page.get_by_role("button", name="扫描页面变更", exact=True).click()
             expect(page.get_by_label("动态原型预扫描", exact=True)).to_be_visible()
             page.wait_for_function("!document.querySelector('[aria-label=\"动态原型预扫描\"]')", timeout=18000)
             observations = page.evaluate("observedStores")

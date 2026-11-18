@@ -30,7 +30,9 @@ def mock_answers(page, content=EXPLANATION):
 
     def respond(route):
         request = route.request
-        calls.append(request)
+        # A shared vector query is distinct from an answer-model invocation.
+        if request.url.endswith(("/responses", "/chat/completions")):
+            calls.append(request)
         if request.url.endswith("/models"):
             route.fulfill(json={"data": [{"id": "fixture-chat"}]})
         elif request.url.endswith("/embeddings"):
@@ -111,7 +113,7 @@ def test_configure_automatically_explains_and_reuses_result_without_chat_history
         try:
             page.goto(reader_file.as_uri())
             open_explanation(page)
-            page.get_by_role("tab", name="AI 问答", exact=True).click()
+            page.get_by_role("tab", name="回答", exact=True).click()
             page.get_by_label("向 AI 提问", exact=True).fill("保留未发送草稿")
             page.get_by_role("tab", name="AI 讲解", exact=True).click()
             configure(page, protocol)
@@ -123,15 +125,19 @@ def test_configure_automatically_explains_and_reuses_result_without_chat_history
             conversation = posted.get("input") or posted["messages"][1:]
             assert len(conversation) == 1 and '"selector":"#taskcreate"' in conversation[0]["content"]
             assert "保留未发送草稿" not in conversation[0]["content"]
-            page.get_by_role("tab", name="AI 问答", exact=True).click()
+            page.get_by_role("tab", name="回答", exact=True).click()
             expect(page.get_by_label("向 AI 提问", exact=True)).to_have_value("保留未发送草稿")
             expect(page.locator(".chat-message")).to_have_count(0)
             page.get_by_role("tab", name="AI 讲解", exact=True).click()
             page.wait_for_timeout(400)
             assert len(calls) == 1
+            page.locator(".explanation-current .chat-citations summary").first.click()
             page.locator(".explanation-current .chat-citations button").first.click()
+            preview = page.get_by_role("dialog", name="引用原文预览", exact=True)
+            expect(preview).to_be_visible()
+            preview.get_by_role("button", name="打开文档原文", exact=True).click()
             expect(page.locator(".document h1")).to_have_text("任务操作手册")
-            expect(page.get_by_text("先选择要讲解的模块或控件", exact=True)).to_be_visible()
+            expect(page.get_by_role("complementary", name="文档 AI 助手", exact=True)).to_be_visible()
             assert "synthetic-explanation-key" not in reader_file.read_text()
         finally:
             browser.close()
@@ -148,7 +154,7 @@ def test_clearing_key_keeps_cache_and_unapplied_connection_does_not_generate(rea
             configure(page)
             expect(page.get_by_text("讲解已完成 · 仅本次会话", exact=True)).to_be_visible()
             page.get_by_role("button", name="连接设置", exact=True).click()
-            page.get_by_role("button", name="清除本次密钥", exact=True).click()
+            page.get_by_role("button", name="清除并忘记 Key", exact=True).click()
             page.get_by_role("tab", name="AI 讲解", exact=True).click()
             expect(page.locator(".explanation-current .answer")).to_contain_text("创建任务")
             configure(page)
@@ -167,9 +173,11 @@ def test_clearing_key_keeps_cache_and_unapplied_connection_does_not_generate(rea
 
 
 def test_context_changes_auto_refresh_and_discard_late_answer(reader_file):
-    reader_tests.rewrite_library(
-        reader_file, lambda data: data["prototypes"].append({**data["prototypes"][0], "id": "p2", "name": "第二个原型"})
-    )
+    def update(data):
+        data["prototypes"].append({**data["prototypes"][0], "id": "p2", "name": "第二个原型"})
+        data["bindings"].append({**data["bindings"][0], "id": "b2", "package_id": "p2", "section_ids": ["s2"]})
+
+    reader_tests.rewrite_library(reader_file, update)
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
         page = browser.new_page()
@@ -178,7 +186,9 @@ def test_context_changes_auto_refresh_and_discard_late_answer(reader_file):
             open_explanation(page)
             page.evaluate("""() => {
                 window.releases=[]; window.signals=[];
-                window.fetch=(url,init)=>new Promise(resolve=>{
+                window.fetch=(url,init)=>String(url).endsWith('/embeddings')
+                  ? Promise.resolve(new Response(JSON.stringify({data:[{embedding:[1,0]}]}),{headers:{'content-type':'application/json'}}))
+                  : new Promise(resolve=>{
                     const n=window.releases.length; window.signals.push(init.signal);
                     window.releases.push(()=>resolve(new Response('data: '+JSON.stringify({choices:[{delta:{content:n?'新目标讲解 [1]。':'旧目标迟到 [1]。'}}]})+'\\n\\n'+'data: '+JSON.stringify({choices:[{delta:{},finish_reason:'stop'}]})+'\\n\\n',{headers:{'content-type':'text/event-stream'}})));
                 });
@@ -195,7 +205,7 @@ def test_context_changes_auto_refresh_and_discard_late_answer(reader_file):
             page.evaluate("window.releases[1]()")
             expect(page.locator(".explanation-current .answer")).to_have_text("新目标讲解 [1]。")
             expect(page.locator(".explanation-current")).not_to_contain_text("旧目标迟到")
-            page.get_by_role("tab", name="相关知识", exact=True).click()
+            page.get_by_role("tab", name="文档", exact=True).click()
             page.get_by_role("tab", name="AI 讲解", exact=True).click()
             page.wait_for_timeout(400)
             assert page.evaluate("window.releases.length") == 2
@@ -205,15 +215,17 @@ def test_context_changes_auto_refresh_and_discard_late_answer(reader_file):
             page.evaluate("window.releases[2]()")
             expect(page.get_by_text("讲解已完成 · 仅本次会话", exact=True)).to_be_visible()
             page.get_by_role("button", name="知识文档", exact=True).click()
-            expect(page.get_by_text("先选择要讲解的模块或控件", exact=True)).to_be_visible()
-            header = page.locator(".assistant-context").inner_text()
+            document_ai = page.frame_locator('iframe[title="知识手册 AI 助手"]')
+            expect(document_ai.locator("#vks-host-index-status")).to_contain_text("任务操作手册")
+            header = document_ai.locator("#vks-host-index-status").inner_text()
             frame.evaluate("document.title='隐藏页面';document.querySelector('#taskcreate').click()")
             page.wait_for_timeout(400)
-            expect(page.locator(".assistant-context")).to_have_text(header)
+            expect(document_ai.locator("#vks-host-index-status")).to_have_text(header)
             assert page.evaluate("window.releases.length") == 3
+            page.locator(".doc-list").get_by_role("button", name="其他文档", exact=False).click()
             page.get_by_role("button", name="交互原型", exact=True).click()
-            page.get_by_label("选择原型", exact=True).select_option("p2")
-            open_explanation(page)
+            page.frame_locator("iframe.prototype-frame").get_by_role("button", name="删除任务", exact=True).click(button="right")
+            page.get_by_role("button", name="AI 讲解这个功能", exact=False).click()
             page.wait_for_function("window.releases.length===4")
             page.evaluate("window.releases[3]()")
             expect(page.get_by_text("讲解已完成 · 仅本次会话", exact=True)).to_be_visible()
@@ -283,6 +295,7 @@ def test_automatic_explanation_preserves_stream_limits_and_stop(reader_file, mod
                 """mode => {
               window.calls=0;
               window.fetch=(url,init)=>{
+                if(String(url).endsWith('/embeddings')) return Promise.resolve(new Response(JSON.stringify({data:[{embedding:[1,0]}]}),{headers:{'content-type':'application/json'}}));
                 window.calls++;
                 let stream;
                 const body=new ReadableStream({start(c){stream=c;c.enqueue(new TextEncoder().encode(mode==='oversize'?'x'.repeat(2*1024*1024+1):'data: '+JSON.stringify({choices:[{delta:{content:'部分讲解 [1]。'}}]})+'\\n\\n'));if(mode!=='cancel')c.close();}});

@@ -46,6 +46,8 @@ def test_native_reading_does_not_wait_for_links_or_download_unvisited_prototype(
             # Visiting the prototype loads it once; subsequent view switches
             # preserve both original runtimes and their authored form state.
             page.get_by_role("button", name="关联知识", exact=True).click()
+            expect(page.locator('iframe[title="知识手册 AI 助手"]')).to_be_visible()
+            page.get_by_role("button", name="原型", exact=True).click()
             page.get_by_role("button", name="助手选项", exact=True).click()
             manual = page.get_by_role("button", name="手动补充关联", exact=True)
             expect(manual).to_be_disabled()
@@ -63,12 +65,15 @@ def test_native_reading_does_not_wait_for_links_or_download_unvisited_prototype(
             manual.click()
             source = page.frame_locator('iframe[title="原 HTML 原型"]').frame_locator("#material")
             expect(source.get_by_label("Prototype memo", exact=True)).to_be_visible(timeout=15000)
+            expect(page.locator(".prototype-space .runtime-status")).to_have_count(0)
             source.get_by_label("Prototype memo", exact=True).click()
             panel = page.get_by_role("complementary", name="知识助手")
             expect(panel.get_by_label("知识标题", exact=True)).to_have_value("Prototype memo")
             assert not any("/interactive/related" in request for request in requests)
             panel.get_by_role("button", name="取消", exact=True).click()
+            expect(panel).to_have_count(0)
             source.get_by_label("Prototype memo", exact=True).fill("Preserved prototype state")
+            page.get_by_role("button", name="打开知识助手", exact=True).click()
 
             # Once links are ready, selecting an existing control retains the
             # saved identity and wording instead of opening a blank new link.

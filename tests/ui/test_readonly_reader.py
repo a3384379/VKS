@@ -98,8 +98,13 @@ def test_file_reader_offline_links_isolation_and_ephemeral_prototype(reader_file
             frame.get_by_role("button", name="创建任务", exact=True).click(button="right")
             page.get_by_role("button", name="查看关联文档", exact=False).click()
             expect(page.get_by_text("新增任务需要填写名称和负责人。", exact=True)).to_be_visible()
-            page.get_by_role("button", name="▤ 任务操作手册 · 创建任务", exact=True).click()
+            page.locator(".knowledge-card .chat-citations summary").click()
+            page.get_by_role("button", name="[1] 任务操作手册 · 创建任务", exact=True).click()
+            preview = page.get_by_role("dialog", name="引用原文预览", exact=True)
+            expect(preview).to_be_visible()
+            preview.get_by_role("button", name="打开文档原文", exact=True).click()
             expect(page.locator(".document h1")).to_have_text("任务操作手册")
+            expect(page.locator(".document .section-links, .document .target-link")).to_have_count(0)
             expect(page.locator(".document table")).to_be_visible()
             assert page.evaluate("window.docExecuted") is None
             expect(page.get_by_text("<script>window.docExecuted=true</script>", exact=True)).to_be_visible()
@@ -109,7 +114,7 @@ def test_file_reader_offline_links_isolation_and_ephemeral_prototype(reader_file
             page.get_by_role("textbox", name="搜索知识库", exact=True).fill("任务名称")
             page.locator(".search-result").first.click()
             expect(page.locator(".document h1")).to_have_text("任务操作手册")
-            page.get_by_role("button", name="↗ 创建任务", exact=True).click()
+            page.get_by_role("button", name="交互原型", exact=True).click()
             frame.get_by_role("button", name="创建任务", exact=True).click()
             frame.get_by_placeholder("任务名称").fill("只用于演示")
             frame.get_by_role("button", name="提交", exact=True).click()
@@ -125,9 +130,19 @@ def test_file_reader_offline_links_isolation_and_ephemeral_prototype(reader_file
             browser.close()
 
 
-def configure(page):
+def open_connection_settings(page):
     page.get_by_role("button", name="打开知识助手", exact=True).click()
-    page.get_by_role("button", name="连接设置", exact=True).click()
+    if page.locator(".document-ai-window").is_visible():
+        page.locator('iframe[title="知识手册 AI 助手"]').wait_for(state="visible")
+        assistant = page.frame_locator('iframe[title="知识手册 AI 助手"]')
+        assistant.locator('[data-ai-tab="settings"]').click()
+        assistant.get_by_role("button", name="模型连接设置", exact=True).click()
+    else:
+        page.get_by_role("button", name="连接设置", exact=True).click()
+
+
+def configure(page):
+    open_connection_settings(page)
     page.get_by_label("模型服务", exact=True).select_option("custom")
     page.get_by_label("接口地址", exact=True).fill("https://api.example.test/v1")
     page.get_by_label("API Key", exact=True).fill("fixture-recipient-only")
@@ -164,16 +179,35 @@ def test_recipient_model_dropdown_stream_citations_and_no_key_persistence(reader
             page.goto(reader_file.as_uri())
             configure(page)
             page.get_by_label("向 AI 提问", exact=True).fill("创建任务需要填写哪些信息？")
-            page.get_by_role("button", name="发送", exact=True).click()
+            question = page.get_by_label("向 AI 提问", exact=True)
+            question.dispatch_event("keydown", {"key": "Enter", "isComposing": True, "keyCode": 229})
+            question.press("Shift+Enter")
+            assert question.input_value().endswith("\n")
+            assert not [call for call in calls if call[0].endswith("/chat/completions")]
+            question.press("Enter")
             expect(page.locator(".answer").last).to_contain_text("任务名称和负责人均为必填")
             expect(page.get_by_role("button", name="发送", exact=True)).to_be_enabled()
+            user = page.locator(".chat-message.user").bounding_box()
+            messages = page.locator(".chat-message-list").bounding_box()
+            assert abs(user["x"] + user["width"] - messages["x"] - messages["width"]) < 3
+            expect(page.locator(".chat-citations")).not_to_have_attribute("open", "")
+            page.locator(".chat-citations summary").click()
+            expect(page.locator(".chat-citations .rich-markdown")).to_have_count(0)
+            expect(page.locator(".chat-citations .chat-source-entry").first).to_be_visible()
             page.locator(".chat-citations button").first.click()
+            expect(page.get_by_role("dialog", name="引用原文预览", exact=True).locator("table")).to_be_visible()
+            page.get_by_role("dialog", name="引用原文预览", exact=True).get_by_role(
+                "button", name="打开文档原文", exact=True
+            ).click()
             expect(page.locator(".document h1")).to_have_text("任务操作手册")
             assert len([call for call in calls if call[0].endswith("/chat/completions")]) == 1
-            assert page.evaluate("localStorage.length") == 0
+            assert not page.evaluate(
+                "Object.values(localStorage).some(value=>value.includes('fixture-recipient-only'))"
+            )
             assert page.evaluate("sessionStorage.length") == 0
             assert "fixture-recipient-only" not in reader_file.read_text()
             page.reload()
+            page.get_by_role("button", name="交互原型", exact=True).click()
             page.get_by_role("button", name="打开知识助手", exact=True).click()
             page.get_by_role("button", name="连接设置", exact=True).click()
             expect(page.get_by_label("API Key", exact=True)).to_have_value("")
@@ -276,7 +310,8 @@ def test_nested_static_site_and_document_links_stay_in_material_namespace(reader
             expect(frame.get_by_role("heading", name="使用说明页面", exact=True)).to_be_visible()
             frame.get_by_role("link", name="返回任务", exact=True).click()
             expect(frame.get_by_role("link", name="查看说明", exact=True)).to_be_visible()
-            page.get_by_role("button", name="模块知识", exact=True).click()
+            frame.locator("body").click(button="right", position={"x": 400, "y": 6})
+            page.get_by_role("button", name="查看关联文档", exact=False).click()
             expect(page.locator(".assistant-context")).to_contain_text("当前模块")
             page.get_by_role("button", name="知识文档", exact=True).click()
             page.get_by_label("文档资料包", exact=True).select_option(label="文档资料包 2")
@@ -706,7 +741,16 @@ def test_export_directory_tabs_source_order_folders_chapters_and_cross_category_
             page.locator(".doc-list").get_by_role("button", name="进阶", exact=True).click()
             expect(page.locator(".doc-list").get_by_role("button", name="进阶操作说明", exact=True)).to_be_visible()
             page.locator(".doc-list").get_by_role("button", name="任务操作手册", exact=True).click()
+            expect(page.locator(".document h1")).to_have_text("任务操作手册")
+            expect(page.locator(".doc-list .chapter-link").filter(has_text="创建任务")).to_have_count(0)
+            task_row = page.locator(".doc-row").filter(has=page.get_by_role("button", name="任务操作手册", exact=True))
+            task_row.get_by_role("button", name="展开文章章节", exact=True).click()
             expect(page.locator(".doc-list .chapter-link").filter(has_text="创建任务")).to_be_visible()
+            page.locator(".doc-list").get_by_role("button", name="Z 原始排序第一篇", exact=True).click()
+            page.locator(".doc-list").get_by_role("button", name="任务操作手册", exact=True).click()
+            expect(task_row.get_by_role("button", name="收起文章章节", exact=True)).to_have_attribute(
+                "aria-expanded", "true"
+            )
             page.locator(".doc-list").get_by_role("button", name="展开子章节", exact=True).click()
             page.locator(".doc-list").get_by_role("button", name="填写信息", exact=True).click()
             expect(page.locator(".document #section-s-info")).to_contain_text("输入任务信息后保存")
@@ -740,7 +784,9 @@ def test_export_citation_follows_its_package_and_category_without_edit_controls(
                 button="right"
             )
             page.get_by_role("button", name="查看关联文档", exact=False).click()
-            page.get_by_role("button", name="▤ B 独立手册 · B 专属说明", exact=True).click()
+            page.locator(".knowledge-card .chat-citations summary").click()
+            page.get_by_role("button", name="[1] B 独立手册 · B 专属说明", exact=True).click()
+            page.get_by_role("dialog", name="引用原文预览", exact=True).get_by_role("button", name="打开文档原文", exact=True).click()
             expect(page.get_by_label("文档资料包", exact=True)).to_have_value("package-B")
             expect(page.get_by_role("tab", name="B 使用指南", exact=True)).to_have_attribute("aria-selected", "true")
             expect(page.locator(".document h1")).to_have_text("B 独立手册")

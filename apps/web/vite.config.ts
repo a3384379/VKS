@@ -16,6 +16,20 @@ export default defineConfig(({ mode }) => {
             new URL("./diagram-frame.html", import.meta.url),
             "utf8",
           );
+          const publicSources = new Set([
+            "/src/diagram-frame.ts",
+            "/src/diagram-policy.ts",
+            ...["diagram-frame.ts", "diagram-policy.ts"].map(
+              (name) =>
+                "/@fs" +
+                fileURLToPath(
+                  new URL(
+                    "../../packages/markdown-runtime/src/" + name,
+                    import.meta.url,
+                  ),
+                ),
+            ),
+          ]);
           server.middlewares.use((request, response, next) => {
             let path: string;
             try {
@@ -32,9 +46,7 @@ export default defineConfig(({ mode }) => {
             // The opaque frame may import only these public renderer modules.
             // No CORS permission is added to API/private filesystem responses.
             if (
-              ["/src/diagram-frame.ts", "/src/diagram-policy.ts"].includes(
-                path,
-              ) ||
+              publicSources.has(path) ||
               path.startsWith("/node_modules/.vite/") ||
               path.startsWith("/@fs" + cachePath + "/") ||
               path.startsWith("/@fs/" + cachePath + "/")

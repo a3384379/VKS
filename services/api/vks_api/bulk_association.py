@@ -18,9 +18,10 @@ from typing import Annotated, Literal
 from fastapi import Depends, Header, Query, Request
 from pydantic import Field, ValidationError
 from sqlalchemy import JSON, ForeignKey, String, func, select
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, defer, mapped_column
 
 from .ai_gateway import ModelPolicy
+from .association_limits import GLOBAL_REQUEST_LIMIT, request_concurrency
 from .interactive import DOMTarget, InteractiveBinding, InteractiveKnowledgeService
 from .interactive_ai import AssistanceInput, InteractiveAssistant
 from .materials import ROOT, MaterialService, StudioWorkspace, roots
@@ -81,21 +82,47 @@ def target_id(package_id, target):
 
 
 def composition(s, pid, aid):
+    from .input_versions import cached_projection
+
+    return cached_projection(s.bind, s, ("composition", pid, aid), lambda: _composition(s, pid, aid))
+
+
+def _composition(s, pid, aid):
     # Batch-generated actions and knowledge do not invalidate their own job.
     # Manual document/section edits do, even if the material root is unchanged.
-    selected = list(
-        s.execute(
-            select(Revision.id, Revision.content_sha256)
-            .join(Selection, Selection.entity_revision_id == Revision.id)
-            .join(Entity, Entity.id == Revision.entity_id)
-            .where(
-                Selection.analysis_set_id == aid,
-                Revision.project_id == pid,
-                Entity.project_id == pid,
-                Entity.type.in_(("document", "section")),
-            )
+    query = (
+        select(Revision.id, Revision.content_sha256)
+        .join(Selection, Selection.entity_revision_id == Revision.id)
+        .join(Entity, Entity.id == Revision.entity_id)
+        .where(
+            Selection.analysis_set_id == aid,
+            Revision.project_id == pid,
+            Entity.project_id == pid,
+            Entity.type.in_(("document", "section")),
         )
     )
+    if s.bind.dialect.name == "sqlite":
+        # Preserve the exact historical digest, while letting SQLite serialize
+        # its ordered scalar facts without hydrating thousands of Python rows.
+        selected = query.order_by(Revision.id, Revision.content_sha256).subquery()
+        documents = s.scalar(select(func.json_group_array(func.json_array(selected.c.id, selected.c.content_sha256))))
+        packages = list(
+            s.scalars(
+                select(Revision.id)
+                .join(Entity, Entity.id == Revision.entity_id)
+                .join(Selection, Selection.entity_revision_id == Revision.id)
+                .where(
+                    Selection.analysis_set_id == aid,
+                    Entity.project_id == pid,
+                    Entity.type == "page",
+                    Entity.stable_key.startswith("material."),
+                    func.json_type(Revision.metadata_json, "$.material_package").is_not(None),
+                )
+                .order_by(Revision.id)
+            )
+        )
+        return sha('{"documents":' + (documents or "[]") + ',"packages":' + canonical(packages) + "}")
+    selected = list(s.execute(query))
     return sha(
         canonical(
             {"packages": sorted(r.id for r in roots(s, pid, aid)), "documents": sorted(tuple(r) for r in selected)}
@@ -521,6 +548,7 @@ class BulkAssociationService:
                 "composition": digest,
                 "coverage": coverage,
                 "jobs": jobs,
+                "model_request_limit": GLOBAL_REQUEST_LIMIT,
             }
 
     def enqueue(self, actor, pid, form, expected, key):
@@ -804,7 +832,31 @@ def run_batch(service, jid, *, preserve_processed=False):
     items = {i["id"]: i for i in payload["items"]}
 
     def validate(s):
-        active = s.get(Job, jid)
+        # Model inputs can span megabytes. Only mutable execution fences and the
+        # current authorization snapshot are needed at each checkpoint.
+        from types import SimpleNamespace
+        from .inference_pipeline import READ_SESSION, WRITE_SESSION
+
+        writer = WRITE_SESSION.get() or READ_SESSION.get()
+        scoped = (
+            s.info.setdefault("vks_batch_job_scopes", {})
+            if (
+                writer == (service, s)
+                and (s.info.get("vks_completion_batch") or s.info.get("vks_read_batch"))
+                and s.bind.dialect.name == "sqlite"
+            )
+            else None
+        )
+        scope_key = (jid, attempt)
+        if scoped is not None and scope_key in scoped:
+            return scoped[scope_key]
+        header = s.info.get("vks_task_header")
+        row = (header[2], None) if header and header[2].id == jid else s.execute(
+            select(Job, Job.input_json["_authorization"])
+            .options(defer(Job.input_json), defer(Job.result_json))
+            .where(Job.id == jid)
+        ).first()
+        active, authorization = row if row else (None, None)
         if (
             not active
             or active.attempt != attempt
@@ -814,7 +866,13 @@ def run_batch(service, jid, *, preserve_processed=False):
             and active.lease_until <= now()
         ):
             raise DomainError("VKS_CANCELLED", "预关联任务已停止或执行资格失效", 409)
-        actor = current_actor(service, active.created_by, pid, s, job=active)
+        actor = current_actor(
+            service,
+            active.created_by,
+            pid,
+            s,
+            job=SimpleNamespace(kind=active.kind, input_json={"_authorization": authorization}),
+        )
         service.require(s, actor, pid, "knowledge:edit")
         if payload.get("scan_pipeline"):
             from .prototype_scan import PrototypeScanRun
@@ -840,11 +898,15 @@ def run_batch(service, jid, *, preserve_processed=False):
             or composition(s, pid, analysis.id) != payload["composition"]
         ):
             raise DomainError("VKS_VERSION_CONFLICT", "资料版本已变化，停止旧版本预关联", 409)
+        if scoped is not None:
+            scoped[scope_key] = actor
         return actor
 
-    def result():
-        values = list(completed.values())[-200:]
-        pending = counters["insufficient"] + counters["failed"]
+    def result(projected=None):
+        outcomes = completed if projected is None else projected
+        counts = counters if projected is None else Counter(v["status"] for v in projected.values())
+        values = list(outcomes.values())[-200:]
+        pending = counts["insufficient"] + counts["failed"]
         issues = [
             {"label": v["label"], "message": v["message"]} for v in values if v["status"] in ("insufficient", "failed")
         ]
@@ -855,15 +917,15 @@ def run_batch(service, jid, *, preserve_processed=False):
         return {
             "processing_epoch": processing_epoch,
             "completed": {v["id"]: v for v in values},
-            "processed": len(completed),
+            "processed": len(outcomes),
             "total": len(items),
-            "saved": counters["linked"],
-            "reused": counters["reused"],
-            "manual": counters["manual"],
-            "excluded": counters["excluded"],
-            "skipped": counters["skipped"],
+            "saved": counts["linked"],
+            "reused": counts["reused"],
+            "manual": counts["manual"],
+            "excluded": counts["excluded"],
+            "skipped": counts["skipped"],
             "pending": pending,
-            "details_truncated": len(completed) > 200,
+            "details_truncated": len(outcomes) > 200,
             "operation_groups": len(payload["groups"]),
             "coverage": payload["coverage"],
             "issues": issues
@@ -875,25 +937,35 @@ def run_batch(service, jid, *, preserve_processed=False):
         }
 
     def persist(key, outcome):
+        from .inference_pipeline import CURRENT_PIPELINE
+
+        pipeline = CURRENT_PIPELINE.get()
+        if pipeline:
+            return pipeline.complete(lambda: write_outcome(key, outcome))
+        return write_outcome(key, outcome)
+
+    def write_outcome(key, outcome):
         with service.db() as s:
             validate(s)
-            job = s.get(Job, jid)
-            row = s.scalar(
-                select(Checkpoint).where(
-                    Checkpoint.job_id == jid,
-                    Checkpoint.stage == "ASSOCIATE",
-                    Checkpoint.input_hash == key,
-                    Checkpoint.processor_version == PROCESSOR,
-                )
-            )
-            if row:
-                row.result_json = outcome
-            else:
-                s.add(
-                    Checkpoint(
-                        job_id=jid, stage="ASSOCIATE", input_hash=key, processor_version=PROCESSOR, result_json=outcome
+            batch_checkpoints = s.info.get("vks_completion_batch") and s.bind.dialect.name == "sqlite"
+            if not batch_checkpoints:
+                job = s.scalar(select(Job).options(defer(Job.input_json), defer(Job.result_json)).where(Job.id == jid))
+                row = s.scalar(
+                    select(Checkpoint).where(
+                        Checkpoint.job_id == jid,
+                        Checkpoint.stage == "ASSOCIATE",
+                        Checkpoint.input_hash == key,
+                        Checkpoint.processor_version == PROCESSOR,
                     )
                 )
+                if row:
+                    row.result_json = outcome
+                else:
+                    s.add(
+                        Checkpoint(
+                            job_id=jid, stage="ASSOCIATE", input_hash=key, processor_version=PROCESSOR, result_json=outcome
+                        )
+                    )
             if payload.get("scan_pipeline"):
                 from .scan_pipeline import PrototypeScanTarget
 
@@ -906,14 +978,55 @@ def run_batch(service, jid, *, preserve_processed=False):
                     else "failed"
                 )
                 target.outcome, target.updated_at = deepcopy(outcome), now()
-            with completed_lock:
-                completed[key] = outcome
-                counters[outcome["status"]] += 1
-                job.stage, job.progress, job.result_json = (
-                    "ASSOCIATE",
-                    int(len(completed) * 100 / max(1, len(items))),
-                    result(),
-                )
+            if s.info.get("vks_completion_batch"):
+                pending = s.info.setdefault("vks_progress_pending", {}).setdefault(jid, {})
+                pending[key] = outcome
+
+                def summary():
+                    changes = s.info["vks_progress_pending"][jid]
+                    if batch_checkpoints:
+                        from sqlalchemy.dialects.sqlite import insert
+
+                        statement = insert(Checkpoint)
+                        statement = statement.on_conflict_do_update(
+                            index_elements=["job_id", "stage", "input_hash", "processor_version"],
+                            set_={"result_json": statement.excluded.result_json},
+                        )
+                        s.execute(statement, [
+                            {"job_id": jid, "stage": "ASSOCIATE", "input_hash": key,
+                             "processor_version": PROCESSOR, "result_json": outcome}
+                            for key, outcome in changes.items()
+                        ])
+
+                    header = s.info.get("vks_task_header")
+                    latest_job = header[2] if header and header[2].id == jid else s.scalar(
+                        select(Job).options(defer(Job.input_json), defer(Job.result_json)).where(Job.id == jid)
+                    )
+                    with completed_lock:
+                        projected = {**completed, **changes}
+                        latest_job.stage, latest_job.progress, latest_job.result_json = (
+                            "ASSOCIATE",
+                            int(len(projected) * 100 / max(1, len(items))),
+                            result(projected),
+                        )
+
+                def applied():
+                    with completed_lock:
+                        completed.update(s.info["vks_progress_pending"][jid])
+                        counters.clear()
+                        counters.update(v["status"] for v in completed.values())
+
+                s.info.setdefault("vks_before_commit", {})[jid] = summary
+                s.info.setdefault("vks_after_commit", {})[jid] = applied
+            else:
+                with completed_lock:
+                    completed[key] = outcome
+                    counters[outcome["status"]] += 1
+                    job.stage, job.progress, job.result_json = (
+                        "ASSOCIATE",
+                        int(len(completed) * 100 / max(1, len(items))),
+                        result(),
+                    )
 
     if payload.get("needs_model", True) and len(completed) < len(items) and assistant.rag.store.settings(pid).enabled:
         with service.db() as s:
@@ -964,25 +1077,39 @@ def run_batch(service, jid, *, preserve_processed=False):
         }
 
     def process_group(group):
-        with service.db() as s:
-            actor = validate(s)
-            inferred = reusable(actor, payload.get("reuse_from_item"), s)
+        inferred = None
+        if payload.get("reuse_from_item"):
+            with assistant.links.reader.reading.db() as s:
+                actor = validate(s)
+                inferred = reusable(actor, payload["reuse_from_item"], s)
         for key in group:
-            checkpoint(force=True)
+            from .inference_pipeline import CURRENT_PIPELINE
+
+            # current_state validates the same attempt/lease/cancel fences in
+            # the shared read snapshot below. Do not open a second read per item.
+            if CURRENT_PIPELINE.get() is None:
+                checkpoint(force=True)
             if key in completed:
                 continue
             item = items[key]
-            with service.db() as s:
-                actor = validate(s)
-                current = assistant._binding(
-                    actor,
-                    pid,
-                    AssistanceInput(
-                        analysis_set_id=payload["analysis_set_id"], package_id=item["package_id"], target=item["target"]
-                    ),
-                    session=s,
-                )
+            from .inference_pipeline import CURRENT_PIPELINE
+
+            pipeline = CURRENT_PIPELINE.get()
+            lookup = AssistanceInput(
+                analysis_set_id=payload["analysis_set_id"], package_id=item["package_id"], target=item["target"]
+            )
+            def current_state():
+                with assistant.links.reader.reading.db() as s:
+                    actor = validate(s)
+                    current = assistant._binding(actor, pid, lookup, session=s)
+                    return actor, current
+
+            actor, current = (
+                pipeline.read(current_state, binding=(pid, payload["analysis_set_id"], item["package_id"], lookup.target))
+                if pipeline else current_state()
+            )
             status, message = None, None
+            retryable, error_code = False, None
             if current and current["excluded"]:
                 status, message = "excluded", "用户已移除，保持移除状态"
             elif current and current.get("origin") == "manual" and current["validity_status"] == "valid":
@@ -1007,18 +1134,26 @@ def run_batch(service, jid, *, preserve_processed=False):
 
                     def guard(session, actor=actor, form=form, before_manual=before_manual):
                         validate(session)
+                        # Manual edits are checked again under the actual write
+                        # transaction. Before send only the shared job scope is
+                        # needed; a stale model result will never overwrite them.
+                        from .inference_pipeline import WRITE_SESSION
+
+                        if WRITE_SESSION.get() is None and session.info.get("vks_read_batch"):
+                            return
                         latest = assistant._binding(actor, pid, form, session=session)
                         if latest and latest.get("origin") == "manual" and latest["point_revision_id"] != before_manual:
                             raise DomainError("VKS_STATE_CONFLICT", "人工说明已更新，保留当前人工内容", 409)
 
                     if inferred and inferred.get("failure"):
                         status, message = inferred["status"], inferred["failure"]
+                        retryable, error_code = inferred.get("retryable", False), inferred.get("error_code")
                     elif inferred is None:
                         answer = assistant.run(
                             actor, pid, form, migrate_manual=bool(before_manual), validate_scope=guard
                         )
-                        if answer["saved"]:
-                            with service.db() as s:
+                        if answer["saved"] and len(group) > 1:
+                            with assistant.links.reader.reading.db() as s:
                                 validate(s)
                                 saved = assistant._binding(actor, pid, form, session=s)
                                 point = s.get(Revision, saved["point_revision_id"])
@@ -1089,7 +1224,8 @@ def run_batch(service, jid, *, preserve_processed=False):
                     if error.code in {"VKS_FORBIDDEN", "VKS_UNAUTHENTICATED", "VKS_VERSION_CONFLICT", "VKS_CANCELLED"}:
                         raise
                     status, message = "failed", error.message
-                    inferred = {"failure": message, "status": status}
+                    retryable, error_code = error.retryable, error.code
+                    inferred = {"failure": message, "status": status, "retryable": retryable, "error_code": error_code}
             outcome = {
                 "id": key,
                 "label": item["target"]["label"],
@@ -1097,23 +1233,135 @@ def run_batch(service, jid, *, preserve_processed=False):
                 "saved": status == "linked",
                 "message": message,
                 "attempt": attempt,
+                **({"retryable": retryable, "error_code": error_code} if error_code else {}),
             }
             persist(key, outcome)
 
-    if payload.get("concurrency", 3) == 1:
+    lanes = payload.get("concurrency", 3)
+    if lanes == 1 and not payload.get("batched_page"):
         for group in payload["groups"]:
             process_group(group)
     else:
-        with ThreadPoolExecutor(max_workers=payload.get("concurrency", 3), thread_name_prefix="vks-associate") as pool:
-            futures = [pool.submit(copy_context().run, process_group, group) for group in payload["groups"]]
+        # Keep immutable operation groups/checkpoints intact and organize work
+        # by exact page. Repeated row operations still reuse one inference,
+        # while every target keeps its own durable result.
+        pages = OrderedDict()
+        for group in payload["groups"]:
+            remaining = [key for key in group if key not in completed]
+            if not remaining:
+                continue
+            item = items[remaining[0]]
+            page = (item["package_id"], item["target"]["route"], tuple(item["target"]["frame_path"]))
+            pages.setdefault(page, []).append(group)
+        # Real-data review found lower completeness in coalesced generations.
+        # Keep original per-target inference as the production default; local
+        # preparation and independent network requests still run concurrently.
+        cohorts = [[group] for groups in pages.values() for group in groups]
+        if cohorts and payload.get("needs_model", True):
+            # Populate immutable facts before worker contention can make several
+            # cold preparations race. This advisory read never calls a model;
+            # normal per-target checks still decide whether inference is needed.
+            first = next(key for key in cohorts[0][0] if key not in completed)
+            item = items[first]
             try:
-                for future in as_completed(futures):
-                    future.result()
-            except BaseException:
-                for future in futures:
-                    future.cancel()
-                raise
-    return result()
+                form = AssistanceInput(
+                    analysis_set_id=payload["analysis_set_id"],
+                    package_id=item["package_id"],
+                    target=item["target"],
+                    context=item["context"],
+                )
+                with assistant.links.reader.reading.db() as s:
+                    actor = validate(s)
+                    prepared = assistant.prepare(actor, pid, form, session=s)
+                    # Build the immutable locator index once before parallel
+                    # reads compete with its first database projection.
+                    assistant._binding(actor, pid, form, session=s)
+                assistant._index(prepared[2], prepared[1])
+            except DomainError:
+                # Reuse/manual/excluded outcomes need no model configuration.
+                # A target that actually needs inference rechecks and reports
+                # the exact failure through its unchanged normal execution.
+                pass
+
+        # Cohorts do not need a duplicate scope projection: process_group and
+        # the send/commit fences still obtain the current principal themselves.
+        with assistant.links.reader.reading.db() as s:
+            cohort_actor = validate(s)
+
+        def process_cohort(groups):
+            with assistant.batch(
+                cohort_actor,
+                pid,
+                max_items=len(groups),
+                concurrency=1,
+                max_input_bytes=96000,
+                gather_seconds=1,
+                participants=len(groups),
+            ) as batch:
+
+                def participating_group(group):
+                    try:
+                        return process_group(group)
+                    finally:
+                        batch.finish_participant()
+
+                if len(groups) == 1:
+                    participating_group(groups[0])
+                else:
+                    with ThreadPoolExecutor(max_workers=len(groups), thread_name_prefix="vks-infer-target") as targets:
+                        pending = [targets.submit(copy_context().run, participating_group, group) for group in groups]
+                        for future in as_completed(pending):
+                            future.result()
+
+        from .inference_pipeline import InferencePipeline
+
+        capacity = request_concurrency(lanes)
+        with InferencePipeline(capacity, service=service, scope=(pid, payload["analysis_set_id"], jid)) as pipeline:
+            with ThreadPoolExecutor(max_workers=pipeline.workers, thread_name_prefix="vks-associate") as pool:
+                futures = [pool.submit(copy_context().run, process_cohort, group) for group in cohorts]
+                try:
+                    for future in as_completed(futures):
+                        future.result()
+                except BaseException:
+                    for future in futures:
+                        future.cancel()
+                    raise
+    output = result()
+    # Recover transient failures asynchronously through the existing durable
+    # outbox. No original input/checkpoint is reset, no successful item repeats,
+    # and a failed repair cannot recursively create more paid model requests.
+    repair_keys = {key for key, value in completed.items() if value["status"] == "failed" and value.get("retryable")}
+    if repair_keys and not payload.get("_repair_round") and not payload.get("scan_pipeline"):
+        with service.db() as s:
+            actor = validate(s)
+
+            def enqueue_repair():
+                retry_payload = {
+                    **payload,
+                    "items": [items[key] for key in items if key in repair_keys],
+                    "groups": [
+                        [key for key in group if key in repair_keys]
+                        for group in payload["groups"]
+                        if any(key in repair_keys for key in group)
+                    ],
+                    "_repair_parent_job_id": jid,
+                    "_repair_parent_attempt": attempt,
+                    "_repair_round": 1,
+                }
+                child = service._new_job(s, actor, pid, "associate_all", retry_payload)
+                return {"job_id": child.id, "items": len(repair_keys)}
+
+            repair = service.idem(
+                s,
+                actor,
+                pid,
+                "associations.repair.enqueue",
+                f"repair.{jid}.{attempt}",
+                {"job_id": jid, "attempt": attempt, "keys": sorted(repair_keys)},
+                enqueue_repair,
+            )
+            output["repair"] = repair
+    return output
 
 
 def install_bulk_association(app, service, actor, envelope):

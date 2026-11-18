@@ -3,7 +3,7 @@ import {
   validateDiagramSource,
   MAX_DIAGRAM_LENGTH,
   MAX_SVG_LENGTH,
-} from "../apps/web/src/diagram-policy.ts";
+} from "../packages/markdown-runtime/src/diagram-policy.ts";
 
 // This trusted engine is evaluated only inside an opaque, network-disabled
 // frame. User Mermaid is data passed to the parser, never JavaScript.
@@ -15,6 +15,7 @@ mermaid.initialize({
   maxEdges: 200,
   htmlLabels: false,
   theme: "neutral",
+  look: "classic",
   fontFamily: "system-ui, sans-serif",
 });
 
