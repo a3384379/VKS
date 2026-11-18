@@ -153,7 +153,12 @@ def test_guided_preflight_keeps_full_formula_family_tables_and_original_draft(as
     monkeypatch.setattr(engine, "_binding", lambda *a, **k: current)
     monkeypatch.setattr(engine.rag, "available", lambda *a: False)
     reservations = []
-    monkeypatch.setattr(engine.ai, "reserve", lambda *a: reservations.append(a[-1]) or "synthetic-usage")
+
+    def reserve(actor, project, settings, bound, *, prototype_target):
+        reservations.append((bound, prototype_target))
+        return "synthetic-usage"
+
+    monkeypatch.setattr(engine.ai, "reserve", reserve)
     form = ReassociationInput.model_validate(
         {
             **body,
@@ -178,6 +183,8 @@ def test_guided_preflight_keeps_full_formula_family_tables_and_original_draft(as
     assert sent["writing_instruction"] == form.instruction
     assert answer_schema(form)["properties"]["section_revision_ids"]["maxItems"] == 12
     assert len(reservations) == 1
+    assert reservations[0][1]["package_id"] == form.package_id
+    assert reservations[0][1]["route"] == form.target.route
     from copy import deepcopy
 
     partial = deepcopy(prepared.body)
