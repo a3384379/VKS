@@ -11,6 +11,8 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
+_FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000  # Windows SDK fileapi.h
+
 
 class _DarwinStatfs(ctypes.Structure):
     # The 64-bit struct statfs layout from Darwin's <sys/mount.h>.
@@ -157,7 +159,7 @@ def _open_private_windows(path: Path, create: bool) -> int:
             con.FILE_SHARE_READ | con.FILE_SHARE_DELETE,
             attributes,
             con.CREATE_NEW if create else con.OPEN_EXISTING,
-            con.FILE_FLAG_OPEN_REPARSE_POINT,
+            _FILE_FLAG_OPEN_REPARSE_POINT,
             None,
         )
     except pywintypes.error as exc:
