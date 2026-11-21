@@ -131,13 +131,14 @@ def test_runtime_private_origin_key_is_stable_and_rejects_public_file(tmp_path, 
     assert len(first) == 32 and origin_secret() == first
     path = tmp_path / "origin.key"
     if os.name == "nt":
+        import ntsecuritycon
         import win32security as security
 
         descriptor = security.GetNamedSecurityInfo(
             str(path), security.SE_FILE_OBJECT, security.DACL_SECURITY_INFORMATION
         )
         dacl = descriptor.GetSecurityDescriptorDacl()
-        dacl.AddAccessAllowedAce(2, 0x80000000, security.ConvertStringSidToSid("S-1-1-0"))
+        dacl.AddAccessAllowedAce(2, ntsecuritycon.FILE_GENERIC_READ, security.ConvertStringSidToSid("S-1-1-0"))
         security.SetNamedSecurityInfo(
             str(path), security.SE_FILE_OBJECT, security.DACL_SECURITY_INFORMATION, None, None, dacl, None
         )
