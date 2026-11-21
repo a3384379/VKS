@@ -10,9 +10,9 @@ from sqlalchemy import select
 from vks_api import ai_gateway
 from vks_api.ai_gateway import ModelPolicy, PolicyInput
 from vks_api.interactive_ai import AssistanceInput, InteractiveAssistant
-from vks_api.models import Analysis, Artifact, Entity, Revision, Selection, uid
+from vks_api.models import Analysis, Artifact, Entity, Job, Revision, Selection, uid
 from vks_api.service import DomainError
-from vks_api.vector_rag import RagSettings, split
+from vks_api.vector_rag import DocumentIndexInput, RagSettings, split
 
 from tests.interactive import test_knowledge, test_materials
 from tests.prototype.test_v3_workflow import _headers
@@ -223,7 +223,7 @@ def test_background_doc_index_does_not_require_export_permission(vectors):
 
 
 @pytest.mark.parametrize("cancel", [False, True])
-def test_install_plain_md_without_prototype_queues_and_fences_automatic_index(materials, monkeypatch, cancel):
+def test_install_plain_md_is_local_and_explicit_index_is_fenced(materials, monkeypatch, cancel):
     _web, service, owner, manager, projects = materials
     pid, aid = projects[0]
     with service.db() as db:
@@ -241,27 +241,27 @@ def test_install_plain_md_without_prototype_queues_and_fences_automatic_index(ma
     staged = test_materials.stage(
         service, owner, manager, pid, aid, "documents", "# 普通文档\n\n这是没有任何向量或脚本能力的 Markdown。"
     )
-    installed = test_materials.activate(service, owner, manager, pid, aid, [staged])
-    assert installed["job_id"]
-    from vks_api.models import Job
-
-    with service.db() as db:
-        job = db.get(Job, installed["job_id"])
-        assert job.input_json["index_documents"] and not job.input_json["index_package_id"]
     calls = []
+    job_id = None
 
     def provider(config, payload):
         calls.append(payload)
-        if cancel:
-            service.cancel_job(owner, installed["job_id"], "Cancel indexing during provider request")
+        if cancel and job_id:
+            service.cancel_job(owner, job_id, "Cancel indexing during provider request")
         return {
             "data": [{"index": i, "embedding": [1.0] + [0.0] * 63} for i in range(len(payload["input"]))],
             "usage": {"total_tokens": 10},
         }
 
     monkeypatch.setattr(ai_gateway, "request_model", provider)
-    service.process_job(installed["job_id"])
-    result = service.get_job(owner, installed["job_id"])
+    installed = test_materials.activate(service, owner, manager, pid, aid, [staged])
+    assert installed["job_id"] is None and not calls
+    job_id = rag.start_document_job(owner, pid, DocumentIndexInput(analysis_set_id=aid), uid())["job_id"]
+    with service.db() as db:
+        job = db.get(Job, job_id)
+        assert job.input_json["index_only"] and not job.input_json["index_package_id"]
+    service.process_job(job_id)
+    result = service.get_job(owner, job_id)
     with rag.store.db() as db:
         count = db.execute("SELECT COUNT(*) FROM chunks WHERE project=?", (pid,)).fetchone()[0]
     assert calls

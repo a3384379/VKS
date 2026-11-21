@@ -192,6 +192,23 @@ def endpoint_policy(config):
 
 
 def request_model(config, body):
+    if config.get("_adaptive_association"):
+        from .association_pressure import ASSOCIATION_PRESSURE
+
+        with ASSOCIATION_PRESSURE.request():
+            try:
+                if revalidate := config.get("_association_preflight"):
+                    with _model_preflight():
+                        revalidate()
+                return _request_model(config, body)
+            except DomainError as error:
+                if error.details.get("upstream_status") == 429:
+                    ASSOCIATION_PRESSURE.throttled()
+                raise
+    return _request_model(config, body)
+
+
+def _request_model(config, body):
     from .model_stream import CURRENT_MODEL_STREAM, request_stream
 
     stream = CURRENT_MODEL_STREAM.get()
@@ -244,7 +261,10 @@ def request_model(config, body):
         if len(raw) > 2 * 1024 * 1024:
             failure("VKS_LIMIT_EXCEEDED", "模型响应超过体积限制", 413)
         if response.status in (429, 500, 502, 503, 504):
-            failure("VKS_DEPENDENCY_UNAVAILABLE", "模型服务暂时不可用，请稍后重试", 503, True)
+            raise DomainError(
+                "VKS_DEPENDENCY_UNAVAILABLE", "模型服务暂时不可用，请稍后重试", 503,
+                details={"upstream_status": response.status}, retryable=True,
+            )
         if response.status != 200:
             failure("VKS_INVALID_INPUT", "模型服务拒绝请求或发生重定向")
         result = json.loads(raw)
@@ -363,7 +383,7 @@ class AiService:
         evidence = [e for e in w["evidence"] if e["id"] in evidence_ids]
         return w, evidence
 
-    def reserve(self, actor, pid, config, input_bound, *, prototype_target=None):
+    def reserve(self, actor, pid, config, input_bound, *, prototype_target=None, purpose="other"):
         out = config["max_output_tokens"]
         tokens = input_bound + out
         cost = math.ceil(input_bound * config["input_rate_micro_per_million"] / 1000000) + math.ceil(
@@ -417,7 +437,10 @@ class AiService:
                 s.flush()
             self.service.audit(
                 s, actor, pid, "model.reserve", usage.id,
-                metadata={"prototype_target": prototype_target} if prototype_target else None,
+                metadata={
+                    "usage_purpose": purpose,
+                    **({"prototype_target": prototype_target} if prototype_target else {}),
+                },
             )
             return usage.id
 
@@ -601,7 +624,10 @@ class AiService:
                     },
                     "max_completion_tokens": config["max_output_tokens"],
                 }
-            usage_id = self.reserve(actor, pid, config, len(json.dumps(body, ensure_ascii=False).encode()) + 256)
+            usage_id = self.reserve(
+                actor, pid, config, len(json.dumps(body, ensure_ascii=False).encode()) + 256,
+                purpose="other" if document or knowledge_plan else "answer",
+            )
         input_tokens = output_tokens = None
         try:
             with _model_preflight(), self.service.db() as s:

@@ -1,6 +1,9 @@
-"""Project ledger totals with exact, permission-scoped page attribution."""
+"""Project ledger totals, by usage period or visible prototype page."""
 
 import json
+from datetime import UTC, datetime, time, timedelta
+from typing import Literal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
@@ -31,6 +34,81 @@ class ProjectTokenUsage(Input):
     embedding_tokens: int
     unattributed: TokenCounts
     functions: list[FunctionTokenUsage]
+
+
+class TokenPeriodUsage(Input):
+    period: Literal["day", "month"]
+    start_date: str
+    total_tokens: int
+    answer_tokens: int
+    association_tokens: int
+    embedding_tokens: int
+    other_tokens: int
+    unclassified_tokens: int
+
+
+def project_period_usage(assistant, actor, pid, period, selected_date=None):
+    zone = ZoneInfo("Asia/Shanghai")
+    start = selected_date or datetime.now(zone).date()
+    try:
+        if period == "month":
+            start = start.replace(day=1)
+            end = (start + timedelta(days=32)).replace(day=1)
+        else:
+            end = start + timedelta(days=1)
+        utc_start, utc_end = (
+            datetime.combine(day, time.min, zone).astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+            for day in (start, end)
+        )
+    except (OverflowError, ValueError) as exc:
+        raise DomainError("VKS_INVALID_INPUT", "日期超出可查询范围", 422) from exc
+    with assistant.links.reader.reading.db() as s:
+        assistant.service.require(s, actor, pid, "project:manage")
+        scope = (
+            ModelUsage.project_id == pid,
+            ModelUsage.created_at >= utc_start,
+            ModelUsage.created_at < utc_end,
+            ModelUsage.state.in_(("succeeded", "failed")),
+        )
+        records = s.execute(
+            select(ModelUsage.id, ModelUsage.input_tokens + ModelUsage.output_tokens).where(*scope)
+        ).all()
+        totals = dict.fromkeys(("answer", "association", "other", "unclassified"), 0)
+        purposes = dict(s.execute(
+            select(ModelUsage.id, Audit.metadata_json["usage_purpose"].as_string())
+            .join(Audit, (Audit.resource_id == ModelUsage.id) & (Audit.actor_id == ModelUsage.actor_id))
+            .where(*scope, Audit.project_id == pid, Audit.action == "model.reserve",
+                   Audit.metadata_json["usage_purpose"].as_string().in_(("answer", "association", "other")))
+        ).all())
+        if len(purposes) < len(records):
+            # Older receipts can prove these were associations even before
+            # reservations recorded a purpose. A page hint alone cannot, since
+            # questions and explanations also carry a prototype target.
+            saved = (
+                select(ModelUsage.id)
+                .join(Idempotency, ("assistant." + ModelUsage.id == Idempotency.key)
+                      & (Idempotency.actor_id == ModelUsage.actor_id))
+                .where(*scope, Idempotency.project_id == pid, Idempotency.operation == "interactive.binding.save")
+            )
+            previews = (
+                select(ModelUsage.id)
+                .join(Artifact, (Artifact.metadata_json["model_usage_id"].as_string() == ModelUsage.id)
+                      & (Artifact.metadata_json["created_by"].as_string() == ModelUsage.actor_id))
+                .where(*scope, Artifact.project_id == pid, Artifact.kind == "generated",
+                       Artifact.metadata_json["reassociation_preview"].as_boolean().is_(True))
+            )
+            for usage_id in s.scalars(saved.union(previews)):
+                purposes.setdefault(usage_id, "association")
+        for usage_id, tokens in records:
+            totals[purposes.get(usage_id, "unclassified")] += tokens
+    embeddings = assistant.rag.store.used_tokens(pid, days=(start.isoformat(), end.isoformat()))
+    return TokenPeriodUsage(
+        period=period,
+        start_date=start.isoformat(),
+        total_tokens=sum(totals.values()) + embeddings,
+        embedding_tokens=embeddings,
+        **{f"{purpose}_tokens": tokens for purpose, tokens in totals.items()},
+    )
 
 
 def prototype_target(form):

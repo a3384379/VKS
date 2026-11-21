@@ -51,7 +51,9 @@ def test_saved_knowledge_preview_cards_and_uninterrupted_document_reading(reader
             original_url = page.url
             related.locator(".citation-inline").first.click()
             preview = page.get_by_role("dialog", name="引用原文预览", exact=True)
-            expect(preview.locator("h3")).to_have_text("创建任务")
+            heading = preview.get_by_role("heading", name="创建任务", exact=True)
+            expect(heading).to_have_count(1)
+            expect(heading).to_be_visible()
             assert page.url == original_url
             expect(page.get_by_role("button", name="交互原型", exact=True)).to_have_attribute("aria-pressed", "true")
             preview.get_by_role("button", name="返回", exact=True).click()

@@ -14,10 +14,11 @@ from vks_api.readonly_export import html_library
 from tests.ui.test_frontend_browser import chromium_path
 
 ASSETS = Path(__file__).resolve().parents[2] / "services/api/vks_api/reader_assets"
+SOURCE_REVISION = "12345678-1234-4abc-9def-123456789abc"
 
 
 @pytest.fixture
-def reader_file(tmp_path):
+def reader_file(tmp_path, request):
     prototype = """<!doctype html><html><head><title>任务管理</title></head><body>
     <h1>任务管理</h1><button id="taskcreate" onclick="document.getElementById('modal').hidden=false">创建任务</button>
     <section id="modal" class="modal" hidden><h2>创建任务</h2><input placeholder="任务名称">
@@ -75,6 +76,17 @@ def reader_file(tmp_path):
         },
         "ai": {"model": "example-model"},
     }
+    if getattr(request, "param", False):
+        payload["bindings"][0]["summary"] += (
+            f"\n\n## 核对依据\n\n[1]《创建任务》（revision ID：`{SOURCE_REVISION}`）\n\n"
+            f"[1]《适用条件》 (revision ID: {SOURCE_REVISION})\n\n"
+            f"适用于业务规则 V2.1。\n\n```text\n示例（revision ID：{SOURCE_REVISION}）\n```"
+        )
+        payload["bindings"][0]["saved_explanation"] = {
+            "explanation": f"先填名称和负责人，再提交。\n\n[1]《创建任务》（修订 ID：`{SOURCE_REVISION}`）",
+            "section_ids": ["s1"],
+        }
+        payload["documents"][0]["sections"][0]["content"] += f"\n\n原文示例（revision ID：`{SOURCE_REVISION}`）"
     path = tmp_path / "library.html"
     path.write_bytes(html_library(payload))
     return path
@@ -126,6 +138,47 @@ def test_file_reader_offline_links_isolation_and_ephemeral_prototype(reader_file
             page.set_viewport_size({"width": 640, "height": 960})
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             page.screenshot(path=tmp_path / "reader-mobile.png")
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("reader_file", [True], indirect=True)
+def test_saved_explanation_reads_offline_and_uses_the_studio_source_preview(reader_file):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=chromium_path(playwright), headless=True)
+        try:
+            page = browser.new_page(viewport={"width": 390, "height": 720})
+            network = []
+            page.on("request", lambda request: network.append(request.url))
+            page.goto(reader_file.as_uri())
+            frame = page.frame_locator("iframe.prototype-frame")
+            frame.get_by_role("button", name="创建任务", exact=True).click(button="right")
+            page.get_by_role("button", name="查看关联文档", exact=False).click()
+            knowledge = page.locator(".knowledge-card")
+            expect(knowledge).to_contain_text("《适用条件》")
+            expect(knowledge.get_by_text("适用于业务规则 V2.1。", exact=True)).to_be_visible()
+            expect(knowledge.locator("p", has_text="revision ID")).to_have_count(0)
+            expect(knowledge.locator("pre")).to_contain_text(f"示例（revision ID：{SOURCE_REVISION}）")
+            expect(knowledge.get_by_role("button", name="[1]", exact=True)).to_have_count(2)
+            page.get_by_role("tab", name="AI 讲解", exact=True).click()
+            lecture = page.get_by_role("region", name="本次 AI 讲解", exact=True)
+            expect(lecture).to_contain_text("先填名称和负责人，再提交。")
+            expect(lecture).to_contain_text("《创建任务》")
+            expect(lecture).not_to_contain_text(SOURCE_REVISION)
+            expect(page.get_by_text("已保存讲解 · 本地阅读", exact=True)).to_be_visible()
+            lecture.get_by_role("button", name="[1]", exact=True).click()
+            preview = page.get_by_role("dialog", name="引用原文预览", exact=True)
+            expect(preview.locator("header small")).to_have_text("任务操作手册")
+            expect(preview.get_by_role("heading", name="创建任务", exact=True)).to_have_count(1)
+            expect(preview.get_by_text(SOURCE_REVISION, exact=True)).to_be_visible()
+            for button in preview.locator("footer button").all():
+                expect(button).to_have_css("border-top-width", "1px")
+                expect(button).to_have_css("background-color", "rgb(255, 255, 255)")
+            assert preview.bounding_box()["width"] <= 390 - 32
+            assert preview.bounding_box()["height"] <= 720 - 48
+            preview.get_by_role("button", name="返回", exact=True).click()
+            expect(lecture).to_be_visible()
+            assert not [url for url in network if url.startswith("http")]
         finally:
             browser.close()
 

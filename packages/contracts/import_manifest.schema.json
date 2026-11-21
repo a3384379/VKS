@@ -63,6 +63,9 @@
       "maxItems": 64,
       "items": {"$ref": "#/$defs/manifestReference"}
     },
+    "studioManifest": {
+      "$ref": "#/$defs/manifestReference"
+    },
     "businessPointsManifest": {
       "$ref": "#/$defs/manifestReference"
     },
@@ -109,6 +112,12 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 96,
+      "pattern": "^[a-z][a-z0-9._-]*$"
+    },
+    "entityKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
       "pattern": "^[a-z][a-z0-9._-]*$"
     },
     "sha256": {
@@ -386,7 +395,7 @@
             ],
             "properties": {
               "logicalKey": {
-                "$ref": "#/$defs/key"
+                "$ref": "#/$defs/entityKey"
               },
               "name": {
                 "type": "string",
@@ -418,7 +427,7 @@
             ],
             "properties": {
               "logicalKey": {
-                "$ref": "#/$defs/key"
+                "$ref": "#/$defs/entityKey"
               },
               "pageKey": {
                 "$ref": "#/$defs/key"
@@ -441,6 +450,27 @@
             "description": "HTML 对应元素应提供 data-vks-action=logicalKey，所属页面提供 data-vks-page=pageKey。事件名称仅描述业务动作，不授权执行。"
           }
         },
+        "documents": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["logicalKey", "artifactPath", "sha256", "name", "lockedSections"],
+            "properties": {
+              "logicalKey": {"$ref": "#/$defs/entityKey"},
+              "artifactPath": {"$ref": "#/$defs/relativePath"},
+              "sha256": {"$ref": "#/$defs/sha256"},
+              "name": {"type": "string", "minLength": 1, "maxLength": 300},
+              "lockedSections": {
+                "type": "array",
+                "maxItems": 50000,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/entityKey"}
+              }
+            }
+          }
+        },
         "documentSections": {
           "type": "array",
           "maxItems": 20000,
@@ -457,7 +487,7 @@
             ],
             "properties": {
               "sectionKey": {
-                "$ref": "#/$defs/key"
+                "$ref": "#/$defs/entityKey"
               },
               "artifactPath": {
                 "$ref": "#/$defs/relativePath"
@@ -504,7 +534,7 @@
             ],
             "properties": {
               "logicalKey": {
-                "$ref": "#/$defs/key"
+                "$ref": "#/$defs/entityKey"
               },
               "entityType": {
                 "enum": [
@@ -634,7 +664,7 @@
             ],
             "properties": {
               "logicalKey": {
-                "$ref": "#/$defs/key"
+                "$ref": "#/$defs/entityKey"
               },
               "entityType": {
                 "enum": [

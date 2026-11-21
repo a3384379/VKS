@@ -19,6 +19,7 @@ import stat
 import subprocess
 import tempfile
 import zipfile
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -29,6 +30,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 HASH = re.compile(r"^[a-f0-9]{64}$")
 MAX_BYTES = 2 * 1024 * 1024 * 1024
+RAG_STATE = "rag-state.json"
+RAG_DATABASE = "rag-vectors.sqlite"
 
 
 class BackupError(ValueError):
@@ -41,6 +44,60 @@ def digest(raw):
 
 def canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _backup_rag(root):
+    source = root / RAG_DATABASE
+    if source.is_symlink() or (source.exists() and not source.is_file()):
+        raise BackupError("RAG 数据库路径不安全")
+    if not source.exists():
+        return {"config": [], "usage": []}
+    try:
+        with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("BEGIN")
+            return {
+                "config": db.execute("SELECT project, settings FROM config ORDER BY project").fetchall(),
+                "usage": db.execute(
+                    "SELECT id, project, day, model, reserved, used, state FROM usage ORDER BY id"
+                ).fetchall(),
+            }
+    except sqlite3.Error as exc:
+        raise BackupError("无法读取 RAG 配置及嵌入用量快照") from exc
+
+
+def _restore_rag(staging, raw):
+    if raw is None:
+        return "not_in_archive"
+    try:
+        state = json.loads(raw)
+        config, usage = state["config"], state["usage"]
+        if not isinstance(config, list) or not isinstance(usage, list):
+            raise TypeError
+        for project, settings in config:
+            if not isinstance(project, str) or not isinstance(json.loads(settings), dict):
+                raise TypeError
+        for key, project, day, model, reserved, used, status in usage:
+            if (
+                any(not isinstance(field, str) for field in (key, project, day, model, status))
+                or type(reserved) is not int
+                or type(used) is not int
+                or min(reserved, used) < 0
+            ):
+                raise ValueError
+        if not config and not usage:
+            return "empty"
+        path = staging / RAG_DATABASE
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute("CREATE TABLE config(project TEXT PRIMARY KEY, settings TEXT NOT NULL)")
+            db.execute(
+                "CREATE TABLE usage(id TEXT PRIMARY KEY,project TEXT,day TEXT,model TEXT,reserved INTEGER,used INTEGER,state TEXT)"
+            )
+            db.executemany("INSERT INTO config VALUES (?,?)", config)
+            db.executemany("INSERT INTO usage VALUES (?,?,?,?,?,?,?)", usage)
+        path.chmod(0o600)
+    except (ValueError, KeyError, TypeError, OverflowError, sqlite3.Error) as exc:
+        raise BackupError("RAG 配置或用量备份无效") from exc
+    return "restored"
 
 
 def _reference_keys(rows):
@@ -200,6 +257,9 @@ def backup(data_dir, destination, *, database_url=None, pg_tools_container=None)
                         files["database.dump"] = result.stdout
             finally:
                 engine.dispose()
+        # The sidecar SQLite transaction includes committed WAL records. It is
+        # independent of the main database snapshot and excludes derived indexes.
+        files[RAG_STATE] = canonical(_backup_rag(root))
         releases = _release_manifests(rows)
         keys = _reference_keys(rows)
         checkpoint_keys = set()
@@ -289,7 +349,7 @@ def _validated_archive(path, expected_sha256):
                 raise BackupError("备份条目过多")
             for entry in archive.infolist():
                 name = entry.filename
-                allowed = name in ("manifest.json", "owner-id", "database.sqlite", "database.dump") or (
+                allowed = name in ("manifest.json", "owner-id", "database.sqlite", "database.dump", RAG_STATE) or (
                     name.startswith("objects/") and HASH.fullmatch(name[8:])
                 )
                 mode = (entry.external_attr >> 16) & 0xFFFF
@@ -372,6 +432,7 @@ def restore(archive, destination, *, expected_sha256, database_url=None, pg_tool
     staging.chmod(0o700)
     engine = None
     try:
+        rag_state = _restore_rag(staging, files.pop(RAG_STATE, None))
         for name, raw in files.items():
             relative = "vks.db" if name == "database.sqlite" else name
             path = staging / relative
@@ -409,6 +470,7 @@ def restore(archive, destination, *, expected_sha256, database_url=None, pg_tool
             "restored_at": datetime.now(UTC).isoformat(),
             "database_kind": manifest["database_kind"],
             "credentials_revoked": True,
+            "rag_state": rag_state,
             "release_manifests": manifest["release_manifests"],
         }
         (staging / "restore-report.json").write_bytes(canonical(report))

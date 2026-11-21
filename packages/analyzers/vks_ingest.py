@@ -53,6 +53,8 @@ class ParsedBundle:
     relations: list[dict] = field(default_factory=list)
     issues: list[dict] = field(default_factory=list)
     analysis_metrics: dict = field(default_factory=dict)
+    studio_manifest: dict | None = None
+    studio_descriptors: dict = field(default_factory=dict)
 
 
 def _fail(code: str, message: str, **details: Any) -> None:
@@ -314,10 +316,14 @@ def _document_key(path: str) -> str:
     return "document." + sha256(path.encode()).hexdigest()[:24]
 
 
-def _parse_markdown(path: str, text: str, explicit: list[dict]) -> list[dict]:
-    key = _document_key(path)
+def _parse_markdown(path: str, text: str, explicit: list[dict], document: dict | None = None) -> list[dict]:
+    key = document["logicalKey"] if document else _document_key(path)
     headings = _headings(text)
-    title = headings[0]["title"] if headings else PurePosixPath(path).stem
+    title = document["name"] if document else headings[0]["title"] if headings else PurePosixPath(path).stem
+    if document and explicit and (not headings or headings[0]["line"] > 1):
+        preamble = next((row for row in explicit if row["startLine"] == 1), None)
+        if preamble and len(preamble["headingPath"]) == 1:
+            headings.insert(0, {"line": 1, "title": preamble["headingPath"][0], "path": preamble["headingPath"]})
     entities = [
         _entity(
             key,
@@ -334,7 +340,10 @@ def _parse_markdown(path: str, text: str, explicit: list[dict]) -> list[dict]:
     for section in explicit:
         if section["startLine"] in explicit_by_line:
             _fail("VKS_LOCATOR_INVALID", "多个章节声明使用同一开始行")
-        body = _lines(text, section)
+        if text:
+            _lines(text, section)
+        elif section["startLine"] != 1 or section["endLine"] != 1:
+            _fail("VKS_LOCATOR_INVALID", "空文档的章节范围必须是首行")
         matched = next((h for h in headings if h["line"] == section["startLine"]), None)
         if not matched or matched["path"] != section["headingPath"]:
             _fail("VKS_LOCATOR_INVALID", "章节标题路径与原文不一致")
@@ -373,11 +382,15 @@ def _parse_markdown(path: str, text: str, explicit: list[dict]) -> list[dict]:
                     "ordinal": i,
                     "identity_origin": "explicit" if declared else "heading_path",
                     "semantic_content_sha256": sha256(body.encode()).hexdigest(),
-                    "manual_lock": True,
+                    "manual_lock": section_key in document["lockedSections"] if document else True,
                 },
             )
         )
     entities[0]["metadata"]["section_count"] = len(entities) - 1
+    if document and set(document["lockedSections"]) - {row["stable_key"] for row in entities[1:]}:
+        _fail("VKS_REFERENCE_INVALID", "章节锁必须引用所属文档中的章节")
+    if document:
+        entities[0]["metadata"]["portable_document"] = True
     return entities
 
 
@@ -492,6 +505,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
                 "uiManifest",
                 "prototypeManifest",
                 "prototypeManifests",
+                "studioManifest",
                 "businessPointsManifest",
                 "bindings",
                 "selectionManifest",
@@ -610,6 +624,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         ("bindings", "binding_manifest.schema.json", "binding_manifest"),
         ("prototypeManifest", "prototype_manifest.schema.json", "fixture"),
         ("businessPointsManifest", "business_points_manifest.schema.json", "fixture"),
+        ("studioManifest", "studio_manifest.schema.json", "fixture"),
         ("selectionManifest", "import_manifest.schema.json", "fixture"),
     ]:
         reference = manifest.get(field)
@@ -678,12 +693,19 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
             _fail("VKS_MEDIA_TYPE_INVALID", "实体定位需要可解析文本")
         return artifact, texts[path]
 
-    declared_keys = [x["logicalKey"] for field in ("pages", "actions", "codeEntities") for x in ui.get(field, [])] + [
+    declared_keys = [x["logicalKey"] for field in ("pages", "actions", "codeEntities", "documents") for x in ui.get(field, [])] + [
         x["sectionKey"] for x in ui["documentSections"]
     ]
     if len(declared_keys) != len(set(declared_keys)):
         _fail("VKS_DUPLICATE_LOGICAL_KEY", "同一基线的逻辑 key 重复")
     explicit_by_path: dict[str, list[dict]] = {}
+    documents_by_path = {}
+    for document in ui.get("documents", []):
+        referenced_artifact(document, ("markdown",))
+        path = document["artifactPath"]
+        if path in documents_by_path:
+            _fail("VKS_DUPLICATE_LOGICAL_KEY", "同一文档文件只能声明一个逻辑身份")
+        documents_by_path[path] = document
     for section in ui["documentSections"]:
         referenced_artifact(section, ("markdown",))
         explicit_by_path.setdefault(section["artifactPath"], []).append(section)
@@ -692,7 +714,7 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         if path in failed_paths:
             continue
         if artifact["kind"] == "markdown":
-            for entity in _parse_markdown(path, texts[path], explicit_by_path.get(path, [])):
+            for entity in _parse_markdown(path, texts[path], explicit_by_path.get(path, []), documents_by_path.get(path)):
                 add(entity)
         elif artifact["kind"] == "openapi":
             try:
@@ -1080,4 +1102,10 @@ def parse_bundle(data: bytes, expected_project_key: str) -> ParsedBundle:
         result.relations = [
             row for row in result.relations if row["from_key"] in selected and row["to_key"] in selected
         ]
+    if "studioManifest" in sidecars:
+        from .studio_manifest import validate_studio
+
+        result.studio_manifest = validate_studio(
+            sidecars["studioManifest"], artifacts, result.entities
+        )
     return result

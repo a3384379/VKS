@@ -130,6 +130,11 @@ def summary(s, run):
                 count((target.state == "queued") & Job.state.in_(("running", "cancelling")), "running"),
                 count(target.state == "cancelled", "cancelled"),
                 func.count(func.distinct(Job.id)).label("jobs"),
+                func.min(func.coalesce(
+                    Job.input_json["_run_started_at"].as_string(),
+                    case((Job.attempt > 0, Job.created_at)),
+                )).label("started_at"),
+                func.max(Job.updated_at).label("updated_at"),
                 *(count(condition & legacy_scope, "legacy_" + name) for name, condition in legacy_conditions.items()),
             )
             .select_from(target)

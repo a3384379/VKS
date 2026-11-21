@@ -745,7 +745,20 @@ class PrototypeEditor:
             _require_edges(s, service, actor, pid, [current])
             return result
 
-    def _point_revision(self, s, pid, action, entity, prior, form, refs, *, input_revisions=(), generation=None):
+    def _point_revision(
+        self,
+        s,
+        pid,
+        action,
+        entity,
+        prior,
+        form,
+        refs,
+        *,
+        input_revisions=(),
+        generation=None,
+        source_restricted=False,
+    ):
         old = s.get(Artifact, prior.artifact_id) if prior else None
         original = s.get(Artifact, action.artifact_id)
         provenance = {
@@ -776,6 +789,11 @@ class PrototypeEditor:
             "original_artifact_id": (old.metadata_json.get("original_artifact_id") or old.id) if old else original.id,
             "input_revision_provenance": [provenance[key] for key in sorted(provenance)],
             **({"interactive_generation": generation} if generation else {}),
+            **(
+                {"requires_source_read": True}
+                if source_restricted or old and old.metadata_json.get("requires_source_read")
+                else {}
+            ),
         }
         art = _artifact(
             s,

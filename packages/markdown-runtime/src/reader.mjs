@@ -1,5 +1,6 @@
 import { showSelectionMenu } from "./selectionMenu.ts";
 import { openImagePreview as imageDialog } from "./imagePreview.ts";
+import { stripCitationRevisionIds } from "./citationRevisionIds.ts";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
@@ -458,8 +459,13 @@ function render(source, options = {}) {
     result.append(document.createTextNode(value.slice(index)));
     return result;
   };
-  const renderChildren = (node, plain = false) =>
-    (node.children || []).map((child) => nodeToDom(child, plain));
+  const renderChildren = (node, plain = false) => {
+    const children = node.children || [];
+    const visible = options.hideCitationRevisionIds && !plain && node.tagName !== "pre"
+      ? stripCitationRevisionIds(children)
+      : children;
+    return visible.map((child) => nodeToDom(child, plain));
+  };
   const nodeToDom = (node, plain = false) => {
     if (node.type === "text")
       return plain

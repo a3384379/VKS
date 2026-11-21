@@ -291,8 +291,8 @@ def test_actual_input_revocation_after_reserve_releases_only_not_sent_usage(audi
     reserve = AiService.reserve
     revoked = []
 
-    def reserve_then_revoke(self, *args):
-        usage = reserve(self, *args)
+    def reserve_then_revoke(self, *args, **kwargs):
+        usage = reserve(self, *args, **kwargs)
         if not revoked:
             with c.s.db() as s:
                 for artifact in s.scalars(select(Artifact)):
@@ -423,7 +423,7 @@ def test_unknown_preflight_exception_is_not_a_trusted_local_refusal(audit_store,
     _, sent, constructed, _ = local_fixture_transport(c, monkeypatch)
     calls = []
 
-    def unknown_reservation(*args):
+    def unknown_reservation(*args, **kwargs):
         calls.append(True)
         raise RuntimeError("Synthetic unclassified local failure")
 

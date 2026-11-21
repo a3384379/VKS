@@ -35,7 +35,10 @@ export function isTarget(value: unknown): value is Target {
     t.open_steps.every((v) => bounded(v, 2000))
   );
 }
-export type RuntimeHandle = { send: (type: string, payload?: unknown) => void };
+export type RuntimeHandle = {
+  instanceId: string;
+  send: (type: string, payload?: unknown) => string;
+};
 export type RuntimeStorageScope = {
   accountId: string;
   projectId: string;
@@ -117,6 +120,7 @@ export function OriginalRuntime({
         type,
         payload,
       });
+      return request;
     };
     const listener = (e: MessageEvent) => {
       if (
@@ -187,7 +191,7 @@ export function OriginalRuntime({
         }
       };
       port.start();
-      handle.current = { send };
+      handle.current = { instanceId: identity, send };
       iframe.current?.contentWindow?.postMessage(
         { type: "vks.connect", instance: identity },
         origin,

@@ -493,39 +493,24 @@
   flex-direction: row;
   margin: 0;
 }
-.project-token-usage,
-.token-report-dialog {
+.project-token-usage {
   min-width: 0;
   padding: 10px 14px;
   background: #fff;
   border: 1px solid #d7e4dc;
   border-radius: 10px;
 }
-.token-report-dialog {
-  width: min(600px, calc(100% - 32px));
-  max-height: min(540px, calc(100dvh - 32px));
-  padding: 16px;
-  overflow: auto;
-  color: inherit;
-}
-.token-report-dialog::backdrop {
-  background: #19382b66;
-}
-.project-token-usage > header,
-.token-report-dialog > header,
-.token-report-row,
-.token-report-dialog > footer > div {
+.project-token-usage > header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
-.project-token-usage h2,
-.token-report-dialog h2 {
+.project-token-usage h2 {
   margin: 0;
   font-size: 16px;
 }
-.token-report-dialog small,
 .token-report-message,
 .token-report-metrics dt {
   color: #60776a;
@@ -533,19 +518,20 @@
 }
 .token-report-actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 6px;
 }
 .token-report-actions button,
-.token-report-dialog > header button {
+.token-report-actions input {
   padding: 5px 8px;
   min-height: 30px;
   font-size: 12px;
 }
-.token-report-total strong {
-  font-size: clamp(18px, 1.75vw, 25px);
-  letter-spacing: -0.04em;
-  font-variant-numeric: tabular-nums;
+.token-report-date {
+  inline-size: 10rem;
+  max-inline-size: 100%;
+  block-size: 30px;
 }
 .token-report-metrics {
   display: grid;
@@ -559,7 +545,13 @@
   font-size: 12px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-report-total dd {
+  font-size: clamp(18px, 1.75vw, 25px);
+  letter-spacing: -0.04em;
 }
 .token-report-views {
   display: flex;
@@ -567,11 +559,11 @@
   padding: 3px;
   background: #f0f5f2;
   border-radius: 7px;
-  margin-top: 12px;
 }
 .token-report-views button {
   flex: 1;
-  padding: 6px;
+  padding: 4px 6px;
+  min-height: 24px;
   border-color: transparent;
   background: transparent;
   font-size: 12px;
@@ -581,56 +573,15 @@
   border-color: #d8e5dc;
   color: #135b45;
 }
-.token-report-chart {
-  max-height: min(40dvh, 320px);
-  overflow: auto;
-  scrollbar-gutter: stable;
-  margin: 10px 0;
-  padding: 0 4px 0 0;
-  list-style: none;
-}
-.token-report-chart li {
-  padding: 7px 0;
-}
-.token-report-row {
-  font-size: 12px;
-}
-.token-report-row span,
-.token-report-chart li small {
-  display: block;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.token-report-row b,
-.token-report-dialog > footer b {
-  flex: none;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.token-report-bar {
+.token-report-message {
   display: flex;
-  border-radius: 4px;
-  overflow: hidden;
-  height: 6px;
-  margin-top: 6px;
-  background: #e8efea;
-}
-.token-report-bar i:first-child {
-  background: #21765d;
-}
-.token-report-bar i:last-child {
-  background: #9bcab7;
-}
-.token-report-dialog > footer {
-  padding-top: 10px;
-  border-top: 1px solid #e0e9e3;
-  font-size: 12px;
-}
-.token-report-dialog > footer > small {
-  display: block;
-  margin-top: 5px;
+  flex-wrap: wrap;
+  align-content: start;
+  column-gap: 12px;
+  margin: 6px 0 0;
+  line-height: 1.4;
+  block-size: 2.8em;
+  overflow: auto;
 }
 @media (min-width: 960px) {
   .association-management-layout {
@@ -1051,4 +1002,30 @@
   .association-diff-head {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.batch-explanation-dialog {
+  width: min(540px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 20px;
+  color: inherit;
+  border: 1px solid #d8e5df;
+  border-radius: 12px;
+}
+.batch-explanation-dialog::backdrop {
+  background: #193c347a;
+}
+.batch-explanation-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+.batch-explanation-dialog progress {
+  width: 100%;
+}
+.batch-explanation-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, mutation } from "../../web/src/api";
 import { RichMarkdown, type MarkdownReference } from "./RichMarkdown";
+import { TaskTiming, type Timing } from "./TaskTiming";
 import {
   AssociationComparison,
   type AssociationBaseline,
@@ -47,6 +48,8 @@ export type AssociationReviewProps = {
   analysis: string;
   items?: ReviewTarget[];
   mode?: "missing" | "all";
+  resumeJobId?: string;
+  blockedReason?: string;
   addedChapter?: { name: string; document: string };
   onClose: () => void;
   onSaved: () => unknown | Promise<unknown>;
@@ -67,12 +70,19 @@ type ReviewPage = {
   state: string;
   processed: number;
   total: number;
+  timing?: Timing;
+  failure_message?: string;
   matched_total: number;
   unresolved_total: number;
   items: ReviewRow[];
   next_offset?: number | null;
 };
 type ReviewFilter = "all" | "needs_attention" | ReviewRow["status"];
+type PreviewEdit = { title: string; summary: string };
+type ReviewTiming = {
+  single_seconds: number | null;
+  batch_seconds_per_item: number | null;
+};
 const reviewFilters: Record<ReviewFilter, string> = {
   all: "全部状态",
   needs_attention: "需处理",
@@ -83,6 +93,15 @@ const reviewFilters: Record<ReviewFilter, string> = {
 };
 const settled = (state: string) =>
   ["succeeded", "failed", "cancelled"].includes(state);
+const jobStatus: Record<string, string> = {
+  queued: "等待调度",
+  running: "正在生成预览",
+  retry_wait: "等待重试",
+  cancelling: "正在停止生成",
+  cancelled: "生成已停止",
+  failed: "生成失败",
+  succeeded: "预览生成结束",
+};
 const rowError = (row: ReviewRow) =>
   typeof row.error === "string" ? row.error : row.error?.message;
 const statusText = (row: ReviewRow) => reviewFilters[row.status];
@@ -93,6 +112,8 @@ export function AssociationReview({
   analysis,
   items,
   mode = "missing",
+  resumeJobId,
+  blockedReason,
   addedChapter,
   onClose,
   onSaved,
@@ -105,6 +126,7 @@ export function AssociationReview({
   const active = useRef(true);
   const controllers = useRef(new Set<AbortController>());
   const currentJob = useRef<{ id: string; state: string } | null>(null);
+  const [historyTiming, setHistoryTiming] = useState<ReviewTiming | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const [instruction, setInstruction] = useState("");
@@ -114,7 +136,10 @@ export function AssociationReview({
     state: string;
     processed: number;
     total: number;
-  } | null>(null);
+    timing?: Timing;
+  } | null>(() =>
+    resumeJobId ? { id: resumeJobId, state: "queued", processed: 0, total: 0 } : null,
+  );
   const [rows, setRows] = useState<ReviewRow[]>([]);
   const [overrides, setOverrides] = useState<Record<string, ReviewRow>>({});
   const [excluded, setExcluded] = useState(new Set<string>());
@@ -132,14 +157,22 @@ export function AssociationReview({
   } | null>(null);
   const localPreviews = useRef(new Map<string, AssociationPreview>());
   const [generating, setGenerating] = useState(false);
-  const retrying = useRef(new Set<string>());
+  const [generationStarted, setGenerationStarted] = useState("");
+  const retrying = useRef(new Map<string, string>());
   const [regenerating, setRegenerating] = useState(new Set<string>());
   const [retryErrors, setRetryErrors] = useState<Record<string, string>>({});
+  const [retryNotes, setRetryNotes] = useState<Record<string, string>>({});
+  const [batchDirection, setBatchDirection] = useState("");
+  const [batchRetry, setBatchRetry] = useState<{
+    done: number; total: number; ready: number; running: boolean; startedAt: string;
+  }>();
+  const [edits, setEdits] = useState<Record<string, PreviewEdit>>({});
+  const [editing, setEditing] = useState<{ id: string; point: PreviewEdit } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [reading, setReading] = useState(false);
-  const [started, setStarted] = useState(false);
+  const [started, setStarted] = useState(!!resumeJobId);
   const visible = rows
     .map((row) => overrides[row.item_id] || row)
     .filter((row) => !excluded.has(row.item_id));
@@ -151,6 +184,8 @@ export function AssociationReview({
   currentRow.current = current?.item_id;
   const currentPreview = current?.preview_id || current?.display_id;
   const value = preview && preview.id === currentPreview ? preview.value : null;
+  const currentEdit = current?.preview_id ? edits[current.preview_id] : undefined;
+  const activeEditor = editing?.id === currentPreview ? editing : null;
   const total = job?.total ?? rows.length;
   const remaining = Math.max(0, total - excluded.size);
   const localFilters = useMemo(
@@ -163,7 +198,16 @@ export function AssociationReview({
     [excluded, overrides],
   );
   const currentRetrying = !!current && regenerating.has(current.item_id);
+  const currentRetryStarted = current ? retrying.current.get(current.item_id) : null;
   const showUnresolved = !!job && settled(job.state) && unresolved > 0;
+  const singleEstimate = historyTiming?.single_seconds;
+  const batchEstimate = historyTiming?.batch_seconds_per_item && job && job.total > 1
+    ? Math.max(singleEstimate || 0, historyTiming.batch_seconds_per_item * (job.total - (job.timing?.baseline ?? 0)))
+    : null;
+  const batchHistory = batchEstimate ? {
+    lower_seconds: batchEstimate * 0.7,
+    upper_seconds: batchEstimate * 1.5,
+  } : undefined;
 
   async function request<T>(path: string, init: RequestInit = {}) {
     const controller = new AbortController();
@@ -200,6 +244,15 @@ export function AssociationReview({
     };
   }, []);
   useEffect(() => {
+    const controller = new AbortController();
+    void api<ReviewTiming>(`${base}/timing`, { signal: controller.signal })
+      .then((value) => {
+        if (!controller.signal.aborted) setHistoryTiming(value);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [base]);
+  useEffect(() => {
     if (!job?.id) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -225,9 +278,11 @@ export function AssociationReview({
           state: result.state,
           processed: result.processed,
           total: result.total,
+          timing: result.timing,
         });
         setMatched(result.matched_total);
         setUnresolved(result.unresolved_total);
+        if (result.failure_message) setError(result.failure_message);
         if (offset && offset >= result.matched_total) {
           setOffset(
             Math.max(0, Math.ceil(result.matched_total / pageSize) - 1) *
@@ -289,8 +344,9 @@ export function AssociationReview({
   }, [source]);
 
   async function generate() {
-    if (generating || saving) return;
+    if (generating || saving || blockedReason) return;
     setGenerating(true);
+    setGenerationStarted(new Date().toISOString());
     setError("");
     try {
       if (single) {
@@ -347,7 +403,8 @@ export function AssociationReview({
       if (active.current) setGenerating(false);
     }
   }
-  async function regenerate(row: ReviewRow) {
+  async function regenerate(row: ReviewRow, sharedDirection?: string) {
+    if (blockedReason) return;
     if (
       retrying.current.has(row.item_id) ||
       saving ||
@@ -355,9 +412,10 @@ export function AssociationReview({
       (row.status === "pending" && (!job || !settled(job.state)))
     )
       return;
-    retrying.current.add(row.item_id);
-    setRegenerating(new Set(retrying.current));
+    retrying.current.set(row.item_id, new Date().toISOString());
+    setRegenerating(new Set(retrying.current.keys()));
     setRetryErrors((previous) => ({ ...previous, [row.item_id]: "" }));
+    setRetryNotes((previous) => ({ ...previous, [row.item_id]: "" }));
     try {
       const original =
         row.request ||
@@ -370,12 +428,20 @@ export function AssociationReview({
         base,
         mutation("POST", {
           ...original,
-          instruction: directions[row.item_id] ?? instruction,
+          instruction: sharedDirection ?? directions[row.item_id] ?? instruction,
           ...(row.preview_id ? { base_preview_id: row.preview_id } : {}),
           ...(job ? { batch_id: job.id, item_id: row.item_id } : {}),
         }),
       );
       if (!active.current) return;
+      if (
+        currentRow.current === row.item_id && value &&
+        value.title === result.title && value.explanation === result.explanation
+      )
+        setRetryNotes((previous) => ({
+          ...previous,
+          [row.item_id]: "本次重新生成已完成，模型返回了与上一版相同的标题和正文。",
+        }));
       if (!result.preview_id)
         localPreviews.current.set(`local-${row.item_id}`, result);
       const updated: ReviewRow = {
@@ -392,6 +458,7 @@ export function AssociationReview({
           id: result.preview_id || `local-${row.item_id}`,
           value: result,
         });
+      return Boolean(result.can_confirm);
     } catch (cause) {
       if (active.current)
         setRetryErrors((previous) => ({
@@ -400,7 +467,43 @@ export function AssociationReview({
         }));
     } finally {
       retrying.current.delete(row.item_id);
-      if (active.current) setRegenerating(new Set(retrying.current));
+      if (active.current) setRegenerating(new Set(retrying.current.keys()));
+    }
+  }
+  async function retryUnfinished() {
+    if (!job || !settled(job.state) || batchRetry?.running || retrying.current.size || blockedReason) return;
+    const startedAt = new Date().toISOString();
+    setBatchRetry({ done: 0, total: unresolved, ready: 0, running: true, startedAt });
+    setError("");
+    try {
+      const targets: ReviewRow[] = [];
+      let next: number | null = 0;
+      while (next !== null) {
+        const result: ReviewPage = await request(
+          `${base}/batch-preview/${job.id}/results`,
+          mutation("POST", { ...localFilters, status: "needs_attention", offset: next, limit: 100 }),
+        );
+        targets.push(...result.items);
+        next = result.next_offset ?? null;
+      }
+      let done = 0;
+      let ready = 0;
+      const queue = targets.values();
+      setBatchRetry({ done, total: targets.length, ready, running: true, startedAt });
+      await Promise.all(Array.from({ length: Math.min(4, targets.length) }, async () => {
+        for (const row of queue) {
+          if (!active.current) return;
+          if (await regenerate(row, batchDirection.trim() || undefined)) ready++;
+          done++;
+          if (active.current) setBatchRetry({ done, total: targets.length, ready, running: true, startedAt });
+        }
+      }));
+      if (active.current) setBatchRetry({ done, total: targets.length, ready, running: false, startedAt });
+    } catch (cause) {
+      if (active.current) {
+        setError((cause as Error).message);
+        setBatchRetry(undefined);
+      }
     }
   }
   function moveToPage(next: number) {
@@ -421,7 +524,7 @@ export function AssociationReview({
     moveToPage(0);
   }
   async function confirm() {
-    if (saving || generating || retrying.current.size || !remaining) return;
+    if (saving || generating || retrying.current.size || editing || batchRetry?.running || !remaining || blockedReason) return;
     setSaving(true);
     setError("");
     try {
@@ -430,7 +533,7 @@ export function AssociationReview({
           throw new Error("本项依据不足，暂不能保存。");
         const result = await request<{ saved: boolean }>(
           `${base}/confirm`,
-          mutation("POST", { preview_id: current.preview_id }),
+          mutation("POST", { preview_id: current.preview_id, ...(currentEdit && { edit: currentEdit }) }),
         );
         if (!result.saved)
           throw new Error("服务器尚未确认保存，原关联保持不变。");
@@ -463,6 +566,11 @@ export function AssociationReview({
           mutation("POST", {
             job_id: job.id,
             preview_ids: candidates.map((row) => row.preview_id),
+            ...(Object.keys(edits).length && {
+              edits: candidates.flatMap(({ preview_id }) =>
+                preview_id && edits[preview_id] ? [{ preview_id, point: edits[preview_id] }] : [],
+              ),
+            }),
           }),
         );
         if (!result.saved || result.count !== candidates.length)
@@ -499,6 +607,7 @@ export function AssociationReview({
         <div>
           <h2>{single ? "AI 关联预览" : "批量 AI 关联预览"}</h2>
           <p>先查看生成内容，确认后再替换关联。取消或关闭保留原关联。</p>
+          {blockedReason && <p role="status">{blockedReason}</p>}
         </div>
         <button
           type="button"
@@ -569,9 +678,17 @@ export function AssociationReview({
             />
           </label>
           <p className="muted">生成仅形成预览，不会替换已有结果。</p>
-          <button className="primary" disabled={generating}>
+          <button className="primary" disabled={generating || !!blockedReason}>
             {generating ? "正在生成预览…" : "生成关联预览"}
           </button>
+          {generating && (
+            <TaskTiming
+              timing={{ started_at: generationStarted }}
+              state={single ? "running" : "queued"}
+              total={single ? 1 : 0}
+              estimateSeconds={single ? singleEstimate : undefined}
+            />
+          )}
         </form>
       ) : (
         <>
@@ -579,12 +696,53 @@ export function AssociationReview({
             <div className="association-review-progress">
               <span role="status">
                 已处理 {job.processed} / {job.total} 项
-                {!settled(job.state) ? " · 正在生成预览" : " · 预览生成结束"}
+                {" · "}{jobStatus[job.state] || "等待生成"}
               </span>
+              <TaskTiming
+                timing={job.timing}
+                state={job.state}
+                processed={job.processed}
+                total={job.total}
+                estimateSeconds={job.total === 1 ? singleEstimate : undefined}
+                history={batchHistory}
+              />
               {showUnresolved && (
                 <button type="button" onClick={showNeedsAttention}>
                   查看 {unresolved} 项需处理
                 </button>
+              )}
+            </div>
+          )}
+          {job && settled(job.state) && (showUnresolved || batchRetry) && (
+            <div className="association-review-progress" role="group" aria-label="批量重试">
+              <input
+                aria-label="统一重试方向"
+                placeholder="统一重试方向（可选）"
+                value={batchDirection}
+                maxLength={4000}
+                disabled={batchRetry?.running || saving || saved}
+                onChange={(event) => setBatchDirection(event.target.value)}
+              />
+              <button
+                type="button"
+                disabled={!showUnresolved || !!batchRetry?.running || !!regenerating.size || saving || saved || !!blockedReason}
+                onClick={() => void retryUnfinished()}
+              >
+                批量重试未完成项
+              </button>
+              {batchRetry && (
+                <span role="status">
+                  已重试 {batchRetry.done} / {batchRetry.total} 项 · {batchRetry.ready} 项可保存
+                </span>
+              )}
+              {batchRetry?.running && (
+                <TaskTiming
+                  timing={{ started_at: batchRetry.startedAt }}
+                  state="running"
+                  processed={batchRetry.done}
+                  total={batchRetry.total}
+                  estimateSeconds={batchRetry.total === 1 ? singleEstimate : undefined}
+                />
               )}
             </div>
           )}
@@ -609,6 +767,7 @@ export function AssociationReview({
                     type="search"
                     aria-label="搜索关联预览"
                     placeholder="搜索模块、页面或控件"
+                    disabled={!!editing}
                     maxLength={200}
                     value={keyword}
                     onChange={(event) => {
@@ -618,6 +777,7 @@ export function AssociationReview({
                   />
                   <select
                     aria-label="预览状态"
+                    disabled={!!editing}
                     value={statusFilter}
                     onChange={(event) =>
                       filterByStatus(event.target.value as ReviewFilter)
@@ -639,6 +799,7 @@ export function AssociationReview({
                         }
                         aria-label={`查看关联预览：${row.label}`}
                         aria-pressed={current?.item_id === row.item_id}
+                        disabled={!!editing && current?.item_id !== row.item_id}
                         onClick={() => setSelected(row.item_id)}
                       >
                         <strong>{row.label}</strong>
@@ -662,7 +823,7 @@ export function AssociationReview({
                 {matched > pageSize && (
                   <nav aria-label="预览列表分页">
                     <button
-                      disabled={listLoading || !offset}
+                      disabled={listLoading || !!editing || !offset}
                       onClick={() => moveToPage(Math.max(0, offset - pageSize))}
                     >
                       上一页
@@ -672,7 +833,7 @@ export function AssociationReview({
                       {Math.ceil(matched / pageSize)}
                     </span>
                     <button
-                      disabled={listLoading || offset + pageSize >= matched}
+                      disabled={listLoading || !!editing || offset + pageSize >= matched}
                       onClick={() => moveToPage(offset + pageSize)}
                     >
                       下一页
@@ -699,7 +860,7 @@ export function AssociationReview({
                     <div className="association-review-item-actions">
                       {!single && (
                         <button
-                          disabled={saved || saving || currentRetrying}
+                          disabled={saved || saving || currentRetrying || !!editing || !!batchRetry?.running}
                           onClick={() =>
                             setExcluded(
                               (previous) =>
@@ -712,25 +873,78 @@ export function AssociationReview({
                       )}
                     </div>
                   </header>
+                  {currentRetryStarted && !batchRetry?.running && (
+                    <TaskTiming
+                      timing={{ started_at: currentRetryStarted }}
+                      state="running"
+                      total={1}
+                      estimateSeconds={singleEstimate}
+                    />
+                  )}
                   {(retryErrors[current.item_id] || rowError(current)) && (
                     <p role="alert">
                       {retryErrors[current.item_id] || rowError(current)}
                     </p>
                   )}
+                  {retryNotes[current.item_id] && <p role="status">{retryNotes[current.item_id]}</p>}
                   {reading && !value && <p role="status">正在读取完整预览…</p>}
                   {value ? (
                     <>
-                      {value.title && value.title !== current.label && (
-                        <h3>{value.title}</h3>
+                      {(currentEdit?.title ?? value.title) !== current.label && (
+                        <h3>{currentEdit?.title ?? value.title}</h3>
                       )}
-                      <AssociationComparison
-                        key={currentPreview}
-                        title={value.title}
-                        explanation={value.explanation}
-                        sections={value.sections}
-                        baseline={value.baseline}
-                        onReference={setSource}
-                      />
+                      {value.can_confirm && current.preview_id && !saved && (
+                        <div className="association-review-item-actions">
+                          <button
+                            type="button"
+                            disabled={Boolean(editing) || saving || currentRetrying || !!blockedReason}
+                            onClick={() => setEditing({
+                              id: current.preview_id!,
+                              point: currentEdit || { title: value.title, summary: value.explanation },
+                            })}
+                          >
+                            编辑预览
+                          </button>
+                          {currentEdit && (
+                            <button type="button" disabled={Boolean(editing) || saving} onClick={() => {
+                              setEdits(({ [current.preview_id!]: _removed, ...rest }) => rest);
+                            }}>撤销编辑</button>
+                          )}
+                        </div>
+                      )}
+                      {activeEditor ? (
+                        <form className="association-review-item-direction" onSubmit={(event) => {
+                          event.preventDefault();
+                          setEdits((previous) => ({ ...previous, [activeEditor.id]: activeEditor.point }));
+                          setEditing(null);
+                        }}>
+                          <label>
+                            关联标题
+                            <input aria-label="关联标题" required maxLength={160} value={activeEditor.point.title} onChange={(event) =>
+                              setEditing({ ...activeEditor, point: { ...activeEditor.point, title: event.target.value } })
+                            } />
+                          </label>
+                          <label>
+                            Markdown 正文
+                            <textarea aria-label="Markdown 正文" required rows={15} maxLength={512000} value={activeEditor.point.summary} onChange={(event) =>
+                              setEditing({ ...activeEditor, point: { ...activeEditor.point, summary: event.target.value } })
+                            } />
+                          </label>
+                          <div className="association-review-item-actions">
+                            <button disabled={!activeEditor.point.title.trim() || !activeEditor.point.summary.trim()}>应用到对比</button>
+                            <button type="button" onClick={() => setEditing(null)}>取消编辑</button>
+                          </div>
+                        </form>
+                      ) : (
+                        <AssociationComparison
+                          key={currentPreview}
+                          title={currentEdit?.title ?? value.title}
+                          explanation={currentEdit?.summary ?? value.explanation}
+                          sections={value.sections}
+                          baseline={value.baseline}
+                          onReference={setSource}
+                        />
+                      )}
                       {!!value.sections?.length && (
                         <section
                           className="association-review-sources"
@@ -792,6 +1006,10 @@ export function AssociationReview({
                       disabled={
                         saved ||
                         saving ||
+                        !!editing ||
+                        !!currentEdit ||
+                        !!batchRetry?.running ||
+                        !!blockedReason ||
                         currentRetrying ||
                         (current.status === "pending" &&
                           (!job || !settled(job.state)))
@@ -824,8 +1042,11 @@ export function AssociationReview({
             disabled={
               saved ||
               saving ||
+              !!blockedReason ||
               generating ||
               !!regenerating.size ||
+              !!editing ||
+              !!batchRetry?.running ||
               showUnresolved ||
               !remaining ||
               (single ? !current?.can_confirm : !job || !settled(job.state))

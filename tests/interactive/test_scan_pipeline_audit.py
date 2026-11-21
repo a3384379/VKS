@@ -76,13 +76,16 @@ def test_concurrent_page_replays_queue_each_dynamic_target_once_and_ai_does_not_
         list(pool.map(lambda _: capture(), range(3)))
     first = jobs(service, run["id"])
     assert len(first) == 2
-    first_payloads = {jid: payload for jid, payload in first}
+    first_payloads = {}
     for jid, payload in first:
         assert payload["scan_pipeline"] and payload["concurrency"] == 1
         assert {item["target"]["selector"] for item in payload["items"]} <= {"body", "#captured"}
         assert all(item["target"]["route"] == pages[0]["route"] for item in payload["items"])
         service.process_job(jid)
-        assert service.get_job(actor, jid)["state"] == "succeeded"
+        result = service.get_job(actor, jid)
+        assert result["state"] == "succeeded"
+        assert result["timing"]["started_at"] and result["timing"]["baseline"] == 0
+        first_payloads[jid] = {**payload, "_run_started_at": result["timing"]["started_at"], "_run_baseline": 0}
     reconcile(service)
     current = scans.status(actor, pid, aid)["run"]
     assert current["pages_completed"] == 1 and current["ai"]["completed"] == 2

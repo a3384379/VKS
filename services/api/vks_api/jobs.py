@@ -14,6 +14,15 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .models import Base, Credential, Identified, Job, Outbox, now, uid
 
 PERSONAL_TASK = ContextVar("vks_personal_task", default=None)
+TIMED_STUDIO_JOBS = {"material_migrate", "associate_all", "reassociation_preview", "explanation_batch", "export"}
+
+
+def job_timing(job):
+    return {
+        "started_at": job.input_json.get("_run_started_at") or (job.created_at if job.attempt else None),
+        "updated_at": job.updated_at,
+        "baseline": job.input_json.get("_run_baseline", 0),
+    }
 
 
 class DispatchState(Identified, Base):
@@ -173,7 +182,7 @@ def reconcile(service):
             job.updated_at = now()
 
 
-def run_pending(service):
+def run_pending(service, *, run_pipeline=True):
     reconcile(service)
     from .scan_pipeline import reconcile as reconcile_pipeline
 
@@ -183,6 +192,26 @@ def run_pending(service):
     if dispatch_mode() == "celery":
         dispatch_pending(service)
         return
+    if run_pipeline:
+        run_local_pipeline(service)
+    with service.db() as s:
+        ids = list(
+            s.scalars(
+                select(Job.id)
+                .where(
+                    Job.state == "queued",
+                    Job.kind.not_in(("reassociation_preview", "explanation_batch")),
+                    (Job.kind != "associate_all") | Job.input_json["scan_pipeline"].as_boolean().is_not(True),
+                )
+                .order_by(Job.created_at)
+                .limit(1)
+            )
+        )
+    for jid in ids:
+        execute_job(service, jid)
+
+
+def run_local_pipeline(service):
     # Browser-produced page jobs must not block the dispatcher while a model
     # responds. Keep a bounded local pool; the database claim still fences
     # duplicate workers and enforces the per-run limit in every dispatch mode.
@@ -210,7 +239,7 @@ def run_pending(service):
                         .where(
                             Job.state == "queued",
                             ((Job.kind == "associate_all") & Job.input_json["scan_pipeline"].as_boolean().is_(True))
-                            | (Job.kind == "reassociation_preview"),
+                            | Job.kind.in_(("reassociation_preview", "explanation_batch")),
                             Job.id.not_in(list(service.pipeline_futures)),
                         )
                         .order_by(Job.created_at, Job.id)
@@ -226,21 +255,6 @@ def run_pending(service):
                 )
             for jid in pipeline_ids:
                 service.pipeline_futures[jid] = service.pipeline_executor.submit(execute_job, service, jid)
-    with service.db() as s:
-        ids = list(
-            s.scalars(
-                select(Job.id)
-                .where(
-                    Job.state == "queued",
-                    Job.kind != "reassociation_preview",
-                    (Job.kind != "associate_all") | Job.input_json["scan_pipeline"].as_boolean().is_not(True),
-                )
-                .order_by(Job.created_at)
-                .limit(1)
-            )
-        )
-    for jid in ids:
-        execute_job(service, jid)
 
 
 def publish_job(job_id, kind):
@@ -251,7 +265,7 @@ def publish_job(job_id, kind):
         "vks-browser"
         if kind == "capture"
         else "vks-model"
-        if kind in ("generate_documents", "knowledge_task", "material_migrate", "associate_all", "reassociation_preview")
+        if kind in ("generate_documents", "knowledge_task", "material_migrate", "associate_all", "reassociation_preview", "explanation_batch")
         else "vks-index"
     )
     celery.send_task("vks.execute_job", args=[job_id], queue=queue, serializer="json", retry=False)
@@ -352,6 +366,9 @@ def _processor_version():
         root / "packages/analyzers/offline_prototype.py",
         root / "packages/analyzers/prototype_manifest.py",
         root / "packages/analyzers/business_points.py",
+        root / "packages/analyzers/studio_manifest.py",
+        root / "packages/contracts/studio_manifest.schema.json",
+        root / "services/api/vks_api/studio_bundle.py",
         root / "packages/contracts/prototype_manifest.schema.json",
         root / "packages/contracts/business_points_manifest.schema.json",
         root / "services/api/vks_api/source_cache.py",
@@ -404,6 +421,8 @@ def load_parse_checkpoint(service, job_id, input_hash):
             relations=payload["relations"],
             issues=payload["issues"],
             analysis_metrics=payload.get("analysis_metrics", {}),
+            studio_manifest=payload.get("studio_manifest"),
+            studio_descriptors=payload.get("studio_descriptors", {}),
         )
     except (OSError, KeyError, ValueError, TypeError):
         return None
@@ -422,7 +441,10 @@ def save_parse_checkpoint(service, job_id, attempt, input_hash, parsed):
         artifacts.append(artifact)
     payload = {
         name: getattr(parsed, name)
-        for name in ("manifest", "sources", "entities", "evidence", "relations", "issues", "analysis_metrics")
+        for name in (
+            "manifest", "sources", "entities", "evidence", "relations", "issues", "analysis_metrics",
+            "studio_manifest", "studio_descriptors",
+        )
     }
     payload["artifacts"] = artifacts
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -471,6 +493,7 @@ def execute_job(service, jid):
 
 
 def _execute_job(service, jid):
+    from .association_limits import FULL_MODEL_JOBS
     from .knowledge import ImportService, persist_bundle
     from .models import Outbox, Project, Upload
     from .prototype_import import finish_batch, finish_preview, prepare_batch
@@ -486,7 +509,7 @@ def _execute_job(service, jid):
 
             if not claim(service, s, job):
                 return
-        elif job.kind in ("associate_all", "reassociation_preview"):
+        elif job.kind in FULL_MODEL_JOBS:
             from .association_limits import claim_full_association
 
             if not claim_full_association(service, s, job):
@@ -507,6 +530,12 @@ def _execute_job(service, jid):
         job.stage = "PARSE"
         job.lease_until = future(60)
         job.updated_at = now()
+        if job.kind in TIMED_STUDIO_JOBS:
+            job.input_json = {
+                **job.input_json,
+                "_run_started_at": job.updated_at,
+                "_run_baseline": job.result_json.get("processed", 0),
+            }
         payload = job.input_json
         pid = job.project_id
         kind = job.kind
@@ -592,6 +621,10 @@ def _execute_job(service, jid):
                     from .reassociation_batches import run_reassociation_batch
 
                     reassociation_output = run_reassociation_batch(service, jid)
+                if kind == "explanation_batch":
+                    from .explanation_batches import run_explanation_batch
+
+                    explanation_output = run_explanation_batch(service, jid)
                 if kind == "export" and payload["format"] == "readonly_html":
                     from .readonly_export import prepare_job
 
@@ -690,6 +723,8 @@ def _execute_job(service, jid):
                     result = association_output
                 elif kind == "reassociation_preview":
                     result = reassociation_output
+                elif kind == "explanation_batch":
+                    result = explanation_output
                 elif kind == "export":
                     result = (
                         service._perform_export(s, job, readonly_output)

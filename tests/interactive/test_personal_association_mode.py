@@ -43,6 +43,9 @@ def test_personal_mode_still_cancels_and_preserves_the_original_input(materials,
 
     monkeypatch.setattr(ai_gateway, "request_model", cancel)
     service.process_job(job["id"])
+    timing = service.get_job(actor, job["id"])["timing"]
+    assert timing["started_at"] and timing["baseline"] == 0
     with service.db() as s:
         stopped = s.get(Job, job["id"])
-        assert stopped.state == "cancelled" and stopped.input_json == original
+        assert stopped.state == "cancelled"
+        assert stopped.input_json == {**original, "_run_started_at": timing["started_at"], "_run_baseline": 0}

@@ -44,6 +44,27 @@ def preview(web, pid, grant, body):
     return result
 
 
+def test_edited_preview_saves_manual_text_with_same_evidence_and_replays(assistant):
+    (web, service, _owner, pid, aid, grant, _package, _section, _), body, calls = assistant
+    result = preview(web, pid, grant, body)
+    endpoint = root(pid) + "/reassociate/confirm"
+    before = points(service)
+    request = {"preview_id": result["preview_id"], "edit": {"title": "手工核对", "summary": "业务口径。[99]"}}
+    invalid = web.post(endpoint, json=request, headers=_headers(grant, 0, "edit-test"))
+    assert invalid.status_code == 422 and points(service) == before
+    request["edit"]["summary"] = "核对后的计算说明。[1]"
+    valid = web.post(endpoint, json=request, headers=_headers(grant, 0, "edit-test"))
+    assert valid.status_code == 200, valid.text
+    current = bindings(web, pid, aid, grant)[0]
+    assert (current["origin"], current["title"], current["summary"]) == (
+        "manual", request["edit"]["title"], request["edit"]["summary"],
+    )
+    assert current["sections"] == result["sections"]
+    repeated = web.post(endpoint, json=request, headers=_headers(grant, 0, "edit-test"))
+    assert repeated.status_code == 200 and repeated.json()["data"] == valid.json()["data"]
+    assert len(calls) == 1
+
+
 def test_preview_cancel_and_confirm_same_generation_once(assistant):
     (web, service, _owner, pid, aid, grant, package, section, _), body, calls = assistant
     saved = web.post(

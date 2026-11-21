@@ -78,8 +78,13 @@ def test_page_cohort_keeps_group_identity_and_individual_persistent_results(mate
     assert len(network) == len(calls) == 6
     assert all(body["input"][0]["content"] == SYSTEM for body in network)
     assert all("targets" not in json.loads(body["input"][1]["content"]) for body in network)
+    assert job["timing"]["started_at"] and job["timing"]["baseline"] == 0
     with service.db() as s:
-        assert s.get(Job, jid).input_json == planned
+        assert s.get(Job, jid).input_json == {
+            **planned,
+            "_run_started_at": job["timing"]["started_at"],
+            "_run_baseline": 0,
+        }
         markers = list(s.scalars(select(PrototypeScanTarget).where(PrototypeScanTarget.run_id == run["id"])))
         assert len(markers) == 7 and all(row.state == "complete" for row in markers)
         assert {row.target_id for row in markers} == {key for group in planned["groups"] for key in group}
@@ -113,14 +118,17 @@ def test_cancel_after_first_checkpoint_then_retry_retains_saved_target_and_old_i
         service.process_job(jid)
     finally:
         event.remove(service.engine, "after_cursor_execute", stop_after_first)
-    assert service.get_job(actor, jid)["state"] == "cancelled"
+    cancelled = service.get_job(actor, jid)
+    assert cancelled["state"] == "cancelled"
+    assert cancelled["timing"]["started_at"] and cancelled["timing"]["baseline"] == 0
+    recorded_input = {**planned, "_run_started_at": cancelled["timing"]["started_at"], "_run_baseline": 0}
     with service.db() as s:
         preserved = {
             row.input_hash: dict(row.result_json)
             for row in s.scalars(select(Checkpoint).where(Checkpoint.job_id == jid))
         }
         assert preserved and len(preserved) < 7
-        assert s.get(Job, jid).input_json == planned
+        assert s.get(Job, jid).input_json == recorded_input
     calls.clear()
     retry = scans.retry_ai(actor, pid, run["id"], str(run["source_selection_version"]), uid())
     assert retry["ai"]["completed"] >= len(preserved)
@@ -135,7 +143,7 @@ def test_cancel_after_first_checkpoint_then_retry_retains_saved_target_and_old_i
     done = scans.status(actor, pid, aid)["run"]
     assert done["ai"]["saved"] == 7 and done["ai"]["processed"] == 7
     with service.db() as s:
-        assert s.get(Job, jid).input_json == planned
+        assert s.get(Job, jid).input_json == recorded_input
         assert {
             row.input_hash: dict(row.result_json)
             for row in s.scalars(select(Checkpoint).where(Checkpoint.job_id == jid))

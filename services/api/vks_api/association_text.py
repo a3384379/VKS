@@ -5,6 +5,67 @@ import unicodedata
 
 from markdown_it import MarkdownIt
 
+# The parking formula catalog names this rule “月固定数×月数”. The
+# monthly-card billing rules express the same calculation as fixed price
+# multiplied by renewal months. Match the complete expressions only.
+_PARKING_MONTHLY_FIXED = ("月固定金额×月数", "月固定数×月数")
+
+
+def preserve_formulas(instruction: str) -> bool:
+    return bool(re.search(r"(?:保留|沿用|不要删(?:除)?|别删)[^，。；,;\n]{0,24}(?:公式|计算式)", instruction))
+
+
+def formula_key(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text).casefold()
+    text = re.sub(r"\[\d+\]|\*{2,}|[`$\s]", "", text)
+    return text.replace(r"\times", "×").replace(r"\div", "÷").translate(str.maketrans("*−", "×-"))
+
+
+def formula_anchors(body: str) -> dict[str, str]:
+    """Extract identifiable formula codes and symbolic expressions from a working draft."""
+    anchors = {}
+    formula_level = None
+    for line in body.splitlines():
+        if heading := re.match(r"^(#{1,6})\s+(.*)", line):
+            level = len(heading[1])
+            if formula_level is not None and level <= formula_level:
+                formula_level = None
+            if re.search(r"公式|计算式", heading[2]):
+                formula_level = level
+            continue
+        if (formula_level is not None or re.search(r"公式|计算式|[×÷]", line)) and (
+            code := re.match(r"\s*\|\s*`?([0-9]{5,8})`?\s*\|", line)
+        ):
+            anchors[code[1]] = code[1]
+        # Keep calculation cells and explicitly delimited inline expressions;
+        # prose surrounding them is free to change during revision.
+        segments = line.split("|") if line.lstrip().startswith("|") else re.findall(r"\*\*([^*]+)\*\*|`([^`]+)`|\$([^$]+)\$", line)
+        for segment in segments:
+            text = segment if isinstance(segment, str) else next(part for part in segment if part)
+            for part in re.split(r"[，。；：,;:]", text):
+                part = part.strip()
+                key = formula_key(part).rstrip(".")
+                if len(key) <= 120 and re.search(r"[\w)]+(?:[×÷=]|(?<=\))-(?=[a-z]+\())[\w(]+", key):
+                    anchors[key] = part
+    return anchors
+
+
+def contains_formula(text: str, key: str) -> bool:
+    if key.isascii() and key.isdigit():
+        return bool(re.search(rf"(?<![0-9]){key}(?![0-9])", text))
+    if key in _PARKING_MONTHLY_FIXED:
+        return any(
+            (match.start() == 0 or text[match.start() - 1] not in "×÷+-/")
+            and (match.end() == len(text) or text[match.end()] not in "×÷=+-/")
+            for expression in _PARKING_MONTHLY_FIXED
+            for match in re.finditer(r"[([{]*" + re.escape(expression) + r"[)\]}]*", text)
+        )
+    if not key.endswith((")", "]")):
+        # Do not count a shorter expression if it is followed by an operator,
+        # since that would accept an added multiplier or another operand.
+        return bool(re.search(re.escape(key) + r"(?![×÷=])", text))
+    return key in text
+
 
 def has_unmapped_citations(body: str, count: int) -> bool:
     """Check numbered Markdown prose citations, excluding code and links."""

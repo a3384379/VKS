@@ -90,8 +90,13 @@ def test_full_execute_defers_without_consuming_attempt_or_progress_until_entire_
     result = service.get_job(actor, full_id)
     assert result["state"] == "succeeded" and result["result"]["saved"] == 6
     assert result["result"]["pending"] == 1 and result["result"]["processed"] == 7
+    assert result["timing"]["baseline"] == progress["processed"] and result["timing"]["started_at"]
     with service.db() as s:
-        assert s.get(Job, full_id).input_json == immutable
+        assert s.get(Job, full_id).input_json == {
+            **immutable,
+            "_run_started_at": result["timing"]["started_at"],
+            "_run_baseline": progress["processed"],
+        }
         assert s.get(Job, full_id).attempt == 5
         assert (
             s.scalar(

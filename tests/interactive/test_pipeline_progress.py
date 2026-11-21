@@ -18,6 +18,11 @@ def test_progress_counts_states_and_keeps_heavy_payloads_out_of_session(material
         for state in states:
             job = service._new_job(session, actor, pid, "associate_all", {"private_work": "x" * 65536})
             job.state = state
+            job.created_at = "2026-01-01T00:00:00Z"
+            job.updated_at = "2026-01-01T00:02:00Z"
+            if state in {"running", "cancelling", "succeeded"}:
+                job.attempt = 1
+                job.input_json = {**job.input_json, "_run_started_at": "2026-01-01T00:01:00Z"}
             jobs.append(job.id)
         for index in range(200):
             slot = index % 8
@@ -54,6 +59,8 @@ def test_progress_counts_states_and_keeps_heavy_payloads_out_of_session(material
             "running": 50,
             "cancelled": 25,
             "jobs": 5,
+            "started_at": "2026-01-01T00:01:00Z",
+            "updated_at": "2026-01-01T00:02:00Z",
             "error": "待重试",
         }
         assert loaded == [], "polling must not materialize target work or model job inputs"
@@ -67,7 +74,8 @@ def test_empty_pipeline_progress_has_zero_counters(materials, monkeypatch):
     with service.db() as session:
         result = summary(session, session.get(PrototypeScanRun, run["id"]))
     assert result["error"] == ""
-    assert all(value == 0 for key, value in result.items() if key != "error")
+    assert result["started_at"] is None and result["updated_at"] is None
+    assert all(value == 0 for key, value in result.items() if key not in {"error", "started_at", "updated_at"})
 
 
 def test_scan_dto_reads_same_transaction_after_large_sqlite_write(materials, monkeypatch):

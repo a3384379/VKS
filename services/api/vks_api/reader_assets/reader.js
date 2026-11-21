@@ -573,7 +573,7 @@
       !key ||
       state.busy ||
       !explanationConnectionReady() ||
-      state.explanations.has(key)
+      currentExplanation()
     )
       return;
     explanationTimer = setTimeout(() => {
@@ -585,7 +585,7 @@
         explanationKey() === key &&
         !state.busy &&
         explanationConnectionReady() &&
-        !state.explanations.has(key)
+        !currentExplanation()
       )
         void submitQuestion("explain");
     }, 250);
@@ -796,6 +796,22 @@
         (!binding.target?.label ||
           binding.target.label === context?.target?.label),
     );
+  }
+  function currentExplanation(context = state.context) {
+    const session = state.explanations.get(explanationKey(context));
+    if (session) return session;
+    const saved = explanationSourceBindings(context).find((binding) => binding.saved_explanation)?.saved_explanation;
+    if (!saved?.explanation || !saved.section_ids?.length) return null;
+    const refs = saved.section_ids.map((id) => sectionMap.get(id));
+    if (refs.some((ref) => !ref)) return null;
+    return {
+      role: "assistant",
+      content: saved.explanation,
+      refs,
+      mode: "已保存 AI 讲解",
+      finished: true,
+      exported: true,
+    };
   }
   function cancelObsoleteExplanation() {
     if (state.activity?.kind !== "explain") return;
@@ -3697,7 +3713,7 @@
     else renderChat();
     const explanation =
       state.tab === "explain" && state.view === "prototype"
-        ? state.explanations.get(explanationKey())
+        ? currentExplanation()
         : null;
     ui.assistant.append(
       el(
@@ -3707,7 +3723,9 @@
           "span",
           { class: "assistant-footer-status", role: "status" },
           el("span", { class: "status-dot" }),
-          explanation?.finished && !explanation.error
+          explanation?.exported
+            ? "已保存讲解 · 本地阅读"
+            : explanation?.finished && !explanation.error
             ? "讲解已完成 · 仅本次会话"
             : "内容已固定 · 本地阅读",
         ),
@@ -3846,7 +3864,7 @@
       state.activity?.kind === "explain" &&
       state.activity.key === explanationKey();
     const ready = explanationConnectionReady();
-    const hasAnswer = state.explanations.has(explanationKey());
+    const hasAnswer = !!currentExplanation();
     return button(
       generating
         ? "停止讲解"
@@ -3895,7 +3913,7 @@
       );
       return;
     }
-    const answer = state.explanations.get(explanationKey(context));
+    const answer = currentExplanation(context);
     const generating =
       state.busy &&
       state.activity?.kind === "explain" &&
@@ -3939,6 +3957,7 @@
     const content = markdown(binding.summary, refs, undefined, {
       openSection: (id) => previewChatSource(sectionMap.get(id)),
       markMissingCitations: true,
+      hideCitationRevisionIds: true,
     });
     const firstHeading = content.firstElementChild;
     const heading = binding.title || binding.target?.label || "相关功能";
@@ -4001,12 +4020,7 @@
       el(
         "header",
         {},
-        el(
-          "div",
-          {},
-          el("small", {}, reference.document_title),
-          el("h3", {}, reference.title),
-        ),
+        el("small", {}, reference.document_title),
         button("×", () => dialog.close(), "", { "aria-label": "关闭原文预览" }),
       ),
       el(
@@ -4025,6 +4039,9 @@
       ),
     );
     dialog.addEventListener("close", () => dialog.remove());
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") event.stopPropagation();
+    });
     doc.body.append(dialog);
     dialog.showModal();
   }
@@ -4056,6 +4073,7 @@
         markdown(content, message.refs, undefined, {
           openSection: (id) =>
             previewChatSource(message.refs?.find((ref) => ref.id === id)),
+          hideCitationRevisionIds: message.exported === true,
           deferDiagrams:
             message.role === "assistant" &&
             (!message.finished || !!message.error),

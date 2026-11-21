@@ -362,7 +362,7 @@ def test_retry_migration_reuses_the_active_job_and_projects_current_scope(materi
     package = test_materials.stage(service, owner, manager, pid, aid, "documents", "# Guide\n\nExact text.")
     result = test_materials.activate(service, owner, manager, pid, aid, [package])
     first = manager.retry_migration(owner, pid, aid, str(result["selection_version"]), uid())
-    assert first["id"] == result["job_id"]
+    assert result["job_id"] is None
     second = manager.retry_migration(owner, pid, aid, str(result["selection_version"]), uid())
     assert second["id"] == first["id"]
     # Knowledge saves made by this same running migration may advance the

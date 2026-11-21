@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Database, RefreshCw, Save } from "lucide-react";
 import { api, mutation } from "../../web/src/api";
+import { TaskTiming, type Timing } from "./TaskTiming";
 type Settings = {
   enabled: boolean;
   connection_id: string | null;
@@ -14,6 +15,8 @@ type Status = {
   phase?: string;
   completed: number;
   total: number;
+  timing?: Timing;
+  job_state?: string;
   error: string;
   indexed_chunks: number;
   indexed_sections: number;
@@ -163,6 +166,12 @@ export function RAGSettings({
                   {status.phase} · {status.completed} / {status.total} ·{" "}
                   {percent}%
                 </p>
+                <TaskTiming
+                  timing={status.timing}
+                  state={status.job_state || "running"}
+                  processed={status.completed}
+                  total={status.total}
+                />
               </>
             )}
           </div>

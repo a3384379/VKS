@@ -861,8 +861,27 @@ class ReadingService:
             row := s.identity_map.get((Revision, (rid,), None)) or retained.get((Revision, rid)), Revision
         )}
         rows = list(known.values())
+        batch_projection = s.info.get("vks_read_batch") or s.info.get("vks_completion_batch")
         for batch in chunks(rid for rid in ids if rid not in known):
-            rows.extend(s.scalars(select(Revision).where(Revision.id.in_(batch))))
+            if batch_projection:
+                # Binding preparation and commit both inspect artifact policy.
+                # Retain the exact joined rows in the current snapshot so every
+                # scheduling batch avoids separate entity and artifact queries.
+                query = (
+                    select(Revision, Entity, Artifact)
+                    .outerjoin(Entity, Entity.id == Revision.entity_id)
+                    .outerjoin(Artifact, Artifact.id == Revision.artifact_id)
+                    .where(Revision.id.in_(batch))
+                )
+                retained = s.info.setdefault("vks_prefetched", {})
+                for revision, entity, artifact in s.execute(query):
+                    rows.append(revision)
+                    if entity:
+                        retained[(Entity, entity.id)] = entity
+                    if artifact:
+                        retained[(Artifact, artifact.id)] = artifact
+            else:
+                rows.extend(s.scalars(select(Revision).where(Revision.id.in_(batch))))
         self.preload(s, rows)
         return rows
 
@@ -1336,20 +1355,23 @@ class ReadingService:
 
     def job_dto(self, s, actor, job):
         dto = self.service.job_dto(job)
-        if job.kind == "reassociation_preview":
+        if job.kind in {"reassociation_preview", "explanation_batch"}:
             # Its dedicated paginated endpoint reapplies current target and
             # candidate-source permissions before returning any count/name.
             dto.pop("result", None)
             dto.pop("issue_count", None)
+            dto["timing"].pop("baseline", None)
             dto["result_refs"] = []
             if "error" in dto:
-                dto["error"] = {"code": dto["error"]["code"], "message": "本次预览未完成，请查看预览列表", "retryable": False}
+                message = "本次批量讲解未完成" if job.kind == "explanation_batch" else "本次预览未完成，请查看预览列表"
+                dto["error"] = {"code": dto["error"]["code"], "message": message, "retryable": False}
             return dto
         if job.kind in ("material_migrate", "associate_all") and not all(
             self.service._can(s, actor, job.project_id, scope) for scope in ("source:read", "trace:read")
         ):
             dto.pop("result", None)
             dto.pop("issue_count", None)
+            dto["timing"].pop("baseline", None)
             dto["result_refs"] = []
             dto["diagnostics_restricted"] = True
             if "error" in dto:

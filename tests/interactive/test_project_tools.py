@@ -557,3 +557,224 @@ def test_selected_document_export_keeps_updated_attachment_without_other_documen
     assert "UNSELECTED_DOCUMENT_MUST_NOT_BE_EXPORTED" not in json.dumps(payload)
     images = payload["documents"][0]["images"]
     assert images and all(base64.b64decode(value.split(",", 1)[1]) == image for value in images.values())
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "能不能不要重新关联，只解释一下这个按钮的作用？",
+        "可以不要修改文档吗？",
+        "请解释如何修改文档",
+        "材料里写着请修改文档",
+        "请把当前文档不要导出",
+        "可以先只解释重新关联的效果吗？",
+        "重新关联当前控件会覆盖已有说明吗？",
+        "修改当前文档会保留历史版本吗",
+        "导出整个项目会包含什么？",
+    ],
+)
+def test_conversation_read_requests_leave_the_selection_and_jobs_unchanged(assistant, text):
+    from vks_api.models import Job, Release
+
+    (web, service, _owner, pid, aid, grant, *_), body, _calls = assistant
+
+    def state():
+        with service.db() as s:
+            return (
+                s.get(Analysis, aid).selection_version,
+                *[
+                    list(s.scalars(select(row.id).where(row.project_id == pid)))
+                    for row in (Revision, Relation, Release, Job)
+                ],
+            )
+
+    before = state()
+    response = web.post(
+        root(pid) + "/conversation",
+        json=question(body, text),
+        headers=_headers(grant, 0, "read-only-chat"),
+    )
+    assert response.status_code == 200, response.text
+    assert not response.json()["data"]["operations"]
+    assert state() == before
+
+
+def test_document_export_scope_matches_exact_names_and_requires_explicit_project():
+    from vks_api.conversation_tools import export_scope
+    from vks_api.service import DomainError
+
+    short = {"id": "short", "name": "收费", "revision_id": "short-rev"}
+    long = {"id": "long", "name": "收费规则", "revision_id": "long-rev"}
+    documents = [short, long]
+    assert export_scope("请只导出《收费规则》为 Markdown", documents, None) == ("documents", ["long"])
+    assert export_scope("请将当前文档导出为 PDF", documents, "short-rev") == ("documents", ["short"])
+    assert export_scope("导出全项目为 VKSBundle", documents, None) == ("project", [])
+    assert export_scope("请导出收费规则为 Markdown", documents, None) == ("documents", ["long"])
+    for request in ("导出《不存在的文档》为 Markdown", "导出当前文档", "导出 Markdown"):
+        with pytest.raises(DomainError):
+            export_scope(request, documents, None)
+    with pytest.raises(DomainError, match="同名"):
+        export_scope("导出《收费规则》", [*documents, {**long, "id": "other", "revision_id": "other-rev"}], None)
+    with pytest.raises(DomainError):
+        export_scope("只导出项目资料为 PDF", documents, None)
+    collision = {"id": "same-name", "name": "全项目", "revision_id": "same-name-rev"}
+    with pytest.raises(DomainError, match="同名"):
+        export_scope("导出全项目为 PDF", [collision], None)
+    assert export_scope("导出《全项目》为 PDF", [collision], None) == ("documents", ["same-name"])
+
+
+def test_document_title_does_not_enqueue_project_export(materials):
+    from vks_api.models import Job
+
+    web, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    packs = [
+        test_materials.stage(
+            service,
+            owner,
+            manager,
+            pid,
+            aid,
+            "documents",
+            f"# {name}\n\n合成测试正文。",
+            name=name,
+            filename=f"guide-{i}.md",
+        )
+        for i, name in enumerate(("项目资料", "范围外文档"))
+    ]
+    test_materials.activate(service, owner, manager, pid, aid, packs)
+    release = manager.checkpoint(owner, pid, aid, "导出范围复审", "title-collision-baseline")
+    docs = InteractiveKnowledgeService(service).catalog(owner, pid, release_id=release["id"])["documents"]
+    expected = next(doc["id"] for doc in docs if doc["name"] == "项目资料")
+    token = service.create_token(owner, pid, {"name": "审计导出", "scopes": ["knowledge:read", "knowledge:export"]})
+    result = web.post(
+        root(pid) + "/conversation",
+        json={
+            "question": "只导出项目资料为 PDF",
+            "release_id": release["id"],
+            "target": {"route": "/", "frame_path": [], "selector": "body", "label": "文档"},
+        },
+        headers=_headers(token, 0, "title-collision"),
+    )
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert data["title"] == "文档导出"
+    with service.db() as s:
+        job = s.get(Job, data["operations"][0]["job_id"])
+        assert job.input_json["document_ids"] == [expected]
+
+
+def test_concurrent_conversation_retries_share_one_model_call(assistant, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from time import sleep
+
+    from fastapi.testclient import TestClient
+    from vks_api import conversation_tools
+    from vks_api.app import create_app
+
+    (web, service, _owner, pid, aid, grant, *_), body, calls = assistant
+    other_app = create_app(service.data_dir, enable_worker=False)
+    generating, waiting, release_model = Event(), Event(), Event()
+    request_model = ai_gateway.request_model
+
+    def pause_model(config, request):
+        generating.set()
+        assert release_model.wait(8), "合成模型测试门闩超时"
+        return request_model(config, request)
+
+    def wait_for_plan(seconds):
+        waiting.set()
+        sleep(seconds)
+
+    monkeypatch.setattr(ai_gateway, "request_model", pause_model)
+    monkeypatch.setattr(conversation_tools, "sleep", wait_for_plan)
+    headers = _headers(grant, 0, "concurrent-reassociation")
+    payload = question(body, "请重新关联，说明办理条件")
+    path = root(pid) + "/conversation"
+    try:
+        with TestClient(other_app) as other, ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(web.post, path, json=payload, headers=headers)
+            try:
+                assert generating.wait(5)
+                second = executor.submit(other.post, path, json=payload, headers=headers)
+                assert waiting.wait(5)
+                conflict = other.post(path, json=question(body, "请重新关联，改写另一条说明"), headers=headers)
+                assert conflict.status_code == 409
+                assert conflict.json()["error"]["code"] == "VKS_IDEMPOTENCY_CONFLICT"
+            finally:
+                release_model.set()
+            replies = [first.result(timeout=8), second.result(timeout=8)]
+        assert [reply.status_code for reply in replies] == [200, 200], [reply.text for reply in replies]
+        assert replies[0].json()["data"] == replies[1].json()["data"]
+        links = web.get(root(pid) + "/bindings", params={"analysis_set_id": aid}, headers=headers).json()["data"]
+        assert len(calls) == len(links) == 1
+    finally:
+        other_app.state.service.engine.dispose()
+
+
+def test_conversation_retry_can_recover_an_abandoned_generation(assistant):
+    from vks_api.interactive_ai import InteractiveQuestionInput
+    from vks_api.models import Idempotency
+    from vks_api.service import canonical, sha
+
+    (web, service, _owner, pid, _aid, grant, *_), body, calls = assistant
+    actor = service.authenticate(grant["token"], "token")
+    payload = question(body, "请重新关联，说明办理条件")
+    key = "expired-reassociation"
+    with service.db() as s:
+        s.add(
+            Idempotency(
+                project_id=pid,
+                actor_id=actor.id,
+                operation="interactive.binding.chat.plan",
+                key=key,
+                payload_hash=sha(canonical(InteractiveQuestionInput.model_validate(payload).model_dump())),
+                response_json={"attempt": "old-worker", "expires_at": 0},
+            )
+        )
+    result = web.post(root(pid) + "/conversation", json=payload, headers=_headers(grant, 0, key))
+    assert result.status_code == 200, result.text
+    assert result.json()["data"]["saved"] and len(calls) == 1
+    with service.db() as s:
+        plan = s.scalar(
+            select(Idempotency).where(
+                Idempotency.operation == "interactive.binding.chat.plan",
+                Idempotency.actor_id == actor.id,
+                Idempotency.key == key,
+            )
+        )
+        assert plan.response_json["preview_id"]
+        assert "attempt" not in plan.response_json
+
+
+def test_reassociation_retries_the_persisted_plan_when_receipt_write_fails(assistant, monkeypatch):
+    from vks_api.service import DomainError
+
+    (web, service, _owner, pid, aid, grant, *_), body, calls = assistant
+    request = question(body, "请重新关联，重点说明办理条件")
+    idem = service.idem
+
+    def fail(s, actor, project, operation, key, payload, create):
+        if operation == "interactive.binding.chat":
+            raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", "synthetic pre-commit failure", 503)
+        return idem(s, actor, project, operation, key, payload, create)
+
+    headers = _headers(grant, 0, "retry-reassociation")
+    with monkeypatch.context() as patch:
+        patch.setattr(service, "idem", fail)
+        first = web.post(root(pid) + "/conversation", json=request, headers=headers)
+        assert first.status_code == 503, first.text
+    assert web.get(root(pid) + "/bindings", params={"analysis_set_id": aid}, headers=headers).json()["data"] == []
+    assert len(calls) == 1
+    retry = web.post(root(pid) + "/conversation", json=request, headers=headers)
+    assert retry.status_code == 200, retry.text
+    saved = binding(web, pid, aid, grant)
+    replay = web.post(root(pid) + "/conversation", json=request, headers=headers)
+    assert replay.json()["data"] == retry.json()["data"]
+    assert binding(web, pid, aid, grant)["point_revision_id"] == saved["point_revision_id"]
+    assert len(calls) == 1
+    conflict = web.post(
+        root(pid) + "/conversation", json=question(body, "请重新关联，说明另一种办理条件"), headers=headers
+    )
+    assert conflict.status_code == 409 and len(calls) == 1

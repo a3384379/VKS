@@ -1,4 +1,5 @@
 import "../../../packages/assistant-runtime/src/composer.css";
+import "../../../packages/assistant-runtime/src/source-preview.css";
 import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import { api, apiResponse, mutation } from "../../web/src/api";
 import { conversationAnswer } from "./chatStream";
+import { TaskTiming, type Timing } from "./TaskTiming";
 import {
   MarkdownReadingContext,
   RichMarkdown,
@@ -468,6 +470,7 @@ function OperationResult({
   const [job, setJob] = useState<{
     state: string;
     progress?: number;
+    timing?: Timing;
     result?: { download_url?: string; filename?: string };
     error?: { message: string };
   } | null>(null);
@@ -540,7 +543,10 @@ function OperationResult({
       ) : job && ["failed", "cancelled"].includes(job.state) ? (
         <p>{job.error?.message || "导出未完成"}</p>
       ) : (
-        <p>正在导出… {job?.progress || 0}%</p>
+        <>
+          <p>正在导出… {job?.progress || 0}%</p>
+          <TaskTiming timing={job?.timing} state={job?.state || "queued"} />
+        </>
       )}
     </div>
   );
@@ -573,10 +579,7 @@ export function SourcePreview({
       }}
     >
       <header>
-        <div>
-          <small>{reference.document_name}</small>
-          <h3>{reference.name}</h3>
-        </div>
+        <small>{reference.document_name}</small>
         <button
           aria-label="关闭原文预览"
           onClick={() => dialog.current?.close()}

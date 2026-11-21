@@ -5,6 +5,7 @@ revisions. Selecting that root and its members mounts a version in a draft or
 snapshot. No package can supply server-side executable adapters.
 """
 
+from collections import defaultdict
 from copy import deepcopy
 from pathlib import PurePosixPath
 from typing import Annotated, ClassVar, Literal
@@ -21,6 +22,7 @@ from .models import (
     Artifact,
     Base,
     Entity,
+    Evidence,
     Idempotency,
     Job,
     Relation,
@@ -31,7 +33,7 @@ from .models import (
     uid,
 )
 from .prototype_contracts import PrototypeEnvelope
-from .prototype_edit import Input, Ref, _identity, _new_entity, _repoint, _select, version
+from .prototype_edit import Input, Ref, _evidence, _identity, _new_entity, _repoint, _select, version
 from .prototype_read import missing
 from .service import Actor, DomainError, canonical, sha
 
@@ -77,6 +79,11 @@ class PurgeMaterials(Input):
 
 class OpenWorkspace(Input):
     analysis_set_id: Ref | None = None
+
+
+class MigrateMaterials(Input):
+    analysis_set_id: Ref
+    resume_job_id: Ref | None = None
 
 
 class PrepareMaterial(Input):
@@ -549,7 +556,11 @@ class MaterialService:
                 }
                 for j in s.scalars(
                     select(Job)
-                    .where(Job.project_id == pid, Job.kind == "material_migrate")
+                    .where(
+                        Job.project_id == pid,
+                        Job.kind == "material_migrate",
+                        Job.input_json["index_only"].as_boolean().is_not(True),
+                    )
                     .order_by(Job.created_at.desc())
                     .limit(8)
                 )
@@ -1182,19 +1193,7 @@ class MaterialService:
         else:
             s.add(StudioWorkspace(project_id=pid, analysis_set_id=analysis.id))
         job = None
-        document_change = any(
-            (k not in old or old[k].id != r.id) and r.metadata_json[ROOT]["kind"] == "documents"
-            for k, r in desired.items()
-        )
-        document_change = document_change or (
-            any(r.metadata_json[ROOT]["kind"] == "documents" for r in desired.values())
-            and any(
-                r.metadata_json[ROOT]["kind"] == "prototype" and (eid not in old or old[eid].id != r.id)
-                for eid, r in desired.items()
-            )
-        )
-        primary_artifact = desired[chosen].artifact_id if chosen else None
-        if form.auto_migrate and (targets or issues or document_change):
+        if form.auto_migrate and (targets or issues or report["reattached"]):
             job = self.service._new_job(
                 s,
                 actor,
@@ -1205,9 +1204,8 @@ class MaterialService:
                     "targets": targets,
                     "issues": issues,
                     "composition": self.composition_digest(s, pid, analysis.id),
-                    "index_package_id": primary_artifact if document_change else None,
-                    "index_documents": document_change,
-                    "index_selection_version": analysis.selection_version,
+                    "local_plan_complete": True,
+                    "reattached": report["reattached"],
                 },
             )
         s.flush()
@@ -1261,7 +1259,8 @@ class MaterialService:
     def _migrate_graph(self, s, actor, pid, analysis, before, after, selected_before):
         selected = {r.entity_id: r for r in self.service._revisions(s, analysis.id)}
         edges = list(s.scalars(select(Relation).where(Relation.analysis_set_id == analysis.id)))
-        report = {"relocated": 0, "reused": 0, "reassociate": 0, "unresolved": 0, "removed": 0}
+        reattachment = CitationReattachment(self, s, actor, analysis, selected, edges)
+        report = {"relocated": 0, "reused": 0, "reattached": 0, "reassociate": 0, "unresolved": 0, "removed": 0}
         targets, issues = [], []
         old_by_art = {
             r.artifact_id: (eid, r) for eid, r in before.items() if r.metadata_json[ROOT]["kind"] == "prototype"
@@ -1275,7 +1274,7 @@ class MaterialService:
                 continue
             package_id, old_package = pair
             updated = after.get(package_id)
-            bindings = [e for e in edges if e.from_revision_id == action.id and e.relation_type == "has_business_point"]
+            bindings = [e for e in reattachment.outgoing[action.id] if e.relation_type == "has_business_point"]
             if not updated:
                 choice = s.get(Selection, (analysis.id, action.entity_id))
                 if choice:
@@ -1328,11 +1327,10 @@ class MaterialService:
                 _select(s, analysis, point)
                 if binding.excluded:
                     continue
-                citations = [
-                    e
-                    for e in edges
-                    if e.from_revision_id == point.id and e.relation_type == "supported_by_section" and not e.excluded
-                ]
+                if updated.id == old_package.id and reattachment.apply(binding):
+                    report["reattached"] += 1
+                    continue
+                citations = reattachment.citations(point.id)
                 affected = binding.validity_status != "valid" or updated.id != old_package.id
                 for citation in citations:
                     prior = s.get(Revision, citation.to_revision_id)
@@ -1404,11 +1402,30 @@ class MaterialService:
 
             return self.service.idem(s, actor, pid, "material.restore", key, request, restore_pointer)
 
-    def retry_migration(self, actor, pid, aid, expected, key):
+    def retry_migration(self, actor, pid, aid, expected, key, *, resume_job_id=None):
         with self.service.db() as s:
             analysis = self._draft(s, actor, pid, aid)
             self._complete_access(s, actor, pid, analysis)
+            workspace = s.get(StudioWorkspace, pid)
+            if workspace and workspace.analysis_set_id != aid:
+                raise DomainError("VKS_VERSION_CONFLICT", "项目工作区已切换，请刷新后再检查引用", 409)
             composition = self.composition_digest(s, pid, aid)
+            request = {"analysis_set_id": aid, "expected": expected}
+            if resume_job_id:
+                request["resume_job_id"] = resume_job_id
+                previous = s.get(Job, resume_job_id)
+                if (
+                    not previous or previous.project_id != pid or previous.created_by != actor.id
+                    or previous.kind != "material_migrate" or previous.input_json.get("index_only")
+                ):
+                    raise missing()
+                if (
+                    previous.input_json.get("analysis_set_id") != aid
+                    or previous.input_json.get("composition") != composition
+                ):
+                    raise DomainError("VKS_VERSION_CONFLICT", "该任务的资料版本已变化，请重新检查当前引用", 409)
+                if previous.state not in ("failed", "cancelled"):
+                    raise DomainError("VKS_STATE_CONFLICT", "只有已停止或未完成的迁移可以继续", 409)
             active = [
                 job
                 for job in s.scalars(
@@ -1421,6 +1438,7 @@ class MaterialService:
                     )
                 )
                 if job.input_json.get("analysis_set_id") == aid and job.input_json.get("composition") == composition
+                and not job.input_json.get("index_only")
             ]
             if active:
                 job = max(active, key=lambda j: (j.progress, j.state == "running", j.created_at))
@@ -1430,65 +1448,222 @@ class MaterialService:
                     pid,
                     "material.migrate",
                     key,
-                    {"analysis_set_id": aid, "expected": expected},
+                    request,
                     lambda: self.service.job_dto(job),
                 )
-            version(analysis.selection_version, expected)
-            selected = {
-                r.entity_id: r
-                for r in s.scalars(
-                    select(Revision)
-                    .join(Selection, Selection.entity_revision_id == Revision.id)
-                    .join(Entity, Entity.id == Revision.entity_id)
-                    .where(Selection.analysis_set_id == aid, Entity.type == "action")
-                )
-            }
-            package_artifacts = {r.artifact_id for r in roots(s, pid, aid)}
-            targets = []
-            for edge in s.scalars(
-                select(Relation).where(
-                    Relation.analysis_set_id == aid,
-                    Relation.relation_type == "has_business_point",
-                    Relation.excluded == False,
-                    Relation.validity_status != "valid",
-                )
-            ):
-                action = s.get(Revision, edge.from_revision_id)
-                anchor = action.metadata_json.get("interactive_anchor")
-                if selected.get(action.entity_id) is action and anchor and anchor["package_id"] in package_artifacts:
-                    targets.append(
+
+            def enqueue():
+                version(analysis.selection_version, expected)
+                if resume_job_id:
+                    source = previous.input_json
+                    job = self.service._new_job(
+                        s, actor, pid, "material_migrate",
                         {
-                            "package_id": anchor["package_id"],
-                            "target": anchor["target"],
-                            "context": {
-                                "scope": "module" if anchor["target"]["selector"] == "body" else "control",
-                                "page_title": action.name,
-                                "section_title": "",
-                                "nearby_labels": [],
-                            },
-                        }
-                    )
-            return self.service.idem(
-                s,
-                actor,
-                pid,
-                "material.migrate",
-                key,
-                {"analysis_set_id": aid, "expected": expected},
-                lambda: self.service.job_dto(
-                    self.service._new_job(
-                        s,
-                        actor,
-                        pid,
-                        "material_migrate",
-                        {
-                            "analysis_set_id": aid,
-                            "targets": targets,
-                            "composition": composition,
+                            "analysis_set_id": aid, "composition": composition,
+                            "targets": source["targets"], "issues": source.get("issues", []),
+                            "local_plan_complete": source.get("local_plan_complete", False),
+                            "reattached": source.get("reattached", 0),
+                            "resumed_from_job_id": previous.id,
                         },
                     )
-                ),
+                    job.result_json = deepcopy(previous.result_json)
+                    job.result_json["processed"] = len(job.result_json.get("completed", {}))
+                    job.progress = previous.progress
+                else:
+                    job = self.service._new_job(
+                        s, actor, pid, "material_migrate",
+                        {"analysis_set_id": aid, "composition": composition, "targets": self._stale_targets(s, pid, aid)},
+                    )
+                return self.service.job_dto(job)
+
+            return self.service.idem(s, actor, pid, "material.migrate", key, request, enqueue)
+
+    @staticmethod
+    def _stale_targets(s, pid, aid):
+        selected = {
+            r.id: r
+            for r in s.scalars(
+                select(Revision)
+                .join(Selection, Selection.entity_revision_id == Revision.id)
+                .join(Entity, Entity.id == Revision.entity_id)
+                .where(Selection.analysis_set_id == aid, Entity.type == "action")
             )
+        }
+        package_artifacts = {r.artifact_id for r in roots(s, pid, aid)}
+        targets = []
+        for edge in s.scalars(
+            select(Relation).where(
+                Relation.analysis_set_id == aid,
+                Relation.relation_type == "has_business_point",
+                Relation.excluded == False,
+                Relation.validity_status != "valid",
+            )
+        ):
+            action = selected.get(edge.from_revision_id)
+            anchor = action.metadata_json.get("interactive_anchor") if action else None
+            if anchor and anchor["package_id"] in package_artifacts:
+                targets.append(
+                    {
+                        "package_id": anchor["package_id"],
+                        "target": anchor["target"],
+                        "context": {
+                            "scope": "module" if anchor["target"]["selector"] == "body" else "control",
+                            "page_title": action.name,
+                            "section_title": "",
+                            "nearby_labels": [],
+                        },
+                    }
+                )
+        return list({canonical(target): target for target in targets}.values())
+
+
+class CitationReattachment:
+    """Refresh exact citation locations within one workspace transaction."""
+
+    def __init__(self, manager, session, actor, analysis, selected, edges):
+        self.manager, self.s, self.actor, self.analysis = manager, session, actor, analysis
+        self.selected = selected
+        self.outgoing, self.incoming = defaultdict(list), defaultdict(list)
+        for edge in edges:
+            self.outgoing[edge.from_revision_id].append(edge)
+            self.incoming[edge.to_revision_id].append(edge)
+        self.documents = {
+            entity.stable_key: (entity, selected[entity.id])
+            for entity in session.scalars(
+                select(Entity).where(Entity.project_id == analysis.project_id, Entity.type == "document")
+            )
+            if entity.id in selected
+        }
+        self.members: dict[str, set[str]] = {}
+        self.equivalent = {}
+
+    def citations(self, point_id):
+        return [
+            e for e in self.outgoing[point_id]
+            if e.relation_type == "supported_by_section" and not e.excluded
+        ]
+
+    def replacement(self, old):
+        from .reading import revision_policy
+
+        if old.id in self.equivalent:
+            return self.equivalent[old.id]
+        s, pid = self.s, self.analysis.project_id
+        current = self.selected.get(old.entity_id)
+        meta = old.metadata_json
+        document = self.documents.get(meta.get("document_key"))
+        result = None
+        if (
+            current and document
+            and old.project_id == current.project_id == pid
+            and old.name == current.name and old.content == current.content
+            and meta.get("heading_path") == current.metadata_json.get("heading_path")
+            and meta.get("document_key") == current.metadata_json.get("document_key")
+            and meta.get("material_package_id") == current.metadata_json.get("material_package_id")
+            # Relative resources can change independently of the displayed body.
+            and (old.id == current.id or not any(mark in old.content for mark in ("](", "][", "<img", "<a ", "]:")))
+        ):
+            a, b = (s.get(Artifact, row.artifact_id) for row in (old, current))
+            identity = lambda source: (source.source_key, source.provider, source.role, source.service_key)
+            if a and b and (a.kind, a.sensitivity) == (b.kind, b.sensitivity):
+                source, target = (s.get(SourceSnapshot, art.snapshot_id) for art in (a, b))
+                service = self.manager.service
+                if (
+                    source and target and identity(source) == identity(target)
+                    and revision_policy(s, old) == revision_policy(s, current)
+                    and all(service._visible_revision(s, self.actor, pid, row) for row in (old, current, document[1]))
+                ):
+                    key = document[1].id
+                    if key not in self.members:
+                        try:
+                            self.members[key] = {row.id for row in self.manager.docs._sections(s, *document)}
+                        except DomainError as error:
+                            if error.code != "VKS_DOCUMENT_SECTIONS_UNRESOLVED":
+                                raise
+                            self.members[key] = set()
+                    if current.id in self.members[key]:
+                        result = current
+        self.equivalent[old.id] = result
+        return result
+
+    def apply(self, binding, *, resume=False):
+        s, analysis = self.s, self.analysis
+        point = s.get(Revision, binding.to_revision_id)
+        edges = self.outgoing[point.id]
+        citations = self.citations(point.id)
+        order = {rid: i for i, rid in enumerate(point.metadata_json.get("citation_revision_ids") or [])}
+        if order:
+            citations.sort(key=lambda edge: order.get(edge.to_revision_id, len(order)))
+        else:
+            citations.sort(key=Relation.citation_order)
+        art = s.get(Artifact, point.artifact_id)
+        action = s.get(Revision, binding.from_revision_id)
+        if (
+            binding.excluded or binding.validity_status != ("stale" if resume else "valid")
+            or (resume and art.metadata_json.get("original_artifact_id") != action.artifact_id)
+            or binding.causal_basis != "not_established"
+            or self.incoming[point.id] != [binding]
+            or not citations or any(edge.relation_type != "supported_by_section" for edge in edges)
+            or (order and set(order) != {e.to_revision_id for e in citations})
+        ):
+            return False
+        # Only rebind ordinary chapter evidence. Keep independent evidence and
+        # causal decisions attached to their existing revisions.
+        planned = []
+        for edge in citations:
+            old = s.get(Revision, edge.to_revision_id)
+            current = self.replacement(old)
+            if not current or edge.causal_basis != "not_established":
+                return False
+            if current.id == old.id:
+                if edge.validity_status != "valid":
+                    return False
+            elif edge.validity_status != ("stale" if resume else "valid"):
+                return False
+            if len(edge.evidence_ids) != 1:
+                return False
+            proof = s.get(Evidence, edge.evidence_ids[0])
+            if (
+                not proof or proof.stable_key != "prototype." + old.id or proof.artifact_id != old.artifact_id
+                or proof.evidence_kind != "manual" or proof.claim != "当前修订的维护说明或原文章节"
+            ):
+                return False
+            planned.append((edge, current))
+        if all(edge.to_revision_id == row.id for edge, row in planned):
+            return False
+        if len(binding.evidence_ids) != 1:
+            return False
+        proof = s.get(Evidence, binding.evidence_ids[0])
+        if not proof or proof.stable_key != "prototype." + point.id or proof.artifact_id != art.id:
+            return False
+        # Non-cited inputs may also have shaped the saved model explanation.
+        for rid in art.metadata_json.get("interactive_generation", {}).get("input_revision_ids", []):
+            old = s.get(Revision, rid)
+            if old is None or self.replacement(old) is None:
+                return False
+        service = self.manager.service
+        pid = analysis.project_id
+        if (
+            not all(service._visible_revision(s, self.actor, pid, row) for row in (point, action))
+            or not all(service._visible_relation(s, self.actor, pid, edge) for edge in [binding, *citations])
+        ):
+            return False
+        replacement = self.manager.docs._revision(
+            s, s.get(Entity, point.entity_id), art, point.name, point.content, point.locator,
+            {**point.metadata_json, "citation_revision_ids": [row.id for _, row in planned]},
+        )
+        _select(s, analysis, replacement)
+        _repoint([binding, *edges], point, replacement, stale=False)
+        binding.evidence_ids = [_evidence(s, analysis, replacement, art)]
+        new_proof = s.get(Evidence, binding.evidence_ids[0])
+        new_proof.evidence_kind, new_proof.claim = proof.evidence_kind, proof.claim
+        binding.validity_status = "valid"
+        for edge, row in planned:
+            if edge.to_revision_id != row.id:
+                edge.to_revision_id = row.id
+                edge.evidence_ids = [_evidence(s, analysis, row, s.get(Artifact, row.artifact_id))]
+                edge.validity_status = "valid"
+        return True
 
 
 def match_target(old, targets):
@@ -1517,10 +1692,9 @@ def match_target(old, targets):
 
 
 def migrate_job(service, jid):
-    from packages.analyzers.cancellation import checkpoint
-
     from .interactive_ai import AssistanceInput, InteractiveAssistant
     from .jobs import current_actor
+    from .reading import ReadingService
 
     assistant, manager = InteractiveAssistant(service), MaterialService(service)
     with service.db() as s:
@@ -1529,35 +1703,42 @@ def migrate_job(service, jid):
         attempt = job.attempt
         completed = dict(job.result_json.get("completed", {}))
     targets = payload["targets"]
+    aid = payload["analysis_set_id"]
+
+    def fence(s, *, write=False, index=False):
+        active = s.get(Job, jid, populate_existing=True)
+        if not active:
+            raise missing()
+        if write:
+            # Match activation's workspace → draft lock order before taking
+            # the job lock. Scope cannot switch while citation writes commit.
+            actor = current_actor(service, active.created_by, pid, s, job=active)
+            analysis = manager._draft(s, actor, pid, aid)
+            s.refresh(active, with_for_update=True)
+        if (
+            active.attempt != attempt or active.state != "running"
+            or active.cancel_requested or not active.lease_until or active.lease_until <= now()
+        ):
+            raise DomainError("VKS_CANCELLED", "迁移任务已停止或执行资格已失效", 409)
+        if not write:
+            actor = current_actor(service, active.created_by, pid, s, job=active)
+            service.require(s, actor, pid, "knowledge:edit")
+            analysis = s.get(Analysis, aid)
+        workspace = s.get(StudioWorkspace, pid)
+        if (
+            not analysis or analysis.state == "frozen"
+            or (workspace and workspace.analysis_set_id != aid)
+            or (index and payload.get("index_selection_version") not in (None, analysis.selection_version))
+            or manager.composition_digest(s, pid, aid) != payload["composition"]
+        ):
+            raise DomainError("VKS_VERSION_CONFLICT", "资料组合已变化，停止旧版本迁移", 409)
+        return active, actor, analysis
 
     def validate_index_scope():
-        with service.db() as s:
-            active = s.get(Job, jid)
-            if (
-                not active
-                or active.attempt != attempt
-                or active.state != "running"
-                or active.cancel_requested
-                or active.lease_until
-                and active.lease_until <= now()
-            ):
-                raise DomainError("VKS_CANCELLED", "索引任务已取消或执行资格已失效", 409)
-            current = current_actor(service, active.created_by, pid, s, job=active)
-            service.require(s, current, pid, "knowledge:edit")
-            workspace = s.get(StudioWorkspace, pid)
-            analysis = s.get(Analysis, payload["analysis_set_id"])
-            if (
-                not analysis
-                or analysis.state == "frozen"
-                or payload.get("index_selection_version") is not None
-                and analysis.selection_version != payload["index_selection_version"]
-                or workspace
-                and workspace.analysis_set_id != payload["analysis_set_id"]
-                or manager.composition_digest(s, pid, payload["analysis_set_id"]) != payload["composition"]
-            ):
-                raise DomainError("VKS_VERSION_CONFLICT", "资料组合已变化，停止旧版本文档索引", 409)
+        with ReadingService(service).db() as s:
+            fence(s, index=True)
 
-    if (payload.get("index_documents") or payload.get("index_package_id")) and assistant.rag.store.settings(
+    if payload.get("index_only") and assistant.rag.store.settings(
         pid
     ).enabled:
         validate_index_scope()
@@ -1591,76 +1772,54 @@ def migrate_job(service, jid):
             job_id=jid,
             job_attempt=attempt,
         )
-    for index, target in enumerate(targets):
-        checkpoint()
-        signature = sha(canonical(target))
-        if signature in completed and completed[signature].get("saved"):
-            continue
-        with service.db() as s:
-            job = s.get(Job, jid)
-            actor = current_actor(service, job.created_by, pid, s, job=job)
-            state = s.get(StudioWorkspace, pid)
-            analysis = s.get(Analysis, payload["analysis_set_id"])
-            if (
-                not analysis
-                or analysis.state == "frozen"
-                or state
-                and state.analysis_set_id != analysis.id
-                or manager.composition_digest(s, pid, analysis.id) != payload["composition"]
-            ):
-                raise DomainError("VKS_VERSION_CONFLICT", "资料组合已变化，停止旧版本关联迁移", 409)
-            job.progress = int(index * 100 / max(1, len(targets)))
-            job.stage = "ASSOCIATE"
-        try:
+    with service.db() as s:
+        job, actor, analysis = fence(s, write=True)
+        pending = {sha(canonical(target)): target for target in targets}
+        pending = {key: target for key, target in pending.items() if key not in completed}
+        new_reattachments = 0
+        if pending and not payload.get("local_plan_complete"):
+            selected = {row.entity_id: row for row in service._revisions(s, aid)}
+            edges = list(s.scalars(select(Relation).where(Relation.analysis_set_id == aid)))
+            reuse = CitationReattachment(manager, s, actor, analysis, selected, edges)
+            actions = {
+                canonical([anchor["package_id"], anchor["target"]]): row.id
+                for row in selected.values()
+                if (anchor := row.metadata_json.get("interactive_anchor"))
+            }
+            for key, target in list(pending.items()):
+                action_id = actions.get(canonical([target["package_id"], target["target"]]))
+                point_edges = [
+                    edge for edge in reuse.outgoing.get(action_id, [])
+                    if edge.relation_type == "has_business_point"
+                ]
+                if len(point_edges) == 1 and reuse.apply(point_edges[0], resume=True):
+                    completed[key] = {
+                        "label": target["target"]["label"], "saved": True,
+                        "message": "已更新相同正文的引用位置", "reattached": True,
+                    }
+                    del pending[key]
+                    new_reattachments += 1
+            if new_reattachments:
+                analysis.selection_version += 1
 
-            def validate_scope(session):
-                active_job = session.get(Job, jid)
-                current_actor(service, active_job.created_by, pid, session, job=active_job)
-                workspace = session.get(StudioWorkspace, pid)
-                if (
-                    workspace
-                    and workspace.analysis_set_id != payload["analysis_set_id"]
-                    or manager.composition_digest(session, pid, payload["analysis_set_id"]) != payload["composition"]
-                ):
-                    raise DomainError("VKS_VERSION_CONFLICT", "资料组合已变化，丢弃旧迁移结果", 409)
-
-            result = assistant.run(
-                actor,
-                pid,
-                AssistanceInput(analysis_set_id=payload["analysis_set_id"], refresh=True, **target),
-                migrate_manual=True,
-                validate_scope=validate_scope,
-            )
-            completed[signature] = {
-                "label": target["target"]["label"],
-                "saved": result["saved"],
-                "confidence": result["confidence"],
-                "message": "关联已迁移" if result["saved"] else "依据不足，保留为待关联",
+        for key, target in pending.items():
+            completed[key] = {
+                "label": target["target"]["label"], "saved": False,
+                "message": "原文已变化，待手动重新关联",
             }
-        except DomainError as e:
-            if e.code in {"VKS_FORBIDDEN", "VKS_UNAUTHENTICATED", "VKS_VERSION_CONFLICT"}:
-                raise
-            completed[signature] = {
-                "label": target["target"]["label"],
-                "saved": False,
-                "message": e.message,
-                "code": e.code,
-            }
-        with service.db() as s:
-            job = s.get(Job, jid)
-            job.result_json = {
-                "completed": completed,
-                "total": len(targets),
-                "saved": sum(bool(r.get("saved")) for r in completed.values()),
-            }
-    return {
-        "completed": completed,
-        "total": len(targets) + len(payload.get("issues", [])),
-        "issues": payload.get("issues", []),
-        "saved": sum(bool(r.get("saved")) for r in completed.values()),
-        "pending": sum(not r.get("saved") for r in completed.values()) + len(payload.get("issues", [])),
-        "result_refs": [{"kind": "analysis_set", "id": payload["analysis_set_id"]}],
-    }
+        result = {
+            "completed": completed,
+            "total": len(targets) + len(payload.get("issues", [])),
+            "issues": payload.get("issues", []),
+            "saved": sum(bool(r.get("saved")) for r in completed.values()),
+            "processed": len(completed) + len(payload.get("issues", [])),
+            "preserved": sum(bool(r.get("saved") and not r.get("reattached")) for r in completed.values()),
+            "reattached": payload.get("reattached", 0) + sum(bool(r.get("reattached")) for r in completed.values()),
+            "pending": sum(not r.get("saved") for r in completed.values()) + len(payload.get("issues", [])),
+            "result_refs": [{"kind": "analysis_set", "id": aid}],
+        }
+        job.result_json = result
+    return result
 
 
 def install_materials(app, service, actor, envelope):
@@ -1748,10 +1907,12 @@ def install_materials(app, service, actor, envelope):
     @app.post(prefix + "/migrate", response_model=PrototypeEnvelope[dict])
     def migrate(
         pid: str,
-        payload: OpenWorkspace,
+        payload: MigrateMaterials,
         a: ActorDep,
         request: Request,
         if_match: str = Header(...),
         idempotency_key: str = Header(...),
     ):
-        return envelope(request, shared.retry_migration(a, pid, payload.analysis_set_id, if_match, idempotency_key))
+        return envelope(request, shared.retry_migration(
+            a, pid, payload.analysis_set_id, if_match, idempotency_key, resume_job_id=payload.resume_job_id
+        ))

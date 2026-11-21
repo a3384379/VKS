@@ -574,6 +574,9 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     from .reassociation_batches import install_reassociation_batches
 
     install_reassociation_batches(app, service, actor, envelope)
+    from .explanation_batches import install_explanation_batches
+
+    install_explanation_batches(app, service, actor, envelope)
     install_document_presentation(app, service, actor, envelope)
     from .prototype_scan import install_prototype_scan
 

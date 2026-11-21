@@ -2,6 +2,7 @@
 
 import json
 import re
+from contextlib import suppress
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -63,6 +64,26 @@ def test_footer_review_cancel_and_detached_confirmation_preserve_exact_preview(a
         browser = pw.chromium.launch(executable_path=chromium_path(pw), headless=True)
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.add_init_script("if(top===window)localStorage.setItem('vks.studio.auto-associate','off')")
+        page.add_init_script("""
+            if (window === top) {
+                const OriginalChannel = window.MessageChannel;
+                window.runtimeEvents = [];
+                window.MessageChannel = class extends OriginalChannel {
+                    constructor() {
+                        super();
+                        this.port1.addEventListener("message", ({data}) => {
+                            if (!data?.type?.startsWith("context.")) return;
+                            runtimeEvents.push({
+                                type: data.type, sequence: data.sequence, instance: data.runtime_instance_id,
+                                view: new URLSearchParams(location.hash.slice(1)).get("view"),
+                                route: data.payload?.target?.route || data.payload?.route
+                            });
+                        });
+                    }
+                };
+            }
+        """)
+        page.context.tracing.start(screenshots=True, snapshots=True)
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         try:
@@ -172,5 +193,13 @@ def test_footer_review_cancel_and_detached_confirmation_preserve_exact_preview(a
             assert current["point_revision_id"] != original[0]["point_revision_id"]
             assert "确认后才替换" in current["summary"]
             assert not errors
+        except Exception:
+            with suppress(Exception):
+                print("Runtime context events", page.evaluate("window.runtimeEvents"))
+                page.screenshot(path=str(tmp_path / "association-preview-failure.png"), timeout=3000)
+                page.context.tracing.stop(path=str(tmp_path / "association-preview-trace.zip"))
+            raise
+        else:
+            page.context.tracing.stop()
         finally:
             browser.close()

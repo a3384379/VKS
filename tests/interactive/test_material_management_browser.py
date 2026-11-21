@@ -41,7 +41,7 @@ def test_materials_progressive_loading_deduplication_and_recycle_ui(materials, t
             history_frame = page.get_by_role("region", name="完整版本列表", exact=True)
             loading_height = history_frame.bounding_box()["height"]
             assert loading_height >= 240
-            expect(card.get_by_role("button", name="更新资料", exact=True)).to_be_enabled()
+            expect(card.get_by_role("button", name="上传新版本", exact=True)).to_be_enabled()
             expect(card.get_by_role("button", name="删除", exact=True)).to_be_disabled()
             assert all("include_versions=false" in request for request in gets)
             for route in history:
@@ -73,9 +73,13 @@ def test_materials_progressive_loading_deduplication_and_recycle_ui(materials, t
             # Reimporting unchanged content is an immediate no-op, and does not
             # perform a full list fetch before uploading or stage another copy.
             before = len(gets)
-            card.get_by_role("button", name="更新资料", exact=True).click()
+            with page.expect_file_chooser() as chooser:
+                card.get_by_role("button", name="上传新版本", exact=True).click()
+            expect(page.get_by_role("heading", name="上传「Guide」的新版本")).to_be_visible()
+            assert chooser.value.is_multiple()
             picker = page.get_by_label("选择资料文件", exact=True)
-            picker.set_input_files({"name": "guide.md", "mimeType": "text/markdown", "buffer": raw})
+            expect(picker).to_have_attribute("accept", ".md,.markdown,.txt,.html,.htm,.zip")
+            chooser.value.set_files({"name": "guide.md", "mimeType": "text/markdown", "buffer": raw})
             page.get_by_role("button", name="解析并预览", exact=True).click()
             expect(
                 page.get_by_text("资料内容未变化，已保留当前版本，没有重复导入或重建知识库。", exact=True)
@@ -155,10 +159,15 @@ def test_current_migration_and_disabled_retry_are_separate_from_history(material
     web, service, owner, manager, projects = materials
     pid, aid = projects[0]
     package = test_materials.stage(service, owner, manager, pid, aid, "documents", "# Guide\n\nExact source.")
-    activated = test_materials.activate(service, owner, manager, pid, aid, [package])
+    test_materials.activate(service, owner, manager, pid, aid, [package])
     with service.db() as db:
-        job = db.get(Job, activated["job_id"])
+        job = service._new_job(
+            db, owner, pid, "material_migrate",
+            {"analysis_set_id": aid, "composition": manager.composition_digest(db, pid, aid), "targets": []},
+        )
+        original_job_id = job.id
         job.state, job.progress, job.stage = "running", 27, "ASSOCIATE"
+        job.input_json = {**job.input_json, "_run_started_at": "2000-01-01T00:00:00Z"}
         job.result_json = {
             "total": 11,
             "saved": 3,
@@ -177,12 +186,24 @@ def test_current_migration_and_disabled_retry_are_separate_from_history(material
             expect(current).to_have_count(1)
             expect(current).to_contain_text("正在核对关联")
             expect(current).to_contain_text("已处理 3 / 11")
-            expect(page.get_by_role("button", name="迁移进行中", exact=True)).to_be_disabled()
+            expect(current.locator(".task-timing")).to_contain_text("预计剩余 等待更多任务结果")
+            expect(page.get_by_role("button", name="打开关联管理", exact=True)).to_be_enabled()
             history = page.locator(".material-job-history")
             expect(history).to_contain_text("迁移历史（1）")
             expect(history.locator(".material-job")).not_to_be_visible()
             history.locator("summary").click()
             expect(history).to_contain_text("旧资料版本")
+            with service.db() as db:
+                db.get(Job, original_job_id).state = "cancelled"
+            resume = page.get_by_role("button", name="继续迁移", exact=True)
+            expect(resume).to_be_enabled(timeout=8000)
+            expect(page.get_by_role("button", name="重新检查引用", exact=True)).to_be_enabled()
+            with page.expect_response(lambda reply: reply.url.endswith("/materials/migrate")) as result:
+                resume.click()
+            assert result.value.ok, result.value.text()
+            assert result.value.request.post_data_json == {"analysis_set_id": aid, "resume_job_id": original_job_id}
+            resumed = result.value.json()["data"]
+            assert resumed["id"] != original_job_id and resumed["result"]["saved"] == 3
         finally:
             browser.close()
 

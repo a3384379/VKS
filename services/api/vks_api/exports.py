@@ -12,10 +12,11 @@ import zipfile
 from hashlib import sha256
 from html import escape
 from io import BytesIO
+from pathlib import PurePosixPath
 
 from sqlalchemy import select
 
-from packages.analyzers.vks_ingest import _DOM, _document_key, parse_bundle, source_digest
+from packages.analyzers.vks_ingest import BundleError, _DOM, _document_key, parse_bundle, source_digest
 
 from .models import Artifact, Entity, Evidence, Project, Relation, Release, Revision
 
@@ -243,11 +244,20 @@ def export_locator(evidence):
 
 def reimport_bundle(service, s, release, capabilities, rows, relations, evidence):
     from .knowledge import SourceSnapshot, document_origin
+    from .materials import COMPOSITION, ROOT
     from .prototype_export import add_prototypes, portable_points
     from .reading import artifact_policy
+    from .studio_bundle import document_layout, export_studio, file_prefix
 
     # Destination identities cannot reproduce all model input permissions.
     # Omit derived wording rather than mislabel its input scope as evidence.
+    visible_relations = relations
+    anchors = {rev.id for _, rev, _ in rows if rev.metadata_json.get("interactive_anchor")}
+    studio_points = {
+        row["to_revision_id"] for row in relations
+        if row["relation_type"] == "has_business_point" and row["from_revision_id"] in anchors
+    }
+    layout = document_layout(s, rows)
     transferable = []
     for relation in relations:
         stored = s.get(Relation, relation["id"])
@@ -273,7 +283,12 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             or entity.type == "business_point"
         )
     }
-    candidate_artifacts = {art.id: art for _, _, art in rows if art and art.id not in reconstructed}
+    candidate_artifacts = {
+        art.id: art
+        for _, rev, art in rows
+        if art and art.id not in reconstructed
+        and not any(key in rev.metadata_json for key in (ROOT, COMPOSITION, "interactive_anchor"))
+    }
     selected_artifacts = set(candidate_artifacts)
     document_sources = {
         art.id: document_origin(s, rev) for entity, rev, art in rows if entity.type == "document" and art
@@ -281,6 +296,14 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
     document_paths = {}
     for entity, rev, art in rows:
         if entity.type == "document" and art:
+            if entity.id in layout:
+                owner, path = layout[entity.id]
+                # Keep the original material path in studio.json. The index
+                # is Markdown even when it came from HTML or plain text.
+                if art.kind == "markdown" and PurePosixPath(path).suffix.lower() not in {".md", ".markdown"}:
+                    path += "." + digest(entity.stable_key.encode())[:16] + ".md"
+                document_paths[art.id] = file_prefix(owner) + path
+                continue
             original = s.get(Artifact, rev.metadata_json.get("original_artifact_id") or art.id)
             if original and _document_key(original.relative_path) == entity.stable_key:
                 document_paths[art.id] = original.relative_path
@@ -351,6 +374,8 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
     for entity, revision, artifact in rows:
         if (
             entity.type != "page"
+            or ROOT in revision.metadata_json
+            or COMPOSITION in revision.metadata_json
             or revision.metadata_json.get("prototype_manifest")
             or not artifact
             or not allow_artifact(artifact, capabilities)
@@ -414,6 +439,7 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
         "baselineKey": baseline,
         "pages": [],
         "actions": [],
+        "documents": [],
         "documentSections": [],
         "codeEntities": [],
     }
@@ -421,6 +447,8 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
     selected_entities = []
     source_by_path = {row["path"]: row["source_id"] for row in records}
     for entity, rev, art in rows:
+        if ROOT in rev.metadata_json or COMPOSITION in rev.metadata_json or rev.id in anchors:
+            continue
         if rev.metadata_json.get("prototype_manifest") or rev.metadata_json.get("prototype_action"):
             ref = raster_refs.get(entity.stable_key)
             if ref:
@@ -452,13 +480,19 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
                 continue
             path = paths[art.id]
             base = {"artifactPath": path, "sha256": art.sha256}
-        key_by_revision[rev.id] = _document_key(path) if entity.type == "document" else entity.stable_key
+        key_by_revision[rev.id] = entity.stable_key
         if entity.type in {"page", "action", "api", "symbol", "sql", "table", "document", "section", "rule"}:
             selected_entities.append(
                 dict(base, logicalKey=key_by_revision[rev.id], entityType=entity.type, sourceId=source_by_path[path])
             )
         if entity.type == "page":
             ui["pages"].append(dict(base, logicalKey=entity.stable_key, name=rev.name))
+        elif entity.type == "document":
+            locked = [
+                section.stable_key for section_id in rev.metadata_json.get("locked_section_ids", [])
+                if (section := s.get(Entity, section_id))
+            ]
+            ui["documents"].append(dict(base, logicalKey=entity.stable_key, name=rev.name, lockedSections=locked))
         elif entity.type == "action":
             ui["actions"].append(
                 {
@@ -511,9 +545,22 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
         )
         return {"path": path, "sha256": digest(raw)}
 
+    studio, studio_snapshots = export_studio(
+        service, s, rows, visible_relations, capabilities, add_file, layout, key_by_revision
+    )
+    studio_ref = (
+        add_sidecar(
+            "export/studio.json", "fixture", {**identity, **studio},
+            sensitivity="confidential" if (
+                any(binding["sourceRestricted"] for binding in studio["bindings"])
+                or any(record["sensitivity"] == "confidential" for record in records)
+            ) else "internal",
+        )
+        if studio["packages"] or studio["bindings"] else None
+    )
     point_rows, point_bindings, point_policy, selected_points = portable_points(
         s,
-        rows,
+        [row for row in rows if row[1].id not in studio_points],
         relations,
         {
             rev.id: key_by_revision[rev.id]
@@ -571,7 +618,10 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
                     "reimport_policy": "Preserved as data; create a new scenario and revalidate observations before use.",
                 },
             )
-    ui_ref = add_sidecar("export/ui-manifest.json", "ui_manifest", ui)
+    ui_ref = add_sidecar(
+        "export/ui-manifest.json", "ui_manifest", ui,
+        sensitivity="confidential" if any(record["sensitivity"] == "confidential" for record in records) else "internal",
+    )
     selection_ref = add_sidecar(
         "export/selection.json",
         "fixture",
@@ -599,7 +649,7 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             "policy": "Omitted because exact all-input provenance and destination permissions cannot be preserved; regenerate and rebind before proposing.",
         }
     ]
-    included_snapshots = {a.snapshot_id for a in [*art_rows.values(), *raster_originals.values()]}
+    included_snapshots = {a.snapshot_id for a in [*art_rows.values(), *raster_originals.values()]} | studio_snapshots
     visible_snapshots = visible_export_sources(s, release.project_id, included_snapshots, capabilities)
     provenance["sources"] = [
         source
@@ -667,7 +717,10 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             source = {
                 "source_id": source_id,
                 "role": "prototype"
-                if any(ref["path"] == f"export/prototypes/{source_id}.json" for ref in prototypes)
+                if (
+                    any(ref["path"] == f"export/prototypes/{source_id}.json" for ref in prototypes)
+                    or any(pack["key"] == source_id and pack["kind"] == "prototype" for pack in studio["packages"])
+                )
                 else old.get("role", "documentation"),
                 "provider": "local",
                 "root": ".",
@@ -686,6 +739,7 @@ def reimport_bundle(service, s, release, capabilities, rows, relations, evidence
             "uiManifest": ui_ref,
             "selectionManifest": selection_ref,
             **({"prototypeManifests": prototypes} if prototypes else {}),
+            **({"studioManifest": studio_ref} if studio_ref else {}),
             **({"businessPointsManifest": point_ref} if point_ref else {}),
             "analysis_origin": "manual",
             # A default-deny artifact can never become an opt-in on export.
@@ -885,7 +939,15 @@ def perform_export(service, s, job):
     if format == "markdown_bundle":
         raw, suffix = markdown_zip(service, release, capabilities, rows, relations, evidence), ".zip"
     elif format == "vksbundle":
-        raw, source_snapshots = reimport_bundle(service, s, release, capabilities, rows, relations, evidence)
+        try:
+            raw, source_snapshots = reimport_bundle(service, s, release, capabilities, rows, relations, evidence)
+        except BundleError as exc:
+            raise DomainError(
+                "VKS_INVALID_INPUT",
+                "固定版本无法打包为可回导资料：" + exc.message,
+                422,
+                {"reason_code": exc.code, **exc.details},
+            ) from exc
         suffix = ".vksbundle.zip"
     elif format == "pdf":
         raw, suffix = pdf_report(service, release, rows, relations), ".pdf"

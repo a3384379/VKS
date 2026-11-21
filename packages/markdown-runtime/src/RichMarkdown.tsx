@@ -35,6 +35,7 @@ import { rehypeMathQuota, remarkMathAliases } from "./math-plugins";
 import { RenderBoundary } from "./RenderBoundary";
 import { openImagePreview } from "./imagePreview";
 import { attachmentUrl, MarkdownAttachment } from "./MarkdownAttachment";
+import { stripCitationRevisionIds } from "./citationRevisionIds";
 
 const CodeHighlight = lazy(() => import("./CodeHighlight"));
 export type MarkdownDocument = {
@@ -71,6 +72,7 @@ type AstNode = {
   children?: AstNode[];
   data?: { chapterHeading?: string };
 };
+
 export type ReadingContext = {
   projectId?: string;
   analysisSetId?: string;
@@ -148,6 +150,7 @@ export const RichMarkdown = memo(function RichMarkdown({
   revisionId,
   references = [],
   onReference,
+  hideCitationRevisionIds = false,
   omitInitialTitle,
   sections,
   selectedSection,
@@ -160,6 +163,7 @@ export const RichMarkdown = memo(function RichMarkdown({
   revisionId?: string;
   references?: MarkdownReference[];
   onReference?: (reference: MarkdownReference) => void;
+  hideCitationRevisionIds?: boolean;
   omitInitialTitle?: string;
   sections?: MarkdownSection[];
   selectedSection?: string;
@@ -223,6 +227,7 @@ export const RichMarkdown = memo(function RichMarkdown({
     revisionId,
     references,
     onReference,
+    hideCitationRevisionIds,
     sections,
     sectionActions,
     sectionHeadingActions,
@@ -236,6 +241,7 @@ export const RichMarkdown = memo(function RichMarkdown({
     revisionId,
     references,
     onReference,
+    hideCitationRevisionIds,
     sections,
     sectionActions,
     sectionHeadingActions,
@@ -731,9 +737,10 @@ export const RichMarkdown = memo(function RichMarkdown({
   }, []);
   const citationPlugin = useMemo(
     () => () => (tree: AstNode) => {
-      if (!latest.current.onReference && !latest.current.reading.onSection)
-        return;
-      const count = latest.current.references.length;
+      const { onReference, reading, references, hideCitationRevisionIds } =
+        latest.current;
+      const count = onReference || reading.onSection ? references.length : 0;
+      if (!count && !hideCitationRevisionIds) return;
       function visit(node: AstNode) {
         if (
           ["a", "code", "pre", "script", "math"].includes(node.tagName || "") ||
@@ -741,6 +748,8 @@ export const RichMarkdown = memo(function RichMarkdown({
         )
           return;
         if (!node.children) return;
+        if (hideCitationRevisionIds)
+          node.children = stripCitationRevisionIds(node.children);
         node.children = node.children.flatMap((child) => {
           if (child.type !== "text" || !child.value) {
             visit(child);

@@ -114,14 +114,6 @@ def start_legacy_pipeline(page, service, owner, pid, aid, *, mode="all", concurr
     page.get_by_role("button", name="继续扫描页面", exact=True).click()
 
 
-def select_scan_lanes(page, value):
-    settings = page.locator(".batch-settings")
-    if settings.get_attribute("open") is None:
-        settings.locator("summary").click()
-    page.get_by_label("分析与关联并发", exact=True).select_option(str(value))
-    settings.locator("summary").click()
-
-
 @pytest.mark.parametrize("charge", [False, True])
 def test_two_dynamic_routes_discovered_before_clicks_and_ai_enqueue(materials, tmp_path, monkeypatch, charge):
     web, service, owner, pid, aid, calls = setup(materials, monkeypatch, charge=charge)
@@ -205,7 +197,6 @@ def test_cancel_prescan_stops_queued_ai_and_next_run_reuses_captured_pages(mater
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            select_scan_lanes(page, 1)
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"
@@ -242,7 +233,6 @@ def test_navigation_keeps_scan_and_does_not_restart_completed_pages(materials, t
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            select_scan_lanes(page, 1)
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"
@@ -295,7 +285,6 @@ def test_refresh_keeps_persisted_progress_and_requires_explicit_resume(materials
         try:
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            select_scan_lanes(page, 1)
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"

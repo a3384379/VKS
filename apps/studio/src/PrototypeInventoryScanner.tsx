@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, Square } from "lucide-react";
 import { InventoryScanWorker } from "./InventoryScanWorker";
+import { TaskTiming, type Timing } from "./TaskTiming";
 import type {
   Capture,
   InventoryManifest,
@@ -37,6 +38,8 @@ export function PrototypeInventoryScanner({
   onSaved,
   progressBase,
   concurrency,
+  timing,
+  adaptive = false,
   incremental = false,
   onPause,
 }: {
@@ -58,6 +61,8 @@ export function PrototypeInventoryScanner({
     failed?: number;
   };
   concurrency?: number;
+  timing?: Timing;
+  adaptive?: boolean;
   incremental?: boolean;
   onPause?: () => void;
 }) {
@@ -66,6 +71,10 @@ export function PrototypeInventoryScanner({
     Number.isInteger(configured) && configured >= 1 && configured <= 4
       ? configured
       : 3;
+  const maxAdaptive = Math.max(1, Math.min(
+    limit, Math.floor((navigator.hardwareConcurrency || 4) / 2),
+    ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 4 ? 2 : limit,
+  ));
   const pool = useMemo(() => {
     const seen = new Set<string>(),
       tasks: InventoryTask[] = [];
@@ -124,6 +133,33 @@ export function PrototypeInventoryScanner({
   };
   const [view, setView] = useState<Progress>(pool.initial),
     [halted, setHalted] = useState<string | null>(null);
+  const [lanes, setLanes] = useState(1);
+  const lanesRef = useRef(1);
+  useEffect(() => {
+    if (!adaptive) return;
+    let healthy = 0;
+    let tick = performance.now();
+    lanesRef.current = 1;
+    setLanes(1);
+    const timer = setInterval(() => {
+      const now = performance.now();
+      const lag = now - tick - 500;
+      tick = now;
+      const memory = (performance as Performance & {
+        memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number };
+      }).memory;
+      const heap = memory ? memory.usedJSHeapSize / memory.jsHeapSizeLimit : 0;
+      if (document.hidden || lag >= 80 || heap >= 0.65) {
+        healthy = 0;
+        lanesRef.current = Math.max(1, lanesRef.current - 1);
+      } else if (lag <= 25 && ++healthy >= 3) {
+        healthy = 0;
+        lanesRef.current = Math.min(maxAdaptive, lanesRef.current + 1);
+      }
+      setLanes(lanesRef.current);
+    }, 500);
+    return () => clearInterval(timer);
+  }, [adaptive, maxAdaptive, pool]);
   const progress = view.session === pool.id ? view : pool.initial;
   const count = Math.min(limit, pool.tasks.length);
   const isActive = useCallback(
@@ -133,6 +169,7 @@ export function PrototypeInventoryScanner({
   const claim = useCallback(
     (worker: number) => {
       if (!isActive()) return;
+      if (adaptive && pool.inflight.size >= lanesRef.current) return null;
       while (true) {
         const task = pool.retry.pop() || pool.tasks[pool.cursor++];
         if (!task) return;
@@ -141,7 +178,7 @@ export function PrototypeInventoryScanner({
         return task;
       }
     },
-    [pool, isActive],
+    [adaptive, pool, isActive],
   );
   const release = useCallback(
     (worker: number, task: InventoryTask) => {
@@ -275,7 +312,7 @@ export function PrototypeInventoryScanner({
         {progress.failed ? ` · ${progress.failed} 页未完成` : ""}
       </p>
       <small>
-        {count} 路并行采集 · 已尝试 {progress.attempted}{" "}
+        {adaptive ? `自动调节 · 当前上限 ${Math.min(count, lanes)} 路` : `${count} 路并行采集`} · 已尝试 {progress.attempted}{" "}
         页；仅采集默认页面，未打开的弹窗和条件状态仍未覆盖。
       </small>
       {Object.entries(progress.working).map(([worker, label]) => (
@@ -286,6 +323,12 @@ export function PrototypeInventoryScanner({
       <progress
         max={Math.max(1, progressBase?.total ?? manifest.pages_total)}
         value={progress.completed}
+      />
+      <TaskTiming
+        timing={timing}
+        state="running"
+        processed={progress.completed}
+        total={progressBase?.total ?? manifest.pages_total}
       />
       {onPause && <button onClick={() => stop(true)}>暂停扫描</button>}
       <button onClick={() => stop(false)}>

@@ -10,6 +10,8 @@ MCP 构建器合并 18 个基础工具、5 个 V2 工具与 7 个 V3 工具。�
 
 3.0 资料包可通过 `prototypeManifest` 或 `prototypeManifests` 引用 `prototype_manifest.schema.json` 描述的侧车。侧车中的 PNG 必须属于同来源，且原字节、像素尺寸、视口和状态引用均可校验。可回导包可包含 `businessPointsManifest`，以同包的原文、动作和状态重建证据。
 
+Studio 的 `studioManifest` 侧车保存原包闭包、DOM 目标、业务点及有序章节引用。它与顶层项目、基线、制品摘要和所选原文交叉校验。ZIP 原始输入以带原字节摘要的 Base64 字段封装，在 Studio 预检时由现有资料解析器检查内容和展开限额。`uiManifest.documents` 保存文档逻辑键和锁定章节，适用于导出路径与原身份不同的资料。普通 1.0 包仍可沿用旧字段。
+
 V3 HTTP 定义见 `openapi_3.0.json`。读取选择准确 `analysis_set_id` 或 `release_id`。图像接口还需要 `page_revision_id`。导入确认、热区及业务点保存使用 `If-Match` 和 `Idempotency-Key`，以当前草稿的 `selection_version` 作为并发条件。
 
 混合导入预检传 `artifact_ids`，返回 `202` 和任务 ID。预检任务结果包含 `preview_digest`、`selection_version` 及按资料划分的映射、问题和可选范围。确认传 `preview_id`、`preview_digest`、`analysis_set_id`、`selected_artifact_ids`。原单件预检及确认仍接受 `artifact_id`。项目菜单设置可提交 `menu_groups`，菜单分页返回当前可见页面的 `group_name`。

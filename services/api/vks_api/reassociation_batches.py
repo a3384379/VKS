@@ -2,25 +2,46 @@
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from copy import deepcopy
+from datetime import datetime
+from statistics import median
 from typing import Annotated, Literal
 
 from fastapi import Depends, Header, Query, Request
 from pydantic import Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
+from .ai_gateway import ModelPolicy, ModelUsage
 from .association_limits import request_concurrency
 from .bulk_association import BulkAssociationService, target_id
-from .interactive_ai import InteractiveAssistant, ReassociationInput
-from .jobs import current_actor
+from .interactive_ai import InteractiveAssistant, ReassociationEdit, ReassociationInput
+from .jobs import current_actor, job_timing
 from .materials import MaterialService
 from .models import Analysis, Artifact, Job, Project, Revision, now
 from .prototype_contracts import PrototypeEnvelope
 from .prototype_edit import Input, Ref, version
 from .reading import ReadingService, artifact_policy
-from .service import DomainError
+from .service import DomainError, future
 
 KIND = "reassociation_preview"
 TERMINAL = {"succeeded", "failed", "cancelled"}
+MIGRATION_BLOCKED = "当前草稿正在迁移资料引用。可在资料管理查看进度或停止迁移。"
+
+
+def pending_migration(s, pid, aid):
+    return s.scalar(
+        select(Job.id)
+        .where(
+            Job.project_id == pid,
+            Job.kind == "material_migrate",
+            Job.input_json["analysis_set_id"].as_string() == aid,
+            or_(
+                Job.input_json["targets"][0].as_string().is_not(None),
+                Job.input_json["local_plan_complete"].as_boolean().is_(True),
+            ),
+            Job.state.in_(("queued", "running", "retry_wait", "cancelling")),
+        )
+        .limit(1)
+    ) is not None
 
 
 class BatchPreviewInput(Input):
@@ -35,6 +56,7 @@ class BatchPreviewInput(Input):
 class BatchConfirmInput(Input):
     job_id: Ref
     preview_ids: list[Ref] = Field(min_length=1, max_length=10000)
+    edits: list[ReassociationEdit] = Field(default_factory=list, max_length=10000)
 
 
 class BatchResultQuery(Input):
@@ -62,6 +84,73 @@ class ReassociationBatchService:
         if not job or job.project_id != pid or job.kind != KIND or job.created_by != actor.id:
             raise DomainError("VKS_NOT_FOUND", "未找到本次关联预览", 404)
         return job
+
+    def status(self, actor, pid, aid):
+        with ReadingService(self.service).db() as s:
+            self.service.require(s, actor, pid, "knowledge:read")
+            analysis = s.get(Analysis, aid)
+            if not analysis or analysis.project_id != pid:
+                raise DomainError("VKS_NOT_FOUND", "未找到草稿", 404)
+            return {"migrating": pending_migration(s, pid, aid)}
+
+    def timing(self, actor, pid):
+        """Recent completed model and batch timings for this project and caller."""
+        with ReadingService(self.service).db() as s:
+            self.service.require(s, actor, pid, "knowledge:edit")
+            policy = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
+            empty = {"single_seconds": None, "batch_seconds_per_item": None}
+            if not policy or not policy.settings.get("enabled") or not policy.settings.get("model_id"):
+                return empty
+
+            def seconds(start, end):
+                return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()
+
+            since = future(-7 * 24 * 60 * 60)
+            batch = Artifact.metadata_json["batch_id"].as_string()
+            previews = (
+                select(Artifact.created_at, ModelUsage.created_at)
+                .join(ModelUsage, Artifact.metadata_json["model_usage_id"].as_string() == ModelUsage.id)
+                .where(
+                    Artifact.project_id == pid,
+                    Artifact.metadata_json["created_by"].as_string() == actor.id,
+                    Artifact.metadata_json["reassociation_preview"].as_boolean().is_(True),
+                    Artifact.created_at >= since,
+                    ModelUsage.project_id == pid,
+                    ModelUsage.actor_id == actor.id,
+                    ModelUsage.model_id == policy.settings["model_id"],
+                    ModelUsage.state == "succeeded",
+                )
+            )
+            single = [
+                duration for end, start in s.execute(
+                    previews.where(batch.is_(None)).order_by(Artifact.created_at.desc()).limit(20)
+                )
+                if (duration := seconds(start, end)) > 0
+            ]
+            started = Job.input_json["_run_started_at"].as_string()
+            processed = Job.result_json["processed"].as_integer()
+            batches = [
+                duration / count for end, start, count in s.execute(
+                    select(Job.updated_at, started, processed)
+                    .where(
+                        Job.project_id == pid,
+                        Job.created_by == actor.id,
+                        Job.kind == KIND,
+                        Job.state == "succeeded",
+                        Job.updated_at >= since,
+                        started.is_not(None),
+                        processed >= 10,
+                        Job.id.in_(previews.with_only_columns(batch).where(batch.is_not(None))),
+                    )
+                    .order_by(Job.updated_at.desc())
+                    .limit(5)
+                )
+                if (duration := seconds(start, end)) > 0
+            ]
+            return {
+                "single_seconds": median(single) if single else None,
+                "batch_seconds_per_item": median(batches) if batches else None,
+            }
 
     def targets(self, actor, pid, aid, module_only=True, offset=0, limit=200, mode="all", q=""):
         with ReadingService(self.service).db() as s:
@@ -181,6 +270,8 @@ class ReassociationBatchService:
                 raise DomainError("VKS_INVALID_INPUT", "一次最多预览 10000 个目标，请缩小范围", 422)
 
             def apply():
+                if pending_migration(s, pid, analysis.id):
+                    raise DomainError("VKS_STATE_CONFLICT", MIGRATION_BLOCKED, 409)
                 job = self.service._new_job(
                     s,
                     actor,
@@ -257,6 +348,15 @@ class ReassociationBatchService:
             visible = [item for item in visible if item["item_id"] not in hidden]
             outcomes = job.result_json.get("items", {})
             state = job.state
+            timing = job_timing(job)
+            timing.pop("baseline", None)
+            failure_message = None
+            if state == "failed":
+                failure_message = (
+                    "生成期间资料或关联已变化，请重新选择目标并生成预览。"
+                    if job.error_json.get("code") == "VKS_VERSION_CONFLICT"
+                    else "批量预览生成失败，请重新生成。"
+                )
             done = sum(item["item_id"] in outcomes for item in visible)
             excluded = set(filters.excluded_item_ids) if filters else set()
             insufficient = set(filters.insufficient_item_ids) if filters else set()
@@ -309,9 +409,12 @@ class ReassociationBatchService:
                 "request": {**value, "batch_id": jid, "item_id": item["item_id"]},
             }
             if status == "failed":
+                restricted = outcome.get("reason_code") == "VKS_REASSOCIATION_BASELINE_RESTRICTED"
                 row["error"] = {
                     "code": outcome.get("error_code", "VKS_MODEL_FAILED"),
-                    "message": "本项预览未完成，可修改方向后重试。",
+                    "message": "当前模型可用的资料不包含本项原关联的完整依据。可核对依据后重试，或从本次移除。"
+                    if restricted
+                    else "本项预览未完成，可修改方向后重试。",
                 }
             rows.append(row)
         # The total only covers currently authorized target metadata; generated
@@ -319,10 +422,12 @@ class ReassociationBatchService:
         return {
             "job_id": jid,
             "state": state,
+            "timing": timing,
             "processed": done,
             "total": len(visible),
             "items": rows,
             "next_offset": offset + limit if offset + limit < len(prepared) else None,
+            **({"failure_message": failure_message} if failure_message else {}),
             **({"matched_total": len(prepared), "unresolved_total": unresolved} if filters else {}),
         }
 
@@ -331,7 +436,10 @@ class ReassociationBatchService:
             job = self._job(s, actor, pid, form.job_id)
             if job.state not in TERMINAL:
                 raise DomainError("VKS_STATE_CONFLICT", "请等待本次预览完成，或先停止生成", 409)
-        return self.engine.confirm_reassociations(actor, pid, form.preview_ids, batch_id=form.job_id)
+        edits = {edit.preview_id: edit.point for edit in form.edits}
+        if len(edits) != len(form.edits):
+            raise DomainError("VKS_INVALID_INPUT", "同一预览只能提交一份编辑稿", 422)
+        return self.engine.confirm_reassociations(actor, pid, form.preview_ids, batch_id=form.job_id, edits=edits)
 
 
 def run_reassociation_batch(service, jid):
@@ -442,6 +550,14 @@ def install_reassociation_batches(app, service, actor, envelope):
     shared = ReassociationBatchService(service)
     ActorDep = Annotated[object, Depends(actor)]
     prefix = "/api/v3/projects/{pid}/interactive/reassociate"
+
+    @app.get(prefix + "/status", response_model=PrototypeEnvelope[dict])
+    def status(pid: str, analysis_set_id: Ref, request: Request, a: ActorDep):
+        return envelope(request, shared.status(a, pid, analysis_set_id))
+
+    @app.get(prefix + "/timing", response_model=PrototypeEnvelope[dict])
+    def timing(pid: str, request: Request, a: ActorDep):
+        return envelope(request, shared.timing(a, pid))
 
     @app.get(prefix + "/targets", response_model=PrototypeEnvelope[dict])
     def targets(

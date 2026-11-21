@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   Package,
   FileText,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { api, mutation, sha256, date } from "../../web/src/api";
 import { useTransientNotice } from "./useTransientNotice";
+import { TaskTiming, type Timing } from "./TaskTiming";
 
 type PackageVersion = {
   package_id: string;
@@ -57,12 +59,15 @@ type Library = {
     progress: number;
     stage: string;
     created_at?: string;
+    timing?: Timing;
     current_scope?: boolean;
     error?: { message: string };
     result?: {
       total?: number;
       saved?: number;
       pending?: number;
+      reattached?: number;
+      preserved?: number;
       issues?: { label: string; message: string }[];
       completed?: Record<
         string,
@@ -93,6 +98,10 @@ function migrationLabel(j: Library["jobs"][number]) {
   return "正在准备迁移";
 }
 function MigrationRecord({ j }: { j: Library["jobs"][number] }) {
+  const processed = Math.min(
+    j.result?.total ?? 0,
+    Object.keys(j.result?.completed || {}).length + (j.result?.issues?.length || 0),
+  );
   return (
     <article
       className="material-job"
@@ -109,12 +118,23 @@ function MigrationRecord({ j }: { j: Library["jobs"][number] }) {
         </small>
       )}
       <progress value={j.progress} max={100} />
+      <TaskTiming
+        timing={j.timing}
+        state={j.state}
+        processed={processed}
+        total={j.result?.total}
+      />
       {j.result && (
         <p>
-          {j.result.total !== undefined &&
-            `已处理 ${Object.keys(j.result.completed || {}).length} / ${j.result.total} · `}
-          已关联 {j.result.saved || 0}
-          {j.result.pending ? ` · ${j.result.pending} 项待关联` : ""}
+          {!!j.result.total &&
+            `已处理 ${processed} / ${j.result.total} · `}
+          {j.result.pending === undefined && `已关联 ${j.result.saved || 0}`}
+          {j.result.reattached ? `${j.result.reattached} 项已续接引用` : ""}
+          {!j.result.reattached && j.result.pending === 0 && "引用检查已完成"}
+          {j.result.pending
+            ? `${j.result.reattached ? " · " : ""}${j.result.pending} 项待重新关联`
+            : ""}
+          {!!j.result.preserved && ` · 保留上次已完成的 ${j.result.preserved} 项关联`}
         </p>
       )}
       {j.error && <p className="error">{j.error.message}</p>}
@@ -146,12 +166,16 @@ export function Materials({
   analysis,
   onChanged,
   onAI,
+  onAssociations,
+  onApplying,
   selectionVersion,
 }: {
   project: string;
   analysis: string;
   onChanged: (r: Result) => Promise<void>;
   onAI: () => void;
+  onAssociations: () => void;
+  onApplying: (active: boolean) => void;
   selectionVersion?: number;
 }) {
   const prefix = `/api/v3/projects/${project}/materials`;
@@ -166,9 +190,12 @@ export function Materials({
     [staged, setStaged] = useState<PackageVersion[]>([]),
     [replaceAll, setReplaceAll] = useState(false);
   const [busy, setBusy] = useState(""),
+    [workStarted, setWorkStarted] = useState(""),
     [snapshotName, setSnapshotName] = useState("");
   const [exportDocumentMode, setExportDocumentMode] = useState("project");
   const fileInput = useRef<HTMLInputElement>(null);
+  const importForm = useRef<HTMLFormElement>(null);
+  const pickedFromCard = useRef(false);
   const customName = useRef(false);
   const mounted = useRef(true),
     working = useRef(false);
@@ -187,6 +214,7 @@ export function Materials({
     id: string;
     state: string;
     progress?: number;
+    timing?: Timing;
     error?: { message: string };
     result?: { download_url?: string; filename?: string };
   } | null>(null);
@@ -315,10 +343,12 @@ export function Materials({
       jobStates.current[j.id] = j.state;
     }
   }, [data, analysis, onChanged]);
-  async function work(label: string, fn: () => Promise<void>) {
+  async function work(label: string, fn: () => Promise<void>, applying = false) {
     if (working.current) return;
     working.current = true;
+    if (applying) onApplying(true);
     setBusy(label);
+    setWorkStarted(new Date().toISOString());
     setError("");
     setUpdateSuggestion(null);
     setNotice("");
@@ -343,6 +373,7 @@ export function Materials({
         void load(true).catch(() => {});
     } finally {
       working.current = false;
+      if (applying) onApplying(false);
       setBusy("");
     }
   }
@@ -406,7 +437,7 @@ export function Materials({
     primary?: string,
     entire = false,
   ) {
-    await work("正在切换资料并迁移关联…", async () => {
+    await work("正在切换资料并迁移引用…", async () => {
       if (!data) return;
       const current = data;
       const result = await api<Result>(
@@ -432,9 +463,9 @@ export function Materials({
       setStaged([]);
       setReplaceAll(false);
       setNotice(
-        `资料已启用${result.checkpoint_id ? "，替换前版本已自动保存" : ""}。${result.migration?.reassociate ? ` ${result.migration.reassociate} 项关联正在后台重新分析。` : ""}${result.migration?.unresolved ? ` ${result.migration.unresolved} 项旧位置暂未定位，可在迁移结果中查看。` : ""}`,
+        `资料已启用${result.checkpoint_id ? "，替换前版本已自动保存" : ""}。${result.migration?.reattached ? ` 已续接 ${result.migration.reattached} 项引用。` : ""}${result.migration?.reassociate ? ` ${result.migration.reassociate} 项待重新关联，可在关联管理选择生成。` : ""}${result.migration?.unresolved ? ` ${result.migration.unresolved} 项旧位置暂未定位。` : ""}`,
       );
-    });
+    }, true);
   }
   async function saveVersion() {
     await work("正在保存完整版本…", async () => {
@@ -504,7 +535,37 @@ export function Materials({
         ),
       );
       await onChanged(r);
+    }, true);
+  }
+  function uploadVersion(item: Material) {
+    flushSync(() => {
+      setKind(item.kind);
+      setTarget(item.id);
+      setName(item.name);
+      setFiles([]);
+      setEntry("");
+      setUpdateSuggestion(null);
+      setError("");
     });
+    customName.current = false;
+    if (!fileInput.current) return;
+    fileInput.current.value = "";
+    pickedFromCard.current = true;
+    fileInput.current.click();
+  }
+  async function checkReferences(resume?: string) {
+    if (!data) return;
+    await work(resume ? "正在继续迁移…" : "正在准备检查引用…", async () => {
+      const job = await api<Library["jobs"][number]>(
+        `${prefix}/migrate`,
+        mutation("POST", {
+          analysis_set_id: analysis,
+          ...(resume && { resume_job_id: resume }),
+        }, data.selection_version),
+      );
+      jobStates.current[job.id] = job.state;
+      await load(true);
+    }, true);
   }
   async function trash(
     kind: "package" | "version",
@@ -583,11 +644,12 @@ export function Materials({
   const activeJobs = currentJobs.filter(migrating);
   const currentJob =
     [...activeJobs].sort((a, b) => b.progress - a.progress)[0] ||
-    currentJobs.find((j) => j.state !== "cancelled");
+    currentJobs[0];
   const previousJobs = (data?.jobs || []).filter(
     (j) => j.id !== currentJob?.id,
   );
   const active = data?.packages.filter((p) => p.active_revision_id) || [];
+  const updateTarget = data?.packages.find((item) => item.id === target);
   return (
     <section className="materials-page">
       <div className="management-heading">
@@ -640,7 +702,10 @@ export function Materials({
         {exportJob && (
           <div role="status" className="management-description">
             {["queued", "running", "retry_wait"].includes(exportJob.state) ? (
-              `正在准备与建库… ${exportJob.progress || 0}%`
+              <>
+                <span>正在准备与建库… {exportJob.progress || 0}%</span>
+                <TaskTiming timing={exportJob.timing} state={exportJob.state} />
+              </>
             ) : exportJob.state === "succeeded" &&
               exportJob.result?.download_url ? (
               <a
@@ -676,7 +741,8 @@ export function Materials({
       {busy && (
         <p role="status" className="material-progress">
           <LoaderCircle className="spin" size={17} />
-          {busy}
+          <span>{busy}</span>
+          <TaskTiming timing={{ started_at: workStarted }} state="running" />
         </p>
       )}
       <div className="materials-columns">
@@ -684,7 +750,7 @@ export function Materials({
           <section className="management-panel">
             <div className="management-panel-title">
               <UploadCloud size={19} />
-              <h2>导入资料包</h2>
+              <h2>{updateTarget ? `上传「${updateTarget.name}」的新版本` : "导入资料包"}</h2>
               <a
                 className="handbook-template-download"
                 href="/api/v3/document-templates/handbook/download"
@@ -696,6 +762,7 @@ export function Materials({
               </a>
             </div>
             <form
+              ref={importForm}
               onSubmit={(e) => {
                 e.preventDefault();
                 void prepare();
@@ -813,6 +880,10 @@ export function Materials({
                   onChange={(e) => {
                     const picked = Array.from(e.target.files || []);
                     setFiles(picked);
+                    if (pickedFromCard.current && picked.length) {
+                      pickedFromCard.current = false;
+                      importForm.current?.scrollIntoView({ block: "start" });
+                    }
                     if (
                       !customName.current &&
                       (!target || target === "choose") &&
@@ -988,14 +1059,9 @@ export function Materials({
                   )}
                   <button
                     disabled={!!busy || !data.editable}
-                    onClick={() => {
-                      setKind(p.kind);
-                      setTarget(p.id);
-                      setName(p.name);
-                      fileInput.current?.focus();
-                    }}
+                    onClick={() => uploadVersion(p)}
                   >
-                    更新资料
+                    上传新版本
                   </button>
                   <button
                     disabled={
@@ -1176,33 +1242,42 @@ export function Materials({
           <section className="management-panel">
             <div className="management-panel-title">
               <RefreshCw size={19} />
-              <h2>AI 自动关联迁移</h2>
+              <h2>资料迁移结果</h2>
             </div>
             <p className="management-description">
-              未变化的知识直接复用。变更的引用由模型重新关联，人工说明保留，已移除关联不恢复。
+              迁移只更新可确认的引用位置。内容有变化的关联可在关联管理中选择生成，向量索引在 AI 设置中更新。
             </p>
             <div className="form-actions">
-              <button
-                disabled={!!busy || !data?.editable || !!activeJobs.length}
-                onClick={() =>
-                  void work("正在安排关联迁移…", async () => {
-                    if (!data) return;
-                    const c = data;
-                    await api(
-                      `${prefix}/migrate`,
-                      mutation(
-                        "POST",
-                        { analysis_set_id: analysis },
-                        c.selection_version,
-                      ),
-                    );
-                    await load(true);
-                  })
-                }
-              >
-                <RefreshCw size={15} />
-                {activeJobs.length ? "迁移进行中" : "重试待关联"}
+              {currentJob && ["failed", "cancelled"].includes(currentJob.state) && (
+                <button
+                  disabled={!!busy || !data?.editable}
+                  onClick={() => void checkReferences(currentJob.id)}
+                >
+                  <RefreshCw size={15} /> 继续迁移
+                </button>
+              )}
+              {data?.editable && !activeJobs.length && (
+                <button disabled={!!busy} onClick={() => void checkReferences()}>
+                  重新检查引用
+                </button>
+              )}
+              <button onClick={onAssociations}>
+                <ArrowUpRight size={15} />
+                打开关联管理
               </button>
+              {currentJob && migrating(currentJob) && (
+                <button
+                  disabled={!!busy || !data?.editable || currentJob.state === "cancelling"}
+                  onClick={() =>
+                    void work("正在停止自动迁移…", async () => {
+                      await api(`/jobs/${currentJob.id}/cancel`, mutation("POST", {}));
+                      await load(true);
+                    })
+                  }
+                >
+                  停止自动迁移
+                </button>
+              )}
               <button onClick={onAI}>
                 模型与向量库
                 <ArrowUpRight size={15} />

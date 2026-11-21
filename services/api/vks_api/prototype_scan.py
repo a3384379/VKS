@@ -220,6 +220,12 @@ class PrototypeScanService:
             "lease_until": row.lease_until,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
+            "timing": {
+                "started_at": row.plan.get("_round_started_at", row.created_at),
+                "updated_at": min(row.lease_until, row.updated_at) if row.state == "running" and state == "interrupted"
+                else row.updated_at,
+                "baseline": row.plan.get("_round_baseline", 0),
+            },
             "row_version": row.row_version,
             "manifest": manifest,
             "diagnostics_restricted": not valid,
@@ -317,6 +323,8 @@ class PrototypeScanService:
                     scope for scope in actor.scopes if self.service._can(s, actor, pid, scope)
                 )
                 plan["source_selection_version"] = analysis.selection_version
+                plan["_round_started_at"] = now()
+                plan["_round_baseline"] = len(completed)
                 plan["_round_pending"] = [
                     page_key(p["package_id"], page)
                     for p in plan["packages"]
@@ -392,6 +400,8 @@ class PrototypeScanService:
                     ),
                     "source_selection_version": row.plan.get("source_selection_version", row.plan["selection_version"]),
                     "concurrency": lanes,
+                    "_round_started_at": now(),
+                    "_round_baseline": len(captured),
                     "_round_pending": [
                         page_key(p["package_id"], page)
                         for p in row.plan["packages"]
