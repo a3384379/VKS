@@ -115,7 +115,7 @@ def local_query(text):
     return encoder(path).query(text)
 
 
-def build_local_index(documents, model, *, checkpoint=None, progress=None):
+def build_local_index(documents, model, *, checkpoint=None, progress=None, reusable=None):
     """Index the exported chapters, using the same model profile as the plugin."""
     passages = []
     for document in documents:
@@ -123,21 +123,32 @@ def build_local_index(documents, model, *, checkpoint=None, progress=None):
             checkpoint()
         for section in document["sections"]:
             title = f"{section['title']}。{document['title']}"
+            section_tokens = []
             for tokens in model.passage_chunks(title, section["content"]):
-                passages.append((section["id"], tokens))
-                if len(passages) > MAX_CHUNKS:
+                section_tokens.append(tokens)
+                if len(passages) + len(section_tokens) > MAX_CHUNKS:
                     raise LocalModelError("本地向量分片超出成品库限制。")
+            # Saved rows follow the stable token-length ordering of the index.
+            section_tokens.sort(key=len)
+            cached = (reusable or {}).get(section["id"], ())
+            if len(cached) != len(section_tokens):
+                cached = [None] * len(section_tokens)
+            passages.extend((section["id"], tokens, vector) for tokens, vector in zip(section_tokens, cached, strict=True))
     passages.sort(key=lambda row: len(row[1]))
-    chunks = []
-    for offset in range(0, len(passages), 32):
+    chunks = [{"section_id": sid, "vector": vector} for sid, _, vector in passages]
+    pending = [(row, tokens) for row, (_, tokens, vector) in zip(chunks, passages, strict=True) if vector is None]
+    reused = len(chunks) - len(pending)
+    if progress:
+        progress(reused, len(chunks))
+    for offset in range(0, len(pending), 32):
         if checkpoint:
             checkpoint()
-        batch = passages[offset : offset + 32]
+        batch = pending[offset : offset + 32]
         vectors = model.run([tokens for _, tokens in batch])
-        for (sid, _), vector in zip(batch, vectors, strict=True):
-            chunks.append({"section_id": sid, "vector": base64.b64encode(vector.astype("<f4").tobytes()).decode()})
+        for (row, _), vector in zip(batch, vectors, strict=True):
+            row["vector"] = base64.b64encode(vector.astype("<f4").tobytes()).decode()
         if progress:
-            progress(len(chunks), len(passages))
+            progress(reused + offset + len(batch), len(chunks))
     return {
         "profile": PROFILE, "model": MODEL, "dimensions": DIMENSIONS, "encoding": "float32-le-base64", "chunks": chunks,
     }

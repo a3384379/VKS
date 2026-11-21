@@ -86,6 +86,13 @@ type Result = {
 };
 const migrating = (j: Library["jobs"][number]) =>
   ["queued", "running", "retry_wait", "cancelling"].includes(j.state);
+const exportStages: Record<string, string> = {
+  EXPORT_PREPARE: "正在读取保存版本",
+  EXPORT_CACHE: "正在检查已有成品库",
+  EXPORT_VECTORS: "正在生成本地向量",
+  EXPORT_PACK: "正在打包只读 HTML",
+  EXPORT_VERIFY: "正在校验成品库",
+};
 function migrationLabel(j: Library["jobs"][number]) {
   if (j.state === "queued") return "排队等待迁移";
   if (j.state === "retry_wait") return "等待自动重试";
@@ -213,6 +220,7 @@ export function Materials({
   const [exportJob, setExportJob] = useState<{
     id: string;
     state: string;
+    stage?: string;
     progress?: number;
     timing?: Timing;
     error?: { message: string };
@@ -518,9 +526,6 @@ export function Materials({
         ),
       );
       void loadHistory();
-      setNotice(
-        "正在生成本地向量。完成后可下载免 Key 的单文件 HTML 成品库。",
-      );
     });
   }
   async function restore(id: string) {
@@ -703,7 +708,10 @@ export function Materials({
           <div role="status" className="management-description">
             {["queued", "running", "retry_wait"].includes(exportJob.state) ? (
               <>
-                <span>正在准备与建库… {exportJob.progress || 0}%</span>
+                <span>
+                  {exportStages[exportJob.stage || ""] || "等待导出"}
+                  {exportJob.progress ? `… ${exportJob.progress}%` : "…"}
+                </span>{" "}
                 <TaskTiming timing={exportJob.timing} state={exportJob.state} />
               </>
             ) : exportJob.state === "succeeded" &&

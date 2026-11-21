@@ -591,6 +591,24 @@ def _execute_job(service, jid):
                 service.require(session, principal, pid, "source:read")
         return False
 
+    last_export_progress = 0
+
+    def export_progress(stage, progress):
+        nonlocal last_export_progress
+        if progress <= last_export_progress:
+            return
+        with service.db() as session:
+            active = session.scalar(select(Job).where(Job.id == jid).with_for_update())
+            if (
+                not active or active.attempt != attempt or active.state != "running" or active.cancel_requested
+                or (active.lease_until and active.lease_until <= now())
+            ):
+                raise DomainError("VKS_CANCELLED", "导出任务已取消或失效", 409)
+            active.stage = stage
+            active.progress = progress
+            active.updated_at = now()
+        last_export_progress = progress
+
     from packages.analyzers.cancellation import cancellation_scope
     from packages.analyzers.syntax_cache import cache_scope
 
@@ -632,7 +650,7 @@ def _execute_job(service, jid):
                 if kind == "export" and payload["format"] == "readonly_html":
                     from .readonly_export import prepare_job
 
-                    readonly_output = prepare_job(service, jid, processing_cancelled)
+                    readonly_output = prepare_job(service, jid, processing_cancelled, export_progress)
                 if kind == "knowledge_task":
                     from .knowledge_tasks import KnowledgeTaskService
 

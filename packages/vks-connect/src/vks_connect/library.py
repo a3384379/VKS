@@ -295,21 +295,26 @@ def read_envelope(path):
             signature = file_signature(os.fstat(stream.fileno()))
         if signature != file_signature(before) or len(raw) > MAX_FILE_BYTES:
             raise ValueError("changed")
-        matches = PAYLOAD.finditer(raw)
-        first = next(matches, None)
-        if first is None or next(matches, None) is not None:
-            raise ValueError("envelope")
-        with gzip.GzipFile(fileobj=io.BytesIO(base64.b64decode(first[1], validate=True))) as data:
-            decoded = data.read(MAX_DATA_BYTES + 1)
-        if len(decoded) > MAX_DATA_BYTES:
-            raise ValueError("size")
-        return path, raw, first.span(1), json.loads(decoded), signature
+        span, payload = decode_envelope(raw)
+        return path, raw, span, payload, signature
     except OSError as error:
         if isinstance(error, gzip.BadGzipFile):
             raise LibraryError("成品库内容损坏，请重新选择。") from None
         raise LibraryError("无法读取成品库文件，请检查本机路径或重新选择。", "VKS_LIBRARY_UNAVAILABLE") from None
     except (ValueError, TypeError, KeyError, EOFError, RecursionError, zlib.error):
         raise LibraryError("请选择有效的 VKS 只读成品库 HTML。") from None
+
+
+def decode_envelope(raw):
+    matches = PAYLOAD.finditer(raw)
+    first = next(matches, None)
+    if first is None or next(matches, None) is not None:
+        raise ValueError("envelope")
+    with gzip.GzipFile(fileobj=io.BytesIO(base64.b64decode(first[1], validate=True))) as data:
+        decoded = data.read(MAX_DATA_BYTES + 1)
+    if len(decoded) > MAX_DATA_BYTES:
+        raise ValueError("size")
+    return first.span(1), json.loads(decoded)
 
 
 def read_library(path):

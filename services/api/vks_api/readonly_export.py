@@ -11,11 +11,15 @@ import base64
 import gzip
 import json
 import os
+import re
+import zlib
+from collections import defaultdict
 from html import escape
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 from markdown_it import MarkdownIt
+from sqlalchemy import select
 
 from .connector_source import ROOT
 from .documents import DocumentService
@@ -26,8 +30,9 @@ from .prototype_edit import ordered_citation_edges
 from .service import DomainError
 
 # isort: split
-from vks_connect.library import MAX_DATA_BYTES, MAX_FILE_BYTES
-from vks_connect.local_embeddings import LocalModelError, build_local_index, encoder
+from vks_connect.library import MAX_DATA_BYTES, MAX_FILE_BYTES, decode_envelope
+from vks_connect.library_vectors import LibraryVectors
+from vks_connect.local_embeddings import DIMENSIONS, MODEL, PROFILE, LocalModelError, build_local_index, encoder
 
 
 def document_images(service, s, actor, pid, revision, sections, caps, mounted_attachments=None, markdown=None):
@@ -308,7 +313,7 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
     return payload, deps, sorted(section_ids)
 
 
-def html_library(payload):
+def html_library(payload, *, encoded=None):
     """Embed data as inert gzip/base64 and platform-owned runtime as inline code."""
     assets = Path(__file__).with_name("reader_assets")
     assistant_assets = Path(__file__).resolve().parents[3] / "packages/assistant-runtime/src"
@@ -316,10 +321,11 @@ def html_library(payload):
     from .interactive_ai import EXPLANATION_GUIDANCE
 
     template = (assets / "template.html").read_text()
-    data = canonical(payload)
-    if "local_rag" in payload and len(data) > MAX_DATA_BYTES:
-        raise DomainError("VKS_BUDGET_EXCEEDED", "成品库正文与向量超出插件读取限制，请缩小导出范围", 422)
-    encoded = base64.b64encode(gzip.compress(data, compresslevel=9, mtime=0)).decode()
+    if encoded is None:
+        data = canonical(payload)
+        if "local_rag" in payload and len(data) > MAX_DATA_BYTES:
+            raise DomainError("VKS_BUDGET_EXCEEDED", "成品库正文与向量超出插件读取限制，请缩小导出范围", 422)
+        encoded = base64.b64encode(gzip.compress(data, compresslevel=9, mtime=0)).decode()
     # Replacement markers occur only in platform-owned template, never in data.
     return (
         template.replace(
@@ -346,22 +352,108 @@ def html_library(payload):
     ).encode()
 
 
-def studio_local_index(payload, validate_scope):
+def recent_local_exports(s, job):
+    release = Job.input_json["release_id"].as_string() == job.input_json["release_id"]
+    # Use this actor's server-generated products as inputs to the newly authorized projection.
+    return s.execute(
+        select(Job.input_json, Job.result_json["object_key"].as_string())
+        .where(
+            Job.project_id == job.project_id,
+            Job.created_by == job.created_by,
+            Job.kind == "export",
+            Job.state == "succeeded",
+            Job.input_json["format"].as_string() == "readonly_html",
+            Job.input_json["local_vectors"].as_boolean().is_(True),
+        )
+        .order_by(release.desc(), Job.created_at.desc(), Job.id.desc())
+        .limit(8)
+    ).all()
+
+
+def section_inputs(payload):
+    return {
+        section["id"]: (doc["title"], section["title"], section["content"])
+        for doc in payload["documents"]
+        for section in doc["sections"]
+    }
+
+
+def reuse_local_export(service, candidates, payload, deps, caps):
+    if not candidates:
+        return None, {}
+    inputs = section_inputs(payload)
+    reusable, seen = {}, set()
+    for arguments, key in candidates:
+        if len(reusable) == len(inputs) and arguments.get("release_id") != payload["snapshot"]["id"]:
+            break
+        if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key) or key in seen:
+            continue
+        seen.add(key)
+        path = service.data_dir / "objects" / key
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            with path.open("rb") as stream:
+                raw = stream.read(MAX_FILE_BYTES + 1)
+            if len(raw) > MAX_FILE_BYTES or digest(raw) != key:
+                continue
+            (start, end), saved = decode_envelope(raw)
+            index = saved.pop("local_rag")
+            if (index.get("profile"), index.get("model"), index.get("dimensions"), index.get("encoding")) != (
+                PROFILE, MODEL, DIMENSIONS, "float32-le-base64"
+            ):
+                continue
+            old_inputs = section_inputs(saved)
+            if old_inputs or index["chunks"] != []:
+                rows = LibraryVectors.read(index, old_inputs)
+                if (
+                    not rows or len(rows.chunks) != len(index["chunks"])
+                    or {sid for sid, _, _ in rows.chunks} != set(old_inputs)
+                ):
+                    continue
+        except (OSError, ValueError, TypeError, AttributeError, KeyError, EOFError, RecursionError, zlib.error):
+            continue
+        if (
+            saved == payload
+            and all(arguments.get(name) == value for name, value in {**caps, **deps}.items())
+            and raw[:start] + raw[end:] == html_library(payload, encoded="")
+        ):
+            return key, {}
+        matching = defaultdict(list)
+        for row in index["chunks"]:
+            matching[row["section_id"]].append(row["vector"])
+        by_text = {old_inputs[sid]: vectors for sid, vectors in matching.items()}
+        for sid, text in inputs.items():
+            if sid not in reusable and text in by_text:
+                reusable[sid] = matching[sid] if text == old_inputs.get(sid) else by_text[text]
+        if arguments.get("release_id") != payload["snapshot"]["id"]:
+            break
+    return None, reusable
+
+
+def studio_local_index(payload, validate_scope, reusable, report):
     model_dir = Path(os.getenv("VKS_LOCAL_EMBEDDING_MODEL_DIR") or ROOT / "output/vks-connect/local-model")
     try:
         documents = payload["documents"]
         model = encoder(model_dir.resolve()) if any(document["sections"] for document in documents) else None
-        return build_local_index(documents, model, checkpoint=validate_scope)
+        return build_local_index(
+            documents,
+            model,
+            checkpoint=validate_scope,
+            reusable=reusable,
+            progress=lambda done, total: report("EXPORT_VECTORS", 15 + (70 * done // max(total, 1))),
+        )
     except LocalModelError as error:
         raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", str(error), 503) from error
 
 
-def prepare_job(service, jid, validate_scope=None):
+def prepare_job(service, jid, validate_scope=None, report=lambda *_: None):
     """Network and compression run outside the knowledge transaction/worker lock."""
     from .interactive_ai import InteractiveAssistant
     from .jobs import current_actor
     from .reading import ReadingService
 
+    report("EXPORT_PREPARE", 5)
     with ReadingService(service).db() as s:
         job = s.get(Job, jid)
         actor = current_actor(service, job.created_by, job.project_id, session=s, job=job)
@@ -374,14 +466,23 @@ def prepare_job(service, jid, validate_scope=None):
             service, s, actor, pid, release_id, caps, mode, document_ids, explanation_cutoff=job.created_at
         )
         before = digest(canonical([payload, deps]))
+        candidates = recent_local_exports(s, job) if local_vectors else []
+    prepared = {"caps": caps, "projection_hash": before}
     if validate_scope:
         validate_scope()
     if local_vectors:
-        index = studio_local_index(payload, validate_scope)
+        report("EXPORT_CACHE", 12)
+        object_key, reusable = reuse_local_export(service, candidates, payload, deps, caps)
+        if object_key:
+            report("EXPORT_VERIFY", 95)
+            return {**prepared, "object_key": object_key}
+        report("EXPORT_VECTORS", 15)
+        index = studio_local_index(payload, validate_scope, reusable, report)
     else:
         index = InteractiveAssistant(service).rag.export_index(
             actor, pid, release_id=release_id, section_revision_ids=section_ids, ensure=True, validate_scope=validate_scope
         )
+    report("EXPORT_PACK", 88)
     with ReadingService(service).db() as s:
         job = s.get(Job, jid)
         actor = current_actor(service, job.created_by, pid, session=s, job=job)
@@ -399,11 +500,10 @@ def prepare_job(service, jid, validate_scope=None):
         raise DomainError("VKS_BUDGET_EXCEEDED", "成品库文件超出插件读取限制，请缩小导出范围", 422)
     if validate_scope:
         validate_scope()
+    report("EXPORT_VERIFY", 95)
     return {
+        **prepared,
         "object_key": service._put_object(html),
-        "deps": deps,
-        "caps": caps,
-        "projection_hash": before,
     }
 
 

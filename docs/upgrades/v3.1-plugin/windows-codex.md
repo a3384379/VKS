@@ -4,7 +4,7 @@
 
 ## 下载和校验
 
-1. 在 [VKS connector packages](https://github.com/a3384379/VKS/actions/workflows/vks-connector.yaml) 中打开对应提交的成功运行，登录 GitHub 后在 **Artifacts** 下载 **vks-connector-windows-x64**。
+1. 在 [VKS connector packages 的主干构建](https://github.com/a3384379/VKS/actions/workflows/vks-connector.yaml?query=branch%3Amain) 中打开对应提交的成功运行，登录 GitHub 后在 **Artifacts** 下载 **vks-connector-windows-x64**。要试用尚在审查的版本，可在对应 Pull Request 的 Checks 中找到该分支的构建。
 2. 解压外层下载包。将其中的 `vks-plugin-3.1.0-rc.7-windows-x64.zip` 和同名的 `.zip.sha256` 文件放在同一目录。打开 Windows PowerShell 并进入这个目录。
 3. 运行下方命令校验并解压。安装目录按版本分开，升级时可以保留原来的解压目录。
 
