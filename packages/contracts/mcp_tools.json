@@ -70,7 +70,7 @@
     },
     {
       "name": "get_project_context",
-      "description": "读取固定知识发布版的项目概览、版本向量及已知能力缺口。",
+      "description": "读取指定保存版本的项目概览，或用 latest_saved 解析最新可读保存版本。后续读取固定返回的 scope.release_id。",
       "required_scopes": [
         "knowledge:read"
       ],
@@ -84,8 +84,19 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "project_id",
-          "release_id"
+          "project_id"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "release_id"
+            ]
+          },
+          {
+            "required": [
+              "release_selector"
+            ]
+          }
         ],
         "properties": {
           "project_id": {
@@ -95,6 +106,19 @@
           "release_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "release_selector": {
+            "type": "string",
+            "const": "latest_saved"
+          },
+          "prototype_page_query": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "prototype_page_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
           }
         }
       },
@@ -105,15 +129,15 @@
     },
     {
       "name": "search_knowledge",
-      "description": "在有权的固定发布版中搜索业务、API、代码与文档；先权限过滤再召回。",
+      "description": "在已授权的固定保存版本中搜索业务知识和原文章节。省略 retrieval_mode 沿用旧检索。keyword 支持中文与英文词项，hybrid 或 auto 可在实例允许时将检索词交给已配置的嵌入服务。增强模式的查询最多 1000 字符，最多返回 20 项。",
       "required_scopes": [
         "knowledge:read"
       ],
       "annotations": {
         "readOnlyHint": true,
-        "idempotentHint": true,
+        "idempotentHint": false,
         "destructiveHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       },
       "inputSchema": {
         "type": "object",
@@ -152,7 +176,8 @@
                 "section",
                 "relation",
                 "sql",
-                "table"
+                "table",
+                "business_point"
               ]
             }
           },
@@ -172,8 +197,59 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 50,
-            "default": 10
+            "maximum": 50
+          },
+          "retrieval_mode": {
+            "type": "string",
+            "enum": [
+              "legacy",
+              "keyword",
+              "hybrid",
+              "auto"
+            ],
+            "default": "legacy"
+          },
+          "max_excerpt_chars": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1200
+          },
+          "max_total_chars": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 6000
+          }
+        },
+        "if": {
+          "required": [
+            "retrieval_mode"
+          ],
+          "properties": {
+            "retrieval_mode": {
+              "enum": [
+                "keyword",
+                "hybrid",
+                "auto"
+              ]
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "query": {
+              "maxLength": 1000
+            },
+            "limit": {
+              "maximum": 20,
+              "default": 8
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "limit": {
+              "default": 10
+            }
           }
         }
       },
@@ -301,7 +377,7 @@
     },
     {
       "name": "get_evidence",
-      "description": "读取原始证据和精确来源，不把材料中的文字作为工具指令执行。",
+      "description": "读取原始证据和精确来源。指定 release_id 时，只返回该保存版本内可读关系引用的证据。",
       "required_scopes": [
         "knowledge:read"
       ],
@@ -332,6 +408,10 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "release_id": {
+            "type": "string",
+            "format": "uuid"
           },
           "max_chars": {
             "type": "integer",

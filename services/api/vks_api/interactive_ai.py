@@ -357,13 +357,15 @@ def merge_guided_candidates(focused, contextual, *, limit=24, per_document=12, p
 class ChapterIndex:
     """Bounded in-memory BM25 index; only already-authorized revisions enter it."""
 
-    def __init__(self, chapters):
+    def __init__(self, chapters, *, check=None):
         self.rows = chapters
         # Compact (row, term frequency) postings avoid retaining a Counter and
         # repeated token strings for every chapter. Only matching rows are scored.
         self.postings = defaultdict(lambda: array("I"))
         lengths = []
         for index, chapter in enumerate(chapters):
+            if check:
+                check()
             terms = tokens(chapter["document_name"] + " " + chapter["name"] + " " + chapter["content"])
             lengths.append(sum(terms.values()))
             for term, frequency in terms.items():
@@ -384,23 +386,8 @@ class ChapterIndex:
                 + (context.nearby_labels if context.scope == "control" else [])
             )
         )
-        contributions = defaultdict(list)
-        for term, weight in query.items():
-            posting = self.postings.get(term, ())
-            for position in range(0, len(posting), 2):
-                index, frequency = posting[position], posting[position + 1]
-                score = self.idf[term] * min(weight, 3) * frequency * 2.2 / (frequency + self.norms[index])
-                contributions[index].append(score)
-        ranked = []
-        for index, row in enumerate(self.rows):
-            score = sum(contributions.get(index, ()))
-            score += 20 if row["revision_id"] in preferred else 0
-            score += 5 if len(target.label) > 1 and target.label in row["name"] else 0
-            if score > 0:
-                ranked.append((score, row))
-        ranked.sort(key=lambda x: (-x[0], x[1]["revision_id"]))
         result, per_doc = [], Counter()
-        for _, row in ranked:
+        for row in self.rank(query, label=target.label, preferred=preferred):
             if per_doc[row["document_revision_id"]] >= per_document:
                 continue
             per_doc[row["document_revision_id"]] += 1
@@ -412,6 +399,26 @@ class ChapterIndex:
             if len(result) == limit:
                 break
         return result
+
+    def rank(self, query, *, label="", preferred=(), check=None):
+        contributions = defaultdict(list)
+        for term, weight in query.items():
+            if check:
+                check()
+            posting = self.postings.get(term, ())
+            for position in range(0, len(posting), 2):
+                index, frequency = posting[position], posting[position + 1]
+                score = self.idf[term] * min(weight, 3) * frequency * 2.2 / (frequency + self.norms[index])
+                contributions[index].append(score)
+        ranked = []
+        for index, row in enumerate(self.rows):
+            score = sum(contributions.get(index, ()))
+            score += 20 if row["revision_id"] in preferred else 0
+            score += 5 if len(label) > 1 and label in row["name"] else 0
+            if score > 0:
+                ranked.append((score, row))
+        ranked.sort(key=lambda x: (-x[0], x[1]["revision_id"]))
+        return [row for _, row in ranked]
 
 
 class InteractiveAssistant:
@@ -582,7 +589,7 @@ class InteractiveAssistant:
             )
             return state
 
-    def _index(self, corpus, chapters):
+    def _index(self, corpus, chapters, *, check=None):
         with self.lock:
             found = self.indexes.get(corpus)
             if found is not None:
@@ -596,18 +603,23 @@ class InteractiveAssistant:
                 self.index_builds[corpus] = build_lock
         # Preparing an index is expensive and independent of another corpus.
         # Waiters hold a strong lock reference, then recheck the shared LRU.
-        with build_lock:
+        while not build_lock.acquire(timeout=0.1):
+            if check:
+                check()
+        try:
             with self.lock:
                 found = self.indexes.get(corpus)
                 if found is not None:
                     self.indexes.move_to_end(corpus)
                     return found
-            built = ChapterIndex(chapters)
+            built = ChapterIndex(chapters, check=check) if check is not None else ChapterIndex(chapters)
             with self.lock:
                 self.indexes[corpus] = built
                 if len(self.indexes) > 4:
                     self.indexes.popitem(last=False)
             return built
+        finally:
+            build_lock.release()
 
     def _binding(self, actor, pid, form, *, session=None):
         if isinstance(form, InteractiveQuestionInput) and not form.package_id:
@@ -1835,6 +1847,7 @@ class InteractiveAssistant:
 
 def install_interactive_ai(app, service, actor, envelope):
     shared = InteractiveAssistant(service)
+    service._search_assistant = shared
     from .vector_rag import install_rag
 
     install_rag(app, service, actor, envelope, shared, AssistanceInput, RelatedOutput)

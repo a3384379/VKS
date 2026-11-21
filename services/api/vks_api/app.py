@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit, quote
 from uuid import uuid4
+import hashlib
 import json
 import os
 import secrets
@@ -31,6 +32,9 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
 
     app = FastAPI(title="知境 VKS · Project Knowledge API", version=VERSION, lifespan=lifespan)
     app.state.service = service
+    instance_id = hashlib.sha256(
+        service._private_setting("connector-instance-id", lambda: secrets.token_hex(32)).encode()
+    ).hexdigest()
 
     def envelope(request, data, **meta):
         return {"data": data, "meta": {"request_id": getattr(request.state, "request_id", str(uuid4())), **meta}}
@@ -147,19 +151,22 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
             conn.execute(text("SELECT 1"))
         return {
             "status": "ready",
+            "instance_id": instance_id,
+            **({"launcher_instance": marker} if (marker := os.getenv("VKS_LAUNCHER_INSTANCE")) else {}),
             "storage": "local-private",
             "dispatcher": os.getenv("VKS_TASK_MODE", "local"),
             "capabilities": {"capture": True, "platform_llm": True},
         }
 
     @app.get(API + "/auth/session")
-    def get_session(request: Request):
+    def get_session(request: Request, response: Response):
         try:
             a = actor(request)
         except DomainError:
             return envelope(
                 request, {"authenticated": False, "bootstrap_required": True, "auth_mode": "local-bootstrap"}
             )
+        response.headers["X-VKS-Instance-Id"] = instance_id
         return envelope(request, service.session_data(a))
 
     @app.post(API + "/auth/session")
@@ -235,8 +242,19 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         return envelope(request, service.workspace(a, pid, analysis_set_id, release_id))
 
     @app.get(API + "/projects/{pid}/context")
-    def project_context(pid: str, release_id: str, request: Request, a: Actor = Depends(actor)):
-        return envelope(request, service.project_context(a, pid, release_id))
+    def project_context(
+        pid: str,
+        request: Request,
+        release_id: str | None = None,
+        release_selector: Literal["latest_saved"] | None = None,
+        prototype_page_query: str = Query("", max_length=160),
+        prototype_page_offset: int = Query(0, ge=0, le=100_000),
+        a: Actor = Depends(actor),
+    ):
+        return envelope(request, service.project_context(
+            a, pid, release_id, release_selector=release_selector,
+            prototype_page_query=prototype_page_query, prototype_page_offset=prototype_page_offset,
+        ))
 
     @app.post(API + "/projects/{pid}/upload-sessions", status_code=201)
     def upload_session(pid: str, payload: UploadInput, request: Request, a: Actor = Depends(actor)):
@@ -388,12 +406,13 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         request: Request,
         evidence_ids: str,
         max_chars: int = Query(8000, ge=100, le=30000),
+        release_id: str | None = None,
         a: Actor = Depends(actor),
     ):
         ids = evidence_ids.split(",")
         if not 1 <= len(ids) <= 20:
             raise DomainError("VKS_INVALID_INPUT", "每次读取 1–20 条证据")
-        return envelope(request, service.get_evidence(a, pid, ids, max_chars))
+        return envelope(request, service.get_evidence(a, pid, ids, max_chars, release_id=release_id))
 
     @app.get(API + "/evidence/{eid}")
     def evidence_one(eid: str, request: Request, project_id: str | None = None, a: Actor = Depends(actor)):
@@ -442,8 +461,26 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
         return envelope(request, service.diff(a, pid, from_release_id or rid, to_analysis_set_id))
 
     @app.post(API + "/projects/{pid}/search")
-    def search(pid: str, payload: SearchInput, request: Request, a: Actor = Depends(actor)):
-        return envelope(request, service.search(a, pid, payload.model_dump(exclude_none=True)))
+    async def search(pid: str, payload: SearchInput, request: Request, a: Actor = Depends(actor)):
+        from functools import partial
+
+        from starlette.concurrency import run_in_threadpool
+
+        args = payload.model_dump(exclude_none=True, exclude_unset=True)
+        if payload.retrieval_mode == "legacy":
+            return envelope(request, await run_in_threadpool(service.search, a, pid, args))
+        from .knowledge_search import run_search_request
+
+        metadata = {}
+        # Project grant checks alone cannot detect a JWT expiring or its
+        # signing key being removed during an embedding request.
+        reauthenticate = partial(actor, request) if (a.credential_id or "").startswith("oauth:") else None
+        hits = await run_search_request(
+            request,
+            lambda control: service.search(a, pid, args, metadata=metadata, control=control),
+            reauthenticate=reauthenticate,
+        )
+        return {**envelope(request, hits), **metadata}
 
     @app.post(API + "/projects/{pid}/questions")
     def question(pid: str, payload: QuestionInput, request: Request, a: Actor = Depends(actor)):
@@ -453,7 +490,10 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     def export(
         pid: str, payload: ExportInput, request: Request, a: Actor = Depends(actor), idempotency_key: str = Header(...)
     ):
-        return envelope(request, service.export(a, pid, payload.model_dump(), idempotency_key))
+        data = payload.model_dump()
+        if not data["local_vectors"]:
+            data.pop("local_vectors")
+        return envelope(request, service.export(a, pid, data, idempotency_key))
 
     @app.get(API + "/projects/{pid}/exports/{jid}/download")
     def download_export(pid: str, jid: str, request: Request, a: Actor = Depends(actor)):
@@ -564,6 +604,10 @@ def create_app(data_dir=None, database_url=None, enable_worker=True):
     from .interactive import install_interactive
 
     install_interactive(app, service, actor, envelope)
+
+    from .prototype_previews import install_prototype_previews
+
+    install_prototype_previews(app, service, actor, envelope)
     from .materials import install_materials
 
     install_materials(app, service, actor, envelope)

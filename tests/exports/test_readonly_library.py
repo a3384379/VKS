@@ -8,6 +8,7 @@ from copy import deepcopy
 from io import BytesIO
 from zipfile import ZipFile
 
+import numpy as np
 import pytest
 from PIL import Image
 from sqlalchemy import select
@@ -87,12 +88,15 @@ def reader(ctx, scopes=("knowledge:read", "knowledge:export")):
     return service.authenticate(token["token"], "token")
 
 
-def export(ctx, fixed, *, actor=None, include_source=False):
+def export(ctx, fixed, *, actor=None, include_source=False, local_vectors=False):
     service, actor = ctx["service"], actor or ctx["owner"]
     job = service.export(
         actor,
         ctx["pid"],
-        {"release_id": fixed["id"], "format": "readonly_html", "include_source": include_source},
+        {
+            "release_id": fixed["id"], "format": "readonly_html",
+            "include_source": include_source, "local_vectors": local_vectors,
+        },
         uid(),
     )
     service.process_job(job["id"])
@@ -103,6 +107,91 @@ def export(ctx, fixed, *, actor=None, include_source=False):
     assert match, "The single HTML must contain its own inert data payload"
     payload = json.loads(gzip.decompress(base64.b64decode(match[1].strip(), validate=True)))
     return payload, raw, name, job
+
+
+def test_studio_export_indexes_only_the_exported_original_chapters(library, monkeypatch):
+    from vks_api import readonly_export
+    from vks_connect.library import Library
+    from vks_connect.local_embeddings import DIMENSIONS
+
+    inference = []
+    active_progress = []
+
+    class LocalModel:
+        @staticmethod
+        def passage_chunks(title, content):
+            return [[len(content)]]
+
+        @staticmethod
+        def run(rows):
+            inference.extend(row[0] for row in rows)
+            with service.db() as session:
+                active = session.scalar(select(Job).where(Job.kind == "export", Job.state == "running"))
+                active_progress.append((active.stage, active.progress))
+            values = np.zeros((len(rows), DIMENSIONS), dtype=np.float32)
+            values[:, 0] = 1
+            return values
+
+    monkeypatch.setattr(readonly_export, "encoder", lambda _: LocalModel())
+    ctx = library
+    service, pid = ctx["service"], ctx["pid"]
+    fixed = snapshot(ctx)
+    _, baseline, _, _ = export(ctx, fixed)
+    ctx["calls"].clear()
+    token, actor = service.login(service.bootstrap_token)
+    result = ctx["web"].post(
+        f"/api/v1/projects/{pid}/exports",
+        headers={"Cookie": f"vks_session={token}", "X-CSRF-Token": actor.csrf_token, "Idempotency-Key": uid()},
+        json={"release_id": fixed["id"], "format": "readonly_html", "local_vectors": True},
+    )
+    assert result.status_code == 202, result.text
+    jid = result.json()["data"]["id"]
+    service.process_job(jid)
+    job = service.get_job(ctx["owner"], jid)
+    assert job["state"] == "succeeded", job
+    raw, _ = service.download_export(ctx["owner"], pid, jid)
+    data_pattern = rb'<script\b[^>]*\bid="vks-payload"[^>]*>([^<]+)</script>'
+    def decode(html):
+        return json.loads(gzip.decompress(base64.b64decode(re.search(data_pattern, html)[1].strip())))
+
+    before, after = decode(baseline), decode(raw)
+    assert not ctx["calls"] and "rag" not in after
+    assert {key: value for key, value in before.items() if key != "rag"} == {
+        key: value for key, value in after.items() if key != "local_rag"
+    }
+    expected = {section["id"] for doc in before["documents"] for section in doc["sections"]}
+    assert {row["section_id"] for row in after["local_rag"]["chunks"]} == expected
+    library = Library(None, "0" * 64, after)
+    assert library.local_vectors.info()["indexed_chunks"] == len(expected)
+    assert active_progress == [("EXPORT_VECTORS", 15)]
+
+    inference.clear()
+    _, repeated, _, duplicate_job = export(ctx, fixed, local_vectors=True)
+    assert duplicate_job["id"] != jid
+    assert repeated == raw and not inference
+
+    edit_document(ctx, "# 收费项\n\n新增收费项需要填写名称。\n\n## 删除\n\n删除前检查引用并确认归档。")
+    new_fixed = snapshot(ctx)
+    updated, _, _, _ = export(ctx, new_fixed, local_vectors=True)
+    new_sections = [
+        section for document in updated["documents"] for section in document["sections"]
+    ]
+    edited = next(section for section in new_sections if section["title"] == "删除")
+    assert inference == [len(edited["content"])]
+    assert 15 < active_progress[-1][1] < 85
+    assert {row["section_id"] for row in updated["local_rag"]["chunks"]} == {row["id"] for row in new_sections}
+    assert any(row["id"] not in expected and row["title"] == "收费项" for row in new_sections)
+    current, _, _, _ = export(ctx, new_fixed)
+    assert {key: value for key, value in updated.items() if key != "local_rag"} == {
+        key: value for key, value in current.items() if key != "rag"
+    }
+
+    # A damaged object is a cache miss. The export then rebuilds from the frozen input.
+    with service.db() as session:
+        key = session.get(Job, jid).result_json["object_key"]
+    (service.data_dir / "objects" / key).write_bytes(b"damaged")
+    rebuilt, _, _, _ = export(ctx, fixed, local_vectors=True)
+    assert rebuilt["documents"] == after["documents"] and rebuilt["bindings"] == after["bindings"]
 
 
 def declare_original_members(ctx):

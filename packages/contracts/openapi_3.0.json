@@ -1337,7 +1337,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                  "$ref": "#/components/schemas/PrototypeEnvelope_ToolContext_"
                 }
               }
             }
@@ -1386,7 +1386,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                  "$ref": "#/components/schemas/PrototypeEnvelope_Union_DocumentPage__LegacyDocument__"
                 }
               }
             }
@@ -2501,6 +2501,276 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PrototypeEnvelope_InteractiveSelection_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/previews/pages": {
+      "get": {
+        "summary": "Pages",
+        "operationId": "pages_api_v3_projects__pid__interactive_previews_pages_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Analysis Set Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Release Id"
+            }
+          },
+          {
+            "name": "package",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 96
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package"
+            }
+          },
+          {
+            "name": "page_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page Ref"
+            }
+          },
+          {
+            "name": "route",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 1000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Route"
+            }
+          },
+          {
+            "name": "frame_path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Frame Path"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_PreviewPageList_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/previews/read": {
+      "post": {
+        "summary": "Read",
+        "operationId": "read_api_v3_projects__pid__interactive_previews_read_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRead"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewReadEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/previews/capture": {
+      "post": {
+        "summary": "Capture",
+        "operationId": "capture_api_v3_projects__pid__interactive_previews_capture_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewCapture"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
                 }
               }
             }
@@ -5464,6 +5734,103 @@
         ],
         "title": "BindingEdit"
       },
+      "ContextBinding": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "binding_version": {
+            "type": "integer",
+            "title": "Binding Version"
+          },
+          "excluded": {
+            "type": "boolean",
+            "title": "Excluded"
+          },
+          "validity_status": {
+            "type": "string",
+            "title": "Validity Status"
+          },
+          "point_revision_id": {
+            "type": "string",
+            "title": "Point Revision Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "package_id": {
+            "type": "string",
+            "title": "Package Id"
+          },
+          "target": {
+            "$ref": "#/components/schemas/DOMTarget"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveCitation"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "default": "control"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin",
+            "default": "manual"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id",
+            "default": ""
+          },
+          "locator": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrototypeBindingLocator"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "studio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Studio Url"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "binding_version",
+          "excluded",
+          "validity_status",
+          "point_revision_id",
+          "title",
+          "summary",
+          "package_id",
+          "target",
+          "sections"
+        ],
+        "title": "ContextBinding"
+      },
       "ControlContext": {
         "properties": {
           "scope": {
@@ -5714,6 +6081,59 @@
         "type": "object",
         "title": "DocumentIndexInput"
       },
+      "DocumentPage": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "entity_revision_id": {
+            "type": "string",
+            "title": "Entity Revision Id"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSlice"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "entity_revision_id",
+          "row_version",
+          "sections",
+          "offset",
+          "next_offset",
+          "truncated"
+        ],
+        "title": "DocumentPage"
+      },
       "DocumentRead": {
         "properties": {
           "analysis_set_id": {
@@ -5753,6 +6173,43 @@
             "maxLength": 96,
             "minLength": 1,
             "title": "Revision Id"
+          },
+          "section_revision_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 96,
+                  "minLength": 1
+                },
+                "type": "array",
+                "maxItems": 32,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Revision Ids"
+          },
+          "max_chars": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 30000.0,
+                "minimum": 100.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Chars"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -5762,6 +6219,116 @@
           "revision_id"
         ],
         "title": "DocumentRead"
+      },
+      "DocumentSectionLocator": {
+        "properties": {
+          "locator_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Locator Version",
+            "default": 1
+          },
+          "kind": {
+            "type": "string",
+            "const": "document_section",
+            "title": "Kind",
+            "default": "document_section"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "release_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Release Id"
+          },
+          "document_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Document Id"
+          },
+          "document_revision_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Document Revision Id"
+          },
+          "section_revision_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Section Revision Id"
+          },
+          "content_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Sha256"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "release_id",
+          "document_id",
+          "document_revision_id",
+          "section_revision_id",
+          "content_sha256"
+        ],
+        "title": "DocumentSectionLocator"
+      },
+      "DocumentSlice": {
+        "properties": {
+          "section_revision_id": {
+            "type": "string",
+            "title": "Section Revision Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "start_offset": {
+            "type": "integer",
+            "title": "Start Offset"
+          },
+          "end_offset": {
+            "type": "integer",
+            "title": "End Offset"
+          },
+          "locator": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentSectionLocator"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "studio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Studio Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "section_revision_id",
+          "name",
+          "content",
+          "start_offset",
+          "end_offset"
+        ],
+        "title": "DocumentSlice"
       },
       "DocumentWrite": {
         "properties": {
@@ -6971,6 +7538,49 @@
         ],
         "title": "JobOutput"
       },
+      "LegacyDocument": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "entity_revision_id": {
+            "type": "string",
+            "title": "Entity Revision Id"
+          },
+          "content_sha256": {
+            "type": "string",
+            "title": "Content Sha256"
+          },
+          "markdown": {
+            "type": "string",
+            "title": "Markdown"
+          },
+          "sections": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "document_id",
+          "entity_revision_id",
+          "content_sha256",
+          "markdown",
+          "sections",
+          "row_version"
+        ],
+        "title": "LegacyDocument"
+      },
       "MigrateMaterials": {
         "properties": {
           "analysis_set_id": {
@@ -7378,7 +7988,7 @@
           },
           "query": {
             "type": "string",
-            "maxLength": 2000,
+            "maxLength": 1000,
             "minLength": 2,
             "title": "Query"
           }
@@ -7455,6 +8065,128 @@
         "type": "object",
         "title": "PresentationSettings"
       },
+      "PreviewCapture": {
+        "properties": {
+          "analysis_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Set Id"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "package_artifact_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Package Artifact Id"
+          },
+          "page_ref": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Page Ref"
+          },
+          "binding_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_artifact_id",
+          "page_ref"
+        ],
+        "title": "PreviewCapture"
+      },
+      "PreviewImage": {
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "source_image_sha256": {
+            "type": "string",
+            "title": "Source Image Sha256"
+          },
+          "mime_type": {
+            "type": "string",
+            "const": "image/png",
+            "title": "Mime Type",
+            "default": "image/png"
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "generator": {
+            "type": "string",
+            "title": "Generator"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "registered_raster",
+              "isolated_capture"
+            ],
+            "title": "Source"
+          },
+          "viewport": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Viewport"
+          },
+          "device_pixel_ratio": {
+            "type": "number",
+            "title": "Device Pixel Ratio"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sha256",
+          "source_image_sha256",
+          "width",
+          "height",
+          "generated_at",
+          "generator",
+          "source",
+          "viewport",
+          "device_pixel_ratio"
+        ],
+        "title": "PreviewImage"
+      },
       "PreviewInput": {
         "properties": {
           "analysis_set_id": {
@@ -7477,6 +8209,257 @@
           "artifact_id"
         ],
         "title": "PreviewInput"
+      },
+      "PreviewPageList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StudioPreviewPage"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "next_offset"
+        ],
+        "title": "PreviewPageList"
+      },
+      "PreviewRead": {
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Release Id"
+          },
+          "locator": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrototypePageLocator"
+              },
+              {
+                "$ref": "#/components/schemas/PrototypeBindingLocator"
+              }
+            ],
+            "title": "Locator",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "prototype_binding": "#/components/schemas/PrototypeBindingLocator",
+                "prototype_page": "#/components/schemas/PrototypePageLocator"
+              }
+            }
+          },
+          "max_width": {
+            "type": "integer",
+            "maximum": 1280.0,
+            "minimum": 160.0,
+            "title": "Max Width",
+            "default": 960
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "release_id",
+          "locator"
+        ],
+        "title": "PreviewRead"
+      },
+      "PreviewReadEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PreviewResult"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          },
+          "image_base64": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 218456
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Base64"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PreviewReadEnvelope"
+      },
+      "PreviewResult": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "preview_unavailable"
+            ],
+            "title": "Status"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PreviewScope"
+          },
+          "locator": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrototypePageLocator"
+              },
+              {
+                "$ref": "#/components/schemas/PrototypeBindingLocator"
+              }
+            ],
+            "title": "Locator",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "prototype_binding": "#/components/schemas/PrototypeBindingLocator",
+                "prototype_page": "#/components/schemas/PrototypePageLocator"
+              }
+            }
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "default",
+              "binding_unverified",
+              "verified_binding"
+            ],
+            "title": "State",
+            "default": "default"
+          },
+          "page_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Label"
+          },
+          "studio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Studio Url"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "page_not_registered",
+                  "no_exact_preview",
+                  "image_budget_exceeded"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreviewImage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "scope",
+          "locator"
+        ],
+        "title": "PreviewResult"
+      },
+      "PreviewScope": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "release_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Release Id"
+          },
+          "manifest_sha256": {
+            "type": "string",
+            "title": "Manifest Sha256"
+          },
+          "saved_at": {
+            "type": "string",
+            "title": "Saved At"
+          },
+          "release_label": {
+            "type": "string",
+            "title": "Release Label"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_id",
+          "release_id",
+          "manifest_sha256",
+          "saved_at",
+          "release_label"
+        ],
+        "title": "PreviewScope"
       },
       "ProjectTokenUsage": {
         "properties": {
@@ -7605,6 +8588,93 @@
           "selection_version"
         ],
         "title": "PrototypeAnchorsResult"
+      },
+      "PrototypeBindingLocator": {
+        "properties": {
+          "locator_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Locator Version"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "release_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Release Id"
+          },
+          "package_artifact_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Package Artifact Id"
+          },
+          "package_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Key"
+          },
+          "package_revision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Revision Id"
+          },
+          "package_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Package Sha256"
+          },
+          "kind": {
+            "type": "string",
+            "const": "prototype_binding",
+            "title": "Kind"
+          },
+          "binding_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Binding Id"
+          },
+          "point_revision_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Point Revision Id"
+          },
+          "binding_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Binding Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "locator_version",
+          "project_id",
+          "release_id",
+          "package_artifact_id",
+          "package_sha256",
+          "kind",
+          "binding_id",
+          "point_revision_id",
+          "binding_version"
+        ],
+        "title": "PrototypeBindingLocator"
       },
       "PrototypeBindingResult": {
         "properties": {
@@ -7896,6 +8966,24 @@
         ],
         "title": "PrototypeEnvelope[PresentationOutput]"
       },
+      "PrototypeEnvelope_PreviewPageList_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PreviewPageList"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PreviewPageList]"
+      },
       "PrototypeEnvelope_ProjectTokenUsage_": {
         "properties": {
           "data": {
@@ -8093,6 +9181,50 @@
           "meta"
         ],
         "title": "PrototypeEnvelope[TokenPeriodUsage]"
+      },
+      "PrototypeEnvelope_ToolContext_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ToolContext"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[ToolContext]"
+      },
+      "PrototypeEnvelope_Union_DocumentPage__LegacyDocument__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentPage"
+              },
+              {
+                "$ref": "#/components/schemas/LegacyDocument"
+              }
+            ],
+            "title": "Data"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[Union[DocumentPage, LegacyDocument]]"
       },
       "PrototypeEnvelope_Union_ExplanationBatchState__NoneType__": {
         "properties": {
@@ -8343,6 +9475,87 @@
           "has_surface"
         ],
         "title": "PrototypePageEntry"
+      },
+      "PrototypePageLocator": {
+        "properties": {
+          "locator_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Locator Version"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "release_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Release Id"
+          },
+          "package_artifact_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Package Artifact Id"
+          },
+          "package_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Key"
+          },
+          "package_revision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Revision Id"
+          },
+          "package_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Package Sha256"
+          },
+          "kind": {
+            "type": "string",
+            "const": "prototype_page",
+            "title": "Kind"
+          },
+          "page_ref": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Page Ref"
+          },
+          "state": {
+            "type": "string",
+            "const": "default",
+            "title": "State"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "locator_version",
+          "project_id",
+          "release_id",
+          "package_artifact_id",
+          "package_sha256",
+          "kind",
+          "page_ref",
+          "state"
+        ],
+        "title": "PrototypePageLocator"
       },
       "PrototypePoint": {
         "properties": {
@@ -9487,6 +10700,71 @@
         "type": "object",
         "title": "SettingsEdit"
       },
+      "StudioPreviewPage": {
+        "properties": {
+          "page_ref": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Page Ref"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format"
+          },
+          "package_artifact_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Package Artifact Id"
+          },
+          "locator": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrototypePageLocator"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "studio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Studio Url"
+          },
+          "route": {
+            "type": "string",
+            "title": "Route"
+          },
+          "frame_path": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Frame Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "page_ref",
+          "label",
+          "format",
+          "package_artifact_id",
+          "route",
+          "frame_path"
+        ],
+        "title": "StudioPreviewPage"
+      },
       "TokenCounts": {
         "properties": {
           "input_tokens": {
@@ -9556,6 +10834,37 @@
           "unclassified_tokens"
         ],
         "title": "TokenPeriodUsage"
+      },
+      "ToolContext": {
+        "properties": {
+          "catalog": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Catalog"
+          },
+          "binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "related": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Related"
+          }
+        },
+        "type": "object",
+        "required": [
+          "catalog",
+          "binding",
+          "related"
+        ],
+        "title": "ToolContext"
       },
       "TrashMaterial": {
         "properties": {

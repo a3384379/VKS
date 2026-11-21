@@ -1,6 +1,21 @@
 let csrf = "";
+let sessionRevision = 0;
+const unauthenticated = new Set<() => void>();
+
 export function setCsrf(value?: string) {
-  csrf = value || "";
+  const next = value || "";
+  if (next !== csrf) sessionRevision++;
+  csrf = next;
+}
+
+export function observeUnauthenticated(listener: () => void) {
+  unauthenticated.add(listener);
+  return () => { unauthenticated.delete(listener); };
+}
+
+function checkSessionRevision(revision: number) {
+  if (unauthenticated.size && revision !== sessionRevision)
+    throw new DOMException("会话已切换", "AbortError");
 }
 export class ApiError extends Error {
   code: string;
@@ -27,6 +42,7 @@ export async function apiResponse(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  const revision = sessionRevision;
   const headers = new Headers(init.headers);
   if (
     init.body &&
@@ -45,12 +61,19 @@ export async function apiResponse(
       throw new Error("上传地址不属于当前工作空间");
     target = url.pathname + url.search;
   }
+  target = target.startsWith("/api/") ? target : `/api/v1${target}`;
   const response = await fetch(
-    target.startsWith("/api/") ? target : `/api/v1${target}`,
+    target,
     { ...init, headers, credentials: "same-origin" },
   );
+  checkSessionRevision(revision);
   if (!response.ok) {
     const json = await response.json().catch(() => ({}));
+    checkSessionRevision(revision);
+    if (
+      response.status === 401 &&
+      !/^\/api\/v[0-9]+\/auth\/(login|session)(?:\?|$)/.test(target)
+    ) for (const listener of unauthenticated) listener();
     throw new ApiError(
       json.error?.message ||
         json.detail?.message ||
@@ -68,8 +91,11 @@ async function request<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<{ data?: T; meta?: ApiMeta }> {
+  const revision = sessionRevision;
   const response = await apiResponse(path, init);
-  return response.json().catch(() => ({}));
+  const json = await response.json().catch(() => ({}));
+  checkSessionRevision(revision);
+  return json;
 }
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const json = await request<T>(path, init);

@@ -1,0 +1,41 @@
+{
+  "example_only": true,
+  "contract_status": "proposed-not-implemented",
+  "scope": {
+    "project_id": "10000000-0000-4000-8000-000000000001",
+    "release_id": "20000000-0000-4000-8000-000000000002",
+    "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "saved_at": "2026-11-21T01:00:00Z",
+    "release_label": "合成测试版本 R2"
+  },
+  "retrieval": {
+    "requested_mode": "auto",
+    "used_mode": "keyword",
+    "degraded_reason": "embedding_disabled",
+    "truncated": false
+  },
+  "hits": [
+    {
+      "entity_id": "30000000-0000-4000-8000-000000000003",
+      "entity_revision_id": "40000000-0000-4000-8000-000000000004",
+      "title": "示例费用调整规则 / 调整前校验",
+      "excerpt": "演示文字：批量调整需要逐项校验账单状态。此句仅为合成契约样例，不代表任何真实业务规则。",
+      "source_kind": "original_section",
+      "validity": "valid",
+      "match_kind": "fulltext",
+      "locator": {
+        "locator_version": 1,
+        "kind": "document_section",
+        "project_id": "10000000-0000-4000-8000-000000000001",
+        "release_id": "20000000-0000-4000-8000-000000000002",
+        "document_id": "50000000-0000-4000-8000-000000000005",
+        "document_revision_id": "60000000-0000-4000-8000-000000000006",
+        "section_revision_id": "40000000-0000-4000-8000-000000000004",
+        "content_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "studio_url": "http://127.0.0.1:5193/#project=10000000-0000-4000-8000-000000000001&release=20000000-0000-4000-8000-000000000002&view=documents&doc=60000000-0000-4000-8000-000000000006&section=40000000-0000-4000-8000-000000000004&reader=standard",
+      "evidence_ids": [],
+      "excerpt_truncated": false
+    }
+  ]
+}

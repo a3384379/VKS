@@ -336,6 +336,13 @@ def split(chapters):
                 break
 
 
+def fusion_scores(lexical_ids, semantic_ids):
+    scores = {rid: 1 / (60 + rank) for rank, rid in enumerate(lexical_ids)}
+    for rank, rid in enumerate(semantic_ids, 1):
+        scores[rid] = scores.get(rid, 0) + 1.15 / (60 + rank)
+    return scores
+
+
 class VectorRag:
     def __init__(self, service, assistant):
         self.service, self.assistant = service, assistant
@@ -809,7 +816,7 @@ class VectorRag:
             cached[(actor, pid)] = (settings, config, space)
             return settings.model_copy(deep=True), dict(config), space
 
-    def embed(self, actor, pid, settings, config, texts):
+    def embed(self, actor, pid, settings, config, texts, *, search_call=None):
         bound = sum(len(t.encode()) for t in texts) + 128
         key = self.store.reserve(pid, settings, bound)
         used = None
@@ -818,9 +825,11 @@ class VectorRag:
             current, current_config, _ = self.config(actor, pid)
             if current != settings or current_config != config:
                 failure("VKS_VERSION_CONFLICT", "嵌入配置已变化", 412)
+            if search_call:
+                search_call.check()
             submitted = True
             result = ai_gateway.request_model(
-                config,
+                {**config, "_search_call": search_call} if search_call else config,
                 {
                     "model": settings.model_id,
                     "input": texts,
@@ -828,7 +837,8 @@ class VectorRag:
                     "encoding_format": "float",
                 },
             )
-            value = result.get("usage", {}).get("total_tokens")
+            usage = result.get("usage") if isinstance(result, dict) else None
+            value = usage.get("total_tokens") if isinstance(usage, dict) else None
             if type(value) is not int or value < 0 or value > 1000000000:
                 failure("VKS_INVALID_INPUT", "嵌入响应未返回有效用量")
             used = value
@@ -836,11 +846,12 @@ class VectorRag:
             if (
                 not isinstance(rows, list)
                 or len(rows) != len(texts)
+                or any(not isinstance(row, dict) or type(row.get("index")) is not int for row in rows)
                 or {r.get("index") for r in rows} != set(range(len(texts)))
             ):
                 failure("VKS_INVALID_INPUT", "嵌入响应条目不完整")
             embeddings = [
-                normalize(row["embedding"], settings.dimensions) for row in sorted(rows, key=lambda r: r["index"])
+                normalize(row.get("embedding"), settings.dimensions) for row in sorted(rows, key=lambda r: r["index"])
             ]
             self.store.settle(key, used, "succeeded")
             return embeddings
@@ -850,6 +861,79 @@ class VectorRag:
         except Exception:
             self.store.settle(key, used if submitted else 0, "failed")
             raise
+
+    def search_cached(self, actor, pid, query, chapters, control, validate_scope):
+        """Look up existing exact chapter vectors and optionally embed the query."""
+        if not self.store.settings(pid).enabled:
+            return {}, "embedding_disabled", False
+        try:
+            settings, config, space = self.config(actor, pid)
+        except DomainError as exc:
+            if exc.code in {"VKS_MODEL_NOT_CONFIGURED", "VKS_NOT_FOUND"}:
+                # Distinguish a missing connection from revoked access.
+                validate_scope()
+                return {}, "embedding_disabled", False
+            raise
+        expected = {}
+        for chunk in split(chapters):
+            control.check()
+            expected[chunk["id"]] = (chunk["revision"], chunk["start"], chunk["content"])
+        snapshot = self.vector_search.snapshot(
+            self.store, pid, space, {row["revision_id"] for row in chapters}, settings.dimensions,
+            expected=expected, check=control.check,
+        )
+        if not snapshot[0]:
+            return {}, "index_revision_mismatch" if snapshot[4] else "index_unavailable", False
+        degraded = "index_partial" if len(snapshot[0]) < len(expected) else None
+        key = "knowledge-search-v1:" + sha(query.encode())
+        with self.lock:
+            lock = self.query_locks.setdefault((pid, space, key), threading.Lock())
+        with control.embedding() as provider:
+            try:
+                while not lock.acquire(timeout=0.1):
+                    provider.check()
+                try:
+                    provider.check()
+                    blob = self.store.query_vector(pid, space, key)
+                    fresh = not (
+                        isinstance(blob, bytes)
+                        and len(blob) == settings.dimensions * 4
+                        and 0.999 <= math.hypot(*vector(blob)) <= 1.001
+                    )
+                    if fresh:
+                        validate_scope()
+                        try:
+                            blob = self.embed(actor, pid, settings, config, [query], search_call=provider)[0]
+                        except DomainError:
+                            validate_scope()
+                            return {}, "provider_unavailable", False
+                    validate_scope()
+                    try:
+                        unchanged = self.config(actor, pid) == (settings, config, space)
+                    except DomainError:
+                        validate_scope()
+                        unchanged = False
+                    if not unchanged:
+                        return {}, "provider_unavailable", False
+                    provider.check()
+                    if fresh:
+                        with self.store.db() as db:
+                            provider.check()
+                            db.execute("INSERT OR REPLACE INTO queries VALUES (?,?,?,?)", (pid, space, key, blob))
+                finally:
+                    lock.release()
+            except TimeoutError:
+                validate_scope()
+                return {}, "provider_unavailable", False
+
+        matches = self.vector_search.nearest(
+            self.store, pid, space, (), vector(blob), limit=max(36, settings.candidate_limit * 2), snapshot=snapshot
+        )
+        selected = {}
+        for _, rid, start, _content, score in matches:
+            if score >= 0.15:
+                selected.setdefault(rid, start)
+        return selected, degraded, True
 
     def available(self, actor, pid, chapters):
         from .inference_pipeline import CURRENT_PIPELINE, READ_SESSION, WRITE_SESSION
@@ -1312,11 +1396,8 @@ class VectorRag:
         matches = self.vector_search.nearest(
             self.store, pid, space, lookup, q, limit=max(36, settings.candidate_limit * 2), snapshot=snapshot
         )
-        scores = {}
         candidates = {r["revision_id"]: r for r in lexical}
-        seen = set()
-        for rank, row in enumerate(lexical):
-            scores[row["revision_id"]] = 1 / (60 + rank)
+        seen = {}
         for cid, rid, start, content, score in matches:
             if rid in seen or score < 0.15:
                 continue
@@ -1331,9 +1412,9 @@ class VectorRag:
             expected = chapter["document_name"][:160] + "\n" + chapter["name"][:160] + "\n" + content
             if cid != sha(canonical([rid, start, expected])):
                 continue
-            seen.add(rid)
-            scores[rid] = scores.get(rid, 0) + 1.15 / (60 + len(seen))
+            seen[rid] = None
             candidates[rid] = {**lookup[rid], "content": content}
+        scores = fusion_scores((row["revision_id"] for row in lexical), seen)
         result = []
         docs = {}
         for rid in sorted(scores, key=lambda r: -scores[r]):

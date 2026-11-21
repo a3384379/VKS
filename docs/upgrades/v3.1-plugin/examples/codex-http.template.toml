@@ -1,0 +1,16 @@
+# 未来专用只读endpoint的配置模板，不是当前可直接运行的服务。
+# 纯MCP模式使用；若插件已注册同一服务，不要重复添加。
+# 替换域名，确认该endpoint在服务端强制requirements-readonly。
+# 桌面GUI未必继承终端环境变量，不能假设在shell里export后即可使用。
+# 也可用已经配置好的OAuth；VKS本身不是企业OAuth授权服务器。
+
+[mcp_servers.vks]
+url = "https://vks.example/mcp"
+bearer_token_env_var = "VKS_MCP_TOKEN"
+enabled = true
+startup_timeout_sec = 15
+tool_timeout_sec = 20
+enabled_tools = ["list_projects", "get_project_context", "search_knowledge", "get_workspace_document", "get_interactive_context", "get_prototype_action_context", "get_evidence", "get_prototype_preview"]
+
+# 不在本文件写token。此allow-list不是服务端只读权限的替代品。
+# 上述超时为建议值，实现时保证内部调用超时更短并正确取消。

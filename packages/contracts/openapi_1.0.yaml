@@ -111,6 +111,79 @@ paths:
                 $ref: '#/components/schemas/ProjectResponse'
         default:
           $ref: '#/components/responses/ErrorResponse'
+  /projects/{project_id}/context:
+    parameters:
+    - $ref: '#/components/parameters/ProjectId'
+    get:
+      operationId: getProjectContext
+      summary: 读取保存版本上下文，release_id 与 release_selector 二选一
+      x-required-scopes:
+      - knowledge:read
+      parameters:
+      - name: release_id
+        in: query
+        schema:
+          $ref: '#/components/schemas/UUID'
+      - name: release_selector
+        in: query
+        schema:
+          type: string
+          enum: [latest_saved]
+      - name: prototype_page_query
+        in: query
+        schema:
+          type: string
+          maxLength: 160
+      - name: prototype_page_offset
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 100000
+      responses:
+        '200':
+          description: 固定的保存版本
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectContextResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /projects/{project_id}/evidence:
+    parameters:
+    - $ref: '#/components/parameters/ProjectId'
+    get:
+      operationId: listEvidence
+      summary: 读取证据，指定 release_id 时校验冻结关系归属
+      x-required-scopes:
+      - knowledge:read
+      parameters:
+      - name: evidence_ids
+        in: query
+        required: true
+        description: 逗号分隔的 1–20 个证据 ID
+        schema:
+          type: string
+      - name: release_id
+        in: query
+        schema:
+          $ref: '#/components/schemas/UUID'
+      - name: max_chars
+        in: query
+        schema:
+          type: integer
+          minimum: 100
+          maximum: 30000
+          default: 8000
+      responses:
+        '200':
+          description: 获权限且属于指定范围的证据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /projects/{project_id}/members:
     parameters:
     - $ref: '#/components/parameters/ProjectId'
@@ -907,6 +980,8 @@ components:
           - VKS_UNAUTHENTICATED
           - VKS_FORBIDDEN
           - VKS_NOT_FOUND
+          - VKS_INVALID_SCOPE
+          - VKS_NO_SAVED_VERSION
           - VKS_IDEMPOTENCY_CONFLICT
           - VKS_STATE_CONFLICT
           - VKS_VERSION_CONFLICT
@@ -1366,6 +1441,7 @@ components:
           - import
           - index
           - capture
+          - prototype_preview
           - generate_documents
           - suggest_links
           - detect_drift
@@ -1462,6 +1538,7 @@ components:
           - table
           - document
           - section
+          - business_point
           - rule
           - service
         name:
@@ -1979,6 +2056,73 @@ components:
             $ref: '#/components/schemas/Release'
         meta:
           $ref: '#/components/schemas/Meta'
+    SavedScope:
+      type: object
+      additionalProperties: false
+      required: [project_id, release_id, manifest_sha256, saved_at, release_label]
+      properties:
+        project_id:
+          $ref: '#/components/schemas/UUID'
+        release_id:
+          $ref: '#/components/schemas/UUID'
+        manifest_sha256:
+          $ref: '#/components/schemas/SHA256'
+        saved_at:
+          type: string
+          format: date-time
+        release_label:
+          type: string
+    DocumentSectionLocator:
+      type: object
+      additionalProperties: false
+      required: [locator_version, kind, project_id, release_id, document_id, document_revision_id, section_revision_id, content_sha256]
+      properties:
+        locator_version:
+          type: integer
+          enum: [1]
+        kind:
+          type: string
+          enum: [document_section]
+        project_id:
+          $ref: '#/components/schemas/UUID'
+        release_id:
+          $ref: '#/components/schemas/UUID'
+        document_id:
+          $ref: '#/components/schemas/UUID'
+        document_revision_id:
+          $ref: '#/components/schemas/UUID'
+        section_revision_id:
+          $ref: '#/components/schemas/UUID'
+        content_sha256:
+          $ref: '#/components/schemas/SHA256'
+    PrototypePageLocator:
+      type: object
+      additionalProperties: false
+      required: [locator_version, kind, project_id, release_id, package_artifact_id, package_sha256, page_ref, state]
+      properties:
+        locator_version:
+          type: integer
+          enum: [1]
+        kind:
+          type: string
+          enum: [prototype_page]
+        project_id:
+          $ref: '#/components/schemas/UUID'
+        release_id:
+          $ref: '#/components/schemas/UUID'
+        package_artifact_id:
+          $ref: '#/components/schemas/UUID'
+        package_key:
+          $ref: '#/components/schemas/UUID'
+        package_revision_id:
+          $ref: '#/components/schemas/UUID'
+        package_sha256:
+          $ref: '#/components/schemas/SHA256'
+        page_ref:
+          $ref: '#/components/schemas/SHA256'
+        state:
+          type: string
+          enum: [default]
     ProjectContextResponse:
       type: object
       additionalProperties: false
@@ -1994,6 +2138,7 @@ components:
           required:
           - project
           - release
+          - scope
           - sources
           - modules
           - capabilities
@@ -2003,6 +2148,34 @@ components:
               $ref: '#/components/schemas/Project'
             release:
               $ref: '#/components/schemas/Release'
+            scope:
+              $ref: '#/components/schemas/SavedScope'
+            prototype_pages:
+              type: array
+              maxItems: 20
+              items:
+                type: object
+                additionalProperties: false
+                required: [page_ref, label, format, package_artifact_id, locator]
+                properties:
+                  page_ref:
+                    $ref: '#/components/schemas/SHA256'
+                  label:
+                    type: string
+                  format:
+                    type: string
+                  package_artifact_id:
+                    $ref: '#/components/schemas/UUID'
+                  locator:
+                    $ref: '#/components/schemas/PrototypePageLocator'
+                  studio_url:
+                    type: string
+                    format: uri
+            prototype_pages_truncated:
+              type: boolean
+            prototype_pages_next_offset:
+              type: integer
+              minimum: 1
             sources:
               type: array
               items:
@@ -2143,6 +2316,22 @@ components:
       required:
       - release_id
       - query
+      if:
+        required: [retrieval_mode]
+        properties:
+          retrieval_mode:
+            enum: [keyword, hybrid, auto]
+      then:
+        properties:
+          query:
+            maxLength: 1000
+          limit:
+            maximum: 20
+            default: 8
+      else:
+        properties:
+          limit:
+            default: 10
       properties:
         release_id:
           $ref: '#/components/schemas/UUID'
@@ -2165,6 +2354,7 @@ components:
             - relation
             - sql
             - table
+            - business_point
         module_id:
           $ref: '#/components/schemas/UUID'
         include_descendants:
@@ -2178,7 +2368,35 @@ components:
           type: integer
           minimum: 1
           maximum: 50
-          default: 10
+        retrieval_mode:
+          type: string
+          enum: [legacy, keyword, hybrid, auto]
+          default: legacy
+          description: 增强检索的查询最多 1000 字符，最多返回 20 项。
+        max_excerpt_chars:
+          type: integer
+          minimum: 1
+          maximum: 1200
+        max_total_chars:
+          type: integer
+          minimum: 1
+          maximum: 6000
+    RetrievalSummary:
+      type: object
+      additionalProperties: false
+      required: [requested_mode, used_mode, truncated]
+      properties:
+        requested_mode:
+          type: string
+          enum: [legacy, keyword, hybrid, auto]
+        used_mode:
+          type: string
+          enum: [legacy, keyword, hybrid]
+        truncated:
+          type: boolean
+        degraded_reason:
+          type: string
+          enum: [embedding_disabled, provider_unavailable, index_unavailable, index_partial, index_revision_mismatch]
     SearchResponse:
       type: object
       additionalProperties: false
@@ -2188,6 +2406,10 @@ components:
       properties:
         meta:
           $ref: '#/components/schemas/Meta'
+        scope:
+          $ref: '#/components/schemas/SavedScope'
+        retrieval:
+          $ref: '#/components/schemas/RetrievalSummary'
         data:
           type: array
           items:
@@ -2204,6 +2426,27 @@ components:
               excerpt:
                 type: string
                 maxLength: 3000
+              excerpt_truncated:
+                type: boolean
+              source_kind:
+                type: string
+                enum: [original_section, authored_knowledge, generated_binding, candidate]
+              document_revision_id:
+                $ref: '#/components/schemas/UUID'
+              source_section_revision_ids:
+                type: array
+                maxItems: 3
+                uniqueItems: true
+                items:
+                  $ref: '#/components/schemas/UUID'
+              locator:
+                $ref: '#/components/schemas/DocumentSectionLocator'
+              locator_status:
+                type: string
+                enum: [version_only]
+              studio_url:
+                type: string
+                format: uri
               evidence_ids:
                 type: array
                 items:

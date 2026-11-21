@@ -1,5 +1,9 @@
 """Materials remain usable while history loads; imports and recycle actions work in Studio."""
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+
+import numpy as np
 from playwright.sync_api import expect, sync_playwright
 
 from tests.interactive import test_materials
@@ -7,6 +11,46 @@ from tests.interactive.test_native_documents_browser import login, native_studio
 from tests.ui.test_frontend_browser import chromium_path
 
 materials = test_materials.materials
+
+
+def test_offline_export_reports_vector_progress_before_download(materials, tmp_path, monkeypatch):
+    from vks_api import readonly_export
+    from vks_connect.local_embeddings import DIMENSIONS
+
+    web, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    test_materials.install(service, owner, manager, pid, aid)
+    continue_inference = Event()
+
+    class Model:
+        def passage_chunks(self, title, content):
+            return [[1]]
+
+        def run(self, rows):
+            assert continue_inference.wait(15)
+            return np.ones((len(rows), DIMENSIONS), dtype=np.float32)
+
+    monkeypatch.setattr(readonly_export, "encoder", lambda _: Model())
+    with (
+        native_studio(web.app, tmp_path, monkeypatch) as url,
+        sync_playwright() as playwright,
+        playwright.chromium.launch(executable_path=chromium_path(playwright), headless=True) as browser,
+    ):
+        page = browser.new_page()
+        login(page, url, pid, aid)
+        page.get_by_role("button", name="资料管理", exact=True).click()
+        with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/exports")) as accepted:
+            page.get_by_role("button", name="导出当前成品库", exact=True).click()
+        assert accepted.value.status == 202
+        job_id = accepted.value.json()["data"]["id"]
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            task = pool.submit(service.process_job, job_id)
+            try:
+                expect(page.get_by_text("正在生成本地向量… 15%", exact=True)).to_be_visible(timeout=12000)
+            finally:
+                continue_inference.set()
+            task.result(timeout=15)
+        expect(page.get_by_role("link", name="下载只读 HTML", exact=True)).to_be_visible()
 
 
 def test_materials_progressive_loading_deduplication_and_recycle_ui(materials, tmp_path, monkeypatch):

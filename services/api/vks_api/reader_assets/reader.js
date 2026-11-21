@@ -5198,8 +5198,11 @@
       el(
         "p",
         {},
-        `${data.documents.length} 份文档 / ${sections.length} 个章节 / ${data.prototypes.length} 套原型 / ${rag.chunks?.length || 0} 个向量片段`,
+        `${data.documents.length} 份文档 / ${sections.length} 个章节 / ${data.prototypes.length} 套原型`,
       ),
+      ...(data.local_rag?.chunks?.length
+        ? [el("p", {}, `${data.local_rag.chunks.length} 个本地向量片段，可在 Codex VKS 插件内免 Key 检索。`)]
+        : [el("p", {}, `${rag.chunks?.length || 0} 个向量片段`)]),
       el(
         "p",
         {},

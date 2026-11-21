@@ -55,6 +55,7 @@ JOB_SCOPES = {
     "suggest_links": "analysis:run",
     "detect_drift": "analysis:run",
     "capture": "capture:run",
+    "prototype_preview": "capture:run",
     "export": "knowledge:export",
 }
 RELATION_TYPES = {
@@ -108,6 +109,9 @@ class Actor:
 
 class Service:
     def __init__(self, data_dir=None, database_url=None):
+        from .knowledge_locator import studio_base_url
+
+        self.studio_base_url = studio_base_url(os.getenv("VKS_STUDIO_BASE_URL", ""))
         # Register all mapped tables before migrations or first-boot create_all.
         from . import (  # noqa: F401 - mapped-table registration
             knowledge,
@@ -1242,11 +1246,19 @@ class Service:
             if not j:
                 raise DomainError("VKS_NOT_FOUND", "未找到任务", 404)
             self.require(s, actor, j.project_id, JOB_SCOPES[j.kind])
+            if j.kind == "prototype_preview":
+                from .prototype_previews import require_idle_preview
+
+                if not actor.human:
+                    raise DomainError("VKS_FORBIDDEN", "请在 Studio 中主动更新预览", 403)
+                s.scalar(select(Project).where(Project.id == j.project_id).with_for_update())
             s.refresh(j, with_for_update=True)
             if j.created_by != actor.id and not self._can(s, actor, j.project_id, "project:manage"):
                 raise DomainError("VKS_FORBIDDEN", "只能重试自己发起的任务", 403)
             if j.state not in ("cancelled", "failed"):
                 raise DomainError("VKS_STATE_CONFLICT", "只有失败或取消的任务可重试", 409)
+            if j.kind == "prototype_preview":
+                require_idle_preview(s, j.project_id)
             j.state = "queued"
             j.cancel_requested = False
             j.error_json = {}
@@ -1447,13 +1459,14 @@ class Service:
             manifest[KEY] = dict(presentation.settings)
         return manifest
 
+    @staticmethod
+    def _release_catalog(pid):
+        return select(Release).where(Release.project_id == pid).order_by(Release.created_at.desc(), Release.id.desc())
+
     def releases(self, actor, pid):
         with self.db() as s:
             self.require(s, actor, pid)
-            return [
-                self.release_dto(r)
-                for r in s.scalars(select(Release).where(Release.project_id == pid).order_by(Release.created_at.desc()))
-            ]
+            return [self.release_dto(r) for r in s.scalars(self._release_catalog(pid))]
 
     def evidence_project(self, actor, eid):
         with self.db() as s:
@@ -1463,15 +1476,36 @@ class Service:
             self.require(s, actor, e.project_id)
             return e.project_id
 
-    def get_evidence(self, actor, pid, ids, max_chars=8000):
+    def get_evidence(self, actor, pid, ids, max_chars=8000, *, release_id=None):
+        from .reading import ReadingService
+
         with self.db() as s:
             self.require(s, actor, pid)
+            if release_id is not None:
+                if not release_id:
+                    raise DomainError("VKS_INVALID_SCOPE", "需要保存版本 ID")
+                reading = ReadingService(self)
+                analysis, release = reading.baseline(s, actor, pid, release_id=release_id)
+                if not release or not analysis:
+                    raise DomainError("VKS_NOT_FOUND", "未找到保存版本", 404)
+                choices, index = reading.selections(s, analysis, release)
+                visible = set(reading.visible_ids(s, actor, pid, choices).values())
+                referenced = {
+                    eid
+                    for relation in reading.edge_rows(s, analysis.id, index, selected=visible)
+                    if not relation["excluded"] and self._visible_relation(s, actor, pid, relation)
+                    for eid in relation["evidence_ids"]
+                }
+                if not set(ids) <= referenced:
+                    raise DomainError("VKS_NOT_FOUND", "未找到证据", 404)
             rows = []
             for eid in ids:
                 e = s.get(Evidence, eid)
                 if not e or e.project_id != pid or not self._visible_evidence(s, actor, pid, e):
                     raise DomainError("VKS_NOT_FOUND", "未找到证据", 404)
-                if not self._can(s, actor, pid, "knowledge:edit") and not s.scalar(
+                if release_id is not None and e.analysis_set_id != analysis.id:
+                    raise DomainError("VKS_NOT_FOUND", "未找到证据", 404)
+                if release_id is None and not self._can(s, actor, pid, "knowledge:edit") and not s.scalar(
                     select(Release).where(Release.analysis_set_id == e.analysis_set_id)
                 ):
                     raise DomainError("VKS_NOT_FOUND", "未找到证据", 404)
@@ -1517,10 +1551,10 @@ class Service:
             self.require(s, actor, e.project_id)
             return e.project_id
 
-    def search(self, actor, pid, payload):
+    def search(self, actor, pid, payload, *, metadata=None, control=None):
         from .reading import ReadingService
 
-        return ReadingService(self).search(actor, pid, payload)
+        return ReadingService(self).search(actor, pid, payload, metadata=metadata, control=control)
 
     def question(self, actor, pid, payload):
         if payload.get("use_model"):
@@ -1662,13 +1696,75 @@ class Service:
                 relations.append(dict(relation, evidence_ids=evidence_ids))
         return dict(result, changes=changes, impacted_relations=relations)
 
-    def project_context(self, actor, pid, release_id):
+    def project_context(
+        self, actor, pid, release_id=None, *, release_selector=None, prototype_page_query="", prototype_page_offset=0,
+    ):
+        from sqlalchemy.orm import load_only
+
+        from .knowledge_locator import saved_scope
+        from .materials import COMPOSITION, ROOT, MaterialTrash, readable
         from .modules import ModuleService
+        from .prototype_previews import MAX_PAGE_OFFSET, PrototypePreviews
+        from .reading import ReadingService, chunks
+
+        if (
+            (release_id is None) == (release_selector is None)
+            or release_id == ""
+            or release_selector not in (None, "latest_saved")
+        ):
+            raise DomainError("VKS_INVALID_SCOPE", "保存版本 ID 与选择方式只能选择一个")
+        if not 0 <= prototype_page_offset <= MAX_PAGE_OFFSET:
+            raise DomainError("VKS_INVALID_INPUT", "预览目录分页超出允许范围")
+        reading = ReadingService(self)
+
+        def has_readable_knowledge(s, release):
+            choices = reading.index(s, release).selections
+            visible = reading.visible_ids(s, actor, pid, choices)
+            for batch in chunks(visible.values()):
+                rows = s.execute(
+                    select(Revision.id, Revision.metadata_json)
+                    .join(Entity, Entity.id == Revision.entity_id)
+                    .where(Revision.id.in_(batch), Revision.project_id == pid, Entity.project_id == pid)
+                )
+                for rid, metadata in rows:
+                    if COMPOSITION in metadata or metadata.get("status") == "removed":
+                        continue
+                    if ROOT not in metadata:
+                        return True
+                    if metadata[ROOT].get("kind") == "prototype" and readable(self, s, actor, pid, s.get(Revision, rid)):
+                        return True
+            return False
+
+        with reading.db() as s:
+            if release_selector:
+                self.require(s, actor, pid)
+                trashed = select(MaterialTrash.target_id).where(
+                    MaterialTrash.project_id == pid,
+                    MaterialTrash.target_id == Release.id,
+                    MaterialTrash.kind.in_(("version", "purged_version")),
+                ).exists()
+                candidates = self._release_catalog(pid).where(~trashed).options(
+                    load_only(Release.id, Release.manifest_sha256)
+                )
+                release_id = next((row.id for row in s.scalars(candidates) if has_readable_knowledge(s, row)), None)
+                if release_id is None:
+                    raise DomainError("VKS_NO_SAVED_VERSION", "项目没有可读取的保存版本", 404)
+            else:
+                _, release = reading.baseline(s, actor, pid, release_id=release_id)
+                if not has_readable_knowledge(s, release):
+                    raise DomainError("VKS_NOT_FOUND", "未找到保存版本", 404)
 
         w = self.workspace(actor, pid, release_id=release_id)
+        pages, next_offset = PrototypePreviews(self).project_pages(
+            actor, pid, release_id, query=prototype_page_query, offset=prototype_page_offset,
+        )
         return {
             "project": w["project"],
             "release": w["selected_release"],
+            "scope": saved_scope(w["selected_release"]),
+            "prototype_pages": pages,
+            "prototype_pages_truncated": next_offset is not None,
+            **({"prototype_pages_next_offset": next_offset} if next_offset is not None else {}),
             "sources": w["sources"],
             "modules": ModuleService(self).context(actor, pid, release_id),
             "capabilities": w["capabilities"],
@@ -1891,6 +1987,8 @@ class Service:
                 raise DomainError("VKS_INVALID_INPUT", "不支持的导出格式")
             if payload.get("document_mode", "project") not in {"project", "original"}:
                 raise DomainError("VKS_INVALID_INPUT", "不支持的文档导出方式")
+            if payload.get("local_vectors") and payload["format"] != "readonly_html":
+                raise DomainError("VKS_INVALID_INPUT", "本地向量仅支持单文件 HTML 成品库")
             if payload.get("include_source"):
                 self.require(s, actor, pid, "source:read")
             return self.idem(
@@ -1983,11 +2081,12 @@ class Service:
 
     def artifact_bytes(self, actor, pid, aid):
         from .reading import ReadingService, artifact_policy
+        from .prototype_previews import PREVIEW_PREFIX
 
         with self.db() as s:
             self.require(s, actor, pid)
             a = s.get(Artifact, aid)
-            if not a or a.project_id != pid:
+            if not a or a.project_id != pid or a.relative_path.startswith(PREVIEW_PREFIX):
                 raise DomainError("VKS_NOT_FOUND", "未找到文件", 404)
             policy = artifact_policy(s, a)
             if policy.get("offline_archive_invalid"):

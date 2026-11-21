@@ -214,6 +214,7 @@ def _request_model(config, body):
     stream = CURRENT_MODEL_STREAM.get()
     if stream is not None and config["protocol"] in {"responses", "chat_completions"}:
         return request_stream(config, body, stream)
+    search_call = config.get("_search_call")
     with _model_preflight():
         # Internal multi-target transports may need proportionally more output
         # time. Public policy/input schemas do not expose this transient hint.
@@ -230,6 +231,8 @@ def _request_model(config, body):
         key = key_for_ref(config.get("secret_ref"), config["endpoint"])
         if config.get("secret_ref") and not key:
             failure("VKS_DEPENDENCY_UNAVAILABLE", "模型凭证引用未配置", 503)
+        if search_call:
+            request_timeout = search_call.timeout()
     # From connection construction onward any unclassified error is uncertain.
     # In particular, never infer not-sent from an HTTP status or exception code.
     from .model_transport import MODEL_CONNECTIONS, PinnedTLSConnection
@@ -246,6 +249,11 @@ def _request_model(config, body):
     conn = MODEL_CONNECTIONS.take(pool_key, connect, request_timeout)
     reusable = False
     try:
+        if search_call:
+            search_call.check()
+            if conn.sock is None:
+                conn.connect()
+            search_call.attach(conn)
         host = (f"[{p.hostname}]" if ":" in p.hostname else p.hostname) + (f":{port}" if port not in (80, 443) else "")
         headers = {
             "Host": host,
@@ -268,6 +276,8 @@ def _request_model(config, body):
         if response.status != 200:
             failure("VKS_INVALID_INPUT", "模型服务拒绝请求或发生重定向")
         result = json.loads(raw)
+        if search_call:
+            search_call.check()
         reusable = not getattr(response, "will_close", True) and getattr(conn, "sock", None) is not None
         return result
     except TimeoutError as exc:
@@ -305,7 +315,12 @@ def _request_model(config, body):
             retryable=True,
         ) from exc
     finally:
-        if reusable:
+        if search_call:
+            search_call.detach()
+            # Search may interrupt the socket concurrently as its deadline
+            # expires. Never put such a connection back in the common pool.
+            conn.close()
+        elif reusable:
             MODEL_CONNECTIONS.put(pool_key, conn)
         else:
             conn.close()

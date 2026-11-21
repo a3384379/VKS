@@ -22,18 +22,19 @@ class ExactVectorSearch:
         self.cache = OrderedDict()
         self.bytes = 0
 
-    def snapshot(self, store, pid, space, revisions, dimensions):
+    def snapshot(self, store, pid, space, revisions, dimensions, *, expected=None, check=None):
         # Revisions come from THIS request's authorized corpus, never a cached
         # permission decision. The DB epoch detects rebuilds in other processes.
         scope = tuple(sorted(revisions))
         snapshots = store.batch_reads()
-        snapshot_key = ("matrix", pid, space, scope, dimensions)
+        chunk_scope = None if expected is None else tuple(sorted(expected))
+        snapshot_key = ("matrix", pid, space, scope, dimensions, chunk_scope)
         if snapshot_key in snapshots:
             return snapshots[snapshot_key]
         with self.lock, store.db() as db:
             db.execute("BEGIN")
             epoch = db.execute("SELECT value FROM chunk_epoch WHERE id=1").fetchone()[0]
-            key = (pid, space, scope, dimensions, epoch)
+            key = (pid, space, scope, dimensions, chunk_scope, epoch)
             cached = self.cache.get(key)
             if cached is not None:
                 self.cache.move_to_end(key)
@@ -44,6 +45,23 @@ class ExactVectorSearch:
                 "AND revision IN (SELECT value FROM json_each(?))",
                 (pid, space, json.dumps(scope)),
             ).fetchall()
+            rejected = False
+            if expected is not None:
+                verified = []
+                for row in rows:
+                    if check:
+                        check()
+                    cid, revision, start, content, blob = row
+                    if (
+                        expected.get(cid) == (revision, start, content)
+                        and isinstance(blob, bytes)
+                        and len(blob) == dimensions * 4
+                        and 0.999 <= math.hypot(*decode(blob)) <= 1.001
+                    ):
+                        verified.append(row)
+                    else:
+                        rejected = True
+                rows = sorted(verified, key=lambda row: row[0])
             matrix = np.zeros((len(rows), dimensions), dtype=np.float64)
             valid = np.zeros(len(rows), dtype=bool)
             for i, row in enumerate(rows):
@@ -54,7 +72,7 @@ class ExactVectorSearch:
             # Nonstandard vectors must still use the old dot-product semantics;
             # never discard a legacy vector merely because its norm is unusual.
             normal = valid & np.isfinite(matrix).all(axis=1) & (np.linalg.norm(matrix, axis=1) <= 1.001)
-            cached = (rows, matrix, valid, normal)
+            cached = (rows, matrix, valid, normal, rejected)
             size = matrix.nbytes + sum(len(r[4]) if isinstance(r[4], bytes) else 0 for r in rows)
             if size <= self.max_bytes:
                 while self.cache and self.bytes + size > self.max_bytes:
@@ -67,7 +85,7 @@ class ExactVectorSearch:
 
     def nearest(self, store, pid, space, revisions, query, limit=36, *, snapshot=None):
         cached = snapshot if snapshot is not None else self.snapshot(store, pid, space, revisions, len(query))
-        rows, matrix, valid, normal = cached
+        rows, matrix, valid, normal, _ = cached
         if not rows:
             return []
         with np.errstate(invalid="ignore", over="ignore"):

@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VKS 知识工作台</title>
+  <!-- markdown-css -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --ink: #172520;
+      --canvas: #fafcfb;
+      --surface: #fff;
+      --muted: #54635c;
+      --line: #d5e0da;
+      --accent: #176b57;
+      --on-accent: #fff;
+      font: 15px/1.6 system-ui, -apple-system, sans-serif;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --ink: #edf4f0;
+      --canvas: #17201c;
+      --surface: #1e2b25;
+      --muted: #adc0b7;
+      --line: #40534a;
+      --accent: #91e0c2;
+      --on-accent: #12251e;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); }
+    main { width: min(100%, 900px); margin: auto; padding: clamp(16px, 5vw, 48px); }
+    header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: clamp(25px, 5vw, 34px); letter-spacing: -.04em; }
+    p { margin: .5rem 0; }
+    #search, article { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 16px; }
+    #search { margin-top: 20px; }
+    label { display: block; font-weight: 650; margin-bottom: 4px; }
+    [hidden] { display: none !important; }
+    select, input, button { font: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+    select, input { background: var(--surface); color: var(--ink); min-width: 0; }
+    select { max-width: 100%; }
+    .search { display: flex; flex-wrap: wrap; gap: 8px; }
+    input { flex: 1 1 12rem; }
+    button { border-color: var(--accent); background: var(--accent); color: var(--on-accent); cursor: pointer; }
+    button:disabled { opacity: .55; cursor: default; }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    #scope, #status { color: var(--muted); }
+    #scope { margin: 6px 0 14px; }
+    #status { min-height: 1.6em; }
+    #results { display: grid; gap: 10px; }
+    article h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+    article .excerpt { white-space: pre-wrap; overflow-wrap: anywhere; }
+    article .rich-markdown, #navigation { margin: .75rem 0; }
+    article .rich-markdown > :first-child { margin-top: 0; }
+    #navigation input { width: 100%; }
+    #navigation button { margin-top: .35rem; }
+    #embedding-settings { margin-top: .7rem; }
+    #embedding-settings summary { cursor: pointer; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>VKS 知识工作台</h1>
+    <a id="studio" hidden target="_blank" rel="noopener noreferrer">打开 Studio</a>
+  </header>
+  <section id="navigation" hidden aria-label="Studio 链接">
+    <p id="navigation-status" role="status"></p>
+    <label for="studio-address">Studio 地址</label>
+    <input id="studio-address" readonly>
+    <button id="copy-address" type="button">复制链接</button>
+  </section>
+  <section id="search" role="search">
+    <button id="pick-library" type="button" hidden>选择成品库</button>
+    <label id="project-label" for="project">项目</label>
+    <select id="project" disabled></select>
+    <p id="scope">正在读取可访问项目…</p>
+    <label for="query">搜索保存版本</label>
+    <div class="search">
+      <input id="query" maxlength="1000" placeholder="输入关键词或完整问题" disabled>
+      <button id="submit" type="button" disabled>搜索</button>
+    </div>
+    <details id="embedding-settings" hidden>
+      <summary>云端向量检索（可选）</summary>
+      <p id="embedding-index"></p>
+      <label><input type="checkbox" id="cloud-search"> 使用已配置的云端嵌入服务</label>
+      <label for="embedding-url">嵌入服务地址</label>
+      <div class="search">
+        <input id="embedding-url" type="url" value="https://api.openai.com/v1" maxlength="2048">
+        <button id="embedding-save" type="button">在系统窗口输入 API Key</button>
+      </div>
+      <p id="embedding-status" role="status"></p>
+    </details>
+  </section>
+  <p id="status" role="status" aria-live="polite"></p>
+  <div id="results" aria-label="检索结果"></div>
+</main>
+<!-- markdown-js -->
+<script>
+  "use strict";
+  const byId = (id) => document.getElementById(id);
+  const project = byId("project");
+  const query = byId("query");
+  const submit = byId("submit");
+  const scopeLabel = byId("scope");
+  const status = byId("status");
+  const results = byId("results");
+  const studio = byId("studio");
+  const pickLibrary = byId("pick-library");
+  const navigation = byId("navigation");
+  const navigationStatus = byId("navigation-status");
+  const address = byId("studio-address");
+  const rasterTypes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+  const pending = new Map();
+  let sequence = 0;
+  let request = 0;
+  let scope;
+  let studioBase;
+  let libraryMode = false;
+  let navigationRequest = 0;
+  let visibleChapters;
+
+  function post(message) {
+    window.parent.postMessage({jsonrpc: "2.0", ...message}, "*");
+  }
+
+  function rpc(method, params, timeoutMs = 15000) {
+    const id = ++sequence;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error("连接超时，请重试。"));
+      }, timeoutMs);
+      pending.set(id, {resolve, reject, timeout});
+      post({id, method, params});
+    });
+  }
+
+  async function callToolResult(name, args, timeoutMs = 35000) {
+    const reply = await rpc("tools/call", {name, arguments: args}, timeoutMs);
+    if (reply.isError || !reply.structuredContent) {
+      throw new Error(reply.structuredContent?.error?.message || "VKS 未返回可用数据。");
+    }
+    return reply.structuredContent;
+  }
+
+  async function callTool(name, args, timeoutMs) {
+    return (await callToolResult(name, args, timeoutMs)).data;
+  }
+
+  byId("copy-address").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(address.value);
+      navigationStatus.textContent = libraryMode ? "已复制成品库链接。" : "已复制 Studio 链接。";
+    } catch {
+      address.focus();
+      address.select();
+      navigationStatus.textContent = "已选中地址，请按 ⌘C 或 Ctrl+C 复制。";
+    }
+  });
+
+  function navigationLink(link, value, locator) {
+    try {
+      const url = new URL(value);
+      if (url.username || url.password || url.search) return false;
+      if (libraryMode) {
+        const base = new URL(scope.file_url);
+        if (url.protocol !== "file:" || url.host !== base.host || url.pathname !== base.pathname) return false;
+      } else if (!studioBase || url.origin !== studioBase.origin || url.pathname !== "/") return false;
+      link.href = url.href;
+      link.onclick = async (event) => {
+        if (!event.isTrusted || event.defaultPrevented) return;
+        event.preventDefault();
+        const ticket = ++navigationRequest;
+        const destination = libraryMode ? "成品库" : "Studio";
+        address.value = url.href;
+        navigation.hidden = false;
+        navigationStatus.textContent = `正在打开${destination}…`;
+        try {
+          const result = libraryMode
+            ? await callTool("open_vks_library", locator)
+            : await callTool("open_vks_studio", {fragment: url.hash.slice(1)});
+          if (!result?.requested) throw new Error();
+          if (ticket === navigationRequest) navigationStatus.textContent = `已请求系统浏览器打开 ${destination}。`;
+        } catch {
+          if (ticket === navigationRequest) navigationStatus.textContent = `系统未能打开 ${destination}，可以复制地址。`;
+        }
+      };
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function selectProject() {
+    const ticket = ++request;
+    visibleChapters?.disconnect();
+    scope = undefined;
+    query.disabled = submit.disabled = true;
+    status.textContent = "";
+    results.replaceChildren();
+    if (!project.value) {
+      scopeLabel.textContent = "当前凭据没有可访问的项目。";
+      return;
+    }
+    scopeLabel.textContent = "正在读取最新保存版本…";
+    const projectId = project.value;
+    try {
+      const context = await callTool("get_project_context", {
+        project_id: projectId, release_selector: "latest_saved",
+      });
+      if (ticket !== request) return;
+      if (!context.scope?.release_id || context.scope.project_id !== projectId) throw new Error("缺少准确的保存版本。");
+      scope = {project_id: projectId, release_id: context.scope.release_id};
+      scopeLabel.textContent = "保存版本 " + (context.scope.release_label || context.scope.release_id);
+      query.disabled = submit.disabled = false;
+    } catch (error) {
+      if (ticket === request) scopeLabel.textContent = error.message;
+    }
+  }
+
+  function useLibrary(data) {
+    libraryMode = true;
+    ++request;
+    visibleChapters?.disconnect();
+    results.replaceChildren();
+    status.textContent = "";
+    navigation.hidden = true;
+    scope = data.library;
+    const index = scope?.vector_index;
+    const localIndex = scope?.local_vector_index;
+    byId("embedding-settings").hidden = !index;
+    byId("cloud-search").checked = false;
+    byId("embedding-index").textContent = index ? `${index.model} · ${index.dimensions} 维` : "";
+    byId("embedding-status").textContent = "";
+    byId("project-label").hidden = project.hidden = true;
+    document.querySelector('label[for="query"]').textContent = "搜索成品库";
+    byId("navigation").setAttribute("aria-label", "成品库链接");
+    document.querySelector('label[for="studio-address"]').textContent = "成品库地址";
+    pickLibrary.textContent = scope ? "更换成品库" : "选择成品库";
+    pickLibrary.hidden = false;
+    scopeLabel.textContent = scope
+      ? `${scope.project_name} · ${scope.version} · ${scope.file_name}${localIndex ? " · 本地向量" : ""}`
+      : data.message || "请选择本机 VKS 只读成品库 HTML。";
+    query.disabled = submit.disabled = !scope;
+    studio.textContent = "打开成品库";
+    studio.hidden = !scope || !navigationLink(studio, scope.file_url, {library_ref: scope.library_ref});
+  }
+
+  byId("embedding-save").addEventListener("click", async (event) => {
+    if (!event.isTrusted || !scope?.vector_index) return;
+    const libraryRef = scope.library_ref;
+    const display = byId("embedding-status");
+    const control = event.currentTarget;
+    control.disabled = true;
+    display.textContent = "请在系统窗口输入 Key。";
+    try {
+      const configured = await callTool("configure_vks_library_embedding", {
+        library_ref: libraryRef, endpoint: byId("embedding-url").value.trim(),
+      }, 110000);
+      if (scope?.library_ref === libraryRef) display.textContent = configured.cancelled ? "已取消。" : "已保存。勾选云端检索后生效。";
+    } catch (error) {
+      if (scope?.library_ref === libraryRef) display.textContent = error.message;
+    } finally {
+      control.disabled = false;
+    }
+  });
+
+  pickLibrary.addEventListener("click", async (event) => {
+    if (!event.isTrusted) return;
+    pickLibrary.disabled = true;
+    status.textContent = "请选择 VKS 只读成品库 HTML…";
+    try {
+      const library = await callTool("choose_vks_library", {}, 120000);
+      if (library.cancelled) status.textContent = "已取消选择。";
+      else useLibrary({library});
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      pickLibrary.disabled = false;
+    }
+  });
+
+  function begin(result) {
+    if (result._meta?.["vks/library"]) {
+      useLibrary(result._meta["vks/library"]);
+      return;
+    }
+    const data = result._meta?.["vks/workspace"];
+    if (!data) {
+      scopeLabel.textContent = result.structuredContent?.error?.message || "无法读取工作台，请重新打开。";
+      return;
+    }
+    try {
+      const url = new URL(data.studioBaseUrl);
+      const loopback = ["localhost", "[::1]"].includes(url.hostname) || /^127(?:\.\d{1,3}){3}$/.test(url.hostname);
+      if ((url.protocol === "https:" || url.protocol === "http:" && loopback) && !url.username && !url.password) {
+        studioBase = url;
+        studio.hidden = !navigationLink(studio, url.href);
+      }
+    } catch {}
+    project.replaceChildren(...data.projects.map((item) => new Option(item.name, item.id)));
+    if (data.projects.some((item) => item.id === data.defaultProjectId)) project.value = data.defaultProjectId;
+    project.disabled = !project.options.length;
+    selectProject();
+  }
+
+  window.addEventListener("message", ({source, data}) => {
+    if (source !== window.parent || data?.jsonrpc !== "2.0") return;
+    const call = pending.get(data.id);
+    if (call && !data.method) {
+      pending.delete(data.id);
+      clearTimeout(call.timeout);
+      if (data.error) call.reject(new Error("宿主无法完成请求。"));
+      else call.resolve(data.result);
+    } else if (data.method === "ui/notifications/tool-result") {
+      begin(data.params);
+    } else if (data.method === "ui/notifications/host-context-changed" && data.params?.theme) {
+      document.documentElement.dataset.theme = data.params.theme;
+    } else if (data.method === "ui/resource-teardown" && data.id !== undefined) {
+      post({id: data.id, result: {}});
+    }
+  });
+
+  function displayMarkdown(source) {
+    // Historical documents may set Mermaid display options. Keep the graph and
+    // use the local renderer's strict configuration. Studio retains the source.
+    let fence;
+    return source.split(/(?<=\n)/).map((line) => {
+      const marker = /^ {0,3}(`{3,}|~{3,})(.*)/.exec(line);
+      if (fence) {
+        if (marker && marker[1][0] === fence[0][0] && marker[1].length >= fence[0].length &&
+            !marker[2].trim()) fence = undefined;
+        else if (fence[1] === "mermaid" && /^\s*%%\{\s*init(?:ialize)?\s*:.*\}%%\s*$/i.test(line)) return "";
+      } else if (marker) {
+        fence = [marker[1], marker[2].trim().split(/\s/)[0].toLowerCase()];
+      }
+      return line;
+    }).join("");
+  }
+
+  async function readChapter(locator, ticket) {
+    if (libraryMode) {
+      const chunks = [];
+      let offset = 0;
+      for (let index = 0; index < 8 && ticket === request; index++) {
+        const page = await callTool("read_vks_library_section", {...locator, offset, max_chars: 8000});
+        if (page.section_id !== locator.section_id || page.offset !== offset || typeof page.content !== "string") throw new Error();
+        chunks.push(page.content);
+        if (page.next_offset === null) return chunks.join("");
+        if (!Number.isInteger(page.next_offset) || page.next_offset <= offset) throw new Error();
+        offset = page.next_offset;
+      }
+      throw new Error();
+    }
+    const {project_id, release_id, document_id, document_revision_id, section_revision_id, content_sha256} = locator;
+    if (project_id !== scope.project_id || release_id !== scope.release_id) throw new Error();
+    const chunks = [];
+    let offset = 0;
+    for (let index = 0; index < 8 && ticket === request; index++) {
+      const page = await callTool("get_workspace_document", {
+        project_id, release_id, document_id, revision_id: document_revision_id,
+        section_revision_ids: [section_revision_id], max_chars: 8000, offset,
+      });
+      const section = page.sections?.[0];
+      if (page.document_id !== document_id || page.entity_revision_id !== document_revision_id ||
+          page.offset !== offset || page.sections.length !== 1 || section.section_revision_id !== section_revision_id ||
+          section.locator?.content_sha256 !== content_sha256 || typeof section.content !== "string") throw new Error();
+      chunks.push(section.content);
+      if (page.next_offset === null) return chunks.join("");
+      if (!Number.isInteger(page.next_offset) || page.next_offset <= offset) throw new Error();
+      offset = page.next_offset;
+    }
+    throw new Error();
+  }
+
+  async function chapterImages(markdown, locator, ticket) {
+    const available = new Map();
+    const paths = [...window.VksReaderMarkdown.imageReferences(markdown)].filter((target) => {
+      try {
+        const path = decodeURIComponent(target);
+        return path.trim() && path.length <= 2048 &&
+          !/^(?:[a-z][a-z\d+.-]*:|\/)|[\\?#\x00-\x1f\x7f]/i.test(path);
+      } catch { return false; }
+    });
+    for (const path of paths.slice(0, 12)) {
+      if (ticket !== request) break;
+      try {
+        const {release_id, document_id, document_revision_id} = locator;
+        const reply = await rpc("tools/call", libraryMode
+          ? {name: "read_vks_library_image", arguments: {...locator, path}}
+          : {name: "read_vks_document_image", arguments: {release_id, document_id, document_revision_id, path}}, 35000);
+        const image = reply.content?.find((part) => part.type === "image");
+        if (!reply.isError && rasterTypes.has(image?.mimeType) && typeof image.data === "string" &&
+            image.data.length <= 2796204 && /^[A-Za-z0-9+/]+={0,2}$/.test(image.data)) {
+          available.set(path, `data:${image.mimeType};base64,${image.data}`);
+        }
+      } catch {}
+    }
+    return available;
+  }
+
+  async function renderChapter(row, body, ticket) {
+    if (ticket !== request) return;
+    try {
+      const markdown = displayMarkdown(await readChapter(row.locator, ticket));
+      if (ticket !== request) return;
+      const images = await chapterImages(markdown, row.locator, ticket);
+      if (ticket !== request) return;
+      const chapter = window.VksReaderMarkdown.render(markdown, {resolveImage: (path) => images.get(path)});
+      const heading = chapter.firstElementChild;
+      if (heading?.matches("h1,h2,h3,h4,h5,h6") && heading.textContent.trim() === row.entity.name) heading.remove();
+      body.replaceWith(chapter);
+    } catch {
+      if (ticket !== request) return;
+      const message = document.createElement("small");
+      message.textContent = libraryMode ? "当前仅显示摘要，可打开成品库阅读完整章节。" : "当前仅显示检索摘要，可在 Studio 阅读完整章节。";
+      body.append(document.createElement("br"), message);
+    }
+  }
+
+  project.addEventListener("change", selectProject);
+  async function search() {
+    const term = query.value.trim();
+    if (!scope || !term || submit.disabled) return;
+    const ticket = ++request;
+    visibleChapters?.disconnect();
+    submit.disabled = true;
+    status.textContent = "正在检索…";
+    results.replaceChildren();
+    try {
+      const libraryRef = scope.library_ref;
+      const libraryResult = libraryMode ? await callToolResult("search_vks_library", {
+        library_ref: libraryRef, query: term, limit: 8,
+        retrieval_mode: byId("cloud-search").checked ? "hybrid" : "auto",
+      }) : null;
+      const rows = libraryResult ? libraryResult.data.map((row) => ({
+        entity: {name: row.title}, documentTitle: row.document_title, excerpt: row.excerpt, url: row.file_url,
+        locator: {library_ref: libraryRef, section_id: row.section_id},
+      })) : await callTool("search_knowledge", {
+        ...scope, query: term, retrieval_mode: "keyword", kinds: ["section"], limit: 8,
+      });
+      if (ticket !== request) return;
+      const chapters = new Map();
+      let queue = Promise.resolve();
+      visibleChapters = new IntersectionObserver((entries, observer) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          observer.unobserve(entry.target);
+          const row = chapters.get(entry.target);
+          chapters.delete(entry.target);
+          queue = queue.then(() => renderChapter(row, entry.target, ticket));
+        }
+      });
+      for (const row of rows) {
+        const article = document.createElement("article");
+        const title = document.createElement("h2");
+        title.textContent = row.entity.name;
+        const excerpt = document.createElement("p");
+        excerpt.className = "excerpt";
+        excerpt.textContent = row.excerpt || "";
+        const link = document.createElement("a");
+        link.textContent = libraryMode ? "在成品库打开原文章节" : row.locator ? "在 Studio 打开原文章节" : "在 Studio 打开版本目录";
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        article.append(title);
+        if (row.documentTitle && row.documentTitle !== row.entity.name) {
+          const documentTitle = document.createElement("small");
+          documentTitle.textContent = row.documentTitle;
+          article.append(documentTitle);
+        }
+        article.append(excerpt);
+        if (navigationLink(link, libraryMode ? row.url : row.studio_url, row.locator)) article.append(link);
+        results.append(article);
+        if (row.locator) {
+          chapters.set(excerpt, row);
+          visibleChapters.observe(excerpt);
+        }
+      }
+      const count = rows.length ? `找到 ${rows.length} 个章节` : "没有找到匹配章节。";
+      const used = libraryResult?.retrieval?.used;
+      const notes = {
+        embedding_not_configured: "尚未配置向量检索",
+        embedding_key_missing: "未找到嵌入服务 Key",
+        embedding_model_mismatch: "嵌入配置与成品库模型不匹配",
+        embedding_unavailable: "嵌入服务暂不可用",
+        embedding_response_invalid: "嵌入服务返回的向量无效",
+        no_vector_index: "此成品库没有可用向量",
+        no_local_index: "此成品库没有本地向量索引",
+        local_model_unavailable: "本地向量模型不可用",
+      };
+      const note = notes[libraryResult?.retrieval?.fallback];
+      const vectorLabels = {local: "本地向量 + 关键词", cloud: "云端向量 + 关键词"};
+      const modeLabel = vectorLabels[libraryResult?.retrieval?.vector_source] || "关键词检索";
+      status.textContent = used ? `${modeLabel} · ${count}${note ? `（${note}）` : ""}` : count;
+    } catch (error) {
+      if (ticket === request) status.textContent = error.message;
+    } finally {
+      if (ticket === request) submit.disabled = false;
+    }
+  }
+  submit.addEventListener("click", search);
+  query.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.isComposing) search();
+  });
+
+  rpc("ui/initialize", {
+    protocolVersion: "2026-01-26",
+    appInfo: {name: "VKS", version: "3.1"},
+    appCapabilities: {},
+  }).then((response) => {
+    if (response.hostContext?.theme) document.documentElement.dataset.theme = response.hostContext.theme;
+    post({method: "ui/notifications/initialized", params: {}});
+  }).catch((error) => {
+    scopeLabel.textContent = error.message;
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# 拟开发连接器的纯MCP配置模板；替换为真实安装路径。
+# 不依赖.zshrc/PATH；配置/凭据从default连接配置中读取。
+# 如果插件已经注册同一服务，不再添加此项。
+
+[mcp_servers.vks]
+command = "/Users/your-user/Library/Application Support/VKS/connector/bin/vks-connect"
+args = ["mcp", "--profile", "requirements-readonly", "--connection", "default"]
+enabled = true
+startup_timeout_sec = 15
+tool_timeout_sec = 20
+enabled_tools = ["list_projects", "get_project_context", "search_knowledge", "get_workspace_document", "get_interactive_context", "get_prototype_action_context", "get_evidence", "get_prototype_preview"]

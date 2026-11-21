@@ -8,13 +8,19 @@ import json
 import os
 import re
 import secrets
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import RLock
 from time import monotonic
 from urllib.parse import urlsplit
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent
+if not __package__:
+    sys.path.insert(0, str(ROOT.parents[1]))
+
+from packages.private_files import read_private_file, write_private_file  # noqa: E402
+
 POLICY = "default-src 'none'; script-src 'self' blob: 'unsafe-inline' 'unsafe-eval'; style-src blob: data: 'unsafe-inline'; img-src blob: data:; font-src data: blob:; frame-src 'self' about: blob:; worker-src blob:; connect-src 'none'; form-action 'none'; object-src 'none'; base-uri 'none'"
 REGISTRY_LOCK = RLock()
 MAX_REGISTRATIONS = 2048
@@ -92,16 +98,17 @@ def origin_secret():
     )
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = directory / "origin.key"
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        pass
-    else:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(secrets.token_bytes(32))
-    raw = path.read_bytes()
-    if len(raw) != 32 or path.stat().st_mode & 0o077:
-        raise ValueError("Runtime 来源密钥文件无效，要求私有 0600 文件")
+    with REGISTRY_LOCK:
+        try:
+            raw = read_private_file(path, 32)
+        except FileNotFoundError:
+            try:
+                write_private_file(path, secrets.token_bytes(32), create_only=True)
+            except FileExistsError:
+                pass
+            raw = read_private_file(path, 32)
+    if len(raw) != 32:
+        raise ValueError("Runtime 来源密钥文件无效")
     return raw
 
 
@@ -234,6 +241,13 @@ class RuntimeHandler(BaseHTTPRequestHandler):
         if not hostname:
             self.send_error(403)
             return
+        if parsed.path == "/health":
+            self.json_response(200, {
+                "service": "vks-runtime",
+                "status": "ready",
+                **({"launcher_instance": marker} if (marker := os.getenv("VKS_LAUNCHER_INSTANCE")) else {}),
+            })
+            return
         file = {"/": "index.html", "/bridge.js": "bridge.js"}.get(parsed.path)
         if not file:
             self.send_error(404)
@@ -284,4 +298,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=5195)
     args = parser.parse_args()
+    try:
+        origin_secret()
+    except (OSError, ValueError):
+        raise SystemExit("Runtime 来源密钥不可用，请检查实例目录权限与私有文件 ACL") from None
     ThreadingHTTPServer(("127.0.0.1", args.port), RuntimeHandler).serve_forever()

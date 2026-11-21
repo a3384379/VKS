@@ -1127,231 +1127,315 @@ class ReadingService:
                 "selected_release": self.service.release_dto(release) if release else None,
             }
 
-    def search(self, actor, pid, payload):
+    def _search_context(self, s, actor, pid, payload):
         from .knowledge import SourceConnector, SourceSnapshot
         from .modules import BusinessModule, ModuleConnector, ModuleEntity, ModuleSource
+        from .service import DomainError
+
+        analysis, release = self.baseline(s, actor, pid, payload.get("analysis_set_id"), payload.get("release_id"))
+        choices, index = self.selections(s, analysis, release)
+        visible = self.visible_ids(s, actor, pid, choices)
+        visible_endpoints = set(visible.values())
+        if payload.get("module_id"):
+            module = s.get(BusinessModule, payload["module_id"])
+            if not module or module.project_id != pid:
+                raise DomainError("VKS_NOT_FOUND", "未找到业务模块", 404)
+            mids = {module.id}
+            frontier = set(mids)
+            while frontier and payload.get("include_descendants", True):
+                children = (
+                    set(
+                        s.scalars(
+                            select(BusinessModule.id).where(
+                                BusinessModule.project_id == pid, BusinessModule.parent_id.in_(frontier)
+                            )
+                        )
+                    )
+                    - mids
+                )
+                mids.update(children)
+                frontier = children
+            allowed = set(s.scalars(select(ModuleEntity.entity_id).where(ModuleEntity.module_id.in_(mids))))
+            snapshots = set(
+                s.scalars(select(ModuleSource.source_snapshot_id).where(ModuleSource.module_id.in_(mids)))
+            )
+            connectors = list(
+                s.scalars(
+                    select(SourceConnector.key)
+                    .join(ModuleConnector, ModuleConnector.connector_id == SourceConnector.id)
+                    .where(ModuleConnector.module_id.in_(mids), SourceConnector.project_id == pid)
+                )
+            )
+            if connectors:
+                snapshots.update(
+                    s.scalars(
+                        select(SourceSnapshot.id).where(
+                            SourceSnapshot.project_id == pid, SourceSnapshot.source_key.in_(connectors)
+                        )
+                    )
+                )
+            if snapshots:
+                for batch in chunks(visible.values()):
+                    allowed.update(
+                        s.scalars(
+                            select(Revision.entity_id)
+                            .join(Artifact, Revision.artifact_id == Artifact.id)
+                            .where(Revision.id.in_(batch), Artifact.snapshot_id.in_(snapshots))
+                        )
+                    )
+            visible = {eid: rid for eid, rid in visible.items() if eid in allowed}
+        return analysis, release, choices, index, visible, visible_endpoints
+
+    def _search_rows(self, s, pid, visible, payload, query=None, *, check=None):
+        from sqlalchemy import case
+
+        from .knowledge import SourceSnapshot
+
+        content_column = (
+            Revision.content if query is not None else case((Entity.type == "document", ""), else_=Revision.content)
+        )
+        source_keys = (
+            dict(
+                s.execute(
+                    select(SourceSnapshot.id, SourceSnapshot.service_key).where(SourceSnapshot.project_id == pid)
+                ).all()
+            )
+            if payload.get("service_key")
+            else {}
+        )
+        for batch in chunks(visible.values()):
+            if check:
+                check()
+            statement = (
+                select(
+                    Revision.id,
+                    Revision.entity_id,
+                    Revision.name,
+                    content_column,
+                    Revision.content_sha256,
+                    Revision.semantic_content_sha256,
+                    literal("1.0"),
+                    Revision.metadata_json,
+                    Revision.locator,
+                    Entity.stable_key,
+                    Entity.type,
+                    Artifact.relative_path,
+                    Artifact.snapshot_id,
+                )
+                .join(Entity, Revision.entity_id == Entity.id)
+                .outerjoin(Artifact, Revision.artifact_id == Artifact.id)
+                .where(
+                    Revision.id.in_(batch),
+                    Revision.project_id == pid,
+                    Entity.project_id == pid,
+                    or_(Artifact.id.is_(None), Artifact.project_id == pid),
+                )
+            )
+            if payload.get("kinds"):
+                statement = statement.where(Entity.type.in_(payload["kinds"]))
+            if query is not None and self.service.engine.dialect.name == "sqlite":
+                # SQLite's builtin LOWER does not implement Unicode
+                # casefold. The deterministic connection UDF preserves the
+                # exact existing search behavior while reducing row DTOs.
+                statement = statement.where(
+                    or_(
+                        *(
+                            func.vks_casefold(column).contains(query, autoescape=True)
+                            for column in (
+                                Revision.name,
+                                Entity.stable_key,
+                                Revision.content,
+                                Artifact.relative_path,
+                            )
+                        ),
+                        *(
+                            func.vks_json_casefold(cast(column, Text)).contains(query, autoescape=True)
+                            for column in (Revision.metadata_json, Revision.locator)
+                        ),
+                    )
+                )
+            elif (
+                query is not None
+                and self.service.engine.dialect.name == "postgresql"
+                and re.fullmatch(r"[A-Za-z0-9_./-]+", query)
+            ):
+                # Conservative SQL candidates only. Unicode/escaped JSON
+                # always falls back to the exact Python casefold below.
+                columns = (
+                    Revision.name,
+                    Entity.stable_key,
+                    Revision.content,
+                    Artifact.relative_path,
+                    cast(Revision.metadata_json, Text),
+                    cast(Revision.locator, Text),
+                )
+                statement = statement.where(
+                    or_(
+                        *(
+                            clause
+                            for column in columns
+                            for clause in (
+                                func.lower(column).contains(query, autoescape=True),
+                                column.op("~")(r"[^\x20-\x7e]"),
+                                column.contains("\\u", autoescape=True),
+                            )
+                        )
+                    )
+                )
+            for (
+                rid,
+                eid,
+                name,
+                content,
+                content_hash,
+                semantic_hash,
+                schema,
+                metadata,
+                locator,
+                stable_key,
+                kind,
+                path,
+                snapshot_id,
+            ) in s.execute(statement):
+                path = path or ""
+                service_key = metadata.get("service_key") or source_keys.get(snapshot_id)
+                if payload.get("service_key") and payload["service_key"] != service_key:
+                    continue
+                yield (rid, eid, name, content, content_hash, semantic_hash, schema, metadata, locator, stable_key, kind, path)
+
+    @staticmethod
+    def _search_match(query, name, stable_key, path, content, metadata, locator, canonical):
+        direct = (name, stable_key, path)
+        exact = any(query in value.casefold() for value in direct)
+        searchable = metadata
+        if prototype := metadata.get("prototype_manifest"):
+            # Anchor positions and action keys are only discoverable
+            # through their own authorized action projection.
+            searchable = {
+                **metadata,
+                "prototype_manifest": {
+                    "routeAliases": prototype["routeAliases"],
+                    "states": [
+                        {key: state[key] for key in ("stateKey", "name")} for state in prototype["states"]
+                    ],
+                },
+            }
+        if (
+            not exact
+            and query not in content.casefold()
+            and query not in canonical(searchable).casefold()
+            and query not in canonical(locator).casefold()
+        ):
+            return None
+        return "exact" if exact else "fulltext"
+
+    def search(self, actor, pid, payload, *, metadata=None, control=None):
+        from .documents import DocumentService
         from .service import DomainError, canonical
 
+        mode = payload.get("retrieval_mode", "legacy")
+        if mode != "legacy":
+            from .knowledge_search import search
+
+            return search(self, actor, pid, payload, metadata=metadata, control=control)
         query = payload["query"].strip().casefold()
         if not query:
             raise DomainError("VKS_INVALID_INPUT", "请输入检索词")
         with self.db() as s:
-            analysis, release = self.baseline(s, actor, pid, payload.get("analysis_set_id"), payload.get("release_id"))
-            choices, index = self.selections(s, analysis, release)
-            visible = self.visible_ids(s, actor, pid, choices)
-            visible_endpoints = set(visible.values())
-            if payload.get("module_id"):
-                module = s.get(BusinessModule, payload["module_id"])
-                if not module or module.project_id != pid:
-                    raise DomainError("VKS_NOT_FOUND", "未找到业务模块", 404)
-                mids = {module.id}
-                frontier = set(mids)
-                while frontier and payload.get("include_descendants", True):
-                    children = (
-                        set(
-                            s.scalars(
-                                select(BusinessModule.id).where(
-                                    BusinessModule.project_id == pid, BusinessModule.parent_id.in_(frontier)
-                                )
-                            )
-                        )
-                        - mids
-                    )
-                    mids.update(children)
-                    frontier = children
-                allowed = set(s.scalars(select(ModuleEntity.entity_id).where(ModuleEntity.module_id.in_(mids))))
-                snapshots = set(
-                    s.scalars(select(ModuleSource.source_snapshot_id).where(ModuleSource.module_id.in_(mids)))
-                )
-                connectors = list(
-                    s.scalars(
-                        select(SourceConnector.key)
-                        .join(ModuleConnector, ModuleConnector.connector_id == SourceConnector.id)
-                        .where(ModuleConnector.module_id.in_(mids), SourceConnector.project_id == pid)
-                    )
-                )
-                if connectors:
-                    snapshots.update(
-                        s.scalars(
-                            select(SourceSnapshot.id).where(
-                                SourceSnapshot.project_id == pid, SourceSnapshot.source_key.in_(connectors)
-                            )
-                        )
-                    )
-                if snapshots:
-                    for batch in chunks(visible.values()):
-                        allowed.update(
-                            s.scalars(
-                                select(Revision.entity_id)
-                                .join(Artifact, Revision.artifact_id == Artifact.id)
-                                .where(Revision.id.in_(batch), Artifact.snapshot_id.in_(snapshots))
-                            )
-                        )
-                visible = {eid: rid for eid, rid in visible.items() if eid in allowed}
+            analysis, release, choices, index, visible, visible_endpoints = self._search_context(s, actor, pid, payload)
             found = []
-            source_keys = (
-                dict(
-                    s.execute(
-                        select(SourceSnapshot.id, SourceSnapshot.service_key).where(SourceSnapshot.project_id == pid)
-                    ).all()
-                )
-                if payload.get("service_key")
-                else {}
-            )
-            for batch in chunks(visible.values()):
-                statement = (
-                    select(
-                        Revision.id,
-                        Revision.entity_id,
-                        Revision.name,
-                        Revision.content,
-                        Revision.content_sha256,
-                        Revision.semantic_content_sha256,
-                        literal("1.0"),
-                        Revision.metadata_json,
-                        Revision.locator,
-                        Entity.stable_key,
-                        Entity.type,
-                        Artifact.relative_path,
-                        Artifact.snapshot_id,
-                    )
-                    .join(Entity, Revision.entity_id == Entity.id)
-                    .outerjoin(Artifact, Revision.artifact_id == Artifact.id)
-                    .where(Revision.id.in_(batch))
-                )
-                if payload.get("kinds"):
-                    statement = statement.where(Entity.type.in_(payload["kinds"]))
-                if self.service.engine.dialect.name == "sqlite":
-                    # SQLite's builtin LOWER does not implement Unicode
-                    # casefold. The deterministic connection UDF preserves the
-                    # exact existing search behavior while reducing row DTOs.
-                    statement = statement.where(
-                        or_(
-                            *(
-                                func.vks_casefold(column).contains(query, autoescape=True)
-                                for column in (
-                                    Revision.name,
-                                    Entity.stable_key,
-                                    Revision.content,
-                                    Artifact.relative_path,
-                                )
-                            ),
-                            *(
-                                func.vks_json_casefold(cast(column, Text)).contains(query, autoescape=True)
-                                for column in (Revision.metadata_json, Revision.locator)
-                            ),
-                        )
-                    )
-                elif self.service.engine.dialect.name == "postgresql" and re.fullmatch(r"[A-Za-z0-9_./-]+", query):
-                    # Conservative SQL candidates only. Unicode/escaped JSON
-                    # always falls back to the exact Python casefold below.
-                    columns = (
-                        Revision.name,
-                        Entity.stable_key,
-                        Revision.content,
-                        Artifact.relative_path,
-                        cast(Revision.metadata_json, Text),
-                        cast(Revision.locator, Text),
-                    )
-                    statement = statement.where(
-                        or_(
-                            *(
-                                clause
-                                for column in columns
-                                for clause in (
-                                    func.lower(column).contains(query, autoescape=True),
-                                    column.op("~")(r"[^\x20-\x7e]"),
-                                    column.contains("\\u", autoescape=True),
-                                )
-                            )
-                        )
-                    )
-                for (
-                    rid,
-                    eid,
-                    name,
-                    content,
-                    content_hash,
-                    semantic_hash,
-                    schema,
-                    metadata,
-                    locator,
-                    stable_key,
-                    kind,
-                    path,
-                    snapshot_id,
-                ) in s.execute(statement):
-                    path = path or ""
-                    service_key = metadata.get("service_key") or source_keys.get(snapshot_id)
-                    if payload.get("service_key") and payload["service_key"] != service_key:
-                        continue
-                    direct = (name, stable_key, path)
-                    exact = any(query in value.casefold() for value in direct)
-                    searchable = metadata
-                    if prototype := metadata.get("prototype_manifest"):
-                        # Anchor positions and action keys are only discoverable
-                        # through their own authorized action projection.
-                        searchable = {
-                            **metadata,
-                            "prototype_manifest": {
-                                "routeAliases": prototype["routeAliases"],
-                                "states": [
-                                    {key: state[key] for key in ("stateKey", "name")} for state in prototype["states"]
-                                ],
+            for (
+                rid, eid, name, content, content_hash, semantic_hash, schema, row_metadata, locator, stable_key, kind, path
+            ) in self._search_rows(s, pid, visible, payload, query):
+                if release and kind == "document":
+                    document = s.get(Revision, rid)
+                    try:
+                        chapters = DocumentService._sections(s, s.get(Entity, eid), document)
+                    except DomainError as exc:
+                        if exc.code != "VKS_DOCUMENT_SECTIONS_UNRESOLVED":
+                            raise
+                        chapters = None
+                    if chapters is None:
+                        content = ""
+                    elif any(chapter.id not in visible_endpoints for chapter in chapters):
+                        content = "\n\n".join(chapter.content for chapter in chapters if chapter.id in visible_endpoints)
+                match = self._search_match(query, name, stable_key, path, content, row_metadata, locator, canonical)
+                if not match:
+                    continue
+                found.append(
+                    (
+                        rid,
+                        {
+                            "entity": {
+                                "entity_id": eid,
+                                "entity_revision_id": rid,
+                                "type": kind,
+                                "name": name,
+                                "content_sha256": content_hash,
+                                "semantic_content_sha256": semantic_hash,
+                                "schema_version": schema,
                             },
-                        }
-                    if (
-                        not exact
-                        and query not in content.casefold()
-                        and query not in canonical(searchable).casefold()
-                        and query not in canonical(locator).casefold()
-                    ):
-                        continue
-                    found.append(
-                        (
-                            rid,
-                            {
-                                "entity": {
-                                    "entity_id": eid,
-                                    "entity_revision_id": rid,
-                                    "type": kind,
-                                    "name": name,
-                                    "content_sha256": content_hash,
-                                    "semantic_content_sha256": semantic_hash,
-                                    "schema_version": schema,
-                                },
-                                "excerpt": content[:2000],
-                                "evidence_ids": [],
-                                "match_kind": "exact" if exact else "fulltext",
-                            },
-                        )
+                            "excerpt": content[:2000],
+                            "evidence_ids": [],
+                            "match_kind": match,
+                        },
                     )
+                )
             found.sort(
                 key=lambda pair: (
-                    pair[1]["match_kind"] != "exact",
-                    pair[1]["entity"]["name"],
-                    pair[1]["entity"]["entity_id"],
-                )
+                pair[1]["match_kind"] != "exact",
+                pair[1]["entity"]["name"],
+                pair[1]["entity"]["entity_id"],
+                ),
             )
             found = found[: max(1, min(int(payload.get("limit", 10)), 50))]
-            ids = {rid for rid, _ in found}
-            refs = defaultdict(set)
-            if analysis:
-                for relation in self.edge_rows(s, analysis.id, index, frontier=ids):
-                    if (
-                        relation["from_revision_id"] not in visible_endpoints
-                        or relation["to_revision_id"] not in visible_endpoints
-                        or not self.service._visible_relation(s, actor, pid, relation)
-                    ):
+            return self._search_references(s, actor, pid, analysis, release, choices, index, visible_endpoints, found)
+
+    def _search_references(self, s, actor, pid, analysis, release, choices, index, visible_endpoints, found):
+        from .interactive import InteractiveKnowledgeService
+        from .knowledge_locator import document_directory_url, section_reference
+
+        ids = {rid for rid, _ in found}
+        if release:
+            section_ids = {
+                rid for rid, row in found
+                if row["entity"]["type"] == "section" or row.get("source_kind") == "original_section"
+            }
+            sections = self.revision_rows(s, section_ids)
+            if sections:
+                documents = InteractiveKnowledgeService(self.service)._selected_citation_documents(
+                    s, actor, pid, choices, sections
+                )
+                by_id = {row.id: row for row in sections}
+                for rid, hit in found:
+                    if rid not in section_ids:
                         continue
-                    for rid in (relation["from_revision_id"], relation["to_revision_id"]):
-                        if rid in ids:
-                            refs[rid].update(relation["evidence_ids"])
-                all_refs = set().union(*refs.values()) if refs else set()
-                valid = self.visible_evidence(s, actor, pid, analysis.id, all_refs)
-                for rid, row in found:
-                    row["evidence_ids"] = sorted(refs[rid] & valid)
-            return [row for _, row in found]
+                    if rid in documents:
+                        hit.update(section_reference(
+                            self.service.studio_base_url, pid, release.id, documents[rid][1], by_id[rid]
+                        ))
+                    else:
+                        hit["locator_status"] = "version_only"
+                        if url := document_directory_url(self.service.studio_base_url, pid, release.id):
+                            hit["studio_url"] = url
+        refs = defaultdict(set)
+        if analysis:
+            for relation in self.edge_rows(s, analysis.id, index, frontier=ids):
+                if (
+                    relation["from_revision_id"] not in visible_endpoints
+                    or relation["to_revision_id"] not in visible_endpoints
+                    or (release and relation["excluded"])
+                    or not self.service._visible_relation(s, actor, pid, relation)
+                ):
+                    continue
+                for rid in (relation["from_revision_id"], relation["to_revision_id"]):
+                    if rid in ids:
+                        refs[rid].update(relation["evidence_ids"])
+            all_refs = set().union(*refs.values()) if refs else set()
+            valid = self.visible_evidence(s, actor, pid, analysis.id, all_refs)
+            for rid, row in found:
+                row["evidence_ids"] = sorted(refs[rid] & valid)
+        return [row for _, row in found]
 
     def job_dto(self, s, actor, job):
         dto = self.service.job_dto(job)

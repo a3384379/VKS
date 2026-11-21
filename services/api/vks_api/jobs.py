@@ -263,7 +263,7 @@ def publish_job(job_id, kind):
 
     queue = (
         "vks-browser"
-        if kind == "capture"
+        if kind in ("capture", "prototype_preview")
         else "vks-model"
         if kind in ("generate_documents", "knowledge_task", "material_migrate", "associate_all", "reassociation_preview", "explanation_batch")
         else "vks-index"
@@ -591,6 +591,24 @@ def _execute_job(service, jid):
                 service.require(session, principal, pid, "source:read")
         return False
 
+    last_export_progress = 0
+
+    def export_progress(stage, progress):
+        nonlocal last_export_progress
+        if progress <= last_export_progress:
+            return
+        with service.db() as session:
+            active = session.scalar(select(Job).where(Job.id == jid).with_for_update())
+            if (
+                not active or active.attempt != attempt or active.state != "running" or active.cancel_requested
+                or (active.lease_until and active.lease_until <= now())
+            ):
+                raise DomainError("VKS_CANCELLED", "导出任务已取消或失效", 409)
+            active.stage = stage
+            active.progress = progress
+            active.updated_at = now()
+        last_export_progress = progress
+
     from packages.analyzers.cancellation import cancellation_scope
     from packages.analyzers.syntax_cache import cache_scope
 
@@ -601,6 +619,10 @@ def _execute_job(service, jid):
             with cancellation_scope(processing_cancelled), cache_scope(SourceUnitCache(service, jid, attempt)):
                 if kind == "capture":
                     capture_output = ScenarioService(service).execute_capture(jid)
+                if kind == "prototype_preview":
+                    from .prototype_previews import prepare_preview
+
+                    preview_output = prepare_preview(service, jid, principal, processing_cancelled)
                 if kind in ("index", "suggest_links"):
                     from .static_index import prepare
 
@@ -628,7 +650,7 @@ def _execute_job(service, jid):
                 if kind == "export" and payload["format"] == "readonly_html":
                     from .readonly_export import prepare_job
 
-                    readonly_output = prepare_job(service, jid, processing_cancelled)
+                    readonly_output = prepare_job(service, jid, processing_cancelled, report=export_progress)
                 if kind == "knowledge_task":
                     from .knowledge_tasks import KnowledgeTaskService
 
@@ -709,6 +731,10 @@ def _execute_job(service, jid):
                         result = SourceSyncService(service).finalize(s, job, actor, result)
                 elif kind == "capture":
                     result = ScenarioService(service).finalize_capture(s, job, capture_output)
+                elif kind == "prototype_preview":
+                    from .prototype_previews import finish_preview
+
+                    result = finish_preview(service, s, job, principal, preview_output)
                 elif kind == "generate_documents":
                     from .ai_gateway import AiService
 

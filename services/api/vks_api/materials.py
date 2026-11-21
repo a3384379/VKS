@@ -567,6 +567,7 @@ class MaterialService:
                 if j.created_by == actor.id
                 and all(t.get("package_id") in visible_artifacts for t in j.input_json.get("targets", []))
             ]
+            primary_package = library.get(primary(s, pid, choices))
             return {
                 "analysis_set_id": aid,
                 "selection_version": analysis.selection_version,
@@ -576,7 +577,7 @@ class MaterialService:
                 ],
                 "versions": history["versions"],
                 "trash": [*removed, *history["trash"]],
-                "primary_package_id": primary(s, pid, choices),
+                "primary_package_id": primary_package["id"] if primary_package and primary_package["active_revision_id"] else None,
                 "jobs": jobs,
             }
 

@@ -1,0 +1,49 @@
+name: VKS connector packages
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, platform: macos-arm64 }
+          - { runner: macos-15-intel, platform: macos-x64 }
+          - { runner: windows-2022, platform: windows-x64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      VKS_TEST_NATIVE_CREDENTIALS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true }
+      - name: Build and verify isolated wheel and relocated native package
+        run: python scripts/build_vks_connector.py --native ${{ matrix.platform }}
+      - name: Check native private file storage and live HTTP diagnostics
+        run: uv run --frozen pytest -q tests/mcp/test_connector_distribution.py
+      - name: Verify chapter navigation in Windows Chromium
+        if: matrix.platform == 'windows-x64'
+        run: |
+          uv run --frozen playwright install chromium
+          uv run --frozen pytest -q tests/mcp/test_connector_library.py -k exact_fragment
+      - name: Archive verified package
+        uses: actions/upload-artifact@v4
+        with:
+          name: vks-connector-${{ matrix.platform }}
+          path: |
+            output/vks-connect/*.zip
+            output/vks-connect/*.tar.gz
+            output/vks-connect/*.whl
+            output/vks-connect/*.sha256
+          if-no-files-found: error
