@@ -650,7 +650,7 @@ def _execute_job(service, jid):
                 if kind == "export" and payload["format"] == "readonly_html":
                     from .readonly_export import prepare_job
 
-                    readonly_output = prepare_job(service, jid, processing_cancelled, export_progress)
+                    readonly_output = prepare_job(service, jid, processing_cancelled, report=export_progress)
                 if kind == "knowledge_task":
                     from .knowledge_tasks import KnowledgeTaskService
 

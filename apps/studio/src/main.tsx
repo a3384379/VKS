@@ -1329,7 +1329,13 @@ function Workspace({
       return;
     }
     setAssistantMode("documents");
-    if (!target && moduleControl.current)
+    // Opening the panel during a bookmark restore must keep the saved binding
+    // until the runtime has reported the corresponding target.
+    if (
+      !control.current &&
+      moduleControl.current &&
+      (!route.binding || settledReveal.current === generation)
+    )
       void assist(moduleControl.current, "documents", false, false);
   }
   function controlForTarget(t: Target, samePackage = true): Control {

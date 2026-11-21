@@ -268,11 +268,12 @@ def test_compressed_original_exports_through_durable_job_with_live_scope_checks(
             checks.append("projection")
         return original_projection(service, session, *args, **kwargs)
 
-    def prepare_with_scope(service, jid, validate_scope=None):
+    def prepare_with_scope(service, jid, validate_scope=None, *, report):
         assert callable(validate_scope), "Exercise the durable worker's real cancellation/authorization callback"
+        assert callable(report)
         reading["active"] = True
         try:
-            return original_prepare(service, jid, validate_scope)
+            return original_prepare(service, jid, validate_scope, report=report)
         finally:
             reading["active"] = False
 
