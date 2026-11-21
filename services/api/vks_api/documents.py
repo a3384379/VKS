@@ -702,8 +702,9 @@ class DocumentService:
             self.service.audit(s, actor, document.project_id, "workspace.document.save", new.id)
             return self._dto(s, document, new, analysis.id)
 
-    def _dto(self, s, document, revision, aid=None):
-        sections = self._sections(s, document, revision, aid)
+    def _dto(self, s, document, revision, aid=None, *, sections=None):
+        if sections is None:
+            sections = self._sections(s, document, revision, aid)
         return {
             "document_id": document.id,
             "entity_revision_id": revision.id,

@@ -1,24 +1,18 @@
 """Studio reads complete imported Markdown and assistant text through one renderer."""
 
-import os
-import socket
-import subprocess
-import time
 from io import BytesIO
-from pathlib import Path
 from zipfile import ZipFile
 
-import httpx
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
 from vks_api.interactive import InteractiveBinding, InteractiveKnowledgeService
 from vks_api.models import uid
 
 from tests.interactive import test_materials
+from tests.interactive.test_native_documents_browser import native_studio
 from tests.ui.diagram_assertions import assert_clear_mermaid_zoom
-from tests.ui.test_frontend_browser import chromium_path, live_api
+from tests.ui.test_frontend_browser import chromium_path
 
-ROOT = Path(__file__).resolve().parents[2]
 materials = test_materials.materials
 
 MARKDOWN = r"""# 完整格式手册
@@ -104,7 +98,7 @@ def package(markdown, width=32):
     return result.getvalue()
 
 
-def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(materials, tmp_path):
+def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(materials, tmp_path, monkeypatch):
     web, service, owner, manager, projects = materials
     pid, aid = projects[0]
     prototype = test_materials.stage(
@@ -150,170 +144,142 @@ def test_studio_whole_document_diagrams_images_and_assistant_use_rich_markdown(m
         str(catalog["selection_version"]),
         uid(),
     )
-    process = None
-    try:
-        with live_api(web.app) as api:
-            with socket.socket() as probe:
-                probe.bind(("127.0.0.1", 0))
-                port = probe.getsockname()[1]
-            script = """import {createServer} from 'vite';const s=await createServer({root:process.argv[1]+'/apps/studio',configFile:process.argv[1]+'/apps/studio/vite.config.ts',cacheDir:process.argv[2],server:{host:'127.0.0.1',port:Number(process.argv[3]),strictPort:true,proxy:{'/api':{target:process.argv[4],changeOrigin:false}}}});await s.listen();"""
-            with (tmp_path / "vite.log").open("wb") as log:
-                process = subprocess.Popen(
-                    ["node", "--input-type=module", "-e", script, str(ROOT), str(tmp_path / "cache"), str(port), api],
-                    cwd=ROOT,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    env=os.environ.copy(),
+    with native_studio(web.app, tmp_path, monkeypatch) as url, sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
+        try:
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            errors = []
+            remote_requests = []
+            remote_image = BytesIO()
+            Image.new("RGB", (20, 20), "#45a88b").save(remote_image, "PNG")
+
+            def image_route(route):
+                remote_requests.append(route.request.url)
+                route.fulfill(status=200, content_type="image/png", body=remote_image.getvalue())
+
+            page.route("https://source.example.invalid/**", image_route)
+            page.route("https://ai-image.invalid/**", image_route)
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.goto(url + f"/#project={pid}&analysis={aid}&view=documents&doc={document['revision_id']}")
+            page.get_by_label("密码", exact=True).fill("owner")
+            page.get_by_role("button", name="打开交互工作台").click()
+            article = page.locator(".document-reader")
+            expect(article.get_by_role("heading", name="完整格式手册", exact=True)).to_have_count(1)
+            expect(article.locator("strong").filter(has_text="开头加粗")).to_have_count(1)
+            expect(article.locator("strong").filter(has_text="普通加粗")).to_have_count(1)
+            expect(article.locator("strong").filter(has_text="“任务。”")).to_have_count(1)
+            expect(article.locator("b").filter(has_text="HTML 加粗")).to_have_count(1)
+            expect(article.locator("strong").filter(has_text="转义标记")).to_have_count(0)
+            expect(article.locator("ul ul li")).not_to_have_count(0)
+            expect(article.locator("table th")).to_have_count(2)
+            expect(article.get_by_role("link", name="完整来源", exact=True)).to_have_attribute(
+                "href", "https://example.invalid/reference"
+            )
+            expect(article.locator(".footnotes")).to_contain_text("跨章节脚注正文")
+            expect(article.locator(".katex")).not_to_have_count(0)
+            expect(article.locator(".hljs-keyword")).not_to_have_count(0)
+            assert not article.locator(".article-toc").evaluate("node => node.open")
+            expect(article.get_by_alt_text("版本图片", exact=True)).to_be_visible()
+            expect(article.get_by_alt_text("HTML 图片", exact=True)).to_be_visible()
+            expect(article.get_by_alt_text("版本图片", exact=True)).to_have_js_property("naturalWidth", 32)
+            assert page.evaluate("window.importedExecuted") is None
+            for label in ["Mermaid 图表", "PlantUML 图表"]:
+                diagram = article.get_by_role("figure", name=label)
+                diagram.scroll_into_view_if_needed()
+                expect(diagram.get_by_role("img", name=label)).to_be_visible(timeout=45000)
+                if label == "Mermaid 图表":
+                    assert_clear_mermaid_zoom(diagram)
+                else:
+                    image = diagram.get_by_role("img", name=label)
+                    assert image.bounding_box()["height"] <= 481
+                    image.click()
+                    viewer = page.get_by_role("dialog", name=label, exact=True)
+                    expect(viewer).to_be_visible()
+                    viewer.get_by_role("button", name="图片缩放比例", exact=True).click()
+                    expect(viewer.get_by_role("button", name="图片缩放比例", exact=True)).to_have_text("100%")
+                    assert viewer.locator("img").evaluate("n=>Math.abs(n.getBoundingClientRect().width-n.naturalWidth)<1")
+                    viewer.get_by_role("button", name="按宽度", exact=True).click()
+                    expect(viewer.get_by_role("button", name="按宽度", exact=True)).to_have_attribute("aria-pressed", "true")
+                    viewer.get_by_role("button", name="关闭大图", exact=True).click()
+                    expect(viewer).to_have_count(0)
+            first_diagram_url = (
+                article.get_by_role("figure", name="Mermaid 图表")
+                .first.get_by_role("img", name="Mermaid 图表")
+                .get_attribute("src")
+            )
+            selected = article.locator("#section-" + chapter["revision_id"])
+            selected.hover()
+            selected.get_by_role("button", name="将本章关联到原型", exact=True).click()
+            picker = page.get_by_role("dialog", name="选择关联模块", exact=True)
+            expect(picker).to_be_visible()
+            picker.get_by_role("button", name="取消", exact=True).click()
+            expect(
+                article.get_by_role("figure", name="Mermaid 图表").first.get_by_role(
+                    "img", name="Mermaid 图表"
                 )
-                url = f"http://127.0.0.1:{port}"
-                for _ in range(200):
-                    assert process.poll() is None, (tmp_path / "vite.log").read_text()
-                    try:
-                        if httpx.get(url, timeout=0.4).status_code == 200:
-                            break
-                    except httpx.HTTPError:
-                        pass
-                    time.sleep(0.05)
-                with sync_playwright() as p:
-                    browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
-                    try:
-                        page = browser.new_page(viewport={"width": 1440, "height": 1000})
-                        errors = []
-                        remote_requests = []
-                        remote_image = BytesIO()
-                        Image.new("RGB", (20, 20), "#45a88b").save(remote_image, "PNG")
-
-                        def image_route(route):
-                            remote_requests.append(route.request.url)
-                            route.fulfill(status=200, content_type="image/png", body=remote_image.getvalue())
-
-                        page.route("https://source.example.invalid/**", image_route)
-                        page.route("https://ai-image.invalid/**", image_route)
-                        page.on("pageerror", lambda error: errors.append(str(error)))
-                        page.goto(url + f"/#project={pid}&analysis={aid}&view=documents&doc={document['revision_id']}")
-                        page.get_by_label("密码", exact=True).fill("owner")
-                        page.get_by_role("button", name="打开交互工作台").click()
-                        article = page.locator(".document-reader")
-                        expect(article.get_by_role("heading", name="完整格式手册", exact=True)).to_have_count(1)
-                        expect(article.locator("strong").filter(has_text="开头加粗")).to_have_count(1)
-                        expect(article.locator("strong").filter(has_text="普通加粗")).to_have_count(1)
-                        expect(article.locator("strong").filter(has_text="“任务。”")).to_have_count(1)
-                        expect(article.locator("b").filter(has_text="HTML 加粗")).to_have_count(1)
-                        expect(article.locator("strong").filter(has_text="转义标记")).to_have_count(0)
-                        expect(article.locator("ul ul li")).not_to_have_count(0)
-                        expect(article.locator("table th")).to_have_count(2)
-                        expect(article.get_by_role("link", name="完整来源", exact=True)).to_have_attribute(
-                            "href", "https://example.invalid/reference"
-                        )
-                        expect(article.locator(".footnotes")).to_contain_text("跨章节脚注正文")
-                        expect(article.locator(".katex")).not_to_have_count(0)
-                        expect(article.locator(".hljs-keyword")).not_to_have_count(0)
-                        assert not article.locator(".article-toc").evaluate("node => node.open")
-                        expect(article.get_by_alt_text("版本图片", exact=True)).to_be_visible()
-                        expect(article.get_by_alt_text("HTML 图片", exact=True)).to_be_visible()
-                        expect(article.get_by_alt_text("版本图片", exact=True)).to_have_js_property("naturalWidth", 32)
-                        assert page.evaluate("window.importedExecuted") is None
-                        for label in ["Mermaid 图表", "PlantUML 图表"]:
-                            diagram = article.get_by_role("figure", name=label)
-                            diagram.scroll_into_view_if_needed()
-                            expect(diagram.get_by_role("img", name=label)).to_be_visible(timeout=45000)
-                            if label == "Mermaid 图表":
-                                assert_clear_mermaid_zoom(diagram)
-                            else:
-                                image = diagram.get_by_role("img", name=label)
-                                assert image.bounding_box()["height"] <= 481
-                                image.click()
-                                viewer = page.get_by_role("dialog", name=label, exact=True)
-                                expect(viewer).to_be_visible()
-                                viewer.get_by_role("button", name="图片缩放比例", exact=True).click()
-                                expect(viewer.get_by_role("button", name="图片缩放比例", exact=True)).to_have_text("100%")
-                                assert viewer.locator("img").evaluate("n=>Math.abs(n.getBoundingClientRect().width-n.naturalWidth)<1")
-                                viewer.get_by_role("button", name="按宽度", exact=True).click()
-                                expect(viewer.get_by_role("button", name="按宽度", exact=True)).to_have_attribute("aria-pressed", "true")
-                                viewer.get_by_role("button", name="关闭大图", exact=True).click()
-                                expect(viewer).to_have_count(0)
-                        first_diagram_url = (
-                            article.get_by_role("figure", name="Mermaid 图表")
-                            .first.get_by_role("img", name="Mermaid 图表")
-                            .get_attribute("src")
-                        )
-                        selected = article.locator("#section-" + chapter["revision_id"])
-                        selected.hover()
-                        selected.get_by_role("button", name="将本章关联到原型", exact=True).click()
-                        picker = page.get_by_role("dialog", name="选择关联模块", exact=True)
-                        expect(picker).to_be_visible()
-                        picker.get_by_role("button", name="取消", exact=True).click()
-                        expect(
-                            article.get_by_role("figure", name="Mermaid 图表").first.get_by_role(
-                                "img", name="Mermaid 图表"
-                            )
-                        ).to_have_attribute("src", first_diagram_url)
-                        expect(page.locator(".chapter-selected")).to_have_attribute(
-                            "id", "section-" + chapter["revision_id"]
-                        )
-                        # Existing linked knowledge is opened from the related
-                        # operation; the chapter action now selects a module.
-                        selected.get_by_role("button", name="查看原型入口", exact=True).click()
-                        entries = page.get_by_role("dialog", name="原型入口", exact=True)
-                        entries.get_by_text("关联控件（1）", exact=True).click()
-                        entries.get_by_role("listitem").first.get_by_role("button", name="打开原型").click()
-                        page.get_by_role("button", name="打开知识助手", exact=True).click()
-                        panel = page.get_by_role("complementary", name="知识助手")
-                        expect(panel.locator("strong").filter(has_text="必须填写名称")).to_be_visible()
-                        expect(panel.get_by_alt_text("助手图片", exact=True)).to_be_visible()
-                        expect(panel.get_by_alt_text("引用网络图片", exact=True)).to_be_visible()
-                        expect(
-                            panel.get_by_text("回答杜撰网络图片：此地址未出现在引用原文中。", exact=True)
-                        ).to_be_visible()
-                        expect(
-                            panel.get_by_text("文本网址伪装图片：此地址未出现在引用原文中。", exact=True)
-                        ).to_be_visible()
-                        expect(panel.get_by_role("link", name="助手跨章节来源", exact=True)).to_have_attribute(
-                            "href", "https://example.invalid/reference"
-                        )
-                        expect(panel.locator(".footnotes")).to_contain_text("跨章节脚注正文")
-                        assert "非引用章节的其他正文" not in panel.inner_text()
-                        assert not any("ai-image.invalid" in url for url in remote_requests)
-                        expect(panel.get_by_role("img", name="Mermaid 图表")).to_be_visible(timeout=45000)
-                        panel.get_by_role("button", name="收起助手面板", exact=True).click()
-                        page.get_by_role("button", name="文档", exact=True).click()
-                        article.get_by_role("link", name="包内链接", exact=True).click()
-                        expect(article.get_by_role("heading", name="包一其他资料", exact=True)).to_be_visible()
-                        expect(article.locator(".chapter-selected")).to_contain_text("目标段落")
-                        assert "不应跳到这个包" not in article.inner_text()
-                        fixed = manager.checkpoint(owner, pid, aid, "图片原版", uid())
-                        update = test_materials.stage(
-                            service,
-                            owner,
-                            manager,
-                            pid,
-                            aid,
-                            "documents",
-                            package(MARKDOWN, 64),
-                            package_id=docs["package_id"],
-                            filename="manual.zip",
-                        )
-                        test_materials.activate(service, owner, manager, pid, aid, [update])
-                        assert (
-                            next(d for d in links.catalog(owner, pid, aid)["documents"] if d["name"] == "完整格式手册")[
-                                "revision_id"
-                            ]
-                            == document["revision_id"]
-                        )
-                        page.goto(url + f"/#project={pid}&analysis={aid}&view=documents&doc={document['revision_id']}")
-                        page.reload()
-                        expect(article.get_by_alt_text("版本图片", exact=True)).to_be_visible()
-                        expect(article.get_by_alt_text("版本图片", exact=True)).to_have_js_property("naturalWidth", 64)
-                        page.goto(
-                            url + f"/#project={pid}&release={fixed['id']}&view=documents&doc={document['revision_id']}"
-                        )
-                        expect(article.get_by_alt_text("版本图片", exact=True)).to_be_visible()
-                        expect(article.get_by_alt_text("版本图片", exact=True)).to_have_js_property("naturalWidth", 32)
-                        page.screenshot(path=str(tmp_path / "studio-rich-markdown.png"), full_page=True)
-                        assert not errors, errors
-                    finally:
-                        browser.close()
-    finally:
-        if process:
-            process.terminate()
-            process.wait(timeout=10)
+            ).to_have_attribute("src", first_diagram_url)
+            expect(page.locator(".chapter-selected")).to_have_attribute(
+                "id", "section-" + chapter["revision_id"]
+            )
+            # Existing linked knowledge is opened from the related
+            # operation; the chapter action now selects a module.
+            selected.get_by_role("button", name="查看原型入口", exact=True).click()
+            entries = page.get_by_role("dialog", name="原型入口", exact=True)
+            entries.get_by_text("关联控件（1）", exact=True).click()
+            entries.get_by_role("listitem").first.get_by_role("button", name="打开原型").click()
+            page.get_by_role("button", name="打开知识助手", exact=True).click()
+            panel = page.get_by_role("complementary", name="知识助手")
+            expect(panel.locator("strong").filter(has_text="必须填写名称")).to_be_visible()
+            expect(panel.get_by_alt_text("助手图片", exact=True)).to_be_visible()
+            expect(panel.get_by_alt_text("引用网络图片", exact=True)).to_be_visible()
+            expect(
+                panel.get_by_text("回答杜撰网络图片：此地址未出现在引用原文中。", exact=True)
+            ).to_be_visible()
+            expect(
+                panel.get_by_text("文本网址伪装图片：此地址未出现在引用原文中。", exact=True)
+            ).to_be_visible()
+            expect(panel.get_by_role("link", name="助手跨章节来源", exact=True)).to_have_attribute(
+                "href", "https://example.invalid/reference"
+            )
+            expect(panel.locator(".footnotes")).to_contain_text("跨章节脚注正文")
+            assert "非引用章节的其他正文" not in panel.inner_text()
+            assert not any("ai-image.invalid" in url for url in remote_requests)
+            expect(panel.get_by_role("img", name="Mermaid 图表")).to_be_visible(timeout=45000)
+            panel.get_by_role("button", name="收起助手面板", exact=True).click()
+            page.get_by_role("button", name="文档", exact=True).click()
+            article.get_by_role("link", name="包内链接", exact=True).click()
+            expect(article.get_by_role("heading", name="包一其他资料", exact=True)).to_be_visible()
+            expect(article.locator(".chapter-selected")).to_contain_text("目标段落")
+            assert "不应跳到这个包" not in article.inner_text()
+            fixed = manager.checkpoint(owner, pid, aid, "图片原版", uid())
+            update = test_materials.stage(
+                service,
+                owner,
+                manager,
+                pid,
+                aid,
+                "documents",
+                package(MARKDOWN, 64),
+                package_id=docs["package_id"],
+                filename="manual.zip",
+            )
+            test_materials.activate(service, owner, manager, pid, aid, [update])
+            assert (
+                next(d for d in links.catalog(owner, pid, aid)["documents"] if d["name"] == "完整格式手册")[
+                    "revision_id"
+                ]
+                == document["revision_id"]
+            )
+            page.goto(url + f"/#project={pid}&analysis={aid}&view=documents&doc={document['revision_id']}")
+            page.reload()
+            expect(article.get_by_alt_text("版本图片", exact=True)).to_be_visible()
+            expect(article.get_by_alt_text("版本图片", exact=True)).to_have_js_property("naturalWidth", 64)
+            page.goto(
+                url + f"/#project={pid}&release={fixed['id']}&view=documents&doc={document['revision_id']}"
+            )
+            expect(article.get_by_alt_text("版本图片", exact=True)).to_be_visible()
+            expect(article.get_by_alt_text("版本图片", exact=True)).to_have_js_property("naturalWidth", 32)
+            page.screenshot(path=str(tmp_path / "studio-rich-markdown.png"), full_page=True)
+            assert not errors, errors
+        finally:
+            browser.close()

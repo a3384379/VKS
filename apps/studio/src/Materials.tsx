@@ -513,12 +513,13 @@ export function Materials({
             format: "readonly_html",
             include_source: canReadSource,
             document_mode: exportDocumentMode,
+            local_vectors: true,
           }),
         ),
       );
       void loadHistory();
       setNotice(
-        "正在固定资料并补齐向量索引。完成后可下载单文件 HTML，文件不携带 API Key。",
+        "正在生成本地向量。完成后可下载免 Key 的单文件 HTML 成品库。",
       );
     });
   }
@@ -669,9 +670,8 @@ export function Materials({
           <h2>导出成品库</h2>
         </div>
         <p className="management-description">
-          将当前原型、文档、知识关联与向量索引打包为一个只读
-          HTML。离线可阅读、检索和跳转；联网问答由使用者自行填写 API Key。请先在
-          AI 设置中启用嵌入模型。
+          将当前原型、文档、已有知识关联和本地向量打包为一个只读 HTML。
+          可直接在 Codex 的 VKS 插件里按意思搜，无需配置 API Key。
         </p>
         <label className="export-document-mode">
           导出文档呈现

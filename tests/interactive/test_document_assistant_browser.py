@@ -145,7 +145,10 @@ def test_selection_offers_explanation_without_opening_or_focusing_assistant(
             expect(action).to_be_visible()
             bounds = action.bounding_box()
             assert 0 <= bounds["x"] < 1600 and 0 <= bounds["y"] < 1000
-            page.keyboard.press("Escape")
+            if host == "studio" and source_kind == "native":
+                first.dispatch_event("keydown", {"key": "Escape", "bubbles": True})
+            else:
+                page.keyboard.press("Escape")
             expect(action).to_have_count(0)
             first.click(button="right", position={"x": 15, "y": 10})
             expect(action).to_be_visible()

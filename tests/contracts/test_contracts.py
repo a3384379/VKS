@@ -33,14 +33,27 @@ def test_mcp_contracts_are_self_contained_and_do_not_approve():
     original = json.loads((ROOT / "packages/contracts/mcp_tools.json").read_text())
     assert len(original["tools"]) == 18
     assert {t["name"] for t in original["tools"]} <= {t["name"] for t in catalog["tools"]}
-    assert len(catalog["tools"]) == 30
-    assert len({t["name"] for t in catalog["tools"]}) == 30
+    assert len(catalog["tools"]) == 31
+    assert len({t["name"] for t in catalog["tools"]}) == 31
     for tool in catalog["tools"]:
         Draft202012Validator.check_schema(tool["inputSchema"])
         Draft202012Validator.check_schema(tool["outputSchema"])
         assert '"$ref"' not in json.dumps(tool["outputSchema"])
         assert tool["name"] not in {"approve", "publish", "review_relation"}
     assert catalog["authorization"]["annotations_are_security_boundary"] is False
+    search = next(tool["inputSchema"] for tool in catalog["tools"] if tool["name"] == "search_knowledge")
+    kinds = search["properties"]["kinds"]["items"]["enum"]
+    assert len(kinds) == len(set(kinds)) and "business_point" in kinds
+    validate_search = Draft202012Validator(search).is_valid
+    baseline = {
+        "project_id": "10000000-0000-4000-8000-000000000001",
+        "release_id": "20000000-0000-4000-8000-000000000002",
+    }
+    assert validate_search({**baseline, "query": "字" * 1500, "limit": 50})
+    for mode in ("keyword", "hybrid", "auto"):
+        assert validate_search({**baseline, "query": "字" * 1000, "limit": 20, "retrieval_mode": mode})
+        assert not validate_search({**baseline, "query": "字" * 1001, "retrieval_mode": mode})
+        assert not validate_search({**baseline, "query": "字", "limit": 21, "retrieval_mode": mode})
 
 
 def test_v2_openapi_snapshot_and_journey_contract_match_runtime():

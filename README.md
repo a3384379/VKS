@@ -2,6 +2,8 @@
 
 VKS 从业务操作连接到文档章节、接口、源码与证据。当前分支为 **VKS 3.0 候选版**。Studio 在隔离 Runtime 中打开原 HTML 原型，支持从控件查看原文章节、从文档返回准确原型目标。Web 仍提供截图和热区导览。参见 [Studio](docs/upgrades/v3/STUDIO.md)、[3.0 实施记录](docs/upgrades/v3/IMPLEMENTATION.md)、[验证记录](docs/upgrades/v3/VERIFICATION.md)及[安装、升级与回退](docs/upgrades/v3/RELEASE.md)。
 
+VKS 3.1 候选版提供 Codex 插件。安装后可在左栏选择 Studio 导出的 HTML 成品库，使用本地语义检索并打开原文章节。接收方无需安装 Studio 或填写嵌入 API Key。参见 [Windows 安装与试用](docs/upgrades/v3.1-plugin/windows-codex.md)和[连接器安装与诊断](docs/upgrades/v3.1-plugin/连接器安装与诊断.md)。
+
 1.0 和 2.0 的功能与历史验收见 [1.0 实施与验收跟踪](docs/ROADMAP_V1.md)、[2.0 实施记录](docs/upgrades/v2/IMPLEMENTATION.md)及[2.0 验证记录](docs/upgrades/v2/VERIFICATION.md)。
 
 React/TypeScript 工作台按项目空间、业务探索、知识构建、变更与版本、项目设置五组导航组织；1.0 的八种旧 hash 地址仍可恢复。所有页面使用持久化 API；模型默认关闭，普通导入、检索、编辑和阅读不依赖模型。

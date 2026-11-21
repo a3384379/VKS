@@ -42,12 +42,18 @@
       type,
       payload,
     });
-  const visible = (el) =>
-    !!(
-      el?.isConnected &&
-      el.getClientRects().length &&
-      getComputedStyle(el).visibility !== "hidden"
-    );
+  function visible(el) {
+    if (!el?.isConnected || !el.getClientRects().length ||
+        getComputedStyle(el).visibility !== "visible") return false;
+    if (typeof el.checkVisibility === "function")
+      return el.checkVisibility({ opacityProperty: true, checkOpacity: true });
+    for (let node = el; node; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (Number(style.opacity) === 0 || style.contentVisibility === "hidden")
+        return false;
+    }
+    return true;
+  }
   const labelText = (child) =>
     child.nodeType === 3
       ? child.nodeValue
@@ -111,11 +117,12 @@
     return parts.join(" > ");
   }
   const dialogs =
-    '[role="dialog"],.el-dialog,.el-drawer,.el-message-box,.ant-modal,.modal,.drawer,.offline-modal,.demo-modal,.prototype-modal,.vks-modal';
-  const stateOf = (doc) => {
+    'dialog[open],[role="dialog"],.el-dialog,.el-drawer,.el-message-box,.ant-modal,.modal,.drawer,.offline-modal,.demo-modal,.prototype-modal,.vks-modal';
+  const observableState = (doc) => {
     const candidates = Array.from(doc.querySelectorAll(dialogs));
-    return candidates.filter(visible).map(selector).join(" | ").slice(0, 500);
+    return candidates.filter(visible).map(selector).join(" | ");
   };
+  const stateOf = (doc) => observableState(doc).slice(0, 500);
   function target(el, win, path, route, state = stateOf(win.document)) {
     return {
       route,
@@ -126,16 +133,22 @@
       open_steps: histories.get(win) || [],
     };
   }
+  const highlights = new WeakMap();
   function glow(el) {
-    const prior = el.style.outline,
-      offset = el.style.outlineOffset;
+    const highlight = highlights.get(el) || {
+      outline: el.style.outline,
+      outlineOffset: el.style.outlineOffset,
+    };
+    clearTimeout(highlight.timer);
     el.style.outline = "3px solid #13a58d";
     el.style.outlineOffset = "3px";
     el.scrollIntoView({ block: "nearest", inline: "nearest" });
-    setTimeout(() => {
-      el.style.outline = prior;
-      el.style.outlineOffset = offset;
+    highlight.timer = setTimeout(() => {
+      el.style.outline = highlight.outline;
+      el.style.outlineOffset = highlight.outlineOffset;
+      highlights.delete(el);
     }, 2200);
+    highlights.set(el, highlight);
   }
   const actionable =
     'button,a,input,select,textarea,[role="button"],[role="menuitem"],[role="tab"],[onclick],[tabindex]:not([tabindex="-1"]),label,.el-switch,.el-checkbox,.el-radio,.el-menu-item,.el-submenu__title';
@@ -232,7 +245,7 @@
       doc = win.document;
       if (
         !doc?.body ||
-        !doc.body.childElementCount ||
+        (!doc.body.childElementCount && !doc.body.textContent?.trim()) ||
         doc.readyState === "loading"
       )
         return;
@@ -244,7 +257,7 @@
     const windowKey = JSON.stringify(path);
     if (windows.has(windowKey) && windows.get(windowKey).win !== win)
       ambiguousFrames.add(windowKey);
-    windows.set(windowKey, { win, route, path });
+    windows.set(windowKey, { win, doc, route, path });
     if (documentMode) {
       installDocument(win, route);
       for (const child of doc.querySelectorAll("iframe")) {
@@ -480,6 +493,13 @@
     doc.addEventListener("pointerdown", dismissSelectionMenu, true);
     doc.addEventListener("scroll", dismissSelectionMenu, true);
     doc.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key === "Escape") dismissSelectionMenu();
+      },
+      true,
+    );
+    doc.addEventListener(
       "contextmenu",
       (event) => {
         dismissSelectionMenu();
@@ -697,96 +717,216 @@
       if (generation === navigation) documentNavigating = false;
     }
   }
-  async function reveal(t, request, pageOnly = false) {
+  function shownWindow(win) {
+    for (let child = win; child !== frame.contentWindow; child = child.parent) {
+      if (!visible(child.frameElement)) return false;
+    }
+    return visible(frame);
+  }
+  function prototypePage(t) {
+    const key = JSON.stringify(t.frame_path);
+    const current = windows.get(key);
+    if (!current || current.route !== t.route || ambiguousFrames.has(key)) return null;
+    try {
+      return current.win.document === current.doc && shownWindow(current.win) ? current : null;
+    } catch {
+      return null;
+    }
+  }
+  function matchingControl(t, current) {
+    const matches = Array.from(current.doc.querySelectorAll(t.selector)).filter(visible);
+    const el = matches.length === 1 ? matches[0] : null;
+    const matchedLabel = el && (t.selector === "body"
+      ? moduleTarget(current.win, current.path, current.route).label : label(el));
+    return matchedLabel === t.label ? el : null;
+  }
+  const documentIds = new WeakMap();
+  let nextDocumentId = 0;
+  function observeTarget(t, request, pageOnly) {
+    try {
+      scan();
+      const current = prototypePage(t);
+      if (current) {
+        const { doc, route, path } = current;
+        const control = pageOnly ? null : matchingControl(t, current);
+        const observed = observableState(doc);
+        const complete = observed.length < 500;
+        const verified = !!control && !!t.state && complete && observed === t.state;
+        if (!documentIds.has(doc)) documentIds.set(doc, ++nextDocumentId);
+        send("command.result", {
+          ok: pageOnly || !!control,
+          navigation_level: control ? (verified ? "state" : "control") : "page",
+          document_id: documentIds.get(doc),
+          route,
+          frame_path: path,
+          state_verified: verified,
+          state_complete: complete,
+          observed_state: observed.slice(0, 500),
+          target: control ? { selector: t.selector, label: t.label } : undefined,
+        }, request);
+        return;
+      }
+    } catch {
+      // A detached, inaccessible, or invalid target cannot be verified.
+    }
+    send("command.result", { ok: false }, request);
+  }
+  function showPrototypePage(pack, route) {
+    const source = frame.contentWindow;
+    const page = source.document.querySelector("iframe#actualPage");
+    const src = Object.getOwnPropertyDescriptor(source.HTMLIFrameElement.prototype, "src");
+    if (materialWrapper !== "static-site" || !page?.contentWindow ||
+        !src?.get || !src.set || Object.hasOwn(page, "src")) {
+      pack.show(route.slice(1));
+      return;
+    }
+    // Older immutable site wrappers set iframe.src synchronously. Replace
+    // that internal history entry when Studio is following a host bookmark.
+    Object.defineProperty(page, "src", {
+      configurable: true,
+      get() { return src.get.call(page); },
+      set(value) {
+        if (typeof value === "string" && value.startsWith("blob:" + location.origin + "/"))
+          page.contentWindow.location.replace(value);
+        else src.set.call(page, value);
+      },
+    });
+    try {
+      pack.show(route.slice(1));
+    } finally {
+      delete page.src;
+    }
+  }
+  let openingPage = null;
+  async function reveal(t, request, pageOnly, highlight) {
     picking = false;
     const generation = ++navigation;
-    let root = frame.contentWindow;
-    const get = () =>
-      Array.from(windows.values()).find(
-        (w) =>
-          w.route === t.route &&
-          JSON.stringify(w.path) === JSON.stringify(t.frame_path),
-      );
-    let current = get();
-    // Preserve the existing form when the requested page is already open.
-    if (!current && root.__prototypePack?.show)
-      root.__prototypePack.show(t.route.replace(/^\//, ""));
-    for (let i = 0; i < 50 && !current; i++) {
-      await new Promise((r) => setTimeout(r, 100));
+    const get = () => {
+      if (openingPage) {
+        if (windows.get(openingPage.key)?.route !== openingPage.route) return null;
+        openingPage = null;
+      }
+      return prototypePage(t);
+    };
+    const result = (message, level, observed, selectedTarget) => {
       if (generation !== navigation) return;
-      scan();
-      current = get();
-    }
-    if (!current) {
-      send(
-        "command.result",
-        { ok: false, message: "页面尚未加载，请在原型中打开对应页面" },
-        request,
-      );
-      return;
-    }
-    if (pageOnly) {
-      send("command.result", { ok: true, message: "已打开原型页面" }, request);
-      return;
-    }
-    let el;
+      send("command.result", {
+        ok: level === "control" || level === "state" || (pageOnly && level === "page"),
+        message,
+        navigation_level: level,
+        route: level ? t.route : undefined,
+        frame_path: level ? t.frame_path : undefined,
+        target: selectedTarget,
+        state_verified: level === "state",
+        observed_state: observed?.slice(0, 500),
+      }, request);
+    };
     try {
-      const find = () =>
-        Array.from(current.win.document.querySelectorAll(t.selector))
-          .filter(visible)
-          .filter(
-            (n) =>
-              (t.selector === "body"
-                ? moduleContext(current.win, current.path, current.route).target
-                    .label
-                : label(n)) === t.label,
-          );
+      let current = get();
+      let opened = false;
+      // Keep the existing form when the requested page is already open.
+      for (let i = 0; i < 50 && !current; i++) {
+        const pack = frame.contentWindow.__prototypePack;
+        if (!opened && !openingPage && materialWrapper && typeof pack?.show === "function") {
+          // A previous request may have started a frame navigation. Wait for
+          // its document to commit before verifying the next destination.
+          const frameIndex = t.frame_path.indexOf("actualPage");
+          if (frameIndex >= 0)
+            openingPage = { route: t.route, key: JSON.stringify(t.frame_path.slice(0, frameIndex + 1)) };
+          opened = true;
+          showPrototypePage(pack, t.route);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (generation !== navigation) return;
+        scan();
+        current = get();
+      }
+      if (!current) {
+        openingPage = null;
+        result("页面尚未加载，请在原型中打开对应页面");
+        return;
+      }
+      const { doc } = current;
+      const exactPage = () => get()?.doc === doc;
+      const find = () => exactPage() ? matchingControl(t, current) : null;
+      if (pageOnly) {
+        result("已打开原型页面", "page", observableState(doc));
+        return;
+      }
+      const stateMatches = () => {
+        const observed = observableState(doc);
+        return observed === t.state && observed.length < 500;
+      };
       for (const step of t.open_steps || []) {
         if (generation !== navigation) return;
-        if (find().length) break;
-        const candidates = Array.from(
-          current.win.document.querySelectorAll(step),
-        ).filter(visible);
+        if (!exactPage()) throw new Error("原型页面已切换");
+        if (find() && stateMatches()) break;
+        const candidates = Array.from(doc.querySelectorAll(step)).filter(visible);
         if (candidates.length !== 1) break;
         candidates[0].click();
-        await new Promise((r) => setTimeout(r, 280));
+        await new Promise((resolve) => setTimeout(resolve, 280));
+        scan();
       }
-      // The host may still be committing the switch from documents to the
-      // preserved iframe. Wait for layout before declaring a locator missing.
+      let el;
       for (let attempt = 0; attempt < 25; attempt++) {
         if (generation !== navigation) return;
-        const matches = find();
-        if (matches.length === 1) {
-          el = matches[0];
-          break;
-        }
-        if (matches.length > 1) break;
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        el = find();
+        if (el && (!t.state || stateMatches())) break;
+        if (attempt < 24) await new Promise((resolve) => setTimeout(resolve, 50));
+        scan();
       }
-    } catch {}
-    if (el) {
-      glow(el);
-      el.focus({ preventScroll: true });
-      send(
-        "command.result",
-        { ok: true, message: "已定位到 " + t.label },
-        request,
-      );
-    } else
-      send(
-        "command.result",
-        {
-          ok: false,
-          message: "已打开页面，请打开目标弹窗后重试定位；多个候选时请重新选择",
-        },
-        request,
-      );
+      if (!exactPage()) {
+        result("原型页面已切换，无法确认位置");
+        return;
+      }
+      if (!el) {
+        result("已打开原型页面，当前无法定位指定控件", "page", observableState(doc));
+        return;
+      }
+      if (highlight) {
+        glow(el);
+        el.focus({ preventScroll: true });
+      } else el.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (find() !== el) {
+        result("目标在定位过程中发生变化，仅确认页面已打开", "page", observableState(doc));
+        return;
+      }
+      const observed = observableState(doc);
+      const verified = !!t.state && observed === t.state && observed.length < 500;
+      result(verified ? "已核验指定状态并定位到 " + t.label
+        : t.state || observed ? "控件可见，无法核验指定状态"
+        : "已定位到 " + t.label,
+        verified ? "state" : "control", observed, {
+          ...target(el, current.win, current.path, current.route),
+          selector: t.selector,
+          label: t.label,
+        });
+    } catch {
+      result(get() ? "已打开原型页面，当前无法定位指定控件" : "原型页面无法打开",
+        get() ? "page" : undefined);
+    }
   }
+  let lastPosition = "";
   function scan(activateModule = false) {
     if (loaded) {
       windows.clear();
       ambiguousFrames.clear();
       install(frame.contentWindow, [], "/");
+      if (!documentMode) {
+        let active = null;
+        for (const { win, path, route } of windows.values()) {
+          if (
+            !ambiguousFrames.has(JSON.stringify(path)) && shownWindow(win) &&
+            ((!path.length && !materialWrapper && !win.__prototypePack) ||
+              (path[path.length - 1] === "actualPage" && win.__prototypePackPage?.path))
+          ) active = { route, frame_path: path, state: stateOf(win.document) };
+        }
+        const position = JSON.stringify(active);
+        if (position !== lastPosition) {
+          lastPosition = position;
+          send("prototype.position", active);
+        }
+      }
       if (activateModule === true) {
         let active = null;
         for (const { win, path, route } of windows.values()) {
@@ -1148,6 +1288,7 @@
         ++inventoryGeneration;
         inventorySpec = null;
         materialWrapper = null;
+        openingPage = null;
         if (!documentMode) {
           // Bind the wrapper fact to this verified material transfer. Charge
           // startup removes its inert payload node, so live DOM is insufficient.
@@ -1235,6 +1376,10 @@
         send("picker.cancelled");
       } else if (data.type === "document.reveal" && documentMode)
         await revealDocument(data.payload?.location, data.request_id);
+      else if (data.type === "document.cancel" && documentMode) {
+        navigation++;
+        documentNavigating = false;
+      }
       else if (data.type === "target.cancel" && !documentMode)
         navigation++;
       else if (
@@ -1242,7 +1387,10 @@
         !documentMode &&
         data.payload?.target
       )
-        await reveal(data.payload.target, data.request_id, data.payload.page_only === true);
+        await reveal(data.payload.target, data.request_id,
+          data.payload.page_only === true, data.payload.highlight !== false);
+      else if (data.type === "target.observe" && !documentMode && data.payload?.target)
+        observeTarget(data.payload.target, data.request_id, data.payload.page_only === true);
     };
     port.start();
     send("runtime.ready");

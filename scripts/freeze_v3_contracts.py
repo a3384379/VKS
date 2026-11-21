@@ -14,9 +14,10 @@ else:
 def mcp_document():
     from vks_api.interactive import InteractiveBinding
     from vks_api.interactive_ai import AssistanceInput
-    from vks_api.project_tools import DocumentRead, DocumentWrite, WorkspaceExport
+    from vks_api.project_tools import DocumentPage, DocumentRead, DocumentWrite, LegacyDocument, ToolContext, WorkspaceExport
     from vks_api.prototype_contracts import PrototypeBindingResult, PrototypeContext, PrototypeEnvelope
     from vks_api.prototype_edit import BindingEdit
+    from vks_api.prototype_previews import PreviewRead, PreviewResult
 
     uuid = {"type": "string", "format": "uuid"}
     key = {"type": "string", "pattern": r"^[a-z][a-z0-9._-]{0,95}$"}
@@ -72,6 +73,7 @@ def mcp_document():
             "读取交互目标的关联与文档",
             "读取准确草稿或保存版本的控件关联、可见文档和章节候选；返回保存所需的版本。",
             AssistanceInput,
+            result=ToolContext,
         ),
         tool(
             "save_interactive_binding",
@@ -83,9 +85,10 @@ def mcp_document():
         ),
         tool(
             "get_workspace_document",
-            "读取准确版本的完整文档",
-            "读取所选草稿或保存版本中的准确文档 Markdown、章节及 row_version。",
+            "读取准确版本的文档",
+            "读取准确文档修订及其章节。传 max_chars 可分页读取，section_revision_ids 可限定章节。",
             DocumentRead,
+            result=DocumentPage | LegacyDocument,
         ),
         tool(
             "save_workspace_document",
@@ -100,6 +103,13 @@ def mcp_document():
             "从草稿复制不可变导出快照，不冻结当前工作区；或导出指定保存版本。返回任务，使用 get_job 查看并取得下载地址。",
             WorkspaceExport,
             write=True,
+        ),
+        tool(
+            "get_prototype_preview",
+            "读取准确原型预览",
+            "按已返回的定位器读取保存版本中的原型缩略图和 Studio 链接。无图时返回文字，查询不会启动采集。",
+            PreviewRead,
+            result=PreviewResult,
         ),
     ]
     return {

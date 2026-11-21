@@ -263,7 +263,7 @@ def publish_job(job_id, kind):
 
     queue = (
         "vks-browser"
-        if kind == "capture"
+        if kind in ("capture", "prototype_preview")
         else "vks-model"
         if kind in ("generate_documents", "knowledge_task", "material_migrate", "associate_all", "reassociation_preview", "explanation_batch")
         else "vks-index"
@@ -601,6 +601,10 @@ def _execute_job(service, jid):
             with cancellation_scope(processing_cancelled), cache_scope(SourceUnitCache(service, jid, attempt)):
                 if kind == "capture":
                     capture_output = ScenarioService(service).execute_capture(jid)
+                if kind == "prototype_preview":
+                    from .prototype_previews import prepare_preview
+
+                    preview_output = prepare_preview(service, jid, principal, processing_cancelled)
                 if kind in ("index", "suggest_links"):
                     from .static_index import prepare
 
@@ -709,6 +713,10 @@ def _execute_job(service, jid):
                         result = SourceSyncService(service).finalize(s, job, actor, result)
                 elif kind == "capture":
                     result = ScenarioService(service).finalize_capture(s, job, capture_output)
+                elif kind == "prototype_preview":
+                    from .prototype_previews import finish_preview
+
+                    result = finish_preview(service, s, job, principal, preview_output)
                 elif kind == "generate_documents":
                     from .ai_gateway import AiService
 

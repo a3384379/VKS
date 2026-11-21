@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "vks",
+  "version": "0.1.0",
+  "description": "Read version-pinned business knowledge from VKS and open precise sources in VKS Studio.",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "VKS",
+        "shortDescription": "业务知识检索与 Studio 精确引用",
+        "category": "Productivity",
+        "capabilities": [
+          "Read"
+        ]
+      }
+    }
+  }
+}

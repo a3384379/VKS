@@ -1,5 +1,8 @@
 """The reported scan → documents → AI settings → return → refresh journey."""
 
+import re
+from urllib.parse import urlsplit
+
 from playwright.sync_api import expect, sync_playwright
 
 from tests.interactive import test_bulk_association, test_materials
@@ -210,20 +213,18 @@ def test_three_parallel_workers_have_distinct_storage_origins_and_stop_before_la
             browser_inventory.start_legacy_pipeline(page, service, owner, pid, aid)
             frames = page.locator('iframe[title="预扫描原型"]')
             expect(frames).to_have_count(3)
-            page.wait_for_function(
-                r"""() => {const nodes=[...document.querySelectorAll('iframe[title="预扫描原型"]')];
-                return nodes.length===3 && nodes.every(node=>/^http:\/\/vks-/.test(node.src));}"""
-            )
-            origins = frames.evaluate_all("nodes=>nodes.map(node=>new URL(node.src).origin)")
-            assert len(set(origins)) == 3
             runtime_frames = [frames.nth(index).element_handle().content_frame() for index in range(3)]
-            for index, origin in enumerate(origins):
-                frame = runtime_frames[index]
-                frame.wait_for_url(origin + "/**", timeout=5000)
+            origins = set()
+            for frame in runtime_frames:
+                # In-frame location replacement leaves the iframe's src at about:blank.
+                frame.wait_for_url(re.compile(r"^http://vks-[a-f0-9]{48}\.localhost:\d+/"), timeout=5000)
+                url_parts = urlsplit(frame.url)
+                origins.add((url_parts.scheme, url_parts.netloc))
+            assert len(origins) == 3
+            for index, frame in enumerate(runtime_frames):
                 assert frame.evaluate("localStorage.getItem('audit-worker-isolation')") is None
                 frame.evaluate("value=>localStorage.setItem('audit-worker-isolation',value)", str(index))
-            for index, origin in enumerate(origins):
-                frame = runtime_frames[index]
+            for index, frame in enumerate(runtime_frames):
                 assert frame.evaluate("localStorage.getItem('audit-worker-isolation')") == str(index)
             assert page.evaluate("localStorage.getItem('audit-worker-isolation')") == "USER"
             assert not uploads

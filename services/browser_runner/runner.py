@@ -52,6 +52,32 @@ def fixture_value(value, dataset):
     return str(current)
 
 
+def isolated_chromium_options(browser_home, executable_path=None):
+    # Browser pages receive neither the parent's credentials nor its profile.
+    env = {
+        key: os.environ[key]
+        for key in ("PATH", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "SystemRoot", "WINDIR")
+        if key in os.environ
+    }
+    env.update(HOME=browser_home, XDG_CONFIG_HOME=browser_home, XDG_CACHE_HOME=browser_home)
+    return {
+        "headless": True,
+        "executable_path": executable_path or os.getenv("VKS_CHROMIUM_EXECUTABLE") or None,
+        "chromium_sandbox": True,
+        "env": env,
+        "args": [
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-sync",
+            "--proxy-server=http://127.0.0.1:9",
+            "--proxy-bypass-list=<-loopback>",
+            "--dns-prefetch-disable",
+            "--disable-quic",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+        ],
+    }
+
+
 def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executable_path=None, auth=None):
     validate_dsl(dsl)
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
@@ -82,30 +108,7 @@ def run_capture(dsl, environment, dataset, *, cancelled=lambda: False, executabl
     start = time.monotonic()
     allow_write = dsl["risk_level"] == "test_write" and environment["kind"] in ("mock", "test")
     with TemporaryDirectory(prefix="vks-browser-") as browser_home, sync_playwright() as driver:
-        # Page code runs in a browser with an isolated profile and receives no
-        # database, broker, model, provider, or application credentials in env.
-        browser_env = {
-            key: os.environ[key]
-            for key in ("PATH", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "SystemRoot", "WINDIR")
-            if key in os.environ
-        }
-        browser_env.update(HOME=browser_home, XDG_CONFIG_HOME=browser_home, XDG_CACHE_HOME=browser_home)
-        browser = driver.chromium.launch(
-            headless=True,
-            executable_path=executable_path or os.getenv("VKS_CHROMIUM_EXECUTABLE") or None,
-            chromium_sandbox=True,
-            env=browser_env,
-            args=[
-                "--disable-background-networking",
-                "--disable-component-update",
-                "--disable-sync",
-                "--proxy-server=http://127.0.0.1:9",
-                "--proxy-bypass-list=<-loopback>",
-                "--dns-prefetch-disable",
-                "--disable-quic",
-                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
-            ],
-        )
+        browser = driver.chromium.launch(**isolated_chromium_options(browser_home, executable_path))
         context = browser.new_context(
             service_workers="block",
             accept_downloads=False,

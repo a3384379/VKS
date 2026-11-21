@@ -1,6 +1,7 @@
 .PHONY: install dev test build check contracts demo
 install:
 	uv sync --frozen
+	uv run --frozen python scripts/fetch_vks_local_model.py
 	npm ci
 dev:
 	bash scripts/dev.sh

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "vks",
+  "version": "3.1.0-rc.7",
+  "description": "Read a local VKS knowledge library and cite original chapters in its saved snapshot.",
+  "repository": "https://github.com/a3384379/VKS",
+  "extensions": {
+    "com.openai": {
+      "requires_local_executor": true,
+      "interface": {
+        "displayName": "VKS",
+        "shortDescription": "本机成品库检索与原文引用",
+        "category": "Productivity",
+        "capabilities": ["Read"]
+      }
+    }
+  }
+}

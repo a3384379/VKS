@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "vks": {
+      "type": "stdio",
+      "command": "${PLUGIN_ROOT}/bin/vks-connect.exe",
+      "args": [
+        "mcp",
+        "--profile",
+        "requirements-readonly",
+        "--connection",
+        "default"
+      ],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

@@ -40,7 +40,7 @@ class PresentationOutput(Input):
 class PresentationSearchInput(Input):
     analysis_set_id: str | None = None
     release_id: str | None = None
-    query: str = Field(min_length=2, max_length=2000)
+    query: str = Field(min_length=2, max_length=1000)
 
 
 class PresentationSearchResult(Input):
@@ -135,56 +135,34 @@ class PresentationService:
                 s, actor, pid, "document.presentation", key, {**form.model_dump(), "expected": expected}, apply
             )
 
-    def search(self, actor, pid, form):
-        from .interactive import InteractiveKnowledgeService
+    def search(self, actor, pid, form, *, control=None):
         from .service import DomainError
 
-        links = InteractiveKnowledgeService(self.service)
-        reader = links.reader.reading
-        query = form.query.strip().casefold()
+        query = form.query.strip()
         if len(query) < 2:
             raise DomainError("VKS_INVALID_INPUT", "请输入至少两个字符", 422)
-        # Match only the current authorized chapter projection. Searching the
-        # original document body would disclose removed chapters through a
-        # document-level match even when every returned reference was visible.
-        with reader.db() as s:
-            _analysis, _release, choices, _ = links.reader.scope(s, actor, pid, form.analysis_set_id, form.release_id)
-            rows = links._rows(s, actor, pid, choices, types={"document", "section"})
-            visible_chapters = {row.id: row for entity, row in rows if entity.type == "section"}
-            result = []
-            for entity, document in rows:
-                if entity.type != "document":
-                    continue
-                chapters = [
-                    visible_chapters[row.id]
-                    for row in links.documents._sections(s, entity, document)
-                    if row.id in visible_chapters
-                ]
-                if query in document.name.casefold():
-                    result.append(
-                        {
-                            "document": document.id,
-                            "section": None,
-                            "title": document.name,
-                            "snippet": "\n\n".join(row.content for row in chapters)[:280],
-                        }
-                    )
-                for chapter in chapters:
-                    offset = chapter.content.casefold().find(query)
-                    if offset < 0 and query not in chapter.name.casefold():
-                        continue
-                    start = max(0, offset - 70)
-                    result.append(
-                        {
-                            "document": document.id,
-                            "section": chapter.id,
-                            "title": chapter.name,
-                            "snippet": chapter.content[start : start + 280],
-                        }
-                    )
-                    if len(result) >= 50:
-                        return result[:50]
-            return result
+        if bool(form.analysis_set_id) == bool(form.release_id):
+            raise DomainError("VKS_INVALID_INPUT", "请选择准确的草稿或快照", 422)
+        hits = self.service.search(
+            actor, pid,
+            {
+                **form.model_dump(exclude_none=True),
+                "retrieval_mode": "keyword",
+                "kinds": ["section", "document"],
+                "limit": 20,
+                "max_excerpt_chars": 280,
+            },
+            control=control,
+        )
+        return [
+            {
+                "document": hit.get("document_revision_id") or hit["entity"]["entity_revision_id"],
+                "section": hit["entity"]["entity_revision_id"] if hit["entity"]["type"] == "section" else None,
+                "title": hit["entity"]["name"],
+                "snippet": hit["excerpt"],
+            }
+            for hit in hits
+        ]
 
 
 def install_document_presentation(app, service, actor, envelope):
@@ -208,5 +186,8 @@ def install_document_presentation(app, service, actor, envelope):
         return envelope(request, shared.update(a, pid, form, if_match, idempotency_key))
 
     @app.post(prefix + "/search", response_model=PrototypeEnvelope[list[PresentationSearchResult]])
-    def search(pid: str, request: Request, form: PresentationSearchInput, a: ActorDep):
-        return envelope(request, shared.search(a, pid, form))
+    async def search(pid: str, request: Request, form: PresentationSearchInput, a: ActorDep):
+        from .knowledge_search import run_search_request
+
+        result = await run_search_request(request, lambda control: shared.search(a, pid, form, control=control))
+        return envelope(request, result)

@@ -3306,6 +3306,11 @@
             ],
             "title": "Document Mode",
             "default": "project"
+          },
+          "local_vectors": {
+            "type": "boolean",
+            "title": "Local Vectors",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -5346,6 +5351,43 @@
             "minimum": 1.0,
             "title": "Limit",
             "default": 10
+          },
+          "retrieval_mode": {
+            "type": "string",
+            "enum": [
+              "legacy",
+              "keyword",
+              "hybrid",
+              "auto"
+            ],
+            "title": "Retrieval Mode",
+            "default": "legacy"
+          },
+          "max_excerpt_chars": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1200.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Excerpt Chars"
+          },
+          "max_total_chars": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 6000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Total Chars"
           }
         },
         "additionalProperties": false,

@@ -173,11 +173,322 @@
         "type": "object"
       },
       "outputSchema": {
+        "$defs": {
+          "ContextBinding": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "binding_version": {
+                "title": "Binding Version",
+                "type": "integer"
+              },
+              "excluded": {
+                "title": "Excluded",
+                "type": "boolean"
+              },
+              "validity_status": {
+                "title": "Validity Status",
+                "type": "string"
+              },
+              "point_revision_id": {
+                "title": "Point Revision Id",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              },
+              "summary": {
+                "title": "Summary",
+                "type": "string"
+              },
+              "package_id": {
+                "title": "Package Id",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/DOMTarget"
+              },
+              "sections": {
+                "items": {
+                  "$ref": "#/$defs/InteractiveCitation"
+                },
+                "title": "Sections",
+                "type": "array"
+              },
+              "scope": {
+                "default": "control",
+                "title": "Scope",
+                "type": "string"
+              },
+              "origin": {
+                "default": "manual",
+                "title": "Origin",
+                "type": "string"
+              },
+              "model_id": {
+                "default": "",
+                "title": "Model Id",
+                "type": "string"
+              },
+              "locator": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PrototypeBindingLocator"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "studio_url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Studio Url"
+              }
+            },
+            "required": [
+              "id",
+              "binding_version",
+              "excluded",
+              "validity_status",
+              "point_revision_id",
+              "title",
+              "summary",
+              "package_id",
+              "target",
+              "sections"
+            ],
+            "title": "ContextBinding",
+            "type": "object"
+          },
+          "DOMTarget": {
+            "additionalProperties": false,
+            "properties": {
+              "route": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "pattern": "^/",
+                "title": "Route",
+                "type": "string"
+              },
+              "frame_path": {
+                "items": {
+                  "maxLength": 160,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Frame Path",
+                "type": "array"
+              },
+              "selector": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Selector",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 160,
+                "minLength": 1,
+                "title": "Label",
+                "type": "string"
+              },
+              "state": {
+                "default": "",
+                "maxLength": 500,
+                "title": "State",
+                "type": "string"
+              },
+              "open_steps": {
+                "items": {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Open Steps",
+                "type": "array"
+              }
+            },
+            "required": [
+              "route",
+              "frame_path",
+              "selector",
+              "label"
+            ],
+            "title": "DOMTarget",
+            "type": "object"
+          },
+          "InteractiveCitation": {
+            "additionalProperties": false,
+            "properties": {
+              "revision_id": {
+                "title": "Revision Id",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "content": {
+                "title": "Content",
+                "type": "string"
+              },
+              "document_revision_id": {
+                "title": "Document Revision Id",
+                "type": "string"
+              },
+              "document_name": {
+                "title": "Document Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "revision_id",
+              "name",
+              "content",
+              "document_revision_id",
+              "document_name"
+            ],
+            "title": "InteractiveCitation",
+            "type": "object"
+          },
+          "PrototypeBindingLocator": {
+            "additionalProperties": false,
+            "properties": {
+              "locator_version": {
+                "const": 1,
+                "title": "Locator Version",
+                "type": "integer"
+              },
+              "project_id": {
+                "format": "uuid",
+                "title": "Project Id",
+                "type": "string"
+              },
+              "release_id": {
+                "format": "uuid",
+                "title": "Release Id",
+                "type": "string"
+              },
+              "package_artifact_id": {
+                "format": "uuid",
+                "title": "Package Artifact Id",
+                "type": "string"
+              },
+              "package_key": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package Key"
+              },
+              "package_revision_id": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package Revision Id"
+              },
+              "package_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Package Sha256",
+                "type": "string"
+              },
+              "kind": {
+                "const": "prototype_binding",
+                "title": "Kind",
+                "type": "string"
+              },
+              "binding_id": {
+                "format": "uuid",
+                "title": "Binding Id",
+                "type": "string"
+              },
+              "point_revision_id": {
+                "format": "uuid",
+                "title": "Point Revision Id",
+                "type": "string"
+              },
+              "binding_version": {
+                "minimum": 1,
+                "title": "Binding Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "locator_version",
+              "project_id",
+              "release_id",
+              "package_artifact_id",
+              "package_sha256",
+              "kind",
+              "binding_id",
+              "point_revision_id",
+              "binding_version"
+            ],
+            "title": "PrototypeBindingLocator",
+            "type": "object"
+          },
+          "ToolContext": {
+            "properties": {
+              "catalog": {
+                "additionalProperties": true,
+                "title": "Catalog",
+                "type": "object"
+              },
+              "binding": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContextBinding"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "related": {
+                "additionalProperties": true,
+                "title": "Related",
+                "type": "object"
+              }
+            },
+            "required": [
+              "catalog",
+              "binding",
+              "related"
+            ],
+            "title": "ToolContext",
+            "type": "object"
+          }
+        },
         "properties": {
           "data": {
-            "additionalProperties": true,
-            "title": "Data",
-            "type": "object"
+            "$ref": "#/$defs/ToolContext"
           },
           "meta": {
             "additionalProperties": true,
@@ -189,7 +500,7 @@
           "data",
           "meta"
         ],
-        "title": "PrototypeEnvelope[dict]",
+        "title": "PrototypeEnvelope[ToolContext]",
         "type": "object"
       },
       "annotations": {
@@ -432,8 +743,8 @@
     },
     {
       "name": "get_workspace_document",
-      "title": "读取准确版本的完整文档",
-      "description": "读取所选草稿或保存版本中的准确文档 Markdown、章节及 row_version。",
+      "title": "读取准确版本的文档",
+      "description": "读取准确文档修订及其章节。传 max_chars 可分页读取，section_revision_ids 可限定章节。",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -477,6 +788,45 @@
             "title": "Revision Id",
             "type": "string"
           },
+          "section_revision_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 96,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Section Revision Ids"
+          },
+          "max_chars": {
+            "anyOf": [
+              {
+                "maximum": 30000,
+                "minimum": 100,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Chars"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
           "project_id": {
             "type": "string",
             "format": "uuid"
@@ -491,11 +841,227 @@
         "type": "object"
       },
       "outputSchema": {
+        "$defs": {
+          "DocumentPage": {
+            "properties": {
+              "document_id": {
+                "title": "Document Id",
+                "type": "string"
+              },
+              "entity_revision_id": {
+                "title": "Entity Revision Id",
+                "type": "string"
+              },
+              "row_version": {
+                "title": "Row Version",
+                "type": "integer"
+              },
+              "sections": {
+                "items": {
+                  "$ref": "#/$defs/DocumentSlice"
+                },
+                "title": "Sections",
+                "type": "array"
+              },
+              "offset": {
+                "title": "Offset",
+                "type": "integer"
+              },
+              "next_offset": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Next Offset"
+              },
+              "truncated": {
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "document_id",
+              "entity_revision_id",
+              "row_version",
+              "sections",
+              "offset",
+              "next_offset",
+              "truncated"
+            ],
+            "title": "DocumentPage",
+            "type": "object"
+          },
+          "DocumentSectionLocator": {
+            "properties": {
+              "locator_version": {
+                "const": 1,
+                "default": 1,
+                "title": "Locator Version",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "document_section",
+                "default": "document_section",
+                "title": "Kind",
+                "type": "string"
+              },
+              "project_id": {
+                "format": "uuid",
+                "title": "Project Id",
+                "type": "string"
+              },
+              "release_id": {
+                "format": "uuid",
+                "title": "Release Id",
+                "type": "string"
+              },
+              "document_id": {
+                "format": "uuid",
+                "title": "Document Id",
+                "type": "string"
+              },
+              "document_revision_id": {
+                "format": "uuid",
+                "title": "Document Revision Id",
+                "type": "string"
+              },
+              "section_revision_id": {
+                "format": "uuid",
+                "title": "Section Revision Id",
+                "type": "string"
+              },
+              "content_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Content Sha256",
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_id",
+              "release_id",
+              "document_id",
+              "document_revision_id",
+              "section_revision_id",
+              "content_sha256"
+            ],
+            "title": "DocumentSectionLocator",
+            "type": "object"
+          },
+          "DocumentSlice": {
+            "properties": {
+              "section_revision_id": {
+                "title": "Section Revision Id",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "content": {
+                "title": "Content",
+                "type": "string"
+              },
+              "start_offset": {
+                "title": "Start Offset",
+                "type": "integer"
+              },
+              "end_offset": {
+                "title": "End Offset",
+                "type": "integer"
+              },
+              "locator": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/DocumentSectionLocator"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "studio_url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Studio Url"
+              }
+            },
+            "required": [
+              "section_revision_id",
+              "name",
+              "content",
+              "start_offset",
+              "end_offset"
+            ],
+            "title": "DocumentSlice",
+            "type": "object"
+          },
+          "LegacyDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "document_id": {
+                "title": "Document Id",
+                "type": "string"
+              },
+              "entity_revision_id": {
+                "title": "Entity Revision Id",
+                "type": "string"
+              },
+              "content_sha256": {
+                "title": "Content Sha256",
+                "type": "string"
+              },
+              "markdown": {
+                "title": "Markdown",
+                "type": "string"
+              },
+              "sections": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Sections",
+                "type": "array"
+              },
+              "row_version": {
+                "title": "Row Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "document_id",
+              "entity_revision_id",
+              "content_sha256",
+              "markdown",
+              "sections",
+              "row_version"
+            ],
+            "title": "LegacyDocument",
+            "type": "object"
+          }
+        },
         "properties": {
           "data": {
-            "additionalProperties": true,
-            "title": "Data",
-            "type": "object"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DocumentPage"
+              },
+              {
+                "$ref": "#/$defs/LegacyDocument"
+              }
+            ],
+            "title": "Data"
           },
           "meta": {
             "additionalProperties": true,
@@ -507,7 +1073,7 @@
           "data",
           "meta"
         ],
-        "title": "PrototypeEnvelope[dict]",
+        "title": "PrototypeEnvelope[Union[DocumentPage, LegacyDocument]]",
         "type": "object"
       },
       "annotations": {
@@ -709,6 +1275,643 @@
         "readOnlyHint": false,
         "openWorldHint": false,
         "idempotentHint": true
+      }
+    },
+    {
+      "name": "get_prototype_preview",
+      "title": "读取准确原型预览",
+      "description": "按已返回的定位器读取保存版本中的原型缩略图和 Studio 链接。无图时返回文字，查询不会启动采集。",
+      "inputSchema": {
+        "$defs": {
+          "PrototypeBindingLocator": {
+            "additionalProperties": false,
+            "properties": {
+              "locator_version": {
+                "const": 1,
+                "title": "Locator Version",
+                "type": "integer"
+              },
+              "project_id": {
+                "format": "uuid",
+                "title": "Project Id",
+                "type": "string"
+              },
+              "release_id": {
+                "format": "uuid",
+                "title": "Release Id",
+                "type": "string"
+              },
+              "package_artifact_id": {
+                "format": "uuid",
+                "title": "Package Artifact Id",
+                "type": "string"
+              },
+              "package_key": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package Key"
+              },
+              "package_revision_id": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package Revision Id"
+              },
+              "package_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Package Sha256",
+                "type": "string"
+              },
+              "kind": {
+                "const": "prototype_binding",
+                "title": "Kind",
+                "type": "string"
+              },
+              "binding_id": {
+                "format": "uuid",
+                "title": "Binding Id",
+                "type": "string"
+              },
+              "point_revision_id": {
+                "format": "uuid",
+                "title": "Point Revision Id",
+                "type": "string"
+              },
+              "binding_version": {
+                "minimum": 1,
+                "title": "Binding Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "locator_version",
+              "project_id",
+              "release_id",
+              "package_artifact_id",
+              "package_sha256",
+              "kind",
+              "binding_id",
+              "point_revision_id",
+              "binding_version"
+            ],
+            "title": "PrototypeBindingLocator",
+            "type": "object"
+          },
+          "PrototypePageLocator": {
+            "additionalProperties": false,
+            "properties": {
+              "locator_version": {
+                "const": 1,
+                "title": "Locator Version",
+                "type": "integer"
+              },
+              "project_id": {
+                "format": "uuid",
+                "title": "Project Id",
+                "type": "string"
+              },
+              "release_id": {
+                "format": "uuid",
+                "title": "Release Id",
+                "type": "string"
+              },
+              "package_artifact_id": {
+                "format": "uuid",
+                "title": "Package Artifact Id",
+                "type": "string"
+              },
+              "package_key": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package Key"
+              },
+              "package_revision_id": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package Revision Id"
+              },
+              "package_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Package Sha256",
+                "type": "string"
+              },
+              "kind": {
+                "const": "prototype_page",
+                "title": "Kind",
+                "type": "string"
+              },
+              "page_ref": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Page Ref",
+                "type": "string"
+              },
+              "state": {
+                "const": "default",
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "required": [
+              "locator_version",
+              "project_id",
+              "release_id",
+              "package_artifact_id",
+              "package_sha256",
+              "kind",
+              "page_ref",
+              "state"
+            ],
+            "title": "PrototypePageLocator",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "release_id": {
+            "format": "uuid",
+            "title": "Release Id",
+            "type": "string"
+          },
+          "locator": {
+            "discriminator": {
+              "mapping": {
+                "prototype_binding": "#/$defs/PrototypeBindingLocator",
+                "prototype_page": "#/$defs/PrototypePageLocator"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/PrototypePageLocator"
+              },
+              {
+                "$ref": "#/$defs/PrototypeBindingLocator"
+              }
+            ],
+            "title": "Locator"
+          },
+          "max_width": {
+            "default": 960,
+            "maximum": 1280,
+            "minimum": 160,
+            "title": "Max Width",
+            "type": "integer"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "release_id",
+          "locator",
+          "project_id"
+        ],
+        "title": "PreviewRead",
+        "type": "object"
+      },
+      "outputSchema": {
+        "$defs": {
+          "PreviewImage": {
+            "additionalProperties": false,
+            "properties": {
+              "sha256": {
+                "title": "Sha256",
+                "type": "string"
+              },
+              "source_image_sha256": {
+                "title": "Source Image Sha256",
+                "type": "string"
+              },
+              "mime_type": {
+                "const": "image/png",
+                "default": "image/png",
+                "title": "Mime Type",
+                "type": "string"
+              },
+              "width": {
+                "title": "Width",
+                "type": "integer"
+              },
+              "height": {
+                "title": "Height",
+                "type": "integer"
+              },
+              "generated_at": {
+                "title": "Generated At",
+                "type": "string"
+              },
+              "generator": {
+                "title": "Generator",
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "registered_raster",
+                  "isolated_capture"
+                ],
+                "title": "Source",
+                "type": "string"
+              },
+              "viewport": {
+                "additionalProperties": true,
+                "title": "Viewport",
+                "type": "object"
+              },
+              "device_pixel_ratio": {
+                "title": "Device Pixel Ratio",
+                "type": "number"
+              }
+            },
+            "required": [
+              "sha256",
+              "source_image_sha256",
+              "width",
+              "height",
+              "generated_at",
+              "generator",
+              "source",
+              "viewport",
+              "device_pixel_ratio"
+            ],
+            "title": "PreviewImage",
+            "type": "object"
+          },
+          "PreviewResult": {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "enum": [
+                  "available",
+                  "preview_unavailable"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "scope": {
+                "$ref": "#/$defs/PreviewScope"
+              },
+              "locator": {
+                "discriminator": {
+                  "mapping": {
+                    "prototype_binding": "#/$defs/PrototypeBindingLocator",
+                    "prototype_page": "#/$defs/PrototypePageLocator"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/PrototypePageLocator"
+                  },
+                  {
+                    "$ref": "#/$defs/PrototypeBindingLocator"
+                  }
+                ],
+                "title": "Locator"
+              },
+              "state": {
+                "default": "default",
+                "enum": [
+                  "default",
+                  "binding_unverified",
+                  "verified_binding"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "page_label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Page Label"
+              },
+              "studio_url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Studio Url"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "page_not_registered",
+                      "no_exact_preview",
+                      "image_budget_exceeded"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
+              },
+              "image": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PreviewImage"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "status",
+              "scope",
+              "locator"
+            ],
+            "title": "PreviewResult",
+            "type": "object"
+          },
+          "PreviewScope": {
+            "additionalProperties": false,
+            "properties": {
+              "project_id": {
+                "format": "uuid",
+                "title": "Project Id",
+                "type": "string"
+              },
+              "release_id": {
+                "format": "uuid",
+                "title": "Release Id",
+                "type": "string"
+              },
+              "manifest_sha256": {
+                "title": "Manifest Sha256",
+                "type": "string"
+              },
+              "saved_at": {
+                "title": "Saved At",
+                "type": "string"
+              },
+              "release_label": {
+                "title": "Release Label",
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_id",
+              "release_id",
+              "manifest_sha256",
+              "saved_at",
+              "release_label"
+            ],
+            "title": "PreviewScope",
+            "type": "object"
+          },
+          "PrototypeBindingLocator": {
+            "additionalProperties": false,
+            "properties": {
+              "locator_version": {
+                "const": 1,
+                "title": "Locator Version",
+                "type": "integer"
+              },
+              "project_id": {
+                "format": "uuid",
+                "title": "Project Id",
+                "type": "string"
+              },
+              "release_id": {
+                "format": "uuid",
+                "title": "Release Id",
+                "type": "string"
+              },
+              "package_artifact_id": {
+                "format": "uuid",
+                "title": "Package Artifact Id",
+                "type": "string"
+              },
+              "package_key": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package Key"
+              },
+              "package_revision_id": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package Revision Id"
+              },
+              "package_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Package Sha256",
+                "type": "string"
+              },
+              "kind": {
+                "const": "prototype_binding",
+                "title": "Kind",
+                "type": "string"
+              },
+              "binding_id": {
+                "format": "uuid",
+                "title": "Binding Id",
+                "type": "string"
+              },
+              "point_revision_id": {
+                "format": "uuid",
+                "title": "Point Revision Id",
+                "type": "string"
+              },
+              "binding_version": {
+                "minimum": 1,
+                "title": "Binding Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "locator_version",
+              "project_id",
+              "release_id",
+              "package_artifact_id",
+              "package_sha256",
+              "kind",
+              "binding_id",
+              "point_revision_id",
+              "binding_version"
+            ],
+            "title": "PrototypeBindingLocator",
+            "type": "object"
+          },
+          "PrototypePageLocator": {
+            "additionalProperties": false,
+            "properties": {
+              "locator_version": {
+                "const": 1,
+                "title": "Locator Version",
+                "type": "integer"
+              },
+              "project_id": {
+                "format": "uuid",
+                "title": "Project Id",
+                "type": "string"
+              },
+              "release_id": {
+                "format": "uuid",
+                "title": "Release Id",
+                "type": "string"
+              },
+              "package_artifact_id": {
+                "format": "uuid",
+                "title": "Package Artifact Id",
+                "type": "string"
+              },
+              "package_key": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package Key"
+              },
+              "package_revision_id": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package Revision Id"
+              },
+              "package_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Package Sha256",
+                "type": "string"
+              },
+              "kind": {
+                "const": "prototype_page",
+                "title": "Kind",
+                "type": "string"
+              },
+              "page_ref": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Page Ref",
+                "type": "string"
+              },
+              "state": {
+                "const": "default",
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "required": [
+              "locator_version",
+              "project_id",
+              "release_id",
+              "package_artifact_id",
+              "package_sha256",
+              "kind",
+              "page_ref",
+              "state"
+            ],
+            "title": "PrototypePageLocator",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/PreviewResult"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[PreviewResult]",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
       }
     },
     {
