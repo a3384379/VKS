@@ -227,6 +227,7 @@ def persist_bundle(
     bundle = deepcopy(bundle)
 
     manifest = bundle.manifest
+    studio = bundle.studio_manifest
     fingerprint = sha(canonical(manifest))
     a = (
         s.get(Analysis, analysis_id)
@@ -444,7 +445,9 @@ def persist_bundle(
             aliases[original] = stable
             chapter["stable_key"] = stable
             chapter["locator"]["sectionKey"] = stable
-            chapter["metadata"]["manual_lock"] = bool(prior and prior.entity_id in locked)
+            chapter["metadata"]["manual_lock"] = bool(prior and prior.entity_id in locked) or (
+                item["metadata"].get("portable_document", False) and chapter["metadata"].get("manual_lock", False)
+            )
             reserved.add(stable)
             allocated.add(stable)
         retained = {row["stable_key"] for row in incoming}
@@ -672,6 +675,13 @@ def persist_bundle(
                 ids | set(point_art.metadata_json.get("prototype_input_artifact_ids", []))
             ),
         )
+    packages, installed_docs = {}, {}
+    if studio:
+        from .studio_bundle import describe_studio, prepare_packages
+
+        if not bundle.studio_descriptors:
+            describe_studio(bundle)
+        packages, installed_docs = prepare_packages(service, s, actor, a, studio, artifacts)
     entity_map = {}
     replaced, stable_semantics, action_state_changes = {}, set(), {}
     offline_directory = prototype_format == "charge-prototype"
@@ -692,6 +702,21 @@ def persist_bundle(
         art = artifacts.get(item.get("artifact_path"))
         content = item.get("content", "")
         metadata = dict(item.get("metadata", {}))
+        portable_document = metadata.pop("portable_document", False)
+        document_key = item["stable_key"] if item["type"] == "document" else metadata.get("document_key")
+        if document_key in installed_docs:
+            package_id, package_key, material_path = installed_docs[document_key]
+            if metadata.get("material_package_id") not in (None, package_id):
+                error("VKS_STATE_CONFLICT", "文档已归属其他 Studio 资料包", 409)
+            metadata["material_package_id"] = package_id
+            if item["type"] == "document":
+                metadata["material_path"] = material_path
+                metadata.pop("original_artifact_id", None)
+                original = bundle.studio_descriptors[package_key].get("source_body_sha256_by_path", {}).get(material_path)
+                if original:
+                    metadata["source_body_sha256"] = original
+                    if sha(content) != original:
+                        metadata["source_kind"] = "platform_draft"
         selection = s.get(Selection, (a.id, entity.id)) if entity else None
         selected = s.get(Revision, selection.entity_revision_id) if selection else None
         _require_import_revision(service, s, actor, pid, selected)
@@ -746,6 +771,10 @@ def persist_bundle(
             metadata = DocumentService(service).with_sections(
                 s, entity, art, [entity_map[row["stable_key"]] for row in chapters], metadata
             )
+            if portable_document:
+                metadata["locked_section_ids"] = sorted(
+                    entity_map[row["stable_key"]].entity_id for row in chapters if row["metadata"].get("manual_lock")
+                )
             if handbook_refresh:
                 metadata["imported_artifact_id"] = art.id
         locator = item.get("locator", {})
@@ -916,6 +945,10 @@ def persist_bundle(
             metadata_json={"prototype_scope": item["prototype_scope"]} if "prototype_scope" in item else {},
         )
         s.add(rel)
+    if studio:
+        from .studio_bundle import install_studio
+
+        install_studio(service, s, actor, a, bundle, artifacts, entity_map, packages)
     if staged_sources is None:
         a.sources = sources
         a.selection_version += 1

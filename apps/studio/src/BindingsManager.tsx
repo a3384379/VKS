@@ -81,7 +81,9 @@ export function BindingsManager<T extends ManagedBinding>({
   onToggle,
   onSource,
   renderSummary,
+  renderBatchExplanation,
   onReview,
+  associationBlocked = "",
 }: {
   bindings: T[];
   packages?: { id: string; name: string; format?: string }[];
@@ -95,7 +97,9 @@ export function BindingsManager<T extends ManagedBinding>({
   onToggle: (binding: T) => void;
   onSource: (binding: T, index: number) => void;
   renderSummary: (binding: T) => ReactNode;
+  renderBatchExplanation?: (bindingIds: string[]) => ReactNode;
   onReview?: (items: ReviewTarget[]) => void;
+  associationBlocked?: string;
 }) {
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState<Filter>("current"),
@@ -434,12 +438,20 @@ export function BindingsManager<T extends ManagedBinding>({
               !editable ||
               !ready ||
               !selectedResults.length ||
-              exceedsBatchLimit
+              exceedsBatchLimit ||
+              !!associationBlocked
             }
             onClick={() => onReview(selectedResults)}
           >
             批量 AI 关联
           </button>
+          {renderBatchExplanation?.(
+            selectableResults
+              .filter((binding) =>
+                reviewSelection.has(binding.id) && status(binding) === "linked" && binding.sections.length > 0,
+              )
+              .map((binding) => binding.id),
+          )}
           <button
             disabled={!selectedResults.length}
             onClick={() => setReviewSelection(new Map())}
@@ -447,9 +459,9 @@ export function BindingsManager<T extends ManagedBinding>({
             清空本次选择
           </button>
           <small>
-            {exceedsBatchLimit
+            {associationBlocked || (exceedsBatchLimit
               ? "一次最多预览 10,000 项，请缩小筛选范围。"
-              : "先预览生成内容，确认后统一保存。"}
+              : "批量关联先预览，确认后统一保存。")}
           </small>
         </div>
       )}
@@ -575,8 +587,9 @@ export function BindingsManager<T extends ManagedBinding>({
                       <td>
                         <button
                           className="binding-row-ai"
-                          disabled={!editable || !ready || b.excluded}
+                          disabled={!editable || !ready || b.excluded || !!associationBlocked}
                           aria-label={`${pendingById.has(b.id) ? "AI关联" : "AI重新关联"}：${b.title}`}
+                          title={associationBlocked || undefined}
                           onClick={(event) => {
                             event.stopPropagation();
                             onReview([reviewTarget(b)]);
@@ -708,7 +721,8 @@ export function BindingsManager<T extends ManagedBinding>({
                 <div className="binding-detail-actions">
                   {onReview && (
                     <button
-                      disabled={!editable || !ready || current.excluded}
+                      disabled={!editable || !ready || current.excluded || !!associationBlocked}
+                      title={associationBlocked || undefined}
                       onClick={() => onReview([reviewTarget(current)])}
                     >
                       {pendingById.has(current.id) ? "AI 关联" : "AI 重新关联"}

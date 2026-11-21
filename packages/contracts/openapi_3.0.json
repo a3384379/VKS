@@ -1665,6 +1665,76 @@
         }
       }
     },
+    "/api/v3/projects/{pid}/model-usage/period": {
+      "get": {
+        "summary": "Token Usage By Period",
+        "operationId": "token_usage_by_period_api_v3_projects__pid__model_usage_period_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "day",
+                "month"
+              ],
+              "type": "string",
+              "default": "month",
+              "title": "Period"
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_TokenPeriodUsage_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/projects/{pid}/interactive/related": {
       "post": {
         "summary": "Related",
@@ -3038,7 +3108,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/OpenWorkspace"
+                "$ref": "#/components/schemas/MigrateMaterials"
               }
             }
           }
@@ -3369,6 +3439,95 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/reassociate/status": {
+      "get": {
+        "summary": "Status",
+        "operationId": "status_api_v3_projects__pid__interactive_reassociate_status_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "title": "Analysis Set Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/reassociate/timing": {
+      "get": {
+        "summary": "Timing",
+        "operationId": "timing_api_v3_projects__pid__interactive_reassociate_timing_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -3742,6 +3901,124 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PrototypeEnvelope_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/explanation-batches": {
+      "post": {
+        "summary": "Create",
+        "operationId": "create_api_v3_projects__pid__interactive_explanation_batches_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 96,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExplanationBatchInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_ExplanationBatchState_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/projects/{pid}/interactive/explanation-batches/latest": {
+      "get": {
+        "summary": "Status",
+        "operationId": "status_api_v3_projects__pid__interactive_explanation_batches_latest_get",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          },
+          {
+            "name": "analysis_set_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "title": "Analysis Set Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeEnvelope_Union_ExplanationBatchState__NoneType__"
                 }
               }
             }
@@ -4873,6 +5150,14 @@
             "maxItems": 10000,
             "minItems": 1,
             "title": "Preview Ids"
+          },
+          "edits": {
+            "items": {
+              "$ref": "#/components/schemas/ReassociationEdit"
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "title": "Edits"
           }
         },
         "additionalProperties": false,
@@ -5547,6 +5832,96 @@
         ],
         "title": "Exclusion"
       },
+      "ExplanationBatchInput": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "binding_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Binding Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id",
+          "binding_ids"
+        ],
+        "title": "ExplanationBatchInput"
+      },
+      "ExplanationBatchState": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Job Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "processed": {
+            "type": "integer",
+            "title": "Processed"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "saved": {
+            "type": "integer",
+            "title": "Saved"
+          },
+          "reused": {
+            "type": "integer",
+            "title": "Reused"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "timing": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Timing"
+          },
+          "history": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HistoryRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "state",
+          "processed",
+          "total",
+          "saved",
+          "reused",
+          "failed",
+          "timing"
+        ],
+        "title": "ExplanationBatchState"
+      },
       "ExplanationInput": {
         "properties": {
           "analysis_set_id": {
@@ -5654,6 +6029,25 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HistoryRange": {
+        "properties": {
+          "lower_seconds": {
+            "type": "integer",
+            "title": "Lower Seconds"
+          },
+          "upper_seconds": {
+            "type": "integer",
+            "title": "Upper Seconds"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "lower_seconds",
+          "upper_seconds"
+        ],
+        "title": "HistoryRange"
       },
       "ImportConfirmation": {
         "properties": {
@@ -6577,6 +6971,35 @@
         ],
         "title": "JobOutput"
       },
+      "MigrateMaterials": {
+        "properties": {
+          "analysis_set_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Analysis Set Id"
+          },
+          "resume_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 96,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Job Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_set_id"
+        ],
+        "title": "MigrateMaterials"
+      },
       "NativeDocument": {
         "properties": {
           "package_id": {
@@ -7329,6 +7752,24 @@
         ],
         "title": "PrototypeEnvelope[ConversationOutput]"
       },
+      "PrototypeEnvelope_ExplanationBatchState_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ExplanationBatchState"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[ExplanationBatchState]"
+      },
       "PrototypeEnvelope_ImportPreviewResult_": {
         "properties": {
           "data": {
@@ -7634,6 +8075,49 @@
           "meta"
         ],
         "title": "PrototypeEnvelope[RelatedOutput]"
+      },
+      "PrototypeEnvelope_TokenPeriodUsage_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TokenPeriodUsage"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[TokenPeriodUsage]"
+      },
+      "PrototypeEnvelope_Union_ExplanationBatchState__NoneType__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExplanationBatchState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "PrototypeEnvelope[Union[ExplanationBatchState, NoneType]]"
       },
       "PrototypeEnvelope_dict_": {
         "properties": {
@@ -8229,6 +8713,16 @@
             "maxLength": 96,
             "minLength": 1,
             "title": "Preview Id"
+          },
+          "edit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PointText"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -8237,6 +8731,26 @@
           "preview_id"
         ],
         "title": "ReassociationConfirmInput"
+      },
+      "ReassociationEdit": {
+        "properties": {
+          "preview_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Preview Id"
+          },
+          "point": {
+            "$ref": "#/components/schemas/PointText"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "preview_id",
+          "point"
+        ],
+        "title": "ReassociationEdit"
       },
       "ReassociationInput": {
         "properties": {
@@ -8989,6 +9503,59 @@
         "additionalProperties": false,
         "type": "object",
         "title": "TokenCounts"
+      },
+      "TokenPeriodUsage": {
+        "properties": {
+          "period": {
+            "type": "string",
+            "enum": [
+              "day",
+              "month"
+            ],
+            "title": "Period"
+          },
+          "start_date": {
+            "type": "string",
+            "title": "Start Date"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens"
+          },
+          "answer_tokens": {
+            "type": "integer",
+            "title": "Answer Tokens"
+          },
+          "association_tokens": {
+            "type": "integer",
+            "title": "Association Tokens"
+          },
+          "embedding_tokens": {
+            "type": "integer",
+            "title": "Embedding Tokens"
+          },
+          "other_tokens": {
+            "type": "integer",
+            "title": "Other Tokens"
+          },
+          "unclassified_tokens": {
+            "type": "integer",
+            "title": "Unclassified Tokens"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "period",
+          "start_date",
+          "total_tokens",
+          "answer_tokens",
+          "association_tokens",
+          "embedding_tokens",
+          "other_tokens",
+          "unclassified_tokens"
+        ],
+        "title": "TokenPeriodUsage"
       },
       "TrashMaterial": {
         "properties": {

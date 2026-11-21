@@ -2155,38 +2155,6 @@ p {
 .control-menu button svg {
   flex: 0 0 16px;
 }
-.chat-source-preview {
-  width: min(760px, calc(100vw - 32px));
-  max-height: calc(100dvh - 48px);
-  padding: 0;
-  border: 1px solid #cbded2;
-  border-radius: 16px;
-  color: #243c30;
-  background: #fff;
-}
-.chat-source-preview::backdrop {
-  background: #172b244d;
-}
-.chat-source-preview > header,
-.chat-source-preview > footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 20px;
-  background: #f4f8f5;
-}
-.chat-source-preview h3 {
-  margin: 4px 0 0;
-}
-.chat-source-preview > footer {
-  justify-content: flex-end;
-}
-.chat-source-preview-body {
-  max-height: calc(100dvh - 236px);
-  overflow: auto;
-  padding: 20px;
-}
 .control-menu button:hover,
 .control-menu button:focus-visible {
   background: #edf5f0;
@@ -4274,14 +4242,16 @@ p {
 .batch-overview > b {
   white-space: nowrap;
 }
-.batch-help,
-.batch-settings {
+.task-timing {
+  color: #526c5e;
+  font-variant-numeric: tabular-nums;
+}
+.batch-help {
   position: relative;
   font-size: 11px;
   color: #71877b;
 }
-.batch-help summary,
-.batch-settings summary {
+.batch-help summary {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -4290,15 +4260,9 @@ p {
   list-style: none;
   white-space: nowrap;
 }
-.batch-help summary::-webkit-details-marker,
-.batch-settings summary::-webkit-details-marker {
+.batch-help summary::-webkit-details-marker {
   display: none;
 }
-.batch-settings summary span {
-  color: #355b46;
-  font-variant-numeric: tabular-nums;
-}
-.batch-settings > label,
 .batch-help-content {
   position: absolute;
   top: calc(100% + 6px);
@@ -4310,24 +4274,8 @@ p {
   box-shadow: 0 8px 24px #173b2824;
   z-index: 40;
 }
-.batch-settings > label {
-  left: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  font-size: 12px;
-}
 .batch-help-content {
   right: 0;
-}
-.batch-settings select {
-  width: 100%;
-  font-size: 12px;
-  padding: 6px 8px;
-}
-.batch-settings small {
-  font-size: 10px;
-  line-height: 1.6;
 }
 .batch-actions {
   display: flex;
@@ -4398,11 +4346,9 @@ p {
   .batch-overview {
     gap: 8px;
   }
-  .batch-settings[open],
   .batch-help[open] {
     flex-basis: 100%;
   }
-  .batch-settings > label,
   .batch-help-content {
     position: static;
     width: 100%;

@@ -70,8 +70,9 @@ def capabilities(service, s, actor, job):
     }
 
 
-def projection(service, s, actor, pid, release_id, caps, document_mode="project", document_ids=None):
+def projection(service, s, actor, pid, release_id, caps, document_mode="project", document_ids=None, *, explanation_cutoff=None):
     """Read an immutable release using the same closure as Studio, before names."""
+    from .explanation_batches import saved_explanations
     from .materials import ROOT, roots
 
     links = InteractiveKnowledgeService(service)
@@ -181,7 +182,7 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
     for edge in edges:
         if edge["relation_type"] == "supported_by_section" and edge["to_revision_id"] in section_ids:
             citation_edges.setdefault(edge["from_revision_id"], []).append(edge)
-    bindings, relation_ids, evidence_ids = [], set(), set()
+    bindings, explanation_refs, relation_ids, evidence_ids = [], [], set(), set()
     for edge in edges:
         if edge["relation_type"] != "has_business_point":
             continue
@@ -205,10 +206,19 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
                 "origin": point.metadata_json.get("origin", "manual"),
             }
         )
+        explanation_refs.append({
+            **bindings[-1], "point_revision_id": point.id,
+        })
         revisions.update([action.id, point.id])
         for dep in [edge, *citations]:
             relation_ids.add(dep["id"])
             evidence_ids.update(dep.get("evidence_ids", []))
+    explanations = saved_explanations(service, s, pid, explanation_refs, caps, cutoff=explanation_cutoff)
+    for binding in bindings:
+        if saved := explanations.get(binding["id"]):
+            artifact_id, answer = saved
+            artifacts.add(artifact_id)
+            binding["saved_explanation"] = answer
     for eid in evidence_ids:
         ev = s.get(Evidence, eid)
         if (
@@ -295,6 +305,7 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
 def html_library(payload):
     """Embed data as inert gzip/base64 and platform-owned runtime as inline code."""
     assets = Path(__file__).with_name("reader_assets")
+    assistant_assets = Path(__file__).resolve().parents[3] / "packages/assistant-runtime/src"
     from .document_assistant import embedded_assistant
     from .interactive_ai import EXPLANATION_GUIDANCE
 
@@ -307,7 +318,8 @@ def html_library(payload):
         )
         .replace(
             "/* VKS_READER_CSS */",
-            (assets / "reader.css").read_text() + (assets / "assistant-composer.css").read_text(),
+            (assets / "reader.css").read_text() + (assets / "assistant-composer.css").read_text()
+            + (assistant_assets / "source-preview.css").read_text(),
         )
         .replace("/* VKS_HANDBOOK_CSS */", (assets / "handbook.css").read_text())
         .replace("/* VKS_MARKDOWN_CSS */", (assets / "markdown-vendor.css").read_text())
@@ -338,7 +350,9 @@ def prepare_job(service, jid, validate_scope=None):
         pid, release_id = job.project_id, job.input_json["release_id"]
         mode = job.input_json.get("document_mode", "project")
         document_ids = job.input_json.get("document_ids")
-        payload, deps, section_ids = projection(service, s, actor, pid, release_id, caps, mode, document_ids)
+        payload, deps, section_ids = projection(
+            service, s, actor, pid, release_id, caps, mode, document_ids, explanation_cutoff=job.created_at
+        )
         before = digest(canonical([payload, deps]))
     if validate_scope:
         validate_scope()
@@ -349,7 +363,9 @@ def prepare_job(service, jid, validate_scope=None):
         job = s.get(Job, jid)
         actor = current_actor(service, job.created_by, pid, session=s, job=job)
         caps_now = capabilities(service, s, actor, job)
-        latest, current_deps, _ = projection(service, s, actor, pid, release_id, caps_now, mode, document_ids)
+        latest, current_deps, _ = projection(
+            service, s, actor, pid, release_id, caps_now, mode, document_ids, explanation_cutoff=job.created_at
+        )
         if caps != caps_now or before != digest(canonical([latest, current_deps])):
             raise DomainError("VKS_VERSION_CONFLICT", "导出期间资料或权限发生变化，请重新导出", 409)
     if validate_scope:
@@ -379,6 +395,7 @@ def finalize(service, s, job, prepared):
         caps,
         job.input_json.get("document_mode", "project"),
         job.input_json.get("document_ids"),
+        explanation_cutoff=job.created_at,
     )
     if caps != prepared["caps"] or digest(canonical([payload, deps])) != prepared["projection_hash"]:
         raise DomainError("VKS_VERSION_CONFLICT", "导出期间资料或权限发生变化，请重新导出", 409)

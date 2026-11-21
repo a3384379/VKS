@@ -49,6 +49,7 @@ JOB_SCOPES = {
     "material_migrate": "knowledge:edit",
     "associate_all": "knowledge:edit",
     "reassociation_preview": "knowledge:edit",
+    "explanation_batch": "knowledge:edit",
     "index": "analysis:run",
     "generate_documents": "analysis:run",
     "suggest_links": "analysis:run",
@@ -200,6 +201,7 @@ class Service:
         self.lock = RLock()
         self.stop = Event()
         self.thread = None
+        self.pipeline_thread = None
         self.pipeline_lock = RLock()
         self.pipeline_executor = None
         self.pipeline_futures = {}
@@ -246,24 +248,37 @@ class Service:
                 raise DomainError("VKS_STATE_CONFLICT", "对象唯一性或引用约束冲突，请重新加载", 409) from e
 
     def start_worker(self):
-        from .jobs import dispatch_mode
+        from .jobs import dispatch_mode, run_local_pipeline, run_pending
 
-        if dispatch_mode() == "external" or (self.thread and self.thread.is_alive()):
+        mode = dispatch_mode()
+        if mode == "external" or (self.thread and self.thread.is_alive()):
             return
         self.stop.clear()
 
-        def loop():
+        def loop(tick):
             while not self.stop.wait(0.2):
                 try:
-                    self.run_pending()
+                    tick()
                 except Exception:
                     continue
 
-        self.thread = Thread(target=loop, daemon=True, name="vks-durable-dispatcher")
+        self.thread = Thread(
+            target=loop,
+            args=(lambda: run_pending(self, run_pipeline=False),),
+            daemon=True,
+            name="vks-durable-dispatcher",
+        )
+        if mode == "local":
+            self.pipeline_thread = Thread(
+                target=loop, args=(lambda: run_local_pipeline(self),), daemon=True, name="vks-pipeline-dispatcher"
+            )
+            self.pipeline_thread.start()
         self.thread.start()
 
     def stop_worker(self):
         self.stop.set()
+        if self.pipeline_thread:
+            self.pipeline_thread.join(timeout=5)
         if self.thread:
             self.thread.join(timeout=5)
         with self.pipeline_lock:
@@ -344,7 +359,7 @@ class Service:
                 "VKS_VERSION_CONFLICT", "当前内容已更新，请重新加载后合并", 412, {"current_version": value}
             )
 
-    def idem(self, s, actor, pid, operation, key, payload, fn):
+    def _idempotency_lock(self, s, actor, pid, operation, key):
         if not key or len(key) > 128:
             raise DomainError("VKS_INVALID_INPUT", "需要 1–128 字符的 Idempotency-Key")
         if self.engine.dialect.name == "postgresql":
@@ -352,6 +367,9 @@ class Service:
                 hashlib.sha256(f"{pid}:{actor.id}:{operation}:{key}".encode()).digest()[:8], "big", signed=True
             )
             s.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
+
+    def idem(self, s, actor, pid, operation, key, payload, fn):
+        self._idempotency_lock(s, actor, pid, operation, key)
         h = sha(canonical(payload))
         ready = s.info.get("vks_ready_idempotency", {}) if operation == "interactive.binding.save" else {}
         identity = (pid, actor.id, operation, key)
@@ -617,6 +635,8 @@ class Service:
         }
 
     def job_dto(self, j):
+        from .jobs import TIMED_STUDIO_JOBS, job_timing
+
         d = {
             "id": j.id,
             "project_id": j.project_id,
@@ -632,6 +652,8 @@ class Service:
             "issue_count": j.issue_count,
             "result_refs": j.result_json.get("result_refs", []),
         }
+        if j.kind in TIMED_STUDIO_JOBS:
+            d["timing"] = job_timing(j)
         if j.result_json:
             d["result"] = j.result_json
         if j.error_json:
@@ -996,7 +1018,12 @@ class Service:
         from packages.analyzers.vks_ingest import parse_bundle, BundleError
 
         try:
-            return parse_bundle(data, project_key)
+            parsed = parse_bundle(data, project_key)
+            if parsed.studio_manifest:
+                from .studio_bundle import describe_studio
+
+                describe_studio(parsed)
+            return parsed
         except BundleError as e:
             raise DomainError(
                 "VKS_INVALID_INPUT", e.message, 422, {"reason_code": e.code, **getattr(e, "details", {})}
@@ -1203,7 +1230,7 @@ class Service:
                 j.state = "cancelling"
                 j.cancel_requested = True
             self.audit(s, actor, j.project_id, "job.cancel", jid, metadata={"reason": reason[:500]})
-            if j.kind in ("import_preview", "reassociation_preview") or j.input_json.get("_prototype_batch"):
+            if j.kind in ("import_preview", "reassociation_preview", "explanation_batch") or j.input_json.get("_prototype_batch"):
                 from .reading import ReadingService
 
                 return ReadingService(self).job_dto(s, actor, j)
@@ -1229,7 +1256,7 @@ class Service:
             if j.kind == "associate_all":
                 j.result_json = {**j.result_json, "processing_epoch": j.attempt + 1}
             self.audit(s, actor, j.project_id, "job.retry", jid)
-            if j.kind == "reassociation_preview":
+            if j.kind in ("reassociation_preview", "explanation_batch"):
                 from .reading import ReadingService
 
                 return ReadingService(self).job_dto(s, actor, j)
@@ -1386,10 +1413,14 @@ class Service:
         ]
         selections.sort(key=lambda x: x["entity_id"])
         selected = {row.id for row in revisions}
+        anchors = {row.id for row in revisions if row.metadata_json.get("interactive_anchor")}
         relation_rows = [
             r
-            for r in s.scalars(select(Relation).where(Relation.analysis_set_id == a.id, Relation.excluded == False))
+            for r in s.scalars(select(Relation).where(Relation.analysis_set_id == a.id))
             if r.from_revision_id in selected and r.to_revision_id in selected
+            # Studio needs the persisted removal decision when a snapshot is
+            # reopened or transported. Other rejected candidates stay omitted.
+            and (not r.excluded or (r.relation_type == "has_business_point" and r.from_revision_id in anchors))
         ]
         # Legacy business points have no explicit reference order. Keep the
         # chronological order used by the live binding projection in new snapshots.

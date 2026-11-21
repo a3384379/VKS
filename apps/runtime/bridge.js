@@ -1235,6 +1235,8 @@
         send("picker.cancelled");
       } else if (data.type === "document.reveal" && documentMode)
         await revealDocument(data.payload?.location, data.request_id);
+      else if (data.type === "target.cancel" && !documentMode)
+        navigation++;
       else if (
         data.type === "target.reveal" &&
         !documentMode &&

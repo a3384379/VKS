@@ -216,12 +216,14 @@ class VectorStore:
                     (row[0] if used is None else used, state, key),
                 )
 
-    def used_tokens(self, pid):
+    def used_tokens(self, pid, *, days=None):
+        sql = "SELECT COALESCE(SUM(used), 0) FROM usage WHERE project=? AND state IN ('succeeded', 'failed')"
+        params = (pid,)
+        if days is not None:
+            sql += " AND day>=? AND day<?"
+            params += days
         with self.db() as db:
-            return db.execute(
-                "SELECT COALESCE(SUM(used), 0) FROM usage WHERE project=? AND state IN ('succeeded', 'failed')",
-                (pid,),
-            ).fetchone()[0]
+            return db.execute(sql, params).fetchone()[0]
 
     def count(self, pid, space, revisions):
         with self.db() as db:
@@ -555,6 +557,8 @@ class VectorRag:
 
         def progress(completed, total, token):
             nonlocal status_token
+            if status_token != token:
+                state["baseline"] = completed
             status_token = token
             state.update(completed=completed, total=total)
             self.store.index_state(pid, state, token, space=space)
@@ -866,6 +870,7 @@ class VectorRag:
 
     def document_status(self, actor, pid, form):
         """Status for an exact readable Markdown corpus, with no prototype dependency."""
+        from .jobs import job_timing
         from .models import Job
 
         scope = form.model_dump()
@@ -913,13 +918,20 @@ class VectorRag:
                 if (
                     not form.release_id
                     and job_scope.get("analysis_set_id") == form.analysis_set_id
-                    and (job_scope.get("index_documents") or job_scope.get("index_package_id"))
+                    and job_scope.get("index_only")
                 ):
                     if job.state in {"queued", "running", "retry_wait"} and not job.cancel_requested:
                         if data["state"] != "ready":
+                            timing = job_timing(job)
+                            timing["baseline"] = (
+                                state.get("baseline", data["completed"]) if state.get("job_id") == job.id
+                                and state.get("job_attempt") == job.attempt else data["completed"]
+                            )
                             data.update(
                                 state="building",
                                 phase="文档索引任务执行中" if job.state == "running" else "等待文档索引任务",
+                                timing=timing,
+                                job_state=job.state,
                             )
                     elif job.state == "failed" and data["state"] not in {"ready", "unavailable"}:
                         data.update(
@@ -975,7 +987,7 @@ class VectorRag:
                 ):
                     previous = active.input_json
                     if (
-                        previous.get("index_documents")
+                        previous.get("index_only")
                         and previous.get("analysis_set_id") == analysis.id
                         and previous.get("composition") == composition
                         and previous.get("index_selection_version") == analysis.selection_version
@@ -991,6 +1003,7 @@ class VectorRag:
                         "targets": [],
                         "issues": [],
                         "composition": composition,
+                        "index_only": True,
                         "index_documents": True,
                         "index_package_id": package["id"] if package else None,
                         "index_selection_version": analysis.selection_version,

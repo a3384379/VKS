@@ -281,15 +281,22 @@ class AssociationBatch:
                 if len(valid) == 1 or key in self.unsupported:
                     for pending in valid:
                         pending.response = BatchResponse(
-                            self.request_model(pending.config, pending.body), pending.candidates
+                            self.request_model(
+                                {**pending.config, "_association_preflight": pending.preflight}, pending.body
+                            ), pending.candidates
                         )
                         pending.done.set()
                     return
                 config = valid[0].config
                 combined = self._body(valid)
                 output_cap = combined.get("max_output_tokens", combined.get("max_completion_tokens", 0))
+                def revalidate():
+                    for pending in valid:
+                        pending.preflight()
+
                 response = self.request_model(
-                    {**config, "_request_timeout_seconds": 900 if output_cap > 16000 else min(120, 30 * len(valid))}, combined
+                    {**config, "_association_preflight": revalidate,
+                     "_request_timeout_seconds": 900 if output_cap > 16000 else min(120, 30 * len(valid))}, combined
                 )
                 tokens = usage(response)
                 all_inputs = tuple(dict.fromkeys(rid for p in valid for rid in p.candidates))
@@ -324,7 +331,9 @@ class AssociationBatch:
                     try:
                         pending.preflight()
                         attempted = True
-                        single = self.request_model(pending.config, pending.body)
+                        single = self.request_model(
+                            {**pending.config, "_association_preflight": pending.preflight}, pending.body
+                        )
                         extra = usage(single)
                         single["usage"] = {"input_tokens": spent[0] + extra[0], "output_tokens": spent[1] + extra[1]}
                         # The first response may have influenced this derivation;

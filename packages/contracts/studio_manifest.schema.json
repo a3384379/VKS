@@ -1,0 +1,354 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vks:contracts:studio-manifest:1.0",
+  "title": "VKS Studio material and interactive bindings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectKey",
+    "baselineKey",
+    "primaryPackage",
+    "packages",
+    "bindings"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "projectKey": {
+      "$ref": "#/$defs/key"
+    },
+    "baselineKey": {
+      "$ref": "#/$defs/key"
+    },
+    "primaryPackage": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/key"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "packages": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "name",
+          "kind",
+          "format",
+          "entry",
+          "runtime",
+          "inputs",
+          "attachments",
+          "documents"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/$defs/key"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "kind": {
+            "enum": [
+              "prototype",
+              "documents"
+            ]
+          },
+          "format": {
+            "enum": [
+              "html",
+              "static-site",
+              "charge-prototype",
+              "markdown",
+              "html-document",
+              "charge-handbook",
+              "handbook-authoring",
+              "standalone-handbook"
+            ]
+          },
+          "entry": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1000
+          },
+          "runtime": {
+            "$ref": "#/$defs/file"
+          },
+          "inputs": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/$defs/input"
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "maxItems": 5000,
+            "items": {
+              "$ref": "#/$defs/file"
+            }
+          },
+          "documents": {
+            "type": "array",
+            "maxItems": 50000,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "key",
+                "path"
+              ],
+              "properties": {
+                "key": {
+                  "$ref": "#/$defs/key"
+                },
+                "path": {
+                  "$ref": "#/$defs/path"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "bindings": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "point",
+          "package",
+          "target",
+          "title",
+          "summary",
+          "applicability",
+          "outcome",
+          "exceptions",
+          "sections",
+          "inputs",
+          "excluded",
+          "validity",
+          "manualLock",
+          "model",
+          "sourceRestricted"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/key"
+          },
+          "point": {
+            "$ref": "#/$defs/key"
+          },
+          "package": {
+            "$ref": "#/$defs/key"
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "route",
+              "frame_path",
+              "selector",
+              "label",
+              "state",
+              "open_steps"
+            ],
+            "properties": {
+              "route": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "pattern": "^/"
+              },
+              "frame_path": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                }
+              },
+              "selector": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "state": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 500
+              },
+              "open_steps": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              }
+            }
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512000
+          },
+          "applicability": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2000
+          },
+          "outcome": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2000
+          },
+          "exceptions": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2000
+          },
+          "sections": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/$defs/entityKey"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "inputs": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/$defs/entityKey"
+            },
+            "uniqueItems": true
+          },
+          "excluded": {
+            "type": "boolean"
+          },
+          "validity": {
+            "enum": [
+              "valid",
+              "stale",
+              "outdated",
+              "broken"
+            ]
+          },
+          "manualLock": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 160
+          },
+          "sourceRestricted": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[a-z][a-z0-9._-]*$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]+$"
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "name",
+        "encoding",
+        "originalSha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]+$"
+        },
+        "name": {
+          "$ref": "#/$defs/path"
+        },
+        "encoding": {
+          "enum": [
+            "raw",
+            "base64"
+          ]
+        },
+        "originalSha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]+$"
+        }
+      }
+    },
+    "entityKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^[a-z][a-z0-9._-]*$"
+    }
+  }
+}

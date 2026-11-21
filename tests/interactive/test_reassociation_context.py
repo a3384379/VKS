@@ -4,7 +4,14 @@ import json
 
 import pytest
 from vks_api import ai_gateway
-from vks_api.interactive_ai import InteractiveAssistant, ReassociationInput, answer_schema
+from vks_api.association_text import contains_formula, formula_anchors, formula_key
+from vks_api.interactive_ai import (
+    ChapterIndex,
+    InteractiveAssistant,
+    ReassociationInput,
+    answer_schema,
+    formula_evidence,
+)
 from vks_api.service import DomainError
 
 from tests.interactive import test_assistant, test_knowledge
@@ -15,6 +22,51 @@ workspace = test_assistant.workspace
 interactive = test_assistant.interactive
 assistant = test_assistant.assistant
 root = test_knowledge.root
+
+
+def test_parking_formula_retention_accepts_documented_monthly_fixed_price_labels():
+    old = "### 停车类\n| 月固定数 × 月数 | 月固定金额 × 月数 | 按续费月数计算。 |"
+    new = "停车类可识别的计价方式包括按月计费、固定金额、月固定数 × 月数。[6]"
+    anchors = formula_anchors(old)
+    assert len(anchors) == 2
+    assert all(contains_formula(formula_key(new), key) for key in anchors)
+    assert all(contains_formula(formula_key("月固定金额 * 月数。"), key) for key in anchors)
+    assert not any(contains_formula(formula_key("固定金额 × 月数"), key) for key in anchors)
+    assert not any(contains_formula(formula_key("月固定数 × 月数 × 系数"), key) for key in anchors)
+    assert not any(contains_formula(formula_key("系数 × (月固定数 × 月数)"), key) for key in anchors)
+    assert not any(contains_formula(formula_key("(月固定数 × 月数) × 系数"), key) for key in anchors)
+    assert not any(contains_formula(formula_key("月固定金额 × 月数 + 调整金额"), key) for key in anchors)
+
+
+def test_explicit_formula_retention_matches_formula_evidence_and_blocks_omission(assistant):
+    (web, _service, _owner, pid, aid, grant, package, section, _), body, _calls = assistant
+    baseline = "## 计费公式\n\n| `100603` | `F(此前累计 + 本次) − F(此前累计)` |\n"
+    rows = [
+        {"revision_id": "overview", "document_revision_id": "billing", "document_name": "计费", "name": "5.1 统一计算", "content": "先识别类型。"},
+        {"revision_id": "formula", "document_revision_id": "billing", "document_name": "计费", "name": "5.2 抽成公式", "content": "编号 100603，F(此前累计 + 本次) − F(此前累计)。"},
+        {"revision_id": "unrelated", "document_revision_id": "other", "document_name": "账单", "name": "概览", "content": "编号是 21006030。"},
+    ]
+    assert {r["revision_id"] for r in formula_evidence(ChapterIndex(rows), formula_anchors(baseline))} == {
+        "overview", "formula",
+    }
+    form = test_knowledge.form(aid, package, section)
+    form["point"]["summary"] = baseline
+    response = web.post(
+        root(pid) + "/bindings", json=form,
+        headers=_headers(grant, test_knowledge.current(web, pid, aid, grant)["selection_version"], "old-formula"),
+    )
+    assert response.status_code == 200, response.text
+    old = bindings(web, pid, aid, grant)[0]
+    response = web.post(
+        root(pid) + "/reassociate",
+        json={**body, "binding_id": old["id"], "binding_version": old["binding_version"],
+              "point_revision_id": old["point_revision_id"], "instruction": "补全细节，保留原有公式"},
+        headers=_headers(grant, 0, "keep-formula"),
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()["data"]
+    assert result["can_confirm"] is False and result["preview_id"] is None
+    assert "100603" in result["unknowns"][0] and bindings(web, pid, aid, grant)[0] == old
 
 
 def test_add_chapter_rewrites_exact_target_only_after_preview_confirmation(assistant, monkeypatch):
@@ -154,7 +206,8 @@ def test_guided_preflight_keeps_full_formula_family_tables_and_original_draft(as
     monkeypatch.setattr(engine.rag, "available", lambda *a: False)
     reservations = []
 
-    def reserve(actor, project, settings, bound, *, prototype_target):
+    def reserve(actor, project, settings, bound, *, prototype_target, purpose):
+        assert purpose == "association"
         reservations.append((bound, prototype_target))
         return "synthetic-usage"
 
@@ -199,6 +252,19 @@ def test_guided_preflight_keeps_full_formula_family_tables_and_original_draft(as
     with pytest.raises(DomainError, match="完整底稿"):
         engine._prepare_inference(owner, pid, form)
     assert len(reservations) == 1
+
+    config["max_input_tokens"] = 24000
+    rows.remove(old)
+    with pytest.raises(DomainError, match="完整依据"):
+        engine._prepare_inference(owner, pid, form)
+    rebuilt = engine._prepare_inference(owner, pid, form, preview=True)
+    sent = json.loads(rebuilt.body["input"][1]["content"])
+    assert rebuilt.rebuilt_from_current_sources
+    assert sent["existing_binding"] is None
+    assert sent["previous_preview"] is None
+    assert "old" not in {row["revision_id"] for row in sent["chapters"]}
+    assert current["summary"] not in rebuilt.body["input"][1]["content"]
+    assert len(reservations) == 2
 
 
 def test_regeneration_uses_last_preview_and_rejects_other_control(assistant, monkeypatch):

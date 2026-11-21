@@ -1,6 +1,7 @@
 """Every prototype assistant source opens a preview before changing the reader."""
 
 import json
+import re
 
 import pytest
 from playwright.sync_api import expect, sync_playwright
@@ -22,9 +23,15 @@ def test_numbered_and_card_sources_preview_before_navigation(assistant, tmp_path
     (web, _service, _owner, pid, aid, grant, package, section, _), _body, calls = assistant
     binding = test_assistant.form(aid, package, section)
     binding["target"]["frame_path"] = []
+    revision = section["revision_id"]
     binding["point"] = {
         "title": "Saved Add binding",
-        "summary": "核对准确原文。[1][1]\n\n代码中的 `[1]` 保持原样。",
+        "summary": (
+            f"## 核对依据\n\n[1]《办理规则》（revision ID：`{revision}`）\n\n"
+            f"[1]《适用条件》 (revision ID: {revision})\n\n"
+            "适用于业务规则 V2.1。代码中的 `[1]` 保持原样。\n\n"
+            f"```text\n示例（revision ID：{revision}）\n```"
+        ),
     }
     result = web.post(
         test_assistant.root(pid) + "/bindings",
@@ -69,7 +76,13 @@ def test_numbered_and_card_sources_preview_before_navigation(assistant, tmp_path
             panel.get_by_role("tab", name=tab, exact=True).click()
             content = panel.get_by_label("关联说明" if tab == "文档" else "AI 功能讲解", exact=True)
             expect(content.locator(".markdown-reference")).to_have_count(2)
-            expect(content.locator("code")).to_have_text("[1]")
+            expect(content.locator("p > code")).to_have_text("[1]")
+            if tab == "文档":
+                expect(content.get_by_text("[1]《办理规则》", exact=True)).to_be_visible()
+                expect(content.get_by_text("[1]《适用条件》", exact=True)).to_be_visible()
+                expect(content.get_by_text("适用于业务规则 V2.1。", exact=False)).to_be_visible()
+                expect(content.locator("p", has_text="revision ID")).to_have_count(0)
+                expect(content.locator("pre")).to_contain_text(f"示例（revision ID：{revision}）")
             original_url = page.url
             disclosure = panel.locator(".source-disclosure:visible")
             expect(disclosure).not_to_have_attribute("open", "")
@@ -77,7 +90,8 @@ def test_numbered_and_card_sources_preview_before_navigation(assistant, tmp_path
             def preview_stays_on_prototype():
                 preview = host.get_by_role("dialog", name="引用原文预览", exact=True)
                 expect(preview).to_be_visible()
-                expect(preview.locator("h3")).to_have_text(section["name"])
+                expect(preview.locator("header small")).to_have_text(re.compile(r"\S"))
+                expect(preview.locator("header").get_by_role("heading")).to_have_count(0)
                 expect(preview.locator(".markdown")).to_contain_text(section["content"].splitlines()[-1].lstrip("# "))
                 assert page.url == original_url
                 expect(panel.locator(".knowledge-context")).to_contain_text("Add")

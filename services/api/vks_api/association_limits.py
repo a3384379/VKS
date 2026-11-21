@@ -10,6 +10,7 @@ GLOBAL_REQUEST_LIMIT = int(os.environ.get("VKS_AI_CONCURRENCY", "128"))
 if not 1 <= GLOBAL_REQUEST_LIMIT <= MAX_REQUEST_LIMIT:
     raise ValueError("VKS_AI_CONCURRENCY must be between 1 and 128")
 CLAIM_LOCK = 851392741
+FULL_MODEL_JOBS = ("associate_all", "reassociation_preview", "explanation_batch")
 
 
 def request_concurrency(lanes):
@@ -18,6 +19,10 @@ def request_concurrency(lanes):
     # Parallel scanning has a separate CPU budget; short model requests can use
     # more I/O slots without creating additional browser runtimes.
     return 1 if lanes == 1 else GLOBAL_REQUEST_LIMIT
+
+
+def host_request_ceiling():
+    return min(GLOBAL_REQUEST_LIMIT, max(2, 2 * (os.cpu_count() or 1)), 32)
 
 
 def defer_request_job(s, job):
@@ -49,7 +54,7 @@ def active_request_slots(s):
                 Job.input_json["scan_pipeline"].as_boolean(),
                 Job.input_json["concurrency"].as_integer(),
             ).where(
-                Job.kind.in_(("associate_all", "reassociation_preview")),
+                Job.kind.in_(FULL_MODEL_JOBS),
                 Job.state.in_(("running", "cancelling")),
                 Job.lease_until > now(),
             )

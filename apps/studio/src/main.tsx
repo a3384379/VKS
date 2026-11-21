@@ -46,6 +46,7 @@ import { BindingsManager } from "./BindingsManager";
 import { BatchAssociations } from "./BatchAssociations";
 import { ProjectTokenUsage } from "./ProjectTokenUsage";
 import { AssociationReview, type ReviewTarget } from "./AssociationReview";
+import { BatchExplanations } from "./BatchExplanations";
 import {
   DocumentAssociation,
   type AssociationChapter,
@@ -186,6 +187,7 @@ type Route = {
   package: string;
   book: string;
   reader: string;
+  review?: string;
 };
 type ReadingPosition = {
   route: Route;
@@ -212,6 +214,7 @@ const getRoute = (): Route =>
       "package",
       "book",
       "reader",
+      "review",
     ].map((k) => [k, new URLSearchParams(location.hash.slice(1)).get(k) || ""]),
   ) as Route;
 const sameTarget = (a: Target, b: Target) =>
@@ -220,6 +223,15 @@ const sameTarget = (a: Target, b: Target) =>
   a.label === b.label &&
   a.state === b.state &&
   JSON.stringify(a.frame_path) === JSON.stringify(b.frame_path);
+const bindingForTarget = (
+  bindings: Binding[],
+  packageId: string | undefined,
+  target: Target,
+) =>
+  bindings.find(
+    (binding) =>
+      binding.package_id === packageId && sameTarget(binding.target, target),
+  );
 const text = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function App() {
@@ -241,6 +253,39 @@ function App() {
       ? loadedCatalog
       : null;
   const bindings = catalog ? loadedBindings : [];
+  const migrationScope = route.project && route.analysis && !route.release
+    ? `${route.project}:${route.analysis}`
+    : "";
+  const [migratingScope, setMigratingScope] = useState("");
+  const [applyingMaterials, setApplyingMaterials] = useState<Record<string, number>>({});
+  const associationBlocked =
+    migrationScope && (migratingScope === migrationScope || applyingMaterials[migrationScope])
+      ? "当前草稿正在迁移资料引用，可在资料管理查看进度。"
+      : "";
+  useEffect(() => {
+    if (!auth || !catalog || !migrationScope) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function update() {
+      try {
+        const status = await api<{ migrating: boolean }>(
+          `/api/v3/projects/${route.project}/interactive/reassociate/status?analysis_set_id=${encodeURIComponent(route.analysis)}`,
+          { signal: controller.signal },
+        );
+        if (!controller.signal.aborted)
+          setMigratingScope(status.migrating ? migrationScope : "");
+      } catch {
+        // Keep the last known status until the next successful read.
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(update, 3000);
+      }
+    }
+    void update();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [auth, catalog?.editable, catalog?.selection_version, migrationScope, route.project, route.analysis]);
   const documentRef = catalog?.documents.find(
     (doc) => doc.revision_id === route.doc,
   );
@@ -259,12 +304,20 @@ function App() {
     !!documentRef?.native_package_id;
   const prototypePackages =
     catalog?.packages.filter((p) => p.kind === "prototype") || [];
+  const linkedBinding = bindings.find(
+    (binding) => binding.id === route.binding && !binding.excluded,
+  );
   const p =
+    ((!route.view || route.view === "prototype") &&
+      prototypePackages.find(
+        (pack) => pack.id === linkedBinding?.package_id,
+      )) ||
     prototypePackages.find(
       (p) =>
         (p.package_key || p.id) ===
         (route.package || catalog?.primary_package_id),
-    ) || prototypePackages[0];
+    ) ||
+    prototypePackages[0];
   const prefix = `/api/v3/projects/${route.project}/interactive`,
     scope = route.release
       ? `release_id=${encodeURIComponent(route.release)}`
@@ -343,12 +396,18 @@ function App() {
   const [target, setTarget] = useState<Target | null>(null),
     [active, setActive] = useState<Binding | null>(null),
     [knowledge, setKnowledge] = useState(false),
-    [editing, setEditing] = useState(false),
+    [editSession, setEditSession] = useState<{
+      scope: string;
+      packageId: string;
+      target: Target;
+      binding?: Binding;
+    } | null>(null),
     [picking, setPicking] = useState(false),
     [saving, setSaving] = useState(false),
     [pinned, setPinned] = useState(false),
     [docked, setDocked] = useState(false),
     [assistantOptions, setAssistantOptions] = useState(false);
+  const editing = !!editSession;
   const [title, setTitle] = useState(""),
     [summary, setSummary] = useState(""),
     [editDoc, setEditDoc] = useState<Document | null>(null),
@@ -388,13 +447,18 @@ function App() {
       packageId: string;
       target: Target;
       page_only?: boolean;
+      bindingKey: string;
+      instanceId?: string;
+      requestId?: string;
     } | null>(null),
+    readyRuntime = useRef(""),
     documentReveal = useRef(false),
     reader = useRef<HTMLElement>(null),
     docEpoch = useRef(0),
     editEpoch = useRef(0),
     loadEpoch = useRef(0),
-    selectedBinding = useRef(route.binding),
+    selectedBinding = useRef(""),
+    initialBinding = useRef(route.binding),
     assistantTrigger = useRef<HTMLButtonElement>(null);
   const [prototypeChapter, setPrototypeChapter] = useState<string | null>(null);
   const [documentOrigin, setDocumentOrigin] = useState<ReadingPosition | null>(
@@ -419,9 +483,9 @@ function App() {
       () => localStorage.getItem("vks.studio.auto-associate") !== "off",
     ),
     [moduleTitle, setModuleTitle] = useState(""),
-    [menu, setMenu] = useState<(Control & { x: number; y: number }) | null>(
-      null,
-    );
+    [menu, setMenu] = useState<
+      (Control & { packageId: string; x: number; y: number }) | null
+    >(null);
   const moduleControl = useRef<Control | null>(null),
     control = useRef<Control | null>(null),
     controlIdentity = useRef(""),
@@ -638,10 +702,10 @@ function App() {
     const [c, b] = await Promise.all([
       api<Catalog>(`${prefix}/catalog?${scope}`).then((catalog) => {
         if (epoch === loadEpoch.current) {
-          // The original page can start loading as soon as its authorized
-          // catalog is ready. Links may arrive later without blocking reading.
+          // The catalog can paint before links on initial load. During a
+          // refresh retain the current links until their replacement arrives,
+          // so a binding-only bookmark keeps the same mounted package.
           setCatalog(catalog);
-          setBindings([]);
         }
         return catalog;
       }),
@@ -721,8 +785,10 @@ function App() {
     setBindingsReady(false);
     setActive(null);
     setTarget(null);
-    setEditing(false);
+    setEditSession(null);
     setPicking(false);
+    pendingReveal.current = null;
+    selectedBinding.current = "";
     setViewDoc(null);
     setBookMounted(false);
     setPrototypeMounted(false);
@@ -814,46 +880,47 @@ function App() {
     navigate,
   ]);
   useEffect(() => {
-    if (!route.binding) {
+    const key = route.binding
+      ? JSON.stringify([route.project, scope, route.binding])
+      : "";
+    const inPrototype = !route.view || route.view === "prototype";
+    if (
+      pendingReveal.current &&
+      (!inPrototype || pendingReveal.current.bindingKey !== key)
+    )
+      cancelPendingReveal();
+    if (!key) {
       selectedBinding.current = "";
+      initialBinding.current = "";
       return;
     }
-    const changed = selectedBinding.current !== route.binding;
-    selectedBinding.current = route.binding;
-    const b = bindings.find((b) => b.id === route.binding);
-    if (
-      b &&
-      (changed ||
-        !control.current ||
-        sameTarget(control.current.target, b.target))
-    ) {
-      setActive(b);
-      setTarget(b.target);
-      control.current = {
-        target: b.target,
-        context: {
-          scope: b.target.selector === "body" ? "module" : "control",
-          page_title: b.title,
-          section_title: "",
-          nearby_labels: [],
-        },
-      };
-      if (changed) setKnowledge(true);
+    if (!inPrototype || !catalog || !bindingsReady) return;
+    if (!linkedBinding || p?.id !== linkedBinding.package_id) {
+      cancelPendingReveal();
+      setNotice("当前版本没有可打开的关联");
+      navigate({ binding: "" }, true);
+      return;
     }
-  }, [route.binding, bindings]);
+    if (selectedBinding.current === key) return;
+    selectedBinding.current = key;
+    focusBinding(linkedBinding, key);
+    if (initialBinding.current !== route.binding) setKnowledge(true);
+    initialBinding.current = "";
+  }, [
+    route.project,
+    route.binding,
+    route.view,
+    scope,
+    catalog,
+    bindingsReady,
+    linkedBinding,
+    p?.id,
+    navigate,
+  ]);
   useEffect(() => {
     if (!bindingsReady || editing || !p || !control.current) return;
-    const current = control.current.target;
-    // Catalog/runtime may be ready before the binding list. Reconcile the
-    // displayed saved summary once that exact authorized list arrives.
-    setActive(
-      bindings.find(
-        (binding) =>
-          binding.package_id === p.id &&
-          sameTarget(binding.target, current) &&
-          !binding.excluded,
-      ) || null,
-    );
+    const binding = bindingForTarget(bindings, p.id, control.current.target);
+    setActive(binding && !binding.excluded ? binding : null);
   }, [bindingsReady, bindings, p?.id, editing]);
   useEffect(() => {
     if (!catalog || !route.doc) return;
@@ -1007,7 +1074,7 @@ function App() {
   function collapseAssistant() {
     if (saving) return;
     if (detached.open) detached.controller.attach();
-    setEditing(false);
+    setEditSession(null);
     setKnowledge(false);
     setAssistantOptions(false);
     setAssociationReviewTarget(null);
@@ -1075,6 +1142,7 @@ function App() {
     c: Control,
     preserveMode = false,
     keepExplanation = false,
+    keepBindingRoute = false,
   ) {
     const identity = explanationIdentity(c);
     if (
@@ -1094,15 +1162,16 @@ function App() {
     if (!preserveMode) setAssistantMode("documents");
     lastAssist.current = null;
     setTarget(c.target);
-    const selectedBinding =
-      bindings.find(
-        (b) =>
-          b.package_id === p?.id &&
-          sameTarget(b.target, c.target) &&
-          !b.excluded,
-      ) || null;
+    const matchingBinding = bindingForTarget(bindings, p?.id, c.target);
+    const selectedBinding = matchingBinding?.excluded
+      ? null
+      : matchingBinding || null;
     setActive(selectedBinding);
-    if (route.binding && selectedBinding?.id !== route.binding)
+    if (
+      !keepBindingRoute &&
+      route.binding &&
+      selectedBinding?.id !== route.binding
+    )
       navigate({ binding: "" }, true);
     const previousExplanation = explanations.current.get(identity);
     if (previousExplanation) {
@@ -1170,6 +1239,10 @@ function App() {
     refresh = false,
     revealPanel = true,
   ) {
+    if (mode === "explain" && associationBlocked) {
+      setNotice(associationBlocked);
+      return;
+    }
     if (editing || !p) {
       setNotice("请先保存或取消当前编辑");
       return;
@@ -1199,9 +1272,7 @@ function App() {
       setKnowledge(true);
       setAssistantOptions(false);
     }
-    const existing = bindings.find(
-      (b) => b.package_id === p.id && sameTarget(b.target, c.target),
-    );
+    const existing = bindingForTarget(bindings, p.id, c.target);
     if (existing?.excluded) {
       setAssistantError(
         "此关联已被移除，自动关联不会恢复它；可在关联管理中恢复。",
@@ -1261,7 +1332,7 @@ function App() {
         });
         if (epoch !== assistEpoch.current) return;
         setRelated(matches);
-        if (matches.vector_available && matches.origin !== "binding") {
+        if (matches.vector_available && matches.origin !== "binding" && !existing && !matches.binding_id) {
           void api<Related>(`${prefix}/semantic`, {
             ...mutation("POST", lookupPayload),
             signal: controller.signal,
@@ -1299,15 +1370,12 @@ function App() {
       // The authorized related response can arrive before the much larger
       // binding list. Reuse that exact saved identity rather than generating
       // again because this render's local list is still empty.
-      ((matches.origin === "binding" &&
-        !!matches.binding_id &&
-        matches.sections.length > 0) ||
-        (existing?.origin === "manual" && !existing.excluded))
+      (existing || matches.binding_id)
     )
       return;
     if (
       mode === "documents" &&
-      (!automatic || !matches.model_available || !matches.sections.length)
+      (associationBlocked || !automatic || !matches.model_available || !matches.sections.length)
     )
       return;
     const runModel = async () => {
@@ -1383,12 +1451,8 @@ function App() {
   }
   function openReassociation() {
     const selected = control.current;
-    if (!selected || !p || !catalog?.editable || !bindingsReady) return;
-    const current = bindings.find(
-      (binding) =>
-        binding.package_id === p.id &&
-        sameTarget(binding.target, selected.target),
-    );
+    if (!selected || !p || !catalog?.editable || !bindingsReady || associationBlocked) return;
+    const current = bindingForTarget(bindings, p.id, selected.target);
     if (current?.excluded) return;
     setAssistantMode("documents");
     setAssistantOptions(false);
@@ -1414,18 +1478,14 @@ function App() {
     if (!loaded)
       throw new Error("关联已保存，但最新内容尚未读回，请重新读取。");
     const item = selected?.items?.length === 1 ? selected.items[0] : null;
-    const saved = item
-      ? loaded.b.find(
-          (binding) =>
-            binding.package_id === item.package_id &&
-            sameTarget(binding.target, {
-              ...item.target,
-              state: item.target.state || "",
-              open_steps: item.target.open_steps || [],
-            }) &&
-            !binding.excluded,
-        )
+    const match = item
+      ? bindingForTarget(loaded.b, item.package_id, {
+          ...item.target,
+          state: item.target.state || "",
+          open_steps: item.target.open_steps || [],
+        })
       : null;
+    const saved = match?.excluded ? null : match;
     if (item && !saved)
       throw new Error("关联已保存，但最新内容尚未读回，请刷新关联列表。");
     if (
@@ -1466,7 +1526,32 @@ function App() {
       setError(text(e));
     }
   }
+  function sendPendingReveal() {
+    const runtime = prototype.current;
+    const pending = pendingReveal.current;
+    if (
+      runtime &&
+      readyRuntime.current === runtime.instanceId &&
+      pending &&
+      pending.packageId === p?.id &&
+      pending.instanceId !== runtime.instanceId
+    ) {
+      pending.instanceId = runtime.instanceId;
+      pending.requestId = runtime.send("target.reveal", {
+        target: pending.target,
+        page_only: pending.page_only,
+      });
+    }
+  }
+  function cancelPendingReveal() {
+    const runtime = prototype.current;
+    if (runtime && pendingReveal.current?.instanceId === runtime.instanceId)
+      runtime.send("target.cancel");
+    pendingReveal.current = null;
+    documentReveal.current = false;
+  }
   function onRuntime(event: RuntimeEvent) {
+    if (prototype.current?.instanceId !== event.runtime_instance_id) return;
     if (event.type === "material.loaded" && picking)
       prototype.current?.send("picker.start");
     if (event.type === "context.dismiss") {
@@ -1492,15 +1577,18 @@ function App() {
         !Array.isArray(c.context.nearby_labels)
       )
         return;
+      if (route.view && route.view !== "prototype") return;
+      if (pendingReveal.current && event.type === "control.activated") return;
       if (editing) {
         if (event.type !== "control.activated")
           setNotice("请先保存或取消当前编辑");
         return;
       }
-      if (event.type === "context.menu") {
+      if (event.type === "context.menu" && p) {
         chooseControl(c);
         setMenu({
           ...c,
+          packageId: p.id,
           x: Math.max(8, Math.min(c.x || 8, innerWidth - 292)),
           y: Math.max(8, Math.min(c.y || 8, innerHeight - 230)),
         });
@@ -1512,25 +1600,21 @@ function App() {
           automatic &&
           !documentReveal.current &&
           (route.view || "prototype") === "prototype" &&
-          !bindings.some(
-            (b) =>
-              b.package_id === p?.id &&
-              sameTarget(b.target, c.target) &&
-              (b.excluded || b.validity_status === "valid"),
-          )
+          !existingBindingStopsAutomatic(c.target)
         )
           void assist(c, "documents", false, false);
       }
       return;
     }
     if (event.type === "context.changed") {
+      readyRuntime.current = event.runtime_instance_id;
+      sendPendingReveal();
       const unchanged = event.payload as {
         module?: Control;
         route?: string;
         frame_path?: string[];
       };
       if (
-        !pendingReveal.current &&
         !picking &&
         !editing &&
         control.current &&
@@ -1550,10 +1634,6 @@ function App() {
         }
         return;
       }
-      assistEpoch.current++;
-      assistAbort.current?.abort();
-      cancelAutomatic();
-      setAssisting(false);
       const c = event.payload as {
         route?: string;
         frame_path?: string[];
@@ -1568,6 +1648,17 @@ function App() {
         moduleControl.current = c.module;
         setModuleTitle(c.module.target.label);
       }
+      if (
+        pendingReveal.current ||
+        (route.binding &&
+          selectedBinding.current !==
+            JSON.stringify([route.project, scope, route.binding]))
+      )
+        return;
+      assistEpoch.current++;
+      assistAbort.current?.abort();
+      cancelAutomatic();
+      setAssisting(false);
       if (moduleChanged && route.binding) navigate({ binding: "" }, true);
       if (
         !pinned &&
@@ -1584,7 +1675,14 @@ function App() {
         setActive(null);
         setTarget(null);
       }
-      setMenu(null);
+      setMenu((previous) =>
+        previous &&
+        JSON.stringify(previous.target.frame_path) ===
+          JSON.stringify(c.frame_path) &&
+        previous.target.route !== c.route
+          ? null
+          : previous,
+      );
       if (
         c.module &&
         isTarget(c.module.target) &&
@@ -1598,22 +1696,18 @@ function App() {
         if (
           automatic &&
           !documentReveal.current &&
-          (route.view || "prototype") === "prototype"
+          (route.view || "prototype") === "prototype" &&
+          !existingBindingStopsAutomatic(c.module.target)
         )
           void assist(c.module, "documents", false, false);
       }
     }
-    if (
-      event.type === "context.changed" &&
-      pendingReveal.current?.packageId === p?.id &&
-      pendingReveal.current
-    ) {
-      const { target, page_only } = pendingReveal.current;
-      prototype.current?.send("target.reveal", { target, page_only });
-      pendingReveal.current = null;
-    }
     if (event.type === "picker.cancelled") setPicking(false);
-    if (event.type === "command.result") {
+    if (
+      event.type === "command.result" &&
+      pendingReveal.current?.requestId === event.request_id
+    ) {
+      pendingReveal.current = null;
       documentReveal.current = false;
       const result = event.payload as { message: string };
       setNotice(result.message);
@@ -1628,21 +1722,11 @@ function App() {
         setPicking(false);
         return;
       }
-      chooseControl(controlForTarget(t));
       setPicking(false);
-      const b = bindings.find(
-        (b) => b.package_id === p?.id && sameTarget(b.target, t),
-      );
-      setActive(b || null);
-      setTitle(b?.title || t.label);
-      setSummary(b?.summary || "");
-      setEditDocId(b?.sections[0]?.document_revision_id || "");
-      setSectionId(b?.sections[0]?.revision_id || "");
-      setEditing(true);
-      setKnowledge(true);
-      setAssistantOptions(false);
+      if (!p) return;
+      beginBindingEdit(p.id, t, bindingForTarget(bindings, p.id, t));
       setNotice("已选中控件，请选择文档章节并保存说明");
-    } else if (!pinned && !editing) {
+    } else if (!pinned && !editing && !pendingReveal.current) {
       // Editable elements emit action.activated without control.activated.
       // Keep the displayed target and the assistant/chat context together.
       // Compare the synchronous ref so a richer preceding event is preserved.
@@ -1651,12 +1735,8 @@ function App() {
       else {
         control.current = controlForTarget(t);
         setTarget(t);
-        setActive(
-          bindings.find(
-            (b) =>
-              b.package_id === p?.id && sameTarget(b.target, t) && !b.excluded,
-          ) || null,
-        );
+        const binding = bindingForTarget(bindings, p?.id, t);
+        setActive(binding?.excluded ? null : binding || null);
       }
     }
   }
@@ -1677,7 +1757,7 @@ function App() {
     setAssisting(false);
     setRetrieving(false);
     setPicking(true);
-    pendingReveal.current = null;
+    cancelPendingReveal();
     setAssistantOptions(false);
     setKnowledge(false);
     prototype.current?.send("picker.start");
@@ -1699,35 +1779,45 @@ function App() {
     },
     [navigate, detached.open],
   );
-  function reveal(b: Binding, fromDocument?: { pageOnly: boolean }) {
-    chooseControl({
+  function existingBindingStopsAutomatic(target: Target) {
+    const existing = bindingForTarget(bindings, p?.id, target);
+    return !!existing;
+  }
+  function focusBinding(b: Binding, bindingKey: string, pageOnly?: boolean) {
+    chooseControl(
+      controlForTarget(b.target, b.package_id === p?.id),
+      false,
+      false,
+      true,
+    );
+    setActive(b);
+    pendingReveal.current = {
+      packageId: b.package_id,
       target: b.target,
-      context: {
-        scope: b.target.selector === "body" ? "module" : "control",
-        page_title: b.title,
-        section_title: "",
-        nearby_labels: [],
-      },
-    });
-    setEditing(false);
+      bindingKey,
+      page_only: pageOnly,
+    };
+    sendPendingReveal();
+  }
+  function reveal(b: Binding, fromDocument?: { pageOnly: boolean }) {
+    const destination = prototypePackages.find(
+      (pack) => pack.id === b.package_id,
+    );
+    if (!destination || b.excluded) return;
+    setEditSession(null);
     setKnowledge(!fromDocument);
     setAssistantOptions(false);
-    setActive(b);
-    const destination = catalog?.packages.find((p) => p.id === b.package_id);
     const binding = fromDocument?.pageOnly ? "" : b.id;
-    if (fromDocument) {
-      documentReveal.current = true;
-      selectedBinding.current = binding;
-    }
+    documentReveal.current = !!fromDocument;
+    selectedBinding.current = binding
+      ? JSON.stringify([route.project, scope, binding])
+      : "";
+    focusBinding(b, selectedBinding.current, fromDocument?.pageOnly);
     navigate({
       view: "prototype",
       binding,
-      package: destination?.package_key || destination?.id || "",
+      package: destination.package_key || destination.id,
     });
-    const payload = { target: b.target, page_only: fromDocument?.pageOnly };
-    if (prototype.current && p?.id === b.package_id)
-      prototype.current.send("target.reveal", payload);
-    else pendingReveal.current = { packageId: b.package_id, ...payload };
   }
   function openPrototypeFromChapter(
     b: Binding,
@@ -1765,25 +1855,42 @@ function App() {
     });
   }
   function editBinding(b: Binding) {
+    beginBindingEdit(b.package_id, b.target, b);
+  }
+  function beginBindingEdit(
+    packageId: string,
+    target: Target,
+    binding?: Binding,
+  ) {
     if (!checkBindingsReady()) return;
-    const destination = catalog?.packages.find((p) => p.id === b.package_id);
-    if (destination) navigate({ package: destination.package_key || "" });
+    if (binding?.excluded) {
+      setNotice("此关联已被移除，请先在关联管理中恢复");
+      return;
+    }
+    const destination = prototypePackages.find((pack) => pack.id === packageId);
+    if (!destination) return;
+    if (packageId !== p?.id)
+      navigate({
+        package: destination.package_key || destination.id,
+        binding: "",
+      });
     assistEpoch.current++;
     assistAbort.current?.abort();
+    cancelAutomatic();
     setAssistant(null);
     setRelated(null);
     setRetrieving(false);
     setAssistantError("");
     setAssociationReviewTarget(null);
     setAssisting(false);
-    control.current = controlForTarget(b.target, b.package_id === p?.id);
-    setActive(b);
-    setTarget(b.target);
-    setTitle(b.title);
-    setSummary(b.summary);
-    setEditDocId(b.sections[0]?.document_revision_id || "");
-    setSectionId(b.sections[0]?.revision_id || "");
-    setEditing(true);
+    control.current = controlForTarget(target, packageId === p?.id);
+    setActive(binding || null);
+    setTarget(target);
+    setTitle(binding?.title || target.label);
+    setSummary(binding?.summary || "");
+    setEditDocId(binding?.sections[0]?.document_revision_id || "");
+    setSectionId(binding?.sections[0]?.revision_id || "");
+    setEditSession({ scope, packageId, target, binding });
     setKnowledge(true);
     setAssistantOptions(false);
     if (detached.open) {
@@ -1792,9 +1899,17 @@ function App() {
     }
   }
   async function save() {
-    if (!target || !catalog || !sectionId || !summary.trim() || !title.trim())
+    if (
+      !editSession ||
+      editSession.scope !== scope ||
+      !catalog?.editable ||
+      !sectionId ||
+      !summary.trim() ||
+      !title.trim()
+    )
       return;
-    const remainingSections = active?.sections.slice(1) || [];
+    const { target, packageId, binding } = editSession;
+    const remainingSections = binding?.sections.slice(1) || [];
     if (
       remainingSections.some((section) => section.revision_id === sectionId)
     ) {
@@ -1804,8 +1919,8 @@ function App() {
     setSaving(true);
     setError("");
     try {
-      const packageId = active?.package_id || p?.id;
-      if (!packageId) throw new Error("请先导入原型包");
+      if (!prototypePackages.some((pack) => pack.id === packageId))
+        throw new Error("编辑使用的原型包已变化，请重新打开要编辑的关联");
       const result = await api<{ binding_id: string }>(
         `${prefix}/bindings`,
         mutation(
@@ -1819,22 +1934,28 @@ function App() {
               sectionId,
               ...remainingSections.map((section) => section.revision_id),
             ],
-            ...(active
+            ...(binding
               ? {
-                  binding_id: active.id,
-                  binding_version: active.binding_version,
-                  point_revision_id: active.point_revision_id,
+                  binding_id: binding.id,
+                  binding_version: binding.binding_version,
+                  point_revision_id: binding.point_revision_id,
                 }
               : {}),
           },
           catalog.selection_version,
         ),
       );
+      if (!sameWorkspace(getRoute(), route)) return;
       const updated = await reload();
       const b = updated?.b.find((b) => b.id === result.binding_id);
       setActive(b || null);
-      setEditing(false);
+      setEditSession(null);
       setNotice("关联已保存，刷新后仍可查看");
+      selectedBinding.current = JSON.stringify([
+        route.project,
+        scope,
+        result.binding_id,
+      ]);
       navigate({ binding: result.binding_id }, true);
     } catch (e) {
       setError(text(e));
@@ -2022,6 +2143,8 @@ function App() {
             <button
               type="button"
               className="chapter-association-edit"
+              disabled={!!associationBlocked}
+              title={associationBlocked || undefined}
               onClick={() => {
                 if (editing) {
                   setNotice("请先保存或取消当前编辑");
@@ -2041,7 +2164,7 @@ function App() {
         </div>
       );
     },
-    [chapterEntries, catalog?.editable, editing, navigate, viewDoc?.name],
+    [chapterEntries, catalog?.editable, editing, navigate, viewDoc?.name, associationBlocked],
   );
   const titleChapter = viewDoc?.sections.find(
     (section) =>
@@ -2467,10 +2590,13 @@ function App() {
           {currentView === "prototype" && prototypePackages.length > 1 && (
             <select
               aria-label="当前原型包"
+              disabled={editing}
               value={p?.package_key || p?.id}
-              onChange={(e) =>
-                navigate({ package: e.target.value, binding: "" })
-              }
+              onChange={(e) => {
+                cancelPendingReveal();
+                setMenu(null);
+                navigate({ package: e.target.value, binding: "" });
+              }}
             >
               {prototypePackages.map((p) => (
                 <option key={p.id} value={p.package_key || p.id}>
@@ -2749,6 +2875,15 @@ function App() {
             analysis={route.analysis}
             onChanged={materialsChanged}
             onAI={() => navigate({ view: "ai" })}
+            onAssociations={() => navigate({ view: "links" })}
+            onApplying={(active) =>
+              setApplyingMaterials((scopes) => {
+                const { [migrationScope]: count = 0, ...others } = scopes;
+                if (active) return { ...others, [migrationScope]: count + 1 };
+                if (count > 1) return { ...others, [migrationScope]: count - 1 };
+                return others;
+              })
+            }
           />
         )}
         {currentView === "ai" && (
@@ -2772,6 +2907,7 @@ function App() {
                 accountId={accountId || ""}
                 visible={currentView === "links"}
                 editable={!!catalog.editable && !route.release}
+                associationBlocked={associationBlocked}
                 onChanged={reload}
                 refreshVersion={catalog.selection_version}
                 onReview={(mode) =>
@@ -2780,20 +2916,9 @@ function App() {
               />
               {currentView === "links" && route.project && (
                 <ProjectTokenUsage
-                  key={"token-usage:" + route.project + scope}
+                  key={route.project}
                   project={route.project}
-                  analysis={catalog.analysis_set_id}
-                  release={route.release}
                   refreshVersion={catalog.selection_version}
-                  packages={catalog.packages}
-                  pages={bindings
-                    .filter((binding) => binding.target.selector === "body")
-                    .map((binding) => ({
-                      package_id: binding.package_id,
-                      route: binding.target.route,
-                      label: binding.target.label,
-                      frame_path: binding.target.frame_path,
-                    }))}
                 />
               )}
             </div>
@@ -2810,6 +2935,7 @@ function App() {
               }
               ready={bindingsReady}
               editable={!!catalog?.editable}
+              associationBlocked={associationBlocked}
               canCreate={!!p}
               onCreate={startPicker}
               onReveal={reveal}
@@ -2817,10 +2943,19 @@ function App() {
               onReview={(items) =>
                 setAssociationReviewTarget({ items, prototype: false })
               }
+              renderBatchExplanation={catalog?.editable && !route.release ? (bindingIds) => (
+                <BatchExplanations
+                  project={route.project}
+                  analysis={catalog.analysis_set_id}
+                  version={catalog.selection_version}
+                  bindingIds={bindingIds}
+                  blockedReason={associationBlocked}
+                />
+              ) : undefined}
               onToggle={(b) => void exclude(b)}
               onSource={(b, i) => openDoc(b.sections[i], b)}
               renderSummary={(b) => (
-                <Markdown references={b.sections}>{b.summary}</Markdown>
+                <Markdown references={b.sections} hideCitationRevisionIds>{b.summary}</Markdown>
               )}
             />
           )}
@@ -2840,7 +2975,7 @@ function App() {
             }
           />
         )}
-      {menu && (
+      {menu && currentView === "prototype" && menu.packageId === p?.id && (
         <div
           ref={menuRef}
           className="control-menu"
@@ -2882,7 +3017,8 @@ function App() {
             <BookOpen size={16} />
             查看关联文档
           </button>
-          <button role="menuitem" onClick={() => void assist(menu, "explain")}>
+          <button role="menuitem" disabled={!!associationBlocked} title={associationBlocked || undefined}
+            onClick={() => void assist(menu, "explain")}>
             <Sparkles size={16} />
             AI 讲解此功能
           </button>
@@ -2900,6 +3036,8 @@ function App() {
           </button>
           <button
             role="menuitem"
+            disabled={!!associationBlocked}
+            title={associationBlocked || undefined}
             onClick={() => void assist(menu, "explain", true)}
           >
             <Link2 size={16} />
@@ -2911,18 +3049,9 @@ function App() {
             disabled={!catalog?.editable || !bindingsReady}
             onClick={() => {
               if (!checkBindingsReady()) return;
-              const b = bindings.find((b) => sameTarget(b.target, menu.target));
+              const b = bindingForTarget(bindings, menu.packageId, menu.target);
               setMenu(null);
-              if (b) editBinding(b);
-              else {
-                setTitle(menu.target.label);
-                setSummary("");
-                setEditDocId("");
-                setSectionId("");
-                setEditing(true);
-                setKnowledge(true);
-                setAssistantOptions(false);
-              }
+              beginBindingEdit(menu.packageId, menu.target, b);
             }}
           >
             <Link2 size={16} />
@@ -3263,6 +3392,8 @@ function App() {
                       <button
                         role="tab"
                         aria-selected={assistantMode === "explain"}
+                        disabled={!!associationBlocked}
+                        title={associationBlocked || undefined}
                         onClick={() => switchKnowledge("explain")}
                       >
                         AI 讲解
@@ -3347,6 +3478,7 @@ function App() {
                         </b>
                         <p>{assistantError}</p>
                         <button
+                          disabled={!!associationBlocked}
                           onClick={() => {
                             const previous = lastAssist.current;
                             if (previous)
@@ -3387,6 +3519,7 @@ function App() {
                               <span className="eyebrow">关联说明</span>
                               <Markdown
                                 references={active.sections}
+                                hideCitationRevisionIds
                                 onReference={(reference) =>
                                   previewSource(reference, active)
                                 }
@@ -3701,6 +3834,7 @@ function App() {
                         {assistantMode === "documents" && (
                           <Markdown
                             references={active.sections}
+                            hideCitationRevisionIds
                             onReference={(reference) =>
                               previewSource(reference, active)
                             }
@@ -3767,6 +3901,8 @@ function App() {
                         {target && assistantMode === "explain" && (
                           <button
                             className="primary"
+                            disabled={!!associationBlocked}
+                            title={associationBlocked || undefined}
                             onClick={() =>
                               control.current &&
                               void assist(control.current, "explain")
@@ -3822,8 +3958,9 @@ function App() {
                         (assistantMode === "explain" || catalog?.editable) && (
                           <button
                             disabled={
-                              assisting || !bindingsReady || active?.excluded
+                              assisting || !bindingsReady || active?.excluded || !!associationBlocked
                             }
+                            title={associationBlocked || undefined}
                             onClick={() =>
                               assistantMode === "explain"
                                 ? control.current &&
@@ -3907,21 +4044,28 @@ function App() {
           </aside>
         </DetachedPortal>
       )}
-      {associationReviewTarget && (
+      {(associationReviewTarget ||
+        (route.review && currentView === "links" && catalog?.editable && !route.release)) && (
         <DetachedPortal
           target={
-            associationReviewTarget.prototype && detached.open
+            associationReviewTarget?.prototype && detached.open
               ? detached.controller.prototypeMount
               : null
           }
         >
           <AssociationReview
+            key={route.review || "new-review"}
             project={route.project}
             analysis={route.analysis}
-            items={associationReviewTarget.items}
-            mode={associationReviewTarget.mode}
-            addedChapter={associationReviewTarget.addedChapter}
-            onClose={() => setAssociationReviewTarget(null)}
+            items={associationReviewTarget?.items}
+            mode={associationReviewTarget?.mode}
+            resumeJobId={route.review || undefined}
+            blockedReason={associationBlocked}
+            addedChapter={associationReviewTarget?.addedChapter}
+            onClose={() => {
+              setAssociationReviewTarget(null);
+              if (route.review) navigate({ review: "" }, true);
+            }}
             onSaved={associationSaved}
           />
         </DetachedPortal>

@@ -51,16 +51,8 @@ def test_association_card_keeps_large_reading_area_and_one_scroll_owner(material
             expect(page.locator(".binding-inventory-status")).to_be_empty()
             toolbar = page.get_by_role("region", name="AI 预关联", exact=True)
             assert toolbar.bounding_box()["height"] <= 120
-            settings = toolbar.locator(".batch-settings")
-            expect(settings).not_to_have_attribute("open", "")
-            initial_height = toolbar.bounding_box()["height"]
-            settings.locator("summary").click()
-            concurrency = toolbar.get_by_label("分析与关联并发", exact=True)
-            expect(concurrency).to_be_visible()
-            concurrency.select_option("2")
-            expect(settings.locator("summary")).to_contain_text("2 路")
-            assert toolbar.bounding_box()["height"] == initial_height
-            settings.locator("summary").click()
+            expect(toolbar.get_by_text("自动调节并发", exact=True)).to_be_visible()
+            expect(toolbar.get_by_label("分析与关联并发", exact=True)).to_have_count(0)
             assert card.bounding_box()["height"] >= 800
             card.scroll_into_view_if_needed()
             bounds = card.bounding_box()

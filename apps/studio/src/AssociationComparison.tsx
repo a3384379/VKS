@@ -172,7 +172,11 @@ export function AssociationComparison({
         </div>
       ) : (
         <div role="tabpanel" aria-label="Markdown 预览">
-          <RichMarkdown references={sections} onReference={onReference}>
+          <RichMarkdown
+            references={sections}
+            onReference={onReference}
+            hideCitationRevisionIds
+          >
             {explanation}
           </RichMarkdown>
         </div>

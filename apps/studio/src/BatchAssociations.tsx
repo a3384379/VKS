@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, Play, RefreshCw, Settings2, Square } from "lucide-react";
+import { LoaderCircle, Play, RefreshCw, Square } from "lucide-react";
 import { api, mutation } from "../../web/src/api";
 import {
   PrototypeInventoryScanner,
@@ -7,6 +7,7 @@ import {
 } from "./PrototypeInventoryScanner";
 import { mergeScanSnapshot, type ScanReceipt } from "./inventoryProtocol";
 import { BatchResultList } from "./BatchResultList";
+import { TaskTiming, type Timing } from "./TaskTiming";
 
 type Mode = "missing" | "changed" | "all";
 type Outcome = { id?: string; label: string; status: string; message: string };
@@ -29,6 +30,7 @@ type Job = {
   state: string;
   progress: number;
   stage: string;
+  timing?: Timing;
   mode?: Mode;
   current_scope?: boolean;
   scan_run_id?: string;
@@ -45,7 +47,6 @@ type Job = {
   };
 };
 type Status = {
-  model_request_limit?: number;
   analysis_set_id: string;
   selection_version: number;
   editable: boolean;
@@ -70,7 +71,10 @@ type ScanRun = {
   row_version?: number;
   concurrency?: number;
   pipeline?: boolean;
+  timing?: Timing;
   ai?: {
+    started_at?: string | null;
+    updated_at?: string | null;
     processed?: number;
     queued: number;
     running: number;
@@ -108,6 +112,7 @@ export function BatchAssociations({
   visible = true,
   onChanged,
   onReview,
+  associationBlocked = "",
   refreshVersion,
 }: {
   project: string;
@@ -117,12 +122,13 @@ export function BatchAssociations({
   visible?: boolean;
   onChanged: () => Promise<unknown>;
   onReview?: (mode: "missing" | "all") => void;
+  associationBlocked?: string;
   refreshVersion?: number;
 }) {
   const base = `/api/v3/projects/${project}/associations/batch`;
   const scanBase = `/api/v3/projects/${project}/associations/scans`;
   const [clientId] = useState(() => crypto.randomUUID());
-  const [scanConcurrency, setScanConcurrency] = useState(3);
+  const parallelism = 4;
   const [showDetails, setShowDetails] = useState(false);
   const [scanRun, setScanRun] = useState<ScanRun | null>(null);
   const [storedProgress, setStoredProgress] = useState<{
@@ -403,7 +409,6 @@ export function BatchAssociations({
                     ? {
                         client_id: clientId,
                         pipeline: !analysisOnly,
-                        concurrency: parallelism,
                       }
                     : {
                         analysis_set_id: analysis,
@@ -456,7 +461,7 @@ export function BatchAssociations({
           {
             analysis_set_id: analysis,
             mode,
-            concurrency: parallelism,
+            ...(resume ? {} : { concurrency: parallelism }),
             ...(resume ? { resume_job_id: resume } : {}),
             ...(scanId ? { scan_run_id: scanId } : {}),
             ...(allowPartial ? { allow_partial: true } : {}),
@@ -528,7 +533,7 @@ export function BatchAssociations({
         `${scanBase}/${scanRun.id}/retry-ai`,
         mutation(
           "POST",
-          { concurrency: parallelism },
+          {},
           scanRun.source_selection_version ??
             scanRun.manifest.source_selection_version ??
             scanRun.manifest.selection_version,
@@ -581,13 +586,6 @@ export function BatchAssociations({
   const aiProcessed = scanRun?.ai
     ? (scanRun.ai.processed ?? scanRun.ai.completed + scanRun.ai.failed)
     : 0;
-  const parallelism =
-    scanSession?.run.concurrency ??
-    (current && active(current)
-      ? (current.concurrency ?? 3)
-      : aiActive
-        ? (scanRun?.concurrency ?? 3)
-        : scanConcurrency);
   const scanning =
     !!scanSession || (!!scanRun?.current_scope && scanRun.state === "running");
   const analysisDisabled = !editable || !data?.editable || busy || scanning;
@@ -642,41 +640,7 @@ export function BatchAssociations({
           {taskSummary}
         </div>
         <div className="batch-actions">
-          <details className="batch-settings">
-            <summary>
-              <Settings2 size={14} />
-              扫描设置 <span>{parallelism} 路</span>
-            </summary>
-            <label>
-              并行路数
-              <select
-                aria-label="分析与关联并发"
-                value={parallelism}
-                disabled={
-                  !editable ||
-                  !data?.editable ||
-                  busy ||
-                  scanning ||
-                  aiActive ||
-                  (!!current && active(current))
-                }
-                onChange={(event) =>
-                  setScanConcurrency(Number(event.target.value))
-                }
-              >
-                {[1, 2, 3, 4].map((value) => (
-                  <option key={value} value={value}>
-                    {value} 路并行
-                  </option>
-                ))}
-              </select>
-              <small>
-                扫描 {parallelism} 路 · AI 最多{" "}
-                {parallelism === 1 ? 1 : (data?.model_request_limit ?? 128)}{" "}
-                个并发请求
-              </small>
-            </label>
-          </details>
+          <small>自动调节并发</small>
           <div
             className="batch-action-group"
             role="group"
@@ -715,8 +679,8 @@ export function BatchAssociations({
               <div>
                 <button
                   className="primary"
-                  title="为未关联内容生成预览，确认后保存"
-                  disabled={disabled || !onReview}
+                  title={associationBlocked || "为未关联内容生成预览，确认后保存"}
+                  disabled={disabled || !onReview || !!associationBlocked}
                   onClick={() => onReview?.("missing")}
                 >
                   <Play size={14} />
@@ -726,8 +690,8 @@ export function BatchAssociations({
               </div>
               <div>
                 <button
-                  title="为当前范围重新生成预览，确认后替换关联"
-                  disabled={disabled || !onReview}
+                  title={associationBlocked || "为当前范围重新生成预览，确认后替换关联"}
+                  disabled={disabled || !onReview || !!associationBlocked}
                   onClick={() => onReview?.("all")}
                 >
                   重新关联全部
@@ -735,6 +699,9 @@ export function BatchAssociations({
                 <small>先生成预览，确认后再统一替换。</small>
               </div>
             </div>
+            {associationBlocked && (
+              <p role="status" aria-label="资料引用迁移">{associationBlocked}</p>
+            )}
           </div>
           <details className="batch-help">
             <summary>操作说明</summary>
@@ -763,6 +730,8 @@ export function BatchAssociations({
           concurrency={
             scanSession.run.concurrency ?? scanSession.manifest.concurrency ?? 3
           }
+          adaptive
+          timing={scanSession.run.timing}
           incremental={!!scanSession.run.pipeline}
           onPause={() => void pauseScan()}
           onSaved={(receipt: ScanReceipt) => {
@@ -831,6 +800,12 @@ export function BatchAssociations({
               max={Math.max(1, scanRun.pages_total)}
               value={scanRun.pages_completed}
             />
+            <TaskTiming
+              timing={scanRun.timing}
+              state={scanRun.state}
+              processed={scanRun.pages_completed}
+              total={scanRun.pages_total}
+            />
             <small>
               已尝试{" "}
               {scanRun.pages_attempted ??
@@ -850,7 +825,10 @@ export function BatchAssociations({
               ) && (
                 <div className="batch-actions">
                   <button
-                    disabled={busy || !editable || !data}
+                    disabled={
+                      busy || !editable || !data ||
+                      ((scanRun.pipeline || scanRun.state === "completed") && !!associationBlocked)
+                    }
                     onClick={() => void run(scanRun.mode, undefined, scanRun)}
                   >
                     {scanRun.state === "partial" || scanRun.pages_failed
@@ -864,7 +842,7 @@ export function BatchAssociations({
                     (scanRun.state === "partial" || scanRun.pages_failed > 0) &&
                     scanRun.pages_completed > 0 && (
                       <button
-                        disabled={busy || !editable || !data}
+                        disabled={busy || !editable || !data || !!associationBlocked}
                         onClick={() =>
                           void run(scanRun.mode, undefined, scanRun, true)
                         }
@@ -914,6 +892,18 @@ export function BatchAssociations({
               )}
               value={aiProcessed}
             />
+            <TaskTiming
+              timing={scanRun.ai}
+              state={
+                aiActive
+                  ? scanRun.ai.started_at ? "running" : "queued"
+                  : scanRun.ai.failed || ["running", "cancelled"].includes(scanRun.state)
+                    ? "paused"
+                    : "completed"
+              }
+              processed={aiProcessed}
+              total={scanRun.state === "running" ? 0 : scanRun.ai.targets}
+            />
             <small>
               已保存 {scanRun.ai.saved} 项 · 排队 {scanRun.ai.queued} · 处理中{" "}
               {scanRun.ai.running}
@@ -939,7 +929,8 @@ export function BatchAssociations({
                 scanRun.current_scope &&
                 !["cancelled", "invalidated"].includes(scanRun.state) && (
                   <button
-                    disabled={busy || !editable}
+                    disabled={busy || !editable || !!associationBlocked}
+                    title={associationBlocked || undefined}
                     onClick={() => void retryAI()}
                   >
                     重试 AI 未完成项
@@ -1086,6 +1077,12 @@ export function BatchAssociations({
               </span>
             </div>
             <progress max={100} value={current.progress} />
+            <TaskTiming
+              timing={current.timing}
+              state={current.state}
+              processed={current.result?.processed}
+              total={current.result?.total}
+            />
             <small>
               已保存 {current.result?.saved ?? 0} 项 ·
               处理完成与有依据的关联覆盖率分别统计

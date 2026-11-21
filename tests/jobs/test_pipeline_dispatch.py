@@ -125,6 +125,30 @@ def test_preview_batch_uses_model_pool_and_does_not_block_regular_dispatch(setup
     assert set(calls) == {page_jobs[0], ordinary}
 
 
+def test_live_dispatch_claims_preview_added_during_slow_migration(setup):
+    service, page_jobs, ordinary, started, release, calls, _ = setup
+    with service.db() as s:
+        for jid in page_jobs:
+            s.get(Job, jid).state = "cancelled"
+        s.get(Job, ordinary).kind = "material_migrate"
+    release[ordinary] = Event()
+    service.start_worker()
+    try:
+        assert started[ordinary].wait(2)
+        with service.db() as s:
+            preview = s.get(Job, page_jobs[0])
+            preview.kind = "reassociation_preview"
+            preview.input_json = {"pipeline_concurrency": 1}
+            preview.state = "queued"
+        assert started[page_jobs[0]].wait(2)
+        assert not release[ordinary].is_set()
+        assert calls.count(page_jobs[0]) == 1
+    finally:
+        release[ordinary].set()
+        release[page_jobs[0]].set()
+        service.stop_worker()
+
+
 @pytest.mark.parametrize("lanes", [1, 4])
 def test_pipeline_pool_uses_the_configured_shared_lane_count(setup, lanes):
     service, page_jobs, ordinary, started, _, calls, peak = setup

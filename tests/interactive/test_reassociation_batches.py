@@ -1,7 +1,8 @@
 """Preview jobs leave bindings unchanged; explicit atomic commit selects drafts."""
 
+from vks_api.ai_gateway import ModelUsage
 from vks_api.jobs import execute_job
-from vks_api.models import Artifact, Job
+from vks_api.models import Analysis, Artifact, Job
 from vks_api.service import DomainError
 
 from tests.interactive import test_assistant, test_reassociation_preview
@@ -25,6 +26,23 @@ def get(web, pid, grant, path, **params):
     response = web.get(root(pid) + path, params=params, headers=_headers(grant, 0, "read"))
     assert response.status_code == 200, response.text
     return response.json()["data"]
+
+
+def test_association_timing_uses_completed_preview_history(assistant):
+    (web, service, _owner, pid, _aid, grant, _, _, _), body, calls = assistant
+    missing = get(web, pid, grant, "/reassociate/timing")
+    assert missing == {"single_seconds": None, "batch_seconds_per_item": None}
+    preview = test_reassociation_preview.preview(web, pid, grant, body)
+    with service.db() as s:
+        artifact = s.get(Artifact, preview["preview_id"])
+        usage = s.get(ModelUsage, artifact.metadata_json["model_usage_id"])
+        from datetime import datetime, timedelta
+
+        usage.created_at = (datetime.fromisoformat(artifact.created_at) - timedelta(seconds=35)).isoformat()
+    assert get(web, pid, grant, "/reassociate/timing") == {
+        "single_seconds": 35, "batch_seconds_per_item": None,
+    }
+    assert len(calls) == 1
 
 
 def test_batch_preview_regenerate_remove_and_atomic_save(assistant, monkeypatch):
@@ -172,6 +190,43 @@ def test_targets_metadata_and_cancelled_job_never_generate(assistant):
     data = get(web, pid, grant, "/reassociate/batch-preview/" + receipt["job_id"])
     assert data["state"] == "cancelled" and calls == []
     assert not test_reassociation_preview.bindings(web, pid, aid, grant)
+
+
+def test_migration_blocks_same_draft_preview_until_stopped(assistant):
+    (web, service, owner, pid, aid, grant, _, _, _), body, calls = assistant
+    with service.db() as s:
+        migration = service._new_job(s, owner, pid, "material_migrate", {"analysis_set_id": aid, "targets": [body]})
+        migration.state = "cancelling"
+        jid = migration.id
+    assert get(web, pid, grant, "/reassociate/status", analysis_set_id=aid) == {"migrating": True}
+    headers = _headers(grant, 0, "migration")
+    headers.pop("If-Match", None)
+    for endpoint, form in [
+        ("/reassociate", body),
+        ("/explain", {**body, "mode": "explain"}),
+        ("/reassociate/batch-preview", {"analysis_set_id": aid, "items": [body]}),
+    ]:
+        response = web.post(root(pid) + endpoint, json=form, headers=headers)
+        assert response.status_code == 409 and "正在迁移资料引用" in response.text
+    assert not calls
+    with service.db() as s:
+        s.get(Job, jid).state = "cancelled"
+        service._new_job(
+            s, owner, pid, "material_migrate", {"analysis_set_id": "another-draft", "targets": [body]}
+        )
+        service._new_job(s, owner, pid, "material_migrate", {"analysis_set_id": aid, "targets": []})
+    assert get(web, pid, grant, "/reassociate/status", analysis_set_id=aid) == {"migrating": False}
+    assert post(web, pid, grant, "/reassociate/batch-preview", {"analysis_set_id": aid, "items": [body]})["total"] == 1
+
+
+def test_stale_preview_lists_the_conflict_before_model_use(assistant):
+    (web, service, _, pid, aid, grant, _, _, _), body, calls = assistant
+    receipt = post(web, pid, grant, "/reassociate/batch-preview", {"analysis_set_id": aid, "items": [body]})
+    with service.db() as s:
+        s.get(Analysis, aid).selection_version += 1
+    execute_job(service, receipt["job_id"])
+    data = get(web, pid, grant, "/reassociate/batch-preview/" + receipt["job_id"])
+    assert data["state"] == "failed" and "重新选择目标" in data["failure_message"] and not calls
 
 
 def test_recovered_batch_reuses_committed_previews_without_models(assistant):

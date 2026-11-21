@@ -6,7 +6,7 @@ from .models import Analysis, Entity, Evidence, Idempotency, Relation, Revision
 from .reading import ReadingService
 
 
-def prefetch(service, session, completions):
+def prefetch(service, session, completions, *, action_seeds=None):
     from .ai_gateway import ModelLedger, ModelUsage
 
     usage_ids = {item.usage_id for item in completions if item.usage_id}
@@ -75,41 +75,56 @@ def prefetch(service, session, completions):
         replay[(row.project_id, row.actor_id, row.operation, row.key)] = row
     # Discover graph endpoints without separately hydrating each frontier and
     # its artifact/provenance closure. Hydrate their union together below.
-    kinds = dict(
-        session.execute(
-            select(Revision.id, Entity.type)
-            .join(Entity, Entity.id == Revision.entity_id)
-            .where(Revision.id.in_(wanted))
-        ).all()
+    kinds = (
+        dict.fromkeys(action_seeds, "action")
+        if action_seeds is not None
+        else dict(
+            session.execute(
+                select(Revision.id, Entity.type)
+                .join(Entity, Entity.id == Revision.entity_id)
+                .where(Revision.id.in_(wanted))
+            ).all()
+        )
     )
     points = {rid for rid, kind in kinds.items() if kind == "business_point"}
     actions = {rid for rid, kind in kinds.items() if kind == "action"}
     seeds = points | actions
+    bindings = (
+        select(Relation.from_revision_id.label("action"), Relation.to_revision_id.label("point"))
+        .where(
+            Relation.analysis_set_id.in_(aids),
+            Relation.relation_type == "has_business_point",
+            or_(Relation.from_revision_id.in_(actions), Relation.to_revision_id.in_(points)),
+        )
+        .cte("ready_bindings")
+    )
     edges = (
         list(
             session.scalars(
                 select(Relation).where(
                     Relation.analysis_set_id.in_(aids),
-                    or_(Relation.from_revision_id.in_(seeds), Relation.to_revision_id.in_(seeds)),
+                    or_(
+                        Relation.from_revision_id.in_(seeds),
+                        Relation.to_revision_id.in_(seeds),
+                        Relation.from_revision_id.in_(select(bindings.c.point)),
+                        Relation.to_revision_id.in_(select(bindings.c.point)),
+                        Relation.from_revision_id.in_(select(bindings.c.action)),
+                        Relation.to_revision_id.in_(select(bindings.c.action)),
+                    ),
                 )
             )
         )
         if seeds
         else []
     )
-    points |= {edge.to_revision_id for edge in edges if edge.relation_type == "has_business_point"}
-    actions |= {edge.from_revision_id for edge in edges if edge.relation_type == "has_business_point"}
-    extra = (points | actions) - seeds
-    if extra:
-        edges += list(
-            session.scalars(
-                select(Relation).where(
-                    Relation.analysis_set_id.in_(aids),
-                    or_(Relation.from_revision_id.in_(extra), Relation.to_revision_id.in_(extra)),
-                )
-            )
-        )
-    edges = list({edge.id: edge for edge in edges}.values())
+    connected = [
+        edge
+        for edge in edges
+        if edge.relation_type == "has_business_point"
+        and (edge.from_revision_id in actions or edge.to_revision_id in points)
+    ]
+    points |= {edge.to_revision_id for edge in connected}
+    actions |= {edge.from_revision_id for edge in connected}
     cache = session.info.setdefault("vks_ready_edges", {})
     for aid in aids:
         for rid in points | actions:
@@ -197,4 +212,9 @@ def prefetch_targets(service, session, targets):
                 selected_targets(service, session, pid, choices, package, target, type(target), normalize=True)
             )
         completions.append(SimpleNamespace(revision_ids=revisions, analysis_set_id=aid, usage_id=None, binding=None))
-    prefetch(service, session, completions)
+    prefetch(
+        service,
+        session,
+        completions,
+        action_seeds={rid for item in completions for rid in item.revision_ids},
+    )

@@ -179,7 +179,7 @@ def test_project_packages_stage_replace_disable_and_exact_snapshot(materials):
         activate(service, owner, manager, other, other_aid, [p])
 
 
-def test_automatic_migration_retains_manual_text_and_remaps_controls(materials, monkeypatch):
+def test_migration_remaps_controls_and_leaves_changed_rules_for_manual_generation(materials, monkeypatch):
     _, service, owner, manager, projects = materials
     pid, aid = projects[0]
     p, d = install(service, owner, manager, pid, aid)
@@ -226,13 +226,87 @@ def test_automatic_migration_retains_manual_text_and_remaps_controls(materials, 
     service.process_job(switched["job_id"])
     job = service.get_job(owner, switched["job_id"])
     assert job["state"] == "succeeded", job
-    assert job["result"]["saved"] == 1, job
-    assert len(calls) == 1 and "选择类别" in calls[0]["chapters"][0]["content"]
+    assert job["result"]["saved"] == 0 and job["result"]["pending"] == 1, job
+    assert not calls
     links = InteractiveKnowledgeService(service).bindings(owner, pid, aid)
     assert len(links) == 1 and links[0]["target"]["label"] == "创建收费项"
     assert links[0]["target"]["selector"] == "#add"
     assert links[0]["summary"] == "必须保留的人工说明" and links[0]["origin"] == "manual"
-    assert links[0]["validity_status"] == "valid" and len(links[0]["sections"]) == 1
+    assert links[0]["validity_status"] == "stale"
+
+
+@pytest.mark.parametrize("legacy_job", [False, True])
+def test_identical_section_is_reattached_without_model_and_snapshot_keeps_old_reference(
+    materials, monkeypatch, legacy_job
+):
+    from vks_api.materials import CitationReattachment
+
+    _, service, owner, manager, projects = materials
+    pid, aid = projects[0]
+    p, d = install(service, owner, manager, pid, aid)
+    bind(service, owner, pid, aid, p, model=True)
+    links = InteractiveKnowledgeService(service)
+    before = links.bindings(owner, pid, aid)[0]
+    snapshot = manager.checkpoint(owner, pid, aid, "更新前", uid())
+    updated = stage(
+        service, owner, manager, pid, aid, "documents",
+        "# 收费项\n\n新增收费项需要填写名称。\n\n## 删除\n\n先确认没有在途订单。", d["package_id"],
+    )
+
+    def fail_model(*args):
+        pytest.fail("Equivalent citations must never call the model")
+
+    monkeypatch.setattr(ai_gateway, "request_model", fail_model)
+    with monkeypatch.context() as legacy:
+        if legacy_job:
+            legacy.setattr(CitationReattachment, "apply", lambda *a, **k: False)
+        switched = activate(service, owner, manager, pid, aid, [updated])
+    if legacy_job:
+        assert switched["migration"]["reassociate"] == 1
+        from copy import deepcopy
+
+        with service.db() as s:
+            from vks_api.models import Job
+            from vks_api.service import canonical, sha
+
+            job = s.get(Job, switched["job_id"])
+            prior_target = deepcopy(job.input_json["targets"][0])
+            prior_target["target"]["selector"] = "#completed"
+            receipt_key = sha(canonical(prior_target))
+            job.input_json = {
+                k: v for k, v in job.input_json.items() if k not in ("local_plan_complete", "reattached")
+            }
+            job.input_json = {**job.input_json, "targets": [prior_target, *job.input_json["targets"]]}
+            job.state, job.progress = "cancelled", 50
+            job.result_json = {
+                "total": 2, "saved": 1,
+                "completed": {receipt_key: {"label": "已保存", "saved": True, "message": "完成"}},
+            }
+        key = uid()
+        resumed = manager.retry_migration(
+            owner, pid, aid, str(switched["selection_version"]), key, resume_job_id=switched["job_id"],
+        )
+        assert resumed["progress"] == 50 and resumed["result"]["processed"] == 1
+        assert resumed["id"] != switched["job_id"]
+        service.process_job(resumed["id"])
+        result = service.get_job(owner, resumed["id"])["result"]
+        assert result["reattached"] == result["preserved"] == 1
+        assert result["processed"] == result["total"] == 2
+        assert result["completed"][receipt_key]["message"] == "完成"
+        assert service.get_job(owner, switched["job_id"])["state"] == "cancelled"
+        assert manager.retry_migration(
+            owner, pid, aid, str(switched["selection_version"]), key, resume_job_id=switched["job_id"],
+        )["id"] == resumed["id"]
+    else:
+        assert switched["migration"]["reattached"] == 1
+        assert switched["migration"]["reassociate"] == 0
+    after = links.bindings(owner, pid, aid)[0]
+    assert after["id"] == before["id"] and after["origin"] == before["origin"] == "model"
+    assert after["summary"] == before["summary"]
+    assert after["validity_status"] == "valid"
+    assert after["sections"][0]["revision_id"] != before["sections"][0]["revision_id"]
+    frozen = links.bindings(owner, pid, release_id=snapshot["id"])[0]
+    assert frozen["sections"] == before["sections"]
 
 
 def test_excluded_links_stay_excluded_and_deleted_sections_leave_corpus(materials):
@@ -244,10 +318,7 @@ def test_excluded_links_stay_excluded_and_deleted_sections_leave_corpus(material
         s.get(Relation, saved["binding_id"]).excluded = True
     d2 = stage(service, owner, manager, pid, aid, "documents", "# 收费项\n\n已修改。", d["package_id"])
     switched = activate(service, owner, manager, pid, aid, [d2])
-    with service.db() as s:
-        from vks_api.models import Job
-
-        assert not s.get(Job, switched["job_id"]).input_json["targets"]
+    assert switched["job_id"] is None
     links = InteractiveKnowledgeService(service).bindings(owner, pid, aid)
     assert links[0]["excluded"]
     doc = InteractiveKnowledgeService(service).document(

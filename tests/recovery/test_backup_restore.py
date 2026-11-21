@@ -179,3 +179,33 @@ def test_backup_restore_cli_runs_without_pythonpath(tmp_path):
     assert result.returncode == 0, result.stderr.decode()
     assert (tmp_path / "restored-cli/vks.db").exists()
     service.engine.dispose()
+
+
+def test_backup_restores_rag_settings_and_ledger_without_cached_vectors(tmp_path):
+    from vks_api.vector_rag import RagSettings, VectorStore
+
+    original = tmp_path / "source"
+    service = Service(original)
+    _, owner = service.login(service.bootstrap_token)
+    ids = [service.create_project(owner, {"key": f"rag-{i}", "name": "RAG"}, f"project-{i}")["id"] for i in range(2)]
+    store = VectorStore(original)
+    configs = [
+        RagSettings(model_id=f"synthetic-embed-{i}", connection_id=f"conn-{i}", dimensions=1024 + i,
+                    candidate_limit=48, per_document_limit=16)
+        for i in range(2)
+    ]
+    for i, (pid, settings) in enumerate(zip(ids, configs, strict=True)):
+        with store.db() as db:
+            db.execute("INSERT INTO config VALUES (?,?)", (pid, settings.model_dump_json()))
+            db.execute("INSERT INTO chunks VALUES (?,?,?,?,?,?,?)", (pid, "cache", "chunk", "rev", 0, "synthetic", b"x"))
+        store.settle(store.reserve(pid, settings, 500), 321 + i, "succeeded")
+    archive = backup(original, tmp_path / "archive.zip")
+    destination = tmp_path / "restored"
+    restored = restore(archive["path"], destination, expected_sha256=archive["sha256"])
+    assert restored["rag_state"] == "restored"
+    rebuilt = VectorStore(destination)
+    assert [rebuilt.settings(pid) for pid in ids] == configs
+    assert [rebuilt.used_tokens(pid) for pid in ids] == [321, 322]
+    with rebuilt.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 0
+    service.engine.dispose()

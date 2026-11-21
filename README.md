@@ -1,6 +1,6 @@
 # 知境 · Visual Knowledge Studio
 
-VKS 从业务操作连接到文档章节、接口、源码与证据。当前分支为 **VKS 3.0 候选版**。项目可以用原型页面和状态的原始截图导览，在独立热区关联业务说明，从说明打开准确的文档章节，也可以从章节返回同版原型操作。参见 [3.0 实施记录](docs/upgrades/v3/IMPLEMENTATION.md)、[验证记录](docs/upgrades/v3/VERIFICATION.md)及[安装、升级与回退](docs/upgrades/v3/RELEASE.md)。
+VKS 从业务操作连接到文档章节、接口、源码与证据。当前分支为 **VKS 3.0 候选版**。Studio 在隔离 Runtime 中打开原 HTML 原型，支持从控件查看原文章节、从文档返回准确原型目标。Web 仍提供截图和热区导览。参见 [Studio](docs/upgrades/v3/STUDIO.md)、[3.0 实施记录](docs/upgrades/v3/IMPLEMENTATION.md)、[验证记录](docs/upgrades/v3/VERIFICATION.md)及[安装、升级与回退](docs/upgrades/v3/RELEASE.md)。
 
 1.0 和 2.0 的功能与历史验收见 [1.0 实施与验收跟踪](docs/ROADMAP_V1.md)、[2.0 实施记录](docs/upgrades/v2/IMPLEMENTATION.md)及[2.0 验证记录](docs/upgrades/v2/VERIFICATION.md)。
 
@@ -20,6 +20,8 @@ make dev
 
 API 位于 [127.0.0.1:8000](http://127.0.0.1:8000/docs)。本地默认 SQLite，数据保存在忽略目录 `.vks/`。`Ctrl+C` 停止开发服务。完整 PostgreSQL/RabbitMQ/Worker 部署见 [部署说明](deploy/README.md)。
 
+运行 `npm run dev:studio` 启动本机交互工作台，默认入口为 [127.0.0.1:5193](http://127.0.0.1:5193)。仓库 Compose 提供传统 Web、API 和 Worker，Studio 与本机 Runtime 通过独立脚本启动。
+
 开始使用：创建项目 → 导入样例或资料 → 查看动作及证据 → 直接编辑与纠错 → 按需保存知识版本。已发布基线保持不可变，继续工作时先克隆草稿。
 
 文档图表与数学公式的写法、阅读操作和支持边界见 [Markdown 格式说明](docs/MARKDOWN_FORMATS.md)。可将 [图表与公式样例](fixtures/markdown-visuals.md) 导入自己的项目；本地验收实例另有独立的“文档图表与公式示例”项目。
@@ -37,7 +39,7 @@ API 位于 [127.0.0.1:8000](http://127.0.0.1:8000/docs)。本地默认 SQLite，
 | 关系与版本 | 独立用户移除/有效性/因果字段，改选/拆分/合并、纠错反馈、移除与恢复，变更传播与来源有效性核对和默认版本回退 |
 | 检索与模型 | 按版本/模块/类型/服务过滤、权限内全文/路径/符号检索、局部图；可选带证据引用的模型问答/草稿及项目预算账本 |
 | 任务与恢复 | 数据库 outbox、独立 Celery/RabbitMQ 队列、本地兼容调度、租约/检查点/幂等、取消、有限重试、一致备份恢复 |
-| 导出与 MCP | 原始/衍生 Markdown、中文 PDF、可回导 VKS 包；官方 MCP SDK stdio/HTTP，25 个工具含 3.0 原型说明与业务点绑定，支持资源、提示模板及 OAuth 资源服务器 |
+| 导出与 MCP | 原始/衍生 Markdown、中文 PDF、可回导 VKS 包；官方 MCP SDK stdio/HTTP，30 个工具含 Studio 原型关联、文档读写及导出，支持资源、提示模板及 OAuth 资源服务器 |
 
 框架支持范围是有边界的。Java 动态分派、运行因果、复杂 React/Vue 映射不会被猜成事实；前端支持显式构建/热点源码锚点。Axure 降级为无脚本、无外联的被动原型。Web 使用本地团队登录，MCP OAuth 对接外部授权服务器；本项目不实现通用企业 SSO 授权服务器。
 

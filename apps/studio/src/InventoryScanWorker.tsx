@@ -40,7 +40,7 @@ export function InventoryScanWorker({
   manifest: InventoryManifest;
   scanRunId?: string;
   clientId?: string;
-  claim: (worker: number) => InventoryTask | undefined;
+  claim: (worker: number) => InventoryTask | null | undefined;
   release: (worker: number, task: InventoryTask) => void;
   isActive: () => boolean;
   onWorking: (worker: number, task: InventoryTask | null) => void;
@@ -116,7 +116,16 @@ export function InventoryScanWorker({
       try {
         while (true) {
           check();
-          held = claim(worker);
+          const next = claim(worker);
+          if (next === null) {
+            if (loaded) {
+              loaded = "";
+              setRuntime(null);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            continue;
+          }
+          held = next;
           if (!held) break;
           const task = held,
             { source, page } = task;

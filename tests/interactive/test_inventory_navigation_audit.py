@@ -55,7 +55,6 @@ def test_three_route_pipeline_survives_navigation_and_refresh_without_duplicate_
             page.on("request", observe)
             login(page, url, pid, aid)
             page.get_by_role("button", name="关联管理", exact=True).click()
-            browser_inventory.select_scan_lanes(page, 1)
             with page.expect_response(
                 lambda response: (
                     response.request.method == "PUT"
@@ -177,7 +176,7 @@ def test_three_parallel_workers_have_distinct_storage_origins_and_stop_before_la
 ):
     service, owner, manager, pid, aid, initial, _, calls, _ = test_bulk_association.setup(materials, monkeypatch)
     source = zip_docs(
-        [(name + ".html", browser_inventory.dynamic_page("账单 " + name, 4500)) for name in ("a", "b", "c")]
+        [(name + ".html", browser_inventory.dynamic_page("账单 " + name, 6500)) for name in ("a", "b", "c")]
     )
     replacement = test_materials.stage(
         service,
@@ -195,6 +194,7 @@ def test_three_parallel_workers_have_distinct_storage_origins_and_stop_before_la
         browser = p.chromium.launch(executable_path=chromium_path(p), headless=True)
         try:
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.add_init_script("Object.defineProperty(navigator,'hardwareConcurrency',{value:8})")
             uploads = []
             page.on(
                 "request",
@@ -207,7 +207,6 @@ def test_three_parallel_workers_have_distinct_storage_origins_and_stop_before_la
             login(page, url, pid, aid)
             page.evaluate("localStorage.setItem('audit-worker-isolation','USER')")
             page.get_by_role("button", name="关联管理", exact=True).click()
-            browser_inventory.select_scan_lanes(page, 3)
             browser_inventory.start_legacy_pipeline(page, service, owner, pid, aid)
             frames = page.locator('iframe[title="预扫描原型"]')
             expect(frames).to_have_count(3)
