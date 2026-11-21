@@ -11,6 +11,7 @@ import os
 import struct
 import subprocess
 import tomllib
+from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -87,7 +88,10 @@ async def smoke_library(command, cwd, env, settings):
         encoding="utf-8",
     )
     params = StdioServerParameters(command=str(command), args=settings, cwd=cwd, env=env)
-    async with stdio_client(params) as (read, write), ClientSession(read, write) as client:
+    async with (
+        stdio_client(params) as (read, write),
+        ClientSession(read, write, read_timeout_seconds=timedelta(seconds=60)) as client,
+    ):
         await client.initialize()
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
         panel = tools["open_vks_workspace"]
