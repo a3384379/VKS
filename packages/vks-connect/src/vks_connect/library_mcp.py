@@ -17,7 +17,7 @@ from mcp.server.stdio import stdio_server
 from .credentials import CredentialError
 from .library import LibraryError
 from .library_embeddings import DEFAULT_ENDPOINT, EmbeddingSettings, LibraryEmbeddings
-from .local_embeddings import LocalModelError, local_query
+from .local_embeddings import LocalModelError, local_query, model_directory
 from .sidebar import SIDEBAR_TOOL, open_browser_url, register_sidebar, sidebar_action, sidebar_tool
 
 CONTEXT = "get_vks_library_context"
@@ -322,6 +322,12 @@ def create_library_server(store, version, embedding=None):
 
 
 async def run_library_stdio(store, version):
+    if sys.platform == "win32" and model_directory() is not None:
+        # Load OpenBLAS before the stdin pipe reader starts (numpy/numpy#24290).
+        try:
+            import numpy  # noqa: F401
+        except (ImportError, OSError):
+            pass  # A missing optional runtime still allows keyword search.
     server = create_library_server(store, version)
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())

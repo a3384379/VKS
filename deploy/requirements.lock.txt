@@ -405,15 +405,13 @@ numpy==2.5.4 \
     # via
     #   onnxruntime
     #   visual-knowledge-studio
-onnxruntime==1.21.1 ; sys_platform == 'win32' \
-    --hash=sha256:a7afdb3fcb162f5536225e13c2b245018068964b1d0eee05303ea6823ca6785e \
-    --hash=sha256:da606061b9ed1b05b63a37be38c2014679a3e725903f58036ffd626df45c0e47
-    # via visual-knowledge-studio
-onnxruntime==1.22.1 ; sys_platform != 'win32' \
+onnxruntime==1.22.1 \
     --hash=sha256:2d39a530aff1ec8d02e365f35e503193991417788641b184f5b1e8c9a6d5ce8d \
     --hash=sha256:33a7980bbc4b7f446bac26c3785652fe8730ed02617d765399e89ac7d44e0f7d \
     --hash=sha256:460487d83b7056ba98f1f7bac80287224c31d8149b15712b0d6f5078fcc33d0f \
+    --hash=sha256:6a64291d57ea966a245f749eb970f4fa05a64d26672e05a83fdb5db6b7d62f87 \
     --hash=sha256:6e7e823624b015ea879d976cbef8bfaed2f7e2cc233d7506860a76dd37f8f381 \
+    --hash=sha256:70980d729145a36a05f74b573435531f55ef9503bcda81fc6c3d6b9306199982 \
     --hash=sha256:984cea2a02fcc5dfea44ade9aca9fe0f7a8a2cd6f77c258fc4388238618f3928 \
     --hash=sha256:a938d11c0dc811badf78e435daa3899d9af38abee950d87f3ab7430eb5b3cf5a \
     --hash=sha256:b0c37070268ba4e02a1a9d28560cd00cd1e94f0d4f275cbef283854f861a65fa \

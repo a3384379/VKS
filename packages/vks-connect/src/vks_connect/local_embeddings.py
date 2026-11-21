@@ -1,7 +1,6 @@
 """Pinned CPU embeddings for shared, offline library indexes."""
 
 import base64
-import faulthandler
 import hashlib
 import os
 import sys
@@ -113,14 +112,7 @@ def local_query(text):
     path = model_directory()
     if path is None:
         raise LocalModelError("插件未安装本地向量模型。")
-    trace_smoke = os.getenv("VKS_CONNECT_SMOKE_TRACE") == "1"
-    if trace_smoke:
-        faulthandler.dump_traceback_later(20)
-    try:
-        return encoder(path).query(text)
-    finally:
-        if trace_smoke:
-            faulthandler.cancel_dump_traceback_later()
+    return encoder(path).query(text)
 
 
 def build_local_index(documents, model, *, checkpoint=None, progress=None):
