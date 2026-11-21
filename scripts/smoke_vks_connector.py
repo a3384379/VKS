@@ -60,6 +60,7 @@ class API(BaseHTTPRequestHandler):
 async def smoke_library(command, cwd, env, settings):
     env = {k: v for k, v in env.items() if k != "VKS_CONNECT_TOKEN"}
     env["VKS_CONNECT_CONFIG_DIR"] += "-library"
+    env["VKS_CONNECT_SMOKE_TRACE"] = "1"
     library_file = cwd / "只读 成品库.html"
     payload = {
         "schema_version": 1,
