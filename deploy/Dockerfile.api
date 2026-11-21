@@ -4,11 +4,13 @@ COPY deploy/requirements.lock.txt /app/requirements.lock.txt
 RUN pip install --no-cache-dir -r requirements.lock.txt
 COPY services services
 COPY packages packages
+COPY apps/runtime apps/runtime
 COPY fixtures fixtures
 COPY deploy deploy
 COPY scripts scripts
+RUN python scripts/fetch_vks_local_model.py --out /app/models/local-embedding
 COPY alembic.ini alembic.ini
-ENV PYTHONPATH=/app/services/api:/app VKS_DATA_DIR=/data/vks VKS_DATABASE_URL=sqlite:////data/vks/vks.db PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app/services/api:/app VKS_DATA_DIR=/data/vks VKS_DATABASE_URL=sqlite:////data/vks/vks.db PYTHONDONTWRITEBYTECODE=1 VKS_LOCAL_EMBEDDING_MODEL_DIR=/app/models/local-embedding
 RUN useradd --uid 10001 --create-home vks && mkdir -p /data/vks && chown -R vks:vks /data
 USER vks
 EXPOSE 8000

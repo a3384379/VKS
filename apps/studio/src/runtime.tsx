@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { apiResponse } from "../../web/src/api";
 export type Target = {
   route: string;
   frame_path: string[];
@@ -15,6 +16,23 @@ export type RuntimeEvent = {
   request_id: string;
   protocol_version: number;
 };
+export type PrototypePosition = Pick<Target, "route" | "frame_path" | "state">;
+export type RevealResult = {
+  ok: boolean;
+  message: string;
+  navigation_level?: "page" | "control" | "state";
+  route?: string;
+  frame_path?: string[];
+  target?: Target;
+  observed_state?: string;
+  state_verified: boolean;
+};
+export function samePage(
+  a: Pick<Target, "route" | "frame_path">,
+  b: Pick<Target, "route" | "frame_path">,
+) {
+  return a.route === b.route && JSON.stringify(a.frame_path) === JSON.stringify(b.frame_path);
+}
 export function isTarget(value: unknown): value is Target {
   if (!value || typeof value !== "object") return false;
   const t = value as Record<string, unknown>;
@@ -62,6 +80,7 @@ export function OriginalRuntime({
   networkOrigins = [],
   inventoryOnly = false,
   onEvent,
+  onFailure,
   handle,
 }: {
   url: string;
@@ -71,14 +90,20 @@ export function OriginalRuntime({
   networkOrigins?: string[];
   inventoryOnly?: boolean;
   onEvent: (e: RuntimeEvent) => void;
+  onFailure?: (message: string) => void;
   handle: { current: RuntimeHandle | null };
 }) {
   const iframe = useRef<HTMLIFrameElement>(null),
-    eventRef = useRef(onEvent);
+    eventRef = useRef(onEvent),
+    failureRef = useRef(onFailure);
   eventRef.current = onEvent;
+  failureRef.current = onFailure;
   const [identity] = useState(() => crypto.randomUUID());
   const [status, setStatus] = useState("正在读取原始资料…");
-  const runtimePort = import.meta.env.VITE_RUNTIME_PORT || 5195;
+  const configuredPort = document.querySelector<HTMLMetaElement>(
+    'meta[name="vks-runtime-port"]',
+  )?.content;
+  const runtimePort = configuredPort || import.meta.env.VITE_RUNTIME_PORT || 5195;
   const networkKey = JSON.stringify(kind === "prototype" ? [] : networkOrigins);
   useEffect(() => {
     const controller = new AbortController();
@@ -90,12 +115,16 @@ export function OriginalRuntime({
       origin = "";
     setStatus("正在读取原始资料…");
     if (iframe.current) iframe.current.src = "about:blank";
-    const bytes = fetch(url, {
+    const failed = (error: unknown) => {
+      if (disposed) return;
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(message);
+      failureRef.current?.(message);
+    };
+    const bytes = apiResponse(url, {
       signal: controller.signal,
-      credentials: "same-origin",
       redirect: "error",
     }).then(async (r) => {
-      if (!r.ok) throw new Error("无法读取资料，请检查当前版本和权限");
       const b = await r.arrayBuffer();
       const h = Array.from(
         new Uint8Array(await crypto.subtle.digest("SHA-256", b)),
@@ -105,13 +134,12 @@ export function OriginalRuntime({
       if (h !== digest) throw new Error("资料摘要校验失败");
       return b;
     });
-    bytes.catch((e) => {
-      if (!disposed) setStatus(e.message);
-    });
+    void bytes.catch(failed);
     const send = (type: string, payload: unknown = {}) => {
       const request = crypto.randomUUID();
       if (type === "target.reveal" || type === "document.reveal")
         navigationRequest = request;
+      if (type === "target.cancel" || type === "document.cancel") navigationRequest = "";
       port?.postMessage({
         protocol_version: 1,
         runtime_instance_id: identity,
@@ -157,8 +185,8 @@ export function OriginalRuntime({
               },
               [raw],
             );
-          } catch (e) {
-            if (!disposed) setStatus(String(e));
+          } catch {
+            // The verified material request reports failures itself.
           }
         }
         if (data.type === "material.loaded") setStatus("");
@@ -229,18 +257,17 @@ export function OriginalRuntime({
           throw new Error("原始资料运行环境地址无效");
         if (disposed) return;
         origin = expected.origin;
-        if (iframe.current)
-          iframe.current.src = `${origin}/?registration=${encodeURIComponent(registration.registration)}&instance=${identity}`;
+        iframe.current?.contentWindow?.location.replace(
+          `${origin}/?registration=${encodeURIComponent(registration.registration)}&instance=${identity}`,
+        );
       })
-      .catch((error) => {
-        if (!disposed) setStatus(error.message);
-      });
+      .catch(failed);
     return () => {
       disposed = true;
       controller.abort();
       window.removeEventListener("message", listener);
       port?.close();
-      handle.current = null;
+      if (handle.current?.instanceId === identity) handle.current = null;
     };
   }, [
     url,

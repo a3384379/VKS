@@ -2,6 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/services/api:$PWD"
+VKS_STUDIO_DATA_POINTER="$PWD/.vks/studio-preview/data-directory"
+if [[ -z "${VKS_DATA_DIR:-}" && -f "$VKS_STUDIO_DATA_POINTER" ]]; then
+  IFS= read -r VKS_DATA_DIR < "$VKS_STUDIO_DATA_POINTER" || true
+fi
 export VKS_DATA_DIR="${VKS_DATA_DIR:-$PWD/.vks/studio-preview/data}"
 export VKS_PERSONAL_MODE="${VKS_PERSONAL_MODE:-1}"
 VKS_STUDIO_PORT="${VKS_STUDIO_PORT:-5193}"
@@ -9,6 +13,7 @@ VKS_API_PORT="${VKS_API_PORT:-8014}"
 VKS_RUNTIME_PORT="${VKS_RUNTIME_PORT:-5195}"
 export VKS_DEV_API_TARGET="http://127.0.0.1:$VKS_API_PORT"
 export VITE_RUNTIME_PORT="$VKS_RUNTIME_PORT"
+export VKS_STUDIO_BASE_URL="${VKS_STUDIO_BASE_URL:-http://127.0.0.1:$VKS_STUDIO_PORT}"
 export VKS_STUDIO_ALLOWED_ORIGINS="${VKS_STUDIO_ALLOWED_ORIGINS:-http://127.0.0.1:$VKS_STUDIO_PORT,http://localhost:$VKS_STUDIO_PORT}"
 export VKS_MODEL_ALLOWED_ORIGINS="${VKS_MODEL_ALLOWED_ORIGINS:-https://api.openai.com}"
 VKS_STUDIO_API_COMMAND=(uv run)
@@ -49,6 +54,13 @@ if [[ "${VKS_STUDIO_PREVIEW:-0}" == "1" ]]; then
   # Keep this API and its frontend together while later checks rebuild dist.
   VKS_STUDIO_PREVIEW_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/vks-studio-preview.XXXXXX")"
   cp -R apps/studio/dist/. "$VKS_STUDIO_PREVIEW_SNAPSHOT/"
+  uv run python - "$VKS_STUDIO_PREVIEW_SNAPSHOT/index.html" "$VKS_RUNTIME_PORT" <<'PY'
+import sys
+from pathlib import Path
+from scripts.dev_studio import configure_preview_runtime
+
+configure_preview_runtime(Path(sys.argv[1]), int(sys.argv[2]))
+PY
   npm run preview --workspace apps/studio -- --port "$VKS_STUDIO_PORT" --outDir "$VKS_STUDIO_PREVIEW_SNAPSHOT"
 else
   npm run dev --workspace apps/studio -- --port "$VKS_STUDIO_PORT"

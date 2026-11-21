@@ -59,6 +59,9 @@ class SearchInput(Input):
     query: str = Field(min_length=1, max_length=2000)
     kinds: list[str] = Field(default_factory=list)
     limit: int = Field(default=10, ge=1, le=50)
+    retrieval_mode: Literal["legacy", "keyword", "hybrid", "auto"] = "legacy"
+    max_excerpt_chars: int | None = Field(default=None, ge=1, le=1200)
+    max_total_chars: int | None = Field(default=None, ge=1, le=6000)
 
 
 class QuestionInput(Input):
@@ -74,6 +77,7 @@ class ExportInput(Input):
     format: Literal["markdown_bundle", "pdf", "vksbundle", "readonly_html"] = "markdown_bundle"
     include_source: bool = False
     document_mode: Literal["project", "original"] = "project"
+    local_vectors: bool = False
 
 
 class AnalysisInput(Input):

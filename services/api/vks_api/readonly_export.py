@@ -10,18 +10,24 @@ from __future__ import annotations
 import base64
 import gzip
 import json
+import os
 from html import escape
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 from markdown_it import MarkdownIt
 
+from .connector_source import ROOT
 from .documents import DocumentService
 from .exports import allow_artifact, canonical, digest, document_export_choices, read_original
 from .interactive import InteractiveKnowledgeService
 from .models import Analysis, Artifact, Evidence, Job, Project, Release, Revision
 from .prototype_edit import ordered_citation_edges
 from .service import DomainError
+
+# isort: split
+from vks_connect.library import MAX_DATA_BYTES, MAX_FILE_BYTES
+from vks_connect.local_embeddings import LocalModelError, build_local_index, encoder
 
 
 def document_images(service, s, actor, pid, revision, sections, caps, mounted_attachments=None, markdown=None):
@@ -310,7 +316,10 @@ def html_library(payload):
     from .interactive_ai import EXPLANATION_GUIDANCE
 
     template = (assets / "template.html").read_text()
-    encoded = base64.b64encode(gzip.compress(canonical(payload), compresslevel=9, mtime=0)).decode()
+    data = canonical(payload)
+    if "local_rag" in payload and len(data) > MAX_DATA_BYTES:
+        raise DomainError("VKS_BUDGET_EXCEEDED", "成品库正文与向量超出插件读取限制，请缩小导出范围", 422)
+    encoded = base64.b64encode(gzip.compress(data, compresslevel=9, mtime=0)).decode()
     # Replacement markers occur only in platform-owned template, never in data.
     return (
         template.replace(
@@ -337,6 +346,16 @@ def html_library(payload):
     ).encode()
 
 
+def studio_local_index(payload, validate_scope):
+    model_dir = Path(os.getenv("VKS_LOCAL_EMBEDDING_MODEL_DIR") or ROOT / "output/vks-connect/local-model")
+    try:
+        documents = payload["documents"]
+        model = encoder(model_dir.resolve()) if any(document["sections"] for document in documents) else None
+        return build_local_index(documents, model, checkpoint=validate_scope)
+    except LocalModelError as error:
+        raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", str(error), 503) from error
+
+
 def prepare_job(service, jid, validate_scope=None):
     """Network and compression run outside the knowledge transaction/worker lock."""
     from .interactive_ai import InteractiveAssistant
@@ -350,15 +369,19 @@ def prepare_job(service, jid, validate_scope=None):
         pid, release_id = job.project_id, job.input_json["release_id"]
         mode = job.input_json.get("document_mode", "project")
         document_ids = job.input_json.get("document_ids")
+        local_vectors = job.input_json.get("local_vectors", False)
         payload, deps, section_ids = projection(
             service, s, actor, pid, release_id, caps, mode, document_ids, explanation_cutoff=job.created_at
         )
         before = digest(canonical([payload, deps]))
     if validate_scope:
         validate_scope()
-    rag = InteractiveAssistant(service).rag.export_index(
-        actor, pid, release_id=release_id, section_revision_ids=section_ids, ensure=True, validate_scope=validate_scope
-    )
+    if local_vectors:
+        index = studio_local_index(payload, validate_scope)
+    else:
+        index = InteractiveAssistant(service).rag.export_index(
+            actor, pid, release_id=release_id, section_revision_ids=section_ids, ensure=True, validate_scope=validate_scope
+        )
     with ReadingService(service).db() as s:
         job = s.get(Job, jid)
         actor = current_actor(service, job.created_by, pid, session=s, job=job)
@@ -370,9 +393,14 @@ def prepare_job(service, jid, validate_scope=None):
             raise DomainError("VKS_VERSION_CONFLICT", "导出期间资料或权限发生变化，请重新导出", 409)
     if validate_scope:
         validate_scope()
-    payload["rag"] = rag
+    payload["local_rag" if local_vectors else "rag"] = index
+    html = html_library(payload)
+    if local_vectors and len(html) > MAX_FILE_BYTES:
+        raise DomainError("VKS_BUDGET_EXCEEDED", "成品库文件超出插件读取限制，请缩小导出范围", 422)
+    if validate_scope:
+        validate_scope()
     return {
-        "object_key": service._put_object(html_library(payload)),
+        "object_key": service._put_object(html),
         "deps": deps,
         "caps": caps,
         "projection_hash": before,

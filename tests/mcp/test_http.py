@@ -1,17 +1,17 @@
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
 import httpx
+import pytest
+from fastapi.testclient import TestClient
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
-import pytest
-
 from vks_api.app import create_app
-from vks_api.mcp_gateway import APIBridge, create_http_app
+from vks_api.mcp_gateway import FULL, REQUIREMENTS_READONLY, APIBridge, create_http_app
 
 
 @pytest.mark.asyncio
-async def test_streamable_http_sdk_authenticated_handshake_and_revocation(tmp_path):
+@pytest.mark.parametrize("profile", [FULL, REQUIREMENTS_READONLY])
+async def test_streamable_http_sdk_authenticated_handshake_and_revocation(tmp_path, profile):
     api = create_app(data_dir=tmp_path, enable_worker=False)
     service = api.state.service
     with TestClient(api) as web:
@@ -25,21 +25,34 @@ async def test_streamable_http_sdk_authenticated_handshake_and_revocation(tmp_pa
             headers=headers,
             json={"name": "HTTP reader", "scopes": ["knowledge:read"]},
         ).json()["data"]
-        gateway = create_http_app(APIBridge("http://testserver", transport=httpx.ASGITransport(app=api)))
+        gateway = create_http_app(APIBridge("http://testserver", transport=httpx.ASGITransport(app=api)), profile)
         async with gateway.router.lifespan_context(gateway):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=gateway), base_url="http://localhost:8788"
             ) as bare:
                 assert (await bare.post("/mcp", json={})).status_code == 401
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=gateway), headers={"Authorization": "Bearer " + token["token"]}
-            ) as client:
-                async with streamable_http_client("http://localhost:8788/mcp", http_client=client) as (read, write, _):
-                    async with ClientSession(read, write) as sdk:
-                        assert (await sdk.initialize()).serverInfo.version == "3.0.0-rc.1"
-                        result = await sdk.call_tool("list_projects", {})
-                        assert not result.isError
-                        assert result.structuredContent["data"][0]["id"] == project["id"]
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=gateway), headers={"Authorization": "Bearer " + token["token"]}
+                ) as client,
+                streamable_http_client("http://localhost:8788/mcp", http_client=client) as (read, write, _),
+                ClientSession(read, write) as sdk,
+            ):
+                assert (await sdk.initialize()).serverInfo.version == "3.0.0-rc.1"
+                result = await sdk.call_tool("list_projects", {})
+                assert not result.isError
+                assert result.structuredContent["data"][0]["id"] == project["id"]
+                unavailable = await sdk.call_tool(
+                    "search_knowledge",
+                    {
+                        "project_id": project["id"],
+                        "release_id": str(uuid4()),
+                        "query": "fixture",
+                        "retrieval_mode": "keyword",
+                    },
+                )
+                code = "VKS_TARGET_UNAVAILABLE" if profile == REQUIREMENTS_READONLY else "VKS_NOT_FOUND"
+                assert unavailable.isError and unavailable.structuredContent["error"]["code"] == code
             web.delete(f"/api/v1/projects/{project['id']}/tokens/{token['id']}", headers=headers)
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=gateway),

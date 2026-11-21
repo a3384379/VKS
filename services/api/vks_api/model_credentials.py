@@ -2,18 +2,18 @@
 
 import json
 import os
-import tempfile
-from pathlib import Path
 from threading import RLock
 
 from pydantic import SecretStr
 
+from packages.private_files import read_private_file, write_private_file
 from services.browser_runner.network import origin
 
 from .models import uid
 from .service import DomainError
 
 ENV_NAME = "VKS_MODEL_API_KEY"
+MAX_STORE_BYTES = 1024 * 1024
 
 
 def credential_path(service):
@@ -27,18 +27,13 @@ def _read_store(service):
     path = credential_path(service)
     if path.is_symlink():
         raise DomainError("VKS_INVALID_INPUT", "凭据文件不能是符号链接", 422)
-    if not path.exists():
-        return {}
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, "r") as stream:
-            raw = stream.read(1024 * 1024 + 1)
-        if len(raw) > 1024 * 1024:
-            raise ValueError()
-        data = json.loads(raw)
+        data = json.loads(read_private_file(path, MAX_STORE_BYTES).decode("utf-8"))
         if not isinstance(data, dict):
-            raise TypeError()
+            raise TypeError
         return data
+    except FileNotFoundError:
+        return {}
     except (OSError, ValueError, TypeError):
         raise DomainError("VKS_INVALID_INPUT", "本机模型凭据文件无法读取，请重新配置", 503) from None
 
@@ -47,22 +42,13 @@ def _write_store(service, data):
     path = credential_path(service)
     if path.is_symlink():
         raise DomainError("VKS_INVALID_INPUT", "凭据文件不能是符号链接", 422)
-    temporary = None
+    raw = json.dumps(data).encode("utf-8")
+    if len(raw) > MAX_STORE_BYTES:
+        raise DomainError("VKS_LIMIT_EXCEEDED", "本机模型凭据文件已达存储上限", 409)
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", prefix=".model-key-", dir=service.data_dir, delete=False
-        ) as stream:
-            temporary = Path(stream.name)
-            os.chmod(temporary, 0o600)
-            json.dump(data, stream)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        write_private_file(path, raw)
     except OSError:
         raise DomainError("VKS_DEPENDENCY_UNAVAILABLE", "无法保存本机模型凭据", 503) from None
-    finally:
-        if temporary and temporary.exists():
-            temporary.unlink()
 
 
 def _valid_key(value):

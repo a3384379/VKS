@@ -20,6 +20,7 @@ import {
   LoaderCircle,
   Settings2,
   Folders,
+  Copy,
 } from "lucide-react";
 import {
   RichMarkdown as Markdown,
@@ -27,9 +28,15 @@ import {
   type MarkdownSection,
   type ReadingContext,
 } from "./RichMarkdown";
-import { api, mutation, setCsrf } from "../../web/src/api";
-import { OriginalRuntime, isTarget } from "./runtime";
-import type { Target, RuntimeEvent, RuntimeHandle } from "./runtime";
+import { api, mutation, observeUnauthenticated, setCsrf } from "../../web/src/api";
+import { OriginalRuntime, isTarget, samePage } from "./runtime";
+import type {
+  Target,
+  RuntimeEvent,
+  RuntimeHandle,
+  PrototypePosition,
+  RevealResult,
+} from "./runtime";
 import "./style.css";
 import { AISettings } from "./AISettings";
 import { Projects } from "./Projects";
@@ -45,6 +52,7 @@ import { Materials } from "./Materials";
 import { BindingsManager } from "./BindingsManager";
 import { BatchAssociations } from "./BatchAssociations";
 import { ProjectTokenUsage } from "./ProjectTokenUsage";
+import { PrototypePreviewAction } from "./PrototypePreviewAction";
 import { AssociationReview, type ReviewTarget } from "./AssociationReview";
 import { BatchExplanations } from "./BatchExplanations";
 import {
@@ -70,6 +78,13 @@ import {
   firstNavigationDocument,
   type DocumentNavigation,
 } from "./DocumentNavigation";
+import {
+  exactLocationUrl,
+  getRoute,
+  sameWorkspace,
+  useStudioNavigation,
+  type Route,
+} from "./studioNavigation";
 
 type DocRef = {
   id: string;
@@ -176,18 +191,9 @@ type Catalog = {
   primary_package_id?: string;
   documents: DocRef[];
 };
-type Route = {
-  project: string;
-  analysis: string;
-  release: string;
-  view: string;
-  doc: string;
-  section: string;
-  binding: string;
-  package: string;
-  book: string;
-  reader: string;
-  review?: string;
+type RegisteredPage = Pick<Target, "route" | "frame_path"> & {
+  package_artifact_id: string;
+  page_ref: string;
 };
 type ReadingPosition = {
   route: Route;
@@ -195,34 +201,13 @@ type ReadingPosition = {
   chapter: string;
   chapterOffset?: number;
 };
-const sameWorkspace = (a: Route, b: Route) =>
-  a.project === b.project &&
-  a.analysis === b.analysis &&
-  a.release === b.release;
 const documentScrollRoot = (reader: HTMLElement | null) =>
   reader?.closest<HTMLElement>(".hb-main") ?? reader;
-const getRoute = (): Route =>
-  Object.fromEntries(
-    [
-      "project",
-      "analysis",
-      "release",
-      "view",
-      "doc",
-      "section",
-      "binding",
-      "package",
-      "book",
-      "reader",
-      "review",
-    ].map((k) => [k, new URLSearchParams(location.hash.slice(1)).get(k) || ""]),
-  ) as Route;
 const sameTarget = (a: Target, b: Target) =>
-  a.route === b.route &&
+  samePage(a, b) &&
   a.selector === b.selector &&
   a.label === b.label &&
-  a.state === b.state &&
-  JSON.stringify(a.frame_path) === JSON.stringify(b.frame_path);
+  a.state === b.state;
 const bindingForTarget = (
   bindings: Binding[],
   packageId: string | undefined,
@@ -233,19 +218,232 @@ const bindingForTarget = (
       binding.package_id === packageId && sameTarget(binding.target, target),
   );
 const text = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const missingLocation = "当前版本中无法读取该位置";
 
 function App() {
-  const [auth, setAuth] = useState<boolean | null>(null),
-    [accountId, setAccountId] = useState(""),
-    [username, setUsername] = useState("owner"),
-    [password, setPassword] = useState("");
-  const [route, setRoute] = useState(getRoute),
-    [workspaceReady, setWorkspaceReady] = useState(""),
+  const navigation = useStudioNavigation();
+  const { route, hash, external, invalid, navigate, retry } = navigation;
+  const [accountId, setAccountId] = useState("");
+  const [sessionGeneration, setSessionGeneration] = useState(0);
+  const [checking, setChecking] = useState(true);
+  const [signingIn, setSigningIn] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const [username, setUsername] = useState("owner");
+  const [password, setPassword] = useState("");
+  const activeSession = useRef({ accountId: "", csrf: "" });
+  const authRequest = useRef<AbortController | null>(null);
+  const checkedHash = useRef("");
+  const exactSavedTarget = !!route.release && (
+    route.view === "documents" && !!route.doc ||
+    (!route.view || route.view === "prototype") &&
+      !!(route.binding || route.package || route.page_ref)
+  );
+  const checkDestination = !!accountId && !invalid && external &&
+    exactSavedTarget && checkedHash.current !== hash;
+
+  const updateSession = useCallback((actorId: string, value?: string) => {
+    const csrf = actorId && value ? value : "";
+    if (activeSession.current.accountId !== actorId || activeSession.current.csrf !== csrf) {
+      retry();
+      setSessionGeneration((generation) => generation + 1);
+    }
+    activeSession.current = { accountId: actorId, csrf };
+    setCsrf(csrf);
+    setAccountId(actorId);
+  }, [retry]);
+
+  const checkSession = useCallback(async (afterUnauthorized = false) => {
+    if (authRequest.current) return;
+    const controller = new AbortController();
+    authRequest.current = controller;
+    const requestedHash = location.hash;
+    setChecking(true);
+    try {
+      const session = await api<{ authenticated: boolean; actor_id?: string; csrf_token?: string }>(
+        "/auth/session", { cache: "no-store", signal: controller.signal },
+      );
+      if (controller.signal.aborted) return;
+      const actorId = (session.authenticated && session.actor_id) || "";
+      checkedHash.current = requestedHash === location.hash ? requestedHash : "";
+      updateSession(actorId, session.csrf_token);
+      if (!actorId && afterUnauthorized) setLoginError("会话已失效，请重新登录。");
+    } catch {
+      if (!controller.signal.aborted) updateSession("");
+    } finally {
+      if (authRequest.current === controller) {
+        authRequest.current = null;
+        setChecking(false);
+      }
+    }
+  }, [updateSession]);
+
+  useEffect(() => {
+    const unsubscribe = observeUnauthenticated(() => {
+      if (activeSession.current.accountId) void checkSession(true);
+    });
+    void checkSession();
+    return () => {
+      unsubscribe();
+      authRequest.current?.abort();
+      authRequest.current = null;
+    };
+  }, [checkSession]);
+  useEffect(() => {
+    if (checkDestination && !checking) void checkSession(true);
+    if (!external && checkedHash.current !== hash) checkedHash.current = "";
+  }, [checkDestination, checking, external, hash, checkSession]);
+
+  async function login(event: React.FormEvent) {
+    event.preventDefault();
+    if (authRequest.current) return;
+    const controller = new AbortController();
+    authRequest.current = controller;
+    setSigningIn(true);
+    setLoginError("");
+    try {
+      const session = await api<{ csrf_token: string; actor_id: string }>(
+        "/auth/login",
+        { ...mutation("POST", { username, password }), signal: controller.signal },
+      );
+      if (controller.signal.aborted) return;
+      checkedHash.current = location.hash;
+      updateSession(session.actor_id, session.csrf_token);
+      setPassword("");
+    } catch (error) {
+      if (!controller.signal.aborted) setLoginError(text(error));
+    } finally {
+      if (authRequest.current === controller) {
+        authRequest.current = null;
+        setSigningIn(false);
+      }
+    }
+  }
+
+  async function logout() {
+    if (authRequest.current) return;
+    const controller = new AbortController();
+    authRequest.current = controller;
+    setChecking(true);
+    try {
+      await api("/auth/session", { ...mutation("DELETE", {}), signal: controller.signal });
+    } catch {
+      // Always clear the local workspace after logout is requested.
+    } finally {
+      if (authRequest.current === controller) {
+        updateSession("");
+        setLoginError("");
+        authRequest.current = null;
+        setChecking(false);
+      }
+    }
+  }
+
+  if (invalid)
+    return (
+      <main className="login">
+        <section className="navigation-invalid" role="alert">
+          <h1>无法打开此链接</h1>
+          <p>链接参数不完整或格式无效。</p>
+          <button
+            className="primary"
+            onClick={() => {
+              history.replaceState({}, "", location.pathname);
+              navigate({ view: "projects" }, true);
+            }}
+          >
+            打开项目目录
+          </button>
+        </section>
+      </main>
+    );
+  if (checkDestination) return <div className="splash">正在确认登录状态…</div>;
+  if (accountId)
+    return (
+      <Workspace
+        key={sessionGeneration}
+        accountId={accountId}
+        navigation={navigation}
+        checkingSession={checking}
+        onLogout={logout}
+      />
+    );
+  if (checking) return <div className="splash">正在打开知境 Studio…</div>;
+  return (
+    <main className="login">
+      <form onSubmit={login}>
+        <span className="brand-mark">
+          <BookOpen size={25} />
+        </span>
+        <h1>知境 Studio</h1>
+        <p>让知识回到业务操作发生的地方</p>
+        <label>
+          登录名
+          <input
+            autoComplete="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+        </label>
+        <label>
+          密码
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </label>
+        {loginError && (
+          <p role="alert" className="error">
+            {loginError}
+          </p>
+        )}
+        <button className="primary" type="submit" disabled={signingIn}>
+          打开交互工作台 <ArrowUpRight size={16} />
+        </button>
+        <small>VKS 3.0 · 原始交互与知识关联预览</small>
+      </form>
+    </main>
+  );
+}
+
+function Workspace({
+  accountId, navigation, checkingSession, onLogout,
+}: {
+  accountId: string;
+  navigation: ReturnType<typeof useStudioNavigation>;
+  checkingSession: boolean;
+  onLogout: () => Promise<void>;
+}) {
+  const {
+    route, invalid, generation, pageBinding, directory, external, navigate, isCurrent,
+    report: reportNavigation, status: navigationStatus, retry: retryNavigation,
+  } = navigation;
+  const inPrototype = !route.view || route.view === "prototype";
+  const inDocuments = route.view === "documents";
+  const bindingId = inPrototype ? route.binding || pageBinding : "";
+  const pageRef = inPrototype ? route.page_ref : "";
+  const hasDestination =
+    (inPrototype && !!(bindingId || pageRef || route.package)) ||
+    (inDocuments && !!route.doc);
+  const [workspaceReady, setWorkspaceReady] = useState(""),
     [loadedCatalog, setCatalog] = useState<Catalog | null>(null),
+    loadedScope = useRef(""),
+    authorizedGeneration = useRef(-1),
+    authorizingGeneration = useRef(-1),
     [loadedBindings, setBindings] = useState<Binding[]>([]),
     [bindingsReady, setBindingsReady] = useState(false),
     [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
+  const prefix = `/api/v3/projects/${route.project}/interactive`,
+    scope = route.release
+      ? `release_id=${encodeURIComponent(route.release)}`
+      : `analysis_set_id=${encodeURIComponent(route.analysis)}`;
+  const currentScope = useRef(prefix + scope);
+  currentScope.current = prefix + scope;
+  const needsFreshCatalog = external && hasDestination && !!route.release && generation > 0;
   const catalog =
+    (!needsFreshCatalog || authorizedGeneration.current === generation) &&
+    !invalid && loadedScope.current === prefix + scope &&
     loadedCatalog &&
     (route.release
       ? loadedCatalog.release_id === route.release
@@ -263,7 +461,7 @@ function App() {
       ? "当前草稿正在迁移资料引用，可在资料管理查看进度。"
       : "";
   useEffect(() => {
-    if (!auth || !catalog || !migrationScope) return;
+    if (!catalog || !migrationScope) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function update() {
@@ -285,7 +483,7 @@ function App() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [auth, catalog?.editable, catalog?.selection_version, migrationScope, route.project, route.analysis]);
+  }, [catalog?.editable, catalog?.selection_version, migrationScope, route.project, route.analysis]);
   const documentRef = catalog?.documents.find(
     (doc) => doc.revision_id === route.doc,
   );
@@ -304,24 +502,25 @@ function App() {
     !!documentRef?.native_package_id;
   const prototypePackages =
     catalog?.packages.filter((p) => p.kind === "prototype") || [];
+  const [resolvedPage, setResolvedPage] = useState<
+    { generation: number; page: RegisteredPage } | null
+  >(null);
+  const page = resolvedPage?.generation === generation ? resolvedPage.page : null;
   const linkedBinding = bindings.find(
-    (binding) => binding.id === route.binding && !binding.excluded,
+    (binding) => binding.id === (route.binding || pageBinding) && !binding.excluded,
   );
-  const p =
-    ((!route.view || route.view === "prototype") &&
-      prototypePackages.find(
-        (pack) => pack.id === linkedBinding?.package_id,
-      )) ||
-    prototypePackages.find(
-      (p) =>
-        (p.package_key || p.id) ===
-        (route.package || catalog?.primary_package_id),
-    ) ||
-    prototypePackages[0];
-  const prefix = `/api/v3/projects/${route.project}/interactive`,
-    scope = route.release
-      ? `release_id=${encodeURIComponent(route.release)}`
-      : `analysis_set_id=${encodeURIComponent(route.analysis)}`;
+  // Keep the background package mounted across view switches. A specified
+  // package or binding may never fall back to a different visible package.
+  const packageChoice = route.package
+    ? prototypePackages.find((pack) => (pack.package_key || pack.id) === route.package)
+    : prototypePackages.find((pack) => pack.id === linkedBinding?.package_id) ||
+      (bindingId ? undefined : (prototypePackages.find(
+        (pack) => (pack.package_key || pack.id) === catalog?.primary_package_id,
+      ) || prototypePackages[0]));
+  const p = packageChoice &&
+    (!bindingId || packageChoice.id === linkedBinding?.package_id) &&
+    (!pageRef || packageChoice.id === page?.package_artifact_id)
+    ? packageChoice : undefined;
   const documentCache = useMemo(
     () =>
       new DocumentCache<Document>((id, native, signal) =>
@@ -330,11 +529,13 @@ function App() {
           { signal },
         ),
       ),
-    [accountId, auth, catalog, prefix, scope],
+    [accountId, catalog, prefix, scope],
   );
   useEffect(() => () => documentCache.dispose(), [documentCache]);
   const [notice, setNotice] = useTransientNotice(!!catalog);
   const [error, setError] = useState(""),
+    [failedScope, setFailedScope] = useState(""),
+    [scopeRetry, setScopeRetry] = useState(0),
     [loadedDocument, setViewDoc] = useState<{
       cacheId: string;
       native: boolean;
@@ -375,6 +576,8 @@ function App() {
   const nativePackageModified = !!nativePackage?.native_index_modified;
   const originalBook =
     !!nativePackage &&
+    !directory &&
+    (!route.doc || !!documentRef) &&
     !handbookReader &&
     readerChoice !== "standard" &&
     ((!route.doc &&
@@ -444,12 +647,14 @@ function App() {
   const { ref: windowRef, setPosition } = floating;
   const prototype = useRef<RuntimeHandle | null>(null),
     pendingReveal = useRef<{
+      generation: number;
       packageId: string;
-      target: Target;
-      page_only?: boolean;
-      bindingKey: string;
+      target: Pick<Target, "route" | "frame_path">;
+      binding?: Binding;
+      pageOnly: boolean;
       instanceId?: string;
       requestId?: string;
+      timeout: ReturnType<typeof setTimeout>;
     } | null>(null),
     readyRuntime = useRef(""),
     documentReveal = useRef(false),
@@ -457,9 +662,15 @@ function App() {
     docEpoch = useRef(0),
     editEpoch = useRef(0),
     loadEpoch = useRef(0),
-    selectedBinding = useRef(""),
+    settledReveal = useRef(-1),
     initialBinding = useRef(route.binding),
     assistantTrigger = useRef<HTMLButtonElement>(null);
+  const [previewPosition, setPreviewPosition] = useState<
+    { instanceId: string; packageId: string; scope: string; position: PrototypePosition | null } | null
+  >(null);
+  const [bindingPageFallback, setBindingPageFallback] = useState(-1);
+  const [runtimeRestart, setRuntimeRestart] = useState(0);
+  const bindingPageOnly = !!pageBinding || bindingPageFallback === generation;
   const [prototypeChapter, setPrototypeChapter] = useState<string | null>(null);
   const [documentOrigin, setDocumentOrigin] = useState<ReadingPosition | null>(
     null,
@@ -667,37 +878,11 @@ function App() {
     setAssociationChapter(null);
     setPrototypeChapter(null);
   }, [route.project, scope, route.doc, route.view]);
-  const navigate = useCallback(
-    (patch: Partial<Route>, replace = false, state: object = {}) => {
-      const next = { ...getRoute(), ...patch };
-      const p = new URLSearchParams(Object.entries(next).filter(([, v]) => v));
-      history[replace ? "replaceState" : "pushState"](state, "", `#${p}`);
-      setRoute(next);
-    },
-    [],
-  );
-  useEffect(() => {
-    const update = () => setRoute(getRoute());
-    window.addEventListener("popstate", update);
-    window.addEventListener("hashchange", update);
-    return () => {
-      window.removeEventListener("popstate", update);
-      window.removeEventListener("hashchange", update);
-    };
-  }, []);
-  useEffect(() => {
-    api<{ authenticated: boolean; csrf_token?: string; actor_id?: string }>(
-      "/auth/session",
-    )
-      .then((s) => {
-        setCsrf(s.csrf_token);
-        setAccountId(s.actor_id || "");
-        setAuth(s.authenticated);
-      })
-      .catch(() => setAuth(false));
-  }, []);
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (destinationGeneration?: number) => {
+    if (currentScope.current !== prefix + scope) return;
     const epoch = ++loadEpoch.current;
+    if (destinationGeneration !== undefined)
+      authorizingGeneration.current = destinationGeneration;
     setBindingsReady(false);
     const [c, b] = await Promise.all([
       api<Catalog>(`${prefix}/catalog?${scope}`).then((catalog) => {
@@ -705,6 +890,7 @@ function App() {
           // The catalog can paint before links on initial load. During a
           // refresh retain the current links until their replacement arrives,
           // so a binding-only bookmark keeps the same mounted package.
+          loadedScope.current = prefix + scope;
           setCatalog(catalog);
         }
         return catalog;
@@ -712,12 +898,14 @@ function App() {
       api<Binding[]>(`${prefix}/bindings?${scope}`),
     ]);
     if (epoch !== loadEpoch.current) return;
+    if (destinationGeneration !== undefined)
+      authorizedGeneration.current = destinationGeneration;
     setBindings(b);
     setBindingsReady(true);
     return { c, b };
   }, [prefix, scope]);
   useEffect(() => {
-    if (!auth) return;
+    if (invalid) return;
     let cancelled = false;
     api<{ id: string; name: string }[]>("/projects?limit=100")
       .then(async (p) => {
@@ -743,13 +931,18 @@ function App() {
           }
         }
       })
-      .catch((e) => setError(text(e)));
+      .catch((e) => {
+        if (!cancelled) {
+          setFailedScope(prefix + scope);
+          setError(text(e));
+        }
+      });
     return () => {
       cancelled = true;
     };
-  }, [auth, route.project, route.analysis, route.release, navigate]);
+  }, [invalid, route.project, route.analysis, route.release, navigate, scopeRetry]);
   useEffect(() => {
-    if (!auth || !route.project || (!route.analysis && !route.release)) return;
+    if (invalid || !route.project || (!route.analysis && !route.release)) return;
     if (
       !route.release &&
       workspaceReady !== `${route.project}:${route.analysis}`
@@ -787,26 +980,45 @@ function App() {
     setTarget(null);
     setEditSession(null);
     setPicking(false);
-    pendingReveal.current = null;
-    selectedBinding.current = "";
+    cancelPendingReveal();
+    settledReveal.current = -1;
+    setPreviewPosition(null);
     setViewDoc(null);
     setBookMounted(false);
     setPrototypeMounted(false);
     setSourcePackage("");
     pendingNativeLocation.current = null;
     setError("");
-    void reload().catch((e) => setError(text(e)));
+    setFailedScope("");
+    let cancelled = false;
+    void reload(generation).catch((e) => {
+      if (!cancelled) {
+        setFailedScope(prefix + scope);
+        setError(text(e));
+      }
+    });
     return () => {
+      cancelled = true;
       loadEpoch.current++;
     };
   }, [
-    auth,
     route.project,
     route.analysis,
     route.release,
+    invalid,
     reload,
     workspaceReady,
+    scopeRetry,
   ]);
+  useEffect(() => {
+    if (invalid || !needsFreshCatalog || loadedScope.current !== prefix + scope ||
+        !loadedCatalog || authorizingGeneration.current === generation ||
+        authorizedGeneration.current === generation) return;
+    setFailedScope("");
+    void reload(generation).catch(() => {
+      if (isCurrent(generation)) setFailedScope(prefix + scope);
+    });
+  }, [invalid, generation, needsFreshCatalog, loadedCatalog, prefix, scope, reload]);
   useEffect(() => {
     if (route.view === "documents" && originalBook && nativePackage) {
       setBookMounted(true);
@@ -831,24 +1043,13 @@ function App() {
   useEffect(() => {
     if (
       route.view === "documents" &&
-      catalog &&
-      route.doc &&
-      !catalog.documents.some((doc) => doc.revision_id === route.doc)
-    ) {
-      navigate({ doc: "", section: "", reader: "", book: "" }, true);
-      return;
-    }
-    if (
-      route.view === "documents" &&
+      !directory &&
       !handbookReader &&
       catalog?.documents.length &&
       (readerChoice === "standard" ||
         (nativePackageModified && route.reader !== "source") ||
         !catalog.documents.some((doc) => doc.native_package_id)) &&
-      (!route.doc ||
-        !catalog.documents.some(
-          (document) => document.revision_id === route.doc,
-        )) &&
+      !route.doc &&
       (route.release
         ? catalog.release_id === route.release
         : catalog.analysis_set_id === route.analysis)
@@ -872,6 +1073,7 @@ function App() {
     route.view,
     route.doc,
     route.reader,
+    directory,
     readerChoice,
     handbookReader,
     catalog,
@@ -880,42 +1082,57 @@ function App() {
     navigate,
   ]);
   useEffect(() => {
-    const key = route.binding
-      ? JSON.stringify([route.project, scope, route.binding])
-      : "";
-    const inPrototype = !route.view || route.view === "prototype";
-    if (
-      pendingReveal.current &&
-      (!inPrototype || pendingReveal.current.bindingKey !== key)
-    )
+    if (!catalog || !pageRef || !packageChoice) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams(scope);
+    params.set("package", route.package);
+    params.set("page_ref", pageRef);
+    api<{ items: RegisteredPage[] }>(`${prefix}/previews/pages?${params}`, {
+      signal: controller.signal,
+    }).then(({ items }) => {
+      if (!isCurrent(generation) || controller.signal.aborted) return;
+      const match = items.length === 1 && items[0];
+      if (match && match.page_ref === pageRef && match.package_artifact_id === packageChoice.id)
+        setResolvedPage({ generation, page: match });
+      else reportNavigation(generation, { phase: "failed", message: missingLocation });
+    }).catch(() => {
+      if (!controller.signal.aborted)
+        reportNavigation(generation, { phase: "failed", message: missingLocation });
+    });
+    return () => controller.abort();
+  }, [catalog, pageRef, packageChoice?.id, route.package, prefix, scope, generation]);
+  useEffect(() => {
+    return () => {
+      if (pendingReveal.current?.generation === generation) cancelPendingReveal();
+    };
+  }, [generation]);
+  useEffect(() => {
+    if (!inPrototype || !catalog) return;
+    if ((route.package && !packageChoice) ||
+        (bindingId && bindingsReady && (!linkedBinding || !p))) {
       cancelPendingReveal();
-    if (!key) {
-      selectedBinding.current = "";
+      reportNavigation(generation, { phase: "failed", message: missingLocation });
+      return;
+    }
+    if (bindingId && !bindingsReady) return;
+    if (pendingReveal.current || settledReveal.current === generation || !p) return;
+    if (bindingId && linkedBinding) {
+      startReveal(p.id, linkedBinding.target, bindingPageOnly, linkedBinding);
+      if (!bindingPageOnly && !history.state?.vksFromDocument &&
+          initialBinding.current !== route.binding) setKnowledge(true);
       initialBinding.current = "";
-      return;
+    } else if (page) {
+      startReveal(p.id, page, true);
     }
-    if (!inPrototype || !catalog || !bindingsReady) return;
-    if (!linkedBinding || p?.id !== linkedBinding.package_id) {
-      cancelPendingReveal();
-      setNotice("当前版本没有可打开的关联");
-      navigate({ binding: "" }, true);
-      return;
-    }
-    if (selectedBinding.current === key) return;
-    selectedBinding.current = key;
-    focusBinding(linkedBinding, key);
-    if (initialBinding.current !== route.binding) setKnowledge(true);
-    initialBinding.current = "";
   }, [
-    route.project,
-    route.binding,
-    route.view,
-    scope,
+    inPrototype, generation,
+    bindingId, bindingPageOnly, route.package,
     catalog,
     bindingsReady,
     linkedBinding,
+    packageChoice?.id,
     p?.id,
-    navigate,
+    page,
   ]);
   useEffect(() => {
     if (!bindingsReady || editing || !p || !control.current) return;
@@ -923,7 +1140,7 @@ function App() {
     setActive(binding && !binding.excluded ? binding : null);
   }, [bindingsReady, bindings, p?.id, editing]);
   useEffect(() => {
-    if (!catalog || !route.doc) return;
+    if (!catalog || !documentRef) return;
     const epoch = ++docEpoch.current;
     setDocumentError("");
     documentCache
@@ -943,27 +1160,20 @@ function App() {
     return () => {
       docEpoch.current++;
     };
-  }, [documentCache, route.doc, nativeRead, documentRetry]);
+  }, [documentCache, route.doc, !!documentRef, nativeRead, documentRetry]);
   useEffect(() => {
-    if (
-      !viewDoc ||
-      !route.section ||
-      viewDoc.sections.some((section) => section.revision_id === route.section)
-    )
-      return;
-    const slug = (value: string) =>
-      value
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}\s_-]/gu, "")
-        .replace(/\s+/g, "-");
-    const section = viewDoc.sections.find(
-      (section) => slug(section.name) === route.section.toLowerCase(),
-    );
-    if (section) navigate({ section: section.revision_id }, true);
-  }, [viewDoc, route.section, navigate]);
+    if (!inDocuments || !catalog || !route.doc) return;
+    if (!documentRef || documentError || (viewDoc && route.section &&
+        !viewDoc.sections.some((section) => section.revision_id === route.section)))
+      reportNavigation(generation, { phase: "failed", message: missingLocation });
+  }, [catalog, inDocuments, route.doc, route.section, documentRef, viewDoc, documentError, generation]);
   useEffect(() => {
-    if (!viewDoc || route.view !== "documents") return;
+    if (!viewDoc || !inDocuments || originalBook || (route.section &&
+        !viewDoc.sections.some((section) => section.revision_id === route.section))) return;
+    let observer: IntersectionObserver | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const frame = requestAnimationFrame(() => {
+      if (!isCurrent(generation)) return;
       const container = documentScrollRoot(reader.current);
       const saved = history.state?.vksReadingPosition as
         | ReadingPosition
@@ -986,16 +1196,36 @@ function App() {
               saved.chapterOffset
             : saved.top;
         container.scrollTo({ top, behavior: "instant" });
+        reportNavigation(generation, { phase: "located", message: "已恢复文档阅读位置" });
         return;
       }
-      if (route.section)
-        document
-          .getElementById("section-" + route.section)
-          ?.scrollIntoView({ block: "start", behavior: "instant" });
+      const position = route.section
+        ? document.getElementById("section-" + route.section)
+        : reader.current?.querySelector(".document-title");
+      if (route.section) position?.scrollIntoView({ block: "start", behavior: "instant" });
       else container?.scrollTo({ top: 0, behavior: "instant" });
+      if (position && window.IntersectionObserver) {
+        observer = new IntersectionObserver(([entry]) => {
+          if (!entry.isIntersecting) return;
+          observer?.disconnect();
+          clearTimeout(timeout);
+          reportNavigation(generation, {
+            phase: "located",
+            message: route.section ? "已定位到指定章节" : "已打开指定文档修订",
+          });
+        });
+        observer.observe(position);
+      }
+      timeout = setTimeout(() => reportNavigation(generation, {
+        phase: "failed", message: "未能在阅读区定位指定位置",
+      }), 5000);
     });
-    return () => cancelAnimationFrame(frame);
-  }, [viewDoc?.revision_id, route.section, route.view, handbookReader]);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      clearTimeout(timeout);
+    };
+  }, [viewDoc?.revision_id, route.section, inDocuments, originalBook, handbookReader, generation]);
   useEffect(() => {
     if (route.view !== "prototype") {
       documentReveal.current = false;
@@ -1510,22 +1740,6 @@ function App() {
     setAssociationReviewTarget(null);
     setNotice("已确认保存关联并读取最新内容");
   }
-  async function login(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    try {
-      const s = await api<{ csrf_token: string; actor_id: string }>(
-        "/auth/login",
-        mutation("POST", { username, password }),
-      );
-      setCsrf(s.csrf_token);
-      setAccountId(s.actor_id);
-      setPassword("");
-      setAuth(true);
-    } catch (e) {
-      setError(text(e));
-    }
-  }
   function sendPendingReveal() {
     const runtime = prototype.current;
     const pending = pendingReveal.current;
@@ -1533,25 +1747,39 @@ function App() {
       runtime &&
       readyRuntime.current === runtime.instanceId &&
       pending &&
+      isCurrent(pending.generation) &&
       pending.packageId === p?.id &&
       pending.instanceId !== runtime.instanceId
     ) {
       pending.instanceId = runtime.instanceId;
       pending.requestId = runtime.send("target.reveal", {
         target: pending.target,
-        page_only: pending.page_only,
+        page_only: pending.pageOnly,
       });
+      reportNavigation(pending.generation, { phase: "locating", message: "正在定位原型…" });
     }
   }
   function cancelPendingReveal() {
     const runtime = prototype.current;
     if (runtime && pendingReveal.current?.instanceId === runtime.instanceId)
       runtime.send("target.cancel");
+    clearTimeout(pendingReveal.current?.timeout);
     pendingReveal.current = null;
     documentReveal.current = false;
   }
   function onRuntime(event: RuntimeEvent) {
     if (prototype.current?.instanceId !== event.runtime_instance_id) return;
+    if (event.type === "prototype.position" && p) {
+      setPreviewPosition({
+        instanceId: event.runtime_instance_id,
+        packageId: p.id,
+        scope: prefix + scope,
+        position: event.payload as PrototypePosition | null,
+      });
+      return;
+    }
+    if (event.type === "context.changed") readyRuntime.current = event.runtime_instance_id;
+    if (!isCurrent(generation)) return;
     if (event.type === "material.loaded" && picking)
       prototype.current?.send("picker.start");
     if (event.type === "context.dismiss") {
@@ -1607,7 +1835,6 @@ function App() {
       return;
     }
     if (event.type === "context.changed") {
-      readyRuntime.current = event.runtime_instance_id;
       sendPendingReveal();
       const unchanged = event.payload as {
         module?: Control;
@@ -1650,9 +1877,7 @@ function App() {
       }
       if (
         pendingReveal.current ||
-        (route.binding &&
-          selectedBinding.current !==
-            JSON.stringify([route.project, scope, route.binding]))
+        (inPrototype && (bindingId || pageRef) && settledReveal.current !== generation)
       )
         return;
       assistEpoch.current++;
@@ -1705,12 +1930,49 @@ function App() {
     if (event.type === "picker.cancelled") setPicking(false);
     if (
       event.type === "command.result" &&
-      pendingReveal.current?.requestId === event.request_id
+      pendingReveal.current?.requestId === event.request_id &&
+      pendingReveal.current.instanceId === event.runtime_instance_id &&
+      pendingReveal.current.packageId === p?.id &&
+      isCurrent(pendingReveal.current.generation)
     ) {
-      pendingReveal.current = null;
-      documentReveal.current = false;
-      const result = event.payload as { message: string };
-      setNotice(result.message);
+      const pending = pendingReveal.current;
+      settledReveal.current = pending.generation;
+      cancelPendingReveal();
+      const result = event.payload as RevealResult | null;
+      const matchingPage = !!result?.route && Array.isArray(result.frame_path) &&
+        samePage(pending.target, { route: result.route, frame_path: result.frame_path });
+      if (!matchingPage || !result?.navigation_level) {
+        reportNavigation(pending.generation, {
+          phase: "failed", message: result?.message || "原型定位没有收到有效回执",
+        });
+      } else if (pending.pageOnly && result.ok && result.navigation_level === "page") {
+        reportNavigation(pending.generation, {
+          phase: pageRef || pageBinding ? "located" : "degraded",
+          message: result.message,
+        });
+      } else {
+        const binding = pending.binding;
+        const controlLocated = !!(binding && result.ok && isTarget(result.target) &&
+          samePage(binding.target, result.target) &&
+          binding.target.selector === result.target.selector &&
+          binding.target.label === result.target.label);
+        const exactState = binding?.target.state
+          ? result.state_verified && result.navigation_level === "state" &&
+            result.observed_state === binding.target.state
+          : !result.observed_state;
+        if (controlLocated && binding) {
+          // A saved binding still identifies the requested knowledge even
+          // when the visible control's current state cannot be verified.
+          chooseControl(controlForTarget(binding.target), false, false, true);
+          setActive(binding);
+        }
+        reportNavigation(pending.generation, {
+          phase: controlLocated && exactState ? "located" : "degraded",
+          message: controlLocated && !exactState
+            ? "控件可见，无法核验指定状态"
+            : result.message,
+        });
+      }
     }
     if (event.type !== "target.selected" && event.type !== "action.activated")
       return;
@@ -1767,35 +2029,48 @@ function App() {
   const openDoc = useCallback(
     (c: Citation, b?: Pick<Binding, "id">) => {
       pendingNativeLocation.current = null;
+      const relatedBinding = b && bindings.find((item) =>
+        item.id === b.id && !item.excluded && item.package_id === p?.id,
+      );
       navigate({
         view: "documents",
         doc: c.document_revision_id,
         section: c.revision_id,
-        binding: b?.id || "",
         reader: "",
+        ...(relatedBinding && p && {
+          binding: relatedBinding.id,
+          package: p.package_key || p.id,
+          page_ref: "",
+        }),
       });
       setKnowledge(detached.open);
       if (detached.open) window.focus();
     },
-    [navigate, detached.open],
+    [navigate, detached.open, bindings, p],
   );
   function existingBindingStopsAutomatic(target: Target) {
     const existing = bindingForTarget(bindings, p?.id, target);
     return !!existing;
   }
-  function focusBinding(b: Binding, bindingKey: string, pageOnly?: boolean) {
-    chooseControl(
-      controlForTarget(b.target, b.package_id === p?.id),
-      false,
-      false,
-      true,
-    );
-    setActive(b);
+  function startReveal(
+    packageId: string, target: Pick<Target, "route" | "frame_path">,
+    pageOnly: boolean, binding?: Binding,
+  ) {
+    reportNavigation(generation, { phase: "runtime", message: "正在等待原型运行环境…" });
     pendingReveal.current = {
-      packageId: b.package_id,
-      target: b.target,
-      bindingKey,
-      page_only: pageOnly,
+      generation,
+      packageId,
+      target,
+      binding,
+      pageOnly,
+      timeout: setTimeout(() => {
+        if (pendingReveal.current?.generation !== generation || !isCurrent(generation)) return;
+        settledReveal.current = generation;
+        cancelPendingReveal();
+        reportNavigation(generation, {
+          phase: "failed", message: "原型定位超时，请重试或打开原型包目录",
+        });
+      }, 15000),
     };
     sendPendingReveal();
   }
@@ -1808,16 +2083,16 @@ function App() {
     setKnowledge(!fromDocument);
     setAssistantOptions(false);
     const binding = fromDocument?.pageOnly ? "" : b.id;
-    documentReveal.current = !!fromDocument;
-    selectedBinding.current = binding
-      ? JSON.stringify([route.project, scope, binding])
-      : "";
-    focusBinding(b, selectedBinding.current, fromDocument?.pageOnly);
     navigate({
       view: "prototype",
       binding,
       package: destination.package_key || destination.id,
+      page_ref: "",
+    }, false, {
+      ...(fromDocument && { vksFromDocument: true }),
+      ...(fromDocument?.pageOnly && { vksPageBinding: b.id }),
     });
+    documentReveal.current = !!fromDocument;
   }
   function openPrototypeFromChapter(
     b: Binding,
@@ -1951,11 +2226,6 @@ function App() {
       setActive(b || null);
       setEditSession(null);
       setNotice("关联已保存，刷新后仍可查看");
-      selectedBinding.current = JSON.stringify([
-        route.project,
-        scope,
-        result.binding_id,
-      ]);
       navigate({ binding: result.binding_id }, true);
     } catch (e) {
       setError(text(e));
@@ -2066,6 +2336,7 @@ function App() {
     window.addEventListener("pointercancel", end, true);
     window.addEventListener("blur", end);
   }
+  const markdownLinkRequest = useRef(0);
   const markdownReading = useMemo<ReadingContext>(
     () => ({
       projectId: route.project,
@@ -2074,21 +2345,29 @@ function App() {
       selectionVersion: catalog?.selection_version,
       documents: catalog?.documents || [],
       onDocument: (document, fragment) => {
-        const section =
-          document.revision_id === viewDoc?.revision_id
-            ? viewDoc.sections.find(
-                (s) =>
-                  s.revision_id === fragment ||
-                  s.name
-                    .toLowerCase()
-                    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
-                    .replace(/\s+/g, "-") === fragment.toLowerCase(),
-              )
-            : undefined;
-        navigate({
-          view: "documents",
-          doc: document.revision_id,
-          section: section?.revision_id || fragment,
+        const request = ++markdownLinkRequest.current;
+        const openDocument = (section = "") => {
+          if (request !== markdownLinkRequest.current || !isCurrent(generation)) return;
+          navigate({ view: "documents", doc: document.revision_id, section });
+          if (fragment && !section) setNotice("已打开文档，未找到链接指定的章节");
+        };
+        if (!fragment) {
+          openDocument();
+          return;
+        }
+        const target = document.revision_id === viewDoc?.revision_id
+          ? Promise.resolve(viewDoc) : documentCache.load(document.revision_id);
+        void target.then((content) => {
+          const exact = content.sections.find((section) => section.revision_id === fragment);
+          const headings = exact ? [] : content.sections.filter((section) =>
+            section.name.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "")
+              .replace(/\s+/g, "-") === fragment.toLowerCase(),
+          );
+          openDocument(exact?.revision_id || (headings.length === 1 ? headings[0].revision_id : ""));
+        }).catch((error) => {
+          if (!(error instanceof DOMException && error.name === "AbortError") &&
+              request === markdownLinkRequest.current && isCurrent(generation))
+            setNotice(text(error));
         });
       },
       onSection: (reference) => openDoc(reference),
@@ -2109,8 +2388,11 @@ function App() {
       catalog?.documents,
       viewDoc,
       documentCache,
+      generation,
+      isCurrent,
       navigate,
       openDoc,
+      setNotice,
     ],
   );
   const chapterEntries = useMemo(
@@ -2294,45 +2576,7 @@ function App() {
       chapterTools,
     ],
   );
-  if (auth === null) return <div className="splash">正在打开知境 Studio…</div>;
-  if (!auth)
-    return (
-      <main className="login">
-        <form onSubmit={login}>
-          <span className="brand-mark">
-            <BookOpen size={25} />
-          </span>
-          <h1>知境 Studio</h1>
-          <p>让知识回到业务操作发生的地方</p>
-          <label>
-            登录名
-            <input
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </label>
-          <label>
-            密码
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
-          {error && (
-            <p role="alert" className="error">
-              {error}
-            </p>
-          )}
-          <button className="primary" type="submit">
-            打开交互工作台 <ArrowUpRight size={16} />
-          </button>
-          <small>VKS 3.0 · 原始交互与知识关联预览</small>
-        </form>
-      </main>
-    );
+  if (checkingSession) return <div className="splash">正在确认登录状态…</div>;
   const handbookPackages =
     catalog?.packages.filter(
       (p) =>
@@ -2352,6 +2596,7 @@ function App() {
       doc: "",
       section: "",
       binding: "",
+      page_ref: "",
       package: "",
       book: "",
       reader: "",
@@ -2380,6 +2625,7 @@ function App() {
       analysis: result.analysis_set_id,
       release: "",
       binding: "",
+      page_ref: "",
       doc: "",
       section: "",
       package: "",
@@ -2394,6 +2640,54 @@ function App() {
       .catch((e) => setError(text(e)));
   }
   const currentView = route.view || "prototype";
+  const scopeFailed = failedScope === prefix + scope;
+  const trackingDestination = !!(bindingId || pageRef || inDocuments && route.doc);
+  const destinationFeedback = hasDestination && scopeFailed
+    ? { phase: "failed", message: missingLocation }
+    : navigationStatus || (trackingDestination
+      ? { phase: "loading", message: "正在读取指定版本与位置…" }
+      : undefined);
+  const knownRuntimePosition = previewPosition?.instanceId === prototype.current?.instanceId &&
+    previewPosition?.packageId === p?.id && previewPosition?.scope === prefix + scope
+    ? previewPosition?.position : undefined;
+  const observedBinding = p && active && !active.excluded && active.package_id === p.id &&
+    !bindingPageOnly && !pageRef &&
+    knownRuntimePosition && samePage(knownRuntimePosition, active.target) &&
+    knownRuntimePosition.state === active.target.state &&
+    (!route.binding || bindingId === active.id && destinationFeedback?.phase === "located")
+    ? active : undefined;
+  const canCopyDocument = inDocuments && route.section && documentRef &&
+    destinationFeedback?.phase === "located";
+  const canCopyBinding = inPrototype && observedBinding;
+  const canCopyPage = inPrototype && page && knownRuntimePosition &&
+    samePage(page, knownRuntimePosition) &&
+    destinationFeedback?.phase === "located";
+  function copyPosition() {
+    let exact: Partial<Route>;
+    if (canCopyDocument)
+      exact = { view: "documents", doc: route.doc, section: route.section, reader: "standard" };
+    else if (canCopyBinding && p && active)
+      exact = { view: "prototype", package: p.package_key || p.id, binding: active.id };
+    else if (canCopyPage && p)
+      exact = { view: "prototype", package: p.package_key || p.id, page_ref: route.page_ref };
+    else return;
+    void navigator.clipboard.writeText(exactLocationUrl(route, exact))
+      .then(() => setNotice("已复制准确位置"))
+      .catch(() => setNotice("无法写入剪贴板，请检查浏览器权限"));
+  }
+  function openVersionDirectory() {
+    navigate({
+      binding: "", page_ref: "", package: "",
+      doc: "", section: "", reader: "", book: "",
+    }, false, { vksVersionDirectory: true });
+  }
+  function retryPosition() {
+    retryNavigation();
+    if (scopeFailed) setScopeRetry((attempt) => attempt + 1);
+    if (inDocuments) setDocumentRetry((attempt) => attempt + 1);
+    if (inPrototype && (!prototype.current || readyRuntime.current !== prototype.current.instanceId))
+      setRuntimeRestart((attempt) => attempt + 1);
+  }
   const assistantPage =
     currentView === "prototype" || currentView === "documents";
   const inlineKnowledgeVisible =
@@ -2531,20 +2825,14 @@ function App() {
         <div className="top-actions">
           <span className="draft">
             <i />
-            {route.release ? "知识快照" : "当前草稿"}
+            <span title={route.release || undefined}>
+              {route.release ? `知识快照 · ${route.release.slice(0, 8)}` : "当前草稿"}
+            </span>
           </span>
           <button
             aria-label="退出登录"
             className="icon"
-            onClick={() =>
-              void api("/auth/session", mutation("DELETE", {})).finally(() => {
-                setAuth(false);
-                setAccountId("");
-                setCatalog(null);
-                setBindingsReady(false);
-                setProjects([]);
-              })
-            }
+            onClick={() => void onLogout()}
           >
             <LogOut size={16} />
           </button>
@@ -2591,13 +2879,14 @@ function App() {
             <select
               aria-label="当前原型包"
               disabled={editing}
-              value={p?.package_key || p?.id}
+              value={p?.package_key || p?.id || ""}
               onChange={(e) => {
                 cancelPendingReveal();
                 setMenu(null);
-                navigate({ package: e.target.value, binding: "" });
+                navigate({ package: e.target.value, binding: "", page_ref: "" });
               }}
             >
+              {!p && <option value="">选择原型包</option>}
               {prototypePackages.map((p) => (
                 <option key={p.id} value={p.package_key || p.id}>
                   {p.name}
@@ -2671,12 +2960,48 @@ function App() {
               关联知识
             </button>
           )}
+          {route.release && (canCopyDocument || canCopyBinding || canCopyPage) && (
+            <button type="button" onClick={copyPosition}>
+              <Copy size={14} /> 复制准确位置
+            </button>
+          )}
+          {inPrototype && p && knownRuntimePosition && (
+            <PrototypePreviewAction
+              projectId={route.project}
+              scope={route.release ? { release_id: route.release } : { analysis_set_id: route.analysis }}
+              packageId={p.id}
+              route={knownRuntimePosition.route}
+              framePath={knownRuntimePosition.frame_path}
+              state={knownRuntimePosition.state}
+              bindingId={observedBinding?.id}
+            />
+          )}
           <span className="subtle">
             {catalog ? `${catalog.documents.length} 篇文档` : "正在加载…"}
           </span>
         </div>
       </div>
-      {error && (
+      {destinationFeedback && (
+        <div
+          className="navigation-feedback"
+          data-phase={destinationFeedback.phase}
+          role={destinationFeedback.phase === "failed" ? "alert" : "status"}
+        >
+          <span>{destinationFeedback.message}</span>
+          {(destinationFeedback.phase === "failed" || destinationFeedback.phase === "degraded") && (
+            <>
+              <button type="button" onClick={retryPosition}>重试定位</button>
+              {inPrototype && linkedBinding && p && !bindingPageOnly && (
+                <button type="button" onClick={() => setBindingPageFallback(retryNavigation())}>
+                  仅打开页面
+                </button>
+              )}
+              <button type="button" onClick={openVersionDirectory}>打开版本目录</button>
+            </>
+          )}
+        </div>
+      )}
+      {error && !(hasDestination && scopeFailed) && (
         <div className="banner error" role="alert">
           {error}
           <button onClick={() => setError("")} aria-label="关闭错误">
@@ -2731,7 +3056,7 @@ function App() {
             <>
               {(currentView === "prototype" || prototypeMounted) && (
                 <OriginalRuntime
-                  key={p.id + scope}
+                  key={p.id + scope + `:${runtimeRestart}` + (pageRef ? `:${generation}` : "")}
                   url={`${prefix}/packages/${p.id}/content?${scope}`}
                   digest={p.sha256}
                   kind="prototype"
@@ -2742,10 +3067,16 @@ function App() {
                   }}
                   handle={prototype}
                   onEvent={onRuntime}
+                  onFailure={(message) => {
+                    if (!trackingDestination || !isCurrent(generation)) return;
+                    settledReveal.current = generation;
+                    cancelPendingReveal();
+                    reportNavigation(generation, { phase: "failed", message });
+                  }}
                 />
               )}
             </>
-          ) : (
+          ) : !hasDestination && (
             <div className="empty">
               <BookOpen />
               <h2>
@@ -2857,9 +3188,14 @@ function App() {
               contentUrl={`${prefix}/packages/${nativePackage.id}/content?${scope}`}
               origins={networkOrigins}
               visible={currentView === "documents" && originalBook}
-              requestKey={`${route.project}:${scope}:${route.doc}:${route.section}:${route.view}:${route.reader}`}
+              requestKey={`${route.project}:${scope}:${generation}`}
               onLocation={nativeLocation}
+              onLocated={() => reportNavigation(generation, {
+                phase: "located",
+                message: route.section ? "已定位到原文章节" : "已打开指定原文",
+              })}
               onFailure={(message) => {
+                if (!isCurrent(generation)) return;
                 setNotice(message);
                 navigate({ reader: "standard" }, true);
               }}

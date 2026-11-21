@@ -139,9 +139,12 @@ def test_chapter_entries_fold_other_pages_and_restore_reading(materials, tmp_pat
             dialog.get_by_role("listitem").filter(has_text="编辑时选择公式").get_by_role(
                 "button", name="打开原型", exact=True
             ).click()
-            expect(page.get_by_text("已定位到 计费公式", exact=True)).to_be_visible()
+            expect(page.locator('.navigation-feedback[data-phase="degraded"]')).to_contain_text(
+                "控件可见，无法核验指定状态"
+            )
             source = page.frame_locator('iframe[title="原 HTML 原型"]').frame_locator("#material")
             expect(source.locator("#formula-edit")).to_be_focused()
+            expect(page.get_by_role("complementary", name="知识助手")).not_to_be_visible()
             page.go_back(wait_until="commit")
             check_return()
             assert not ai and not errors

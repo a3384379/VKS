@@ -469,6 +469,9 @@ class InteractiveKnowledgeService:
             from .native_documents import catalog_locations, index_modified
 
             packages = self._packages(s, actor, pid, choices)
+            primary_id = primary(s, pid, choices)
+            if not any((package.get("package_key") or package["id"]) == primary_id for package in packages):
+                primary_id = None
             native_locations = catalog_locations(s, pid, choices, rows, packages)
             modified = {e.id: index_modified(s, pid, r) for e, r in rows if e.id in native_locations}
             for package in packages:
@@ -483,7 +486,7 @@ class InteractiveKnowledgeService:
                 "presentation": presentation_for_release(s, release)
                 if release
                 else presentation_for_analysis(s, analysis),
-                "primary_package_id": primary(s, pid, choices),
+                "primary_package_id": primary_id,
                 "release_id": release.id if release else None,
                 "selection_version": analysis.selection_version,
                 "source_fingerprint": self._source_fingerprint(s, actor, pid, choices, rows, packages),

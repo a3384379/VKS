@@ -26,6 +26,9 @@ dependencies = [
   "Pillow>=12,<14",
   "markdownify>=1.2,<2",
   "numpy>=2,<3",
+  "onnxruntime==1.22.1",
+  "tokenizers==0.22.2",
+  "pywin32>=312,<313; sys_platform == 'win32'",
   "tiktoken>=0.12,<1",
 ]
 [dependency-groups]

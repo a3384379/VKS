@@ -197,6 +197,7 @@ export function NativeDocumentPane({
   visible,
   requestKey,
   onLocation,
+  onLocated,
   onFailure,
 }: {
   pack: NativePackage;
@@ -209,6 +210,7 @@ export function NativeDocumentPane({
   visible: boolean;
   requestKey: string;
   onLocation: (location: NativeLocation) => void;
+  onLocated: () => void;
   onFailure: (message: string) => void;
 }) {
   const container = useRef<HTMLElement>(null);
@@ -218,11 +220,12 @@ export function NativeDocumentPane({
   const observed = useRef<NativeLocation | null>(null);
   const sent = useRef("");
   const lastRequest = useRef("");
+  const requestId = useRef("");
   const requestOwner = useRef("");
   const currentRequest = useRef(requestKey);
   currentRequest.current = requestKey;
-  const callbacks = useRef({ onLocation, onFailure });
-  callbacks.current = { onLocation, onFailure };
+  const callbacks = useRef({ onLocation, onLocated, onFailure });
+  callbacks.current = { onLocation, onLocated, onFailure };
   const policy = JSON.stringify(origins);
   useEffect(() => {
     setReady(false);
@@ -236,6 +239,12 @@ export function NativeDocumentPane({
       sent.current = "";
     }
   }, [visible]);
+  useEffect(() => () => {
+    handle.current?.send("document.cancel");
+    sent.current = "";
+    lastRequest.current = "";
+    requestId.current = "";
+  }, [requestKey]);
   useEffect(() => {
     if (!ready || !visible || !native) return;
     const chapter = section
@@ -263,12 +272,14 @@ export function NativeDocumentPane({
     sent.current = key;
     if (
       observed.current?.path === location.path &&
-      (!location.anchor || observed.current.anchor === location.anchor)
-    )
+      (location.anchor ? observed.current.anchor === location.anchor : !chapter)
+    ) {
+      callbacks.current.onLocated();
       return;
+    }
     lastRequest.current = key;
     requestOwner.current = requestKey;
-    handle.current?.send("document.reveal", { location });
+    requestId.current = handle.current?.send("document.reveal", { location }) || "";
   }, [ready, visible, native, section, requestKey]);
   function event(event: RuntimeEvent) {
     if (event.type === "material.loaded") {
@@ -324,14 +335,15 @@ export function NativeDocumentPane({
         visible &&
         lastRequest.current &&
         requestOwner.current === currentRequest.current &&
-        data?.ok === false
+        event.request_id === requestId.current
       ) {
         lastRequest.current = "";
-        callbacks.current.onFailure(
-          typeof data.message === "string"
-            ? data.message.slice(0, 500)
-            : "原文定位失败，已打开标准阅读。",
-        );
+        if (data?.ok) callbacks.current.onLocated();
+        else callbacks.current.onFailure(
+            typeof data?.message === "string"
+              ? data.message.slice(0, 500)
+              : "原文定位失败，已打开标准阅读。",
+          );
       }
     }
   }

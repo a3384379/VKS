@@ -389,8 +389,8 @@ def test_native_location_failure_cannot_replace_a_new_pending_document_request(m
             runtime = page.frame_locator('iframe[title="原 HTML 手册"]')
             source = source_frame(page).frame_locator("#actualPage")
             expect(source.get_by_role("heading", name="Start", exact=True)).to_be_visible(timeout=30000)
-            # Observe the public result protocol so the old failure is delivered
-            # before the newer document response is released.
+            # Observe the result protocol while an old navigation is cancelled
+            # and the newer document response is still pending.
             runtime.locator("body").evaluate(
                 """() => {
                   const send = MessagePort.prototype.postMessage;
@@ -440,13 +440,13 @@ def test_native_location_failure_cannot_replace_a_new_pending_document_request(m
                   }
                 }"""
             )
-            expect(runtime.locator("body")).to_have_attribute("data-audit-failures", "1")
-            page.wait_for_timeout(100)  # Deliver the already-observed MessagePort result.
+            expect(runtime.locator("body")).to_have_attribute("data-audit-failures", "0")
             assert page.evaluate("new URLSearchParams(location.hash.slice(1)).get('reader')") != "standard"
             expect(page.locator(".native-document-space")).to_be_visible()
             expect(page.locator(".toast")).not_to_be_visible()
             release_details.set()
             expect(source.get_by_role("heading", name="Next rule", exact=True)).to_be_in_viewport(timeout=30000)
+            expect(runtime.locator("body")).to_have_attribute("data-audit-failures", "0")
             expect(page).to_have_url(
                 re.compile(r"(?:[#&])section=" + re.escape(second_section["revision_id"]) + r"(?:&|$)")
             )
