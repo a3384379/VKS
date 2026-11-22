@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vks-connect"
-version = "3.1.0rc8"
+version = "3.1.0rc9"
 description = "VKS version-pinned requirements MCP connector"
 requires-python = ">=3.12,<3.13"
 dependencies = [

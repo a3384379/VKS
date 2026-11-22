@@ -49,7 +49,7 @@ from .sidebar import (
     sidebar_tool,
 )
 
-VERSION = "3.1.0-rc.8"
+VERSION = "3.1.0-rc.9"
 HTTP_TOKEN: ContextVar[str | None] = ContextVar("vks_mcp_http_token", default=None)
 CATALOG: dict = {}
 TOOLS: dict = {}
