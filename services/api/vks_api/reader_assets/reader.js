@@ -1405,6 +1405,7 @@
         docFilter: ui.docFilter,
         docList: ui.docList,
         docScroll: ui.docScroll,
+        showBrand: data.authoring === "vks-handbook-authoring-1",
         getState: () => state,
         onOpen: (id, section) =>
           section ? openSection(section) : openDocument(id),
@@ -5203,6 +5204,9 @@
       ...(data.local_rag?.chunks?.length
         ? [el("p", {}, `${data.local_rag.chunks.length} 个本地向量片段，可在 Codex VKS 插件内免 Key 检索。`)]
         : [el("p", {}, `${rag.chunks?.length || 0} 个向量片段`)]),
+      ...(data.chatgpt_plan?.section_ids?.length
+        ? [el("p", {}, "需要用 ChatGPT 订阅问答时，请用 VKS 成品库阅读器打开这份文件，再登录自己的账号。")]
+        : []),
       el(
         "p",
         {},

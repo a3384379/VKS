@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api, mutation } from "../../web/src/api";
 import { RAGSettings } from "./RAGSettings";
+import { ChatGPTPlanSettings } from "./ChatGPTPlanSettings";
 import {
   answerModelCandidates,
   answerModelRestriction,
@@ -408,6 +409,7 @@ export function AISettings({
         aria-labelledby="ai-connection-tab"
         hidden={tab !== "connection"}
       >
+        <ChatGPTPlanSettings key={project} project={project} />
         <div className="ai-layout">
           <aside className="ai-connections">
             <div className="connection-list-heading">

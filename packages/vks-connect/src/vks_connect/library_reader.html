@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VKS 成品库阅读器</title>
+<!-- markdown-css -->
+<style>
+:root { color-scheme: light; --bg: #f4f7f5; --surface: #fff; --ink: #182920; --muted: #54665a; --line: #d1ded5; --accent: #145d47; --button: #fff; }
+@media (prefers-color-scheme: dark) {
+  :root { color-scheme: dark; --bg: #151e19; --surface: #1e2b24; --ink: #edf4ef; --muted: #b6c9bd; --line: #405349; --accent: #a2e9cb; --button: #15291f; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, sans-serif; }
+main { max-width: 850px; margin: auto; padding: 32px 20px 60px; }
+h1, h2, p { margin: 0 0 10px; }
+h1 { font-size: 1.85rem; }
+h2 { font-size: 1.15rem; }
+section, article { padding: 16px; margin: 12px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+label { display: block; margin: 8px 0; }
+input:not([type=checkbox]), select, button { font: inherit; border-radius: 7px; padding: 7px 10px; border: 1px solid var(--line); }
+input:not([type=checkbox]), select { background: var(--surface); color: var(--ink); }
+#query { min-width: 0; flex: 1 1 280px; }
+button { background: var(--accent); color: var(--button); cursor: pointer; }
+button:disabled { cursor: default; opacity: .56; }
+button.secondary { background: var(--surface); color: var(--ink); }
+.row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+a, button.link { color: var(--accent); }
+button.link { background: transparent; padding: 0; border: 0; text-align: start; text-decoration: underline; font: inherit; }
+.subtle { color: var(--muted); }
+dialog { color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; max-width: min(720px, calc(100% - 24px)); max-height: 85vh; }
+dialog::backdrop { background: #0008; }
+#chapter-content, #chapter-address { overflow-wrap: anywhere; }
+.rich-markdown, .rich-markdown strong, .rich-markdown b { color: var(--ink); }
+.rich-markdown a { color: var(--accent); }
+.rich-markdown blockquote, .rich-markdown pre, .rich-markdown th, .rich-markdown tr:nth-child(even) td { background: var(--bg); color: var(--ink); }
+.rich-markdown pre code { color: var(--ink); }
+</style>
+<main>
+  <h1>VKS 成品库阅读器</h1>
+  <p id="scope" class="subtle">正在读取成品库…</p>
+  <section>
+    <form id="search">
+      <label for="query">搜索成品库</label>
+      <div class="row">
+        <input id="query" placeholder="输入问题或关键词" maxlength="1000" required>
+        <button type="submit">搜索</button>
+        <button type="button" id="ask" hidden disabled>用 ChatGPT 回答</button>
+      </div>
+    </form>
+  </section>
+  <details id="connection">
+    <summary>ChatGPT 问答设置</summary>
+    <section>
+      <p id="account" class="subtle"></p>
+      <div class="row">
+        <button id="connect" type="button" hidden>使用 ChatGPT 登录</button>
+        <button id="models" type="button" hidden class="secondary">读取可用模型</button>
+        <button id="disconnect" type="button" hidden class="secondary">退出 ChatGPT</button>
+        <a href="https://chatgpt.com/#settings/usage" target="_blank" rel="noreferrer">管理 ChatGPT 用量</a>
+      </div>
+      <label id="model-label" hidden>订阅模型 <select id="model"></select></label>
+      <label id="consent-label" hidden><input id="consent" type="checkbox">允许发送问题及必要的原文章节片段给 OpenAI</label>
+    </section>
+  </details>
+  <p role="status" id="status"></p>
+  <div id="results"></div>
+</main>
+<dialog id="chapter" aria-labelledby="chapter-title">
+  <div class="row">
+    <h2 id="chapter-title"></h2>
+    <button class="secondary" id="close" type="button" autofocus>关闭</button>
+  </div>
+  <div id="chapter-content"></div>
+  <p id="chapter-address" class="subtle"></p>
+  <button id="open" type="button">在原成品库打开章节</button>
+</dialog>
+<!-- markdown-js -->
+<script>
+"use strict";
+const byId = (id) => document.getElementById(id);
+const query = byId("query"), results = byId("results"), status = byId("status"), chapter = byId("chapter");
+const model = byId("model"), consent = byId("consent"), ask = byId("ask");
+let selectedChapter, previewRequest = 0, ready = false, busy = false;
+
+async function request(action, data = {}) {
+  const reply = await fetch(action, {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-VKS-Reader": "1"},
+    body: JSON.stringify(data)
+  });
+  const payload = await reply.json();
+  if (!reply.ok) throw new Error(payload.error);
+  return payload;
+}
+
+function updateAsk() {
+  ask.disabled = busy || !ready || !model.value || !consent.checked;
+}
+
+async function connectStatus() {
+  const value = await request("status");
+  const library = value.library;
+  byId("scope").textContent = library.project_name + " · " + library.version
+    + (library.local_vector_index ? " · 本地向量 + 关键词" : " · 关键词");
+  byId("account").textContent = !value.can_ask ? "请用新版 Studio 导出后启用 ChatGPT 问答。"
+    : value.pending ? "请在系统浏览器完成授权。"
+    : value.connected ? "当前账号 " + value.account
+    : value.message || "登录后可选择用 ChatGPT 额度回答。";
+  ready = value.can_ask && value.connected;
+  byId("connect").hidden = !value.can_ask || value.pending || value.connected;
+  byId("models").hidden = !ready;
+  byId("disconnect").hidden = !value.connected;
+  byId("consent-label").hidden = !ready;
+  ask.hidden = !value.can_ask;
+  if (value.pending) window.setTimeout(() => void connectStatus().catch(showError), 1000);
+  updateAsk();
+}
+
+function showError(error) { status.textContent = error.message || "操作未完成，请重试。"; }
+
+async function auth(action) {
+  try {
+    const value = await request(action);
+    if (action === "models") {
+      model.replaceChildren(...value.map((item) => new Option(item.name, item.id)));
+      byId("model-label").hidden = !value.length;
+      if (!value.length) status.textContent = "当前账号没有可用的订阅模型。";
+    } else {
+      model.replaceChildren();
+      consent.checked = false;
+      byId("model-label").hidden = true;
+    }
+    await connectStatus();
+  } catch (error) { showError(error); }
+}
+
+async function showChapter(row) {
+  const ticket = ++previewRequest;
+  selectedChapter = row.section_id;
+  byId("chapter-title").textContent = row.title;
+  byId("chapter-address").textContent = "";
+  byId("chapter-content").textContent = "正在读取原文章节…";
+  if (!chapter.open) chapter.showModal();
+  try {
+    const source = await request("chapter", {section_id: row.section_id});
+    const images = new Map();
+    const paths = [...VksReaderMarkdown.imageReferences(source.content)].slice(0, 12);
+    await Promise.all(paths.map(async (path) => {
+      try {
+        const image = await request("image", {section_id: row.section_id, path});
+        images.set(path, image.url);
+      } catch {}
+    }));
+    if (ticket !== previewRequest || !chapter.open) return;
+    byId("chapter-content").replaceChildren(VksReaderMarkdown.render(source.content, {resolveImage: (p) => images.get(p)}));
+    if (source.next_offset !== null) {
+      const note = document.createElement("p");
+      note.textContent = "本章较长，可在原成品库查看后续。";
+      byId("chapter-content").append(note);
+    }
+    byId("chapter-address").textContent = source.file_url;
+  } catch (error) {
+    if (ticket === previewRequest && chapter.open) byId("chapter-content").textContent = error.message;
+  }
+}
+
+function showRows(rows) {
+  for (const row of rows) {
+    const article = document.createElement("article"), title = document.createElement("button");
+    const source = document.createElement("p"), excerpt = document.createElement("p");
+    title.type = "button";
+    title.className = "link";
+    title.textContent = (row.number ? "[" + row.number + "] " : "") + row.title;
+    title.addEventListener("click", () => void showChapter(row));
+    source.className = "subtle";
+    source.textContent = row.document_title;
+    article.append(title, source);
+    if (row.excerpt) {
+      excerpt.textContent = row.excerpt;
+      article.append(excerpt);
+    }
+    results.append(article);
+  }
+}
+
+async function run(action) {
+  if (busy || !query.value.trim()) return;
+  busy = true;
+  updateAsk();
+  status.textContent = action === "ask" ? "正在查找本地依据并用 ChatGPT 回答…" : "正在搜索…";
+  results.replaceChildren();
+  try {
+    const data = await request(action, {question: query.value.trim(), model: model.value, allow_external: consent.checked});
+    if (action === "ask") {
+      const answer = document.createElement("article");
+      answer.style.whiteSpace = "pre-wrap";
+      answer.textContent = data.answer;
+      results.append(answer);
+      showRows(data.sources);
+      status.textContent = "回答完成";
+    } else {
+      showRows(data);
+      status.textContent = data.length ? "找到 " + data.length + " 个章节" : "没有找到相关章节。";
+    }
+  } catch (error) { showError(error); }
+  finally { busy = false; updateAsk(); }
+}
+
+byId("search").addEventListener("submit", (event) => { event.preventDefault(); void run("search"); });
+ask.onclick = () => void run("ask");
+byId("connect").onclick = () => void auth("connect");
+byId("models").onclick = () => void auth("models");
+byId("disconnect").onclick = () => void auth("disconnect");
+byId("close").onclick = () => chapter.close();
+byId("open").onclick = () => void request("open", {section_id: selectedChapter}).catch(error => {
+  byId("chapter-address").textContent = error.message + " " + byId("chapter-address").textContent;
+});
+consent.onchange = updateAsk;
+model.onchange = updateAsk;
+void connectStatus().catch(showError);
+</script>
+</html>

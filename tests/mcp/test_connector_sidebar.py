@@ -25,24 +25,24 @@ LOCATOR = {
     "section_revision_id": SECTION,
     "content_sha256": "a" * 64,
 }
-MARKDOWN = """## 收费台合并缴费
+MARKDOWN = """## 收费标准公式
 
-**先核对账单**
+**先核对收费标准**
 
-核对[缴费说明](https://example.com/)中的 `账单条数`。
+核对[计费说明](https://example.com/)中的 `计费基数`。
 
-- 保留已选项
+- 核对计费期间
 
 > 确认后再提交。
 
-| 条数 | 行为 |
+| 要素 | 说明 |
 | --- | --- |
-| 100 | 允许 |
-| 101 | 拦截 |
+| 基数 | 以收费设置为准 |
+| 单价 | 以收费标准为准 |
 
 ```javascript
-// 校验上限
-const limit = 100;
+// 示例计费
+const total = 50;
 ```
 
 ```mermaid
@@ -116,7 +116,7 @@ def test_sidebar_renders_pinned_chapters_and_opens_studio():
                           break;
                         case "search_knowledge":
                           result = [
-                            {entity:{name:"收费台合并缴费"},excerpt:"-> 被截断的图表片段",locator,studio_url:link},
+                            {entity:{name:"收费标准公式"},excerpt:"-> 被截断的图表片段",locator,studio_url:link},
                             {entity:{name:"外部引用"},studio_url:"https://untrusted.example/"},
                           ];
                           break;
@@ -157,12 +157,17 @@ def test_sidebar_renders_pinned_chapters_and_opens_studio():
             app = page.frame_locator('iframe[title="VKS"]')
             expect(app.get_by_text("保存版本 v23", exact=True)).to_be_visible()
             expect(app.locator("html")).to_have_attribute("data-theme", "dark")
-            app.get_by_label("搜索保存版本").fill("合并缴费")
+            app.get_by_label("搜索保存版本").fill("收费标准公式")
             app.get_by_role("button", name="搜索").click()
             expect(app.locator("#status")).to_have_text("找到 2 个章节")
-            expect(app.locator("article strong")).to_have_text("先核对账单")
-            expect(app.locator("article ul li")).to_have_text("保留已选项")
-            expect(app.get_by_role("cell", name="101")).to_be_visible()
+            expect(app.locator("#results .rich-markdown")).to_have_count(0)
+            assert page.evaluate("!window.messages.some(m => m.params?.name === 'get_workspace_document')")
+            title = app.get_by_role("button", name="收费标准公式", exact=True)
+            title.click()
+            preview = app.get_by_role("dialog", name="收费标准公式")
+            expect(preview.locator("strong")).to_have_text("先核对收费标准")
+            expect(preview.locator("ul li")).to_have_text("核对计费期间")
+            expect(preview.get_by_role("cell", name="单价")).to_be_visible()
             image = app.get_by_role("img", name="原文图片")
             image.scroll_into_view_if_needed()
             expect(image).to_have_js_property("naturalWidth", 1)
@@ -170,7 +175,7 @@ def test_sidebar_renders_pinned_chapters_and_opens_studio():
             expect(diagram).to_be_attached(timeout=20_000)
             diagram.scroll_into_view_if_needed()
             assert diagram.evaluate("image => image.naturalWidth > 0")
-            markdown = app.locator("article .rich-markdown")
+            markdown = preview.locator(".rich-markdown")
             for theme in ("dark", "light", "dark"):
                 page.evaluate("theme => window.changeHostTheme(theme)", theme)
                 expect(app.locator("html")).to_have_css("color-scheme", theme)
@@ -182,7 +187,7 @@ def test_sidebar_renders_pinned_chapters_and_opens_studio():
                 ):
                     assert_readable_text(markdown.locator(selector).first)
             diagram.click()
-            viewer = app.get_by_role("dialog")
+            viewer = app.locator(".md-image-dialog")
             expect(viewer).to_be_visible()
             assert_readable_text(viewer.locator(".md-image-title"))
             assert_readable_text(viewer.locator(".md-image-help"))
@@ -191,26 +196,14 @@ def test_sidebar_renders_pinned_chapters_and_opens_studio():
             expect(app.get_by_text("-> 被截断的图表片段", exact=True)).to_have_count(0)
             expect(app.locator("body")).not_to_have_attribute("data-executed", "yes")
             expect(app.get_by_role("img", name="外部图片")).to_have_count(0)
+            page.keyboard.press("Escape")
+            expect(preview).to_be_hidden()
+            expect(title).to_be_focused()
             app.get_by_role("link", name="打开 Studio", exact=True).click()
             expect(app.locator("#navigation-status")).to_have_text("系统未能打开 Studio，可以复制地址。")
             expect(app.get_by_label("Studio 地址")).to_have_value(STUDIO + "/")
-            open_preview = app.get_by_role("button", name="预览原文章节")
-            open_preview.click()
-            preview = app.get_by_role("dialog", name="收费台合并缴费")
-            expect(preview).to_be_visible()
-            expect(preview.get_by_role("cell", name="101")).to_be_visible()
-            expect(preview.get_by_role("img", name="原文图片")).to_have_js_property("naturalWidth", 1)
-            for theme in ("light", "dark"):
-                page.evaluate("theme => window.changeHostTheme(theme)", theme)
-                expect(app.locator("html")).to_have_css("color-scheme", theme)
-                assert_readable_text(preview.locator("p:has(> a)"))
-                assert_readable_text(preview.get_by_role("link", name="在 Studio 打开原文章节"))
-            page.keyboard.press("Escape")
-            expect(preview).to_be_hidden()
-            expect(open_preview).to_be_focused()
-            title = app.get_by_role("button", name="收费台合并缴费", exact=True)
             title.click()
-            expect(preview.get_by_text("先核对账单", exact=True)).to_be_visible()
+            expect(preview.get_by_text("先核对收费标准", exact=True)).to_be_visible()
             preview.get_by_role("button", name="关闭", exact=True).click()
             expect(preview).to_be_hidden()
             expect(title).to_be_focused()
@@ -226,7 +219,7 @@ def test_sidebar_renders_pinned_chapters_and_opens_studio():
             assert calls[1]["arguments"] == {
                 "project_id": PROJECT,
                 "release_id": RELEASE,
-                "query": "合并缴费",
+                "query": "收费标准公式",
                 "retrieval_mode": "keyword",
                 "kinds": ["section"],
                 "limit": 8,
@@ -308,3 +301,101 @@ async def test_document_image_uses_saved_attachment_route(status, media, succeed
     else:
         with pytest.raises(GatewayError):
             await bridge.document_image(*args)
+
+
+def test_library_sidebar_shows_analysis_and_loads_chapters_only_for_preview():
+    library_ref = "a" * 64
+    file = "file:///tmp/charge-library.html"
+    section = {
+        "section_id": "formula", "title": "收费标准公式",
+        "document_title": "收费手册", "file_url": file + "#section=formula",
+    }
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=chromium_path(playwright))
+        try:
+            page = browser.new_page(viewport={"width": 440, "height": 900})
+            page.route("http://127.0.0.1:49152/", lambda route: route.fulfill(
+                content_type="text/html",
+                body='<iframe title="VKS" sandbox="allow-scripts" style="width:100%;height:100vh"></iframe>',
+            ))
+            page.goto("http://127.0.0.1:49152/")
+            page.evaluate(
+                """({html, library, section}) => {
+                  const iframe = document.querySelector("iframe");
+                  window.calls = [];
+                  const send = (payload) => iframe.contentWindow.postMessage({jsonrpc:"2.0",...payload}, "*");
+                  window.addEventListener("message", ({source, data}) => {
+                    if (source !== iframe.contentWindow) return;
+                    const {id, method, params} = data;
+                    if (method === "ui/initialize") {
+                      send({id, result:{hostContext:{theme:"dark"}}});
+                    } else if (method === "ui/notifications/initialized") {
+                      send({method:"ui/notifications/tool-result",params:{_meta:{"vks/library":{library}}}});
+                    } else if (method === "tools/call") {
+                      window.calls.push(params);
+                      let result;
+                      switch (params.name) {
+                        case "vks_library_chatgpt_plan":
+                          result = {can_ask:true, connected:true, account:"测试账号", pending:false,
+                            models:params.arguments.action === "models" ? [{id:"test-model",name:"测试模型"}] : []};
+                          break;
+                        case "analyze_vks_library":
+                          result = {answer:"**计费依据**见章节 [1]。", sources:[{...section,number:1}]};
+                          break;
+                        case "search_vks_library":
+                          result = [{...section,excerpt:"搜索返回的原文片段"}];
+                          break;
+                        case "read_vks_library_section":
+                          result = {...section, offset:0, next_offset:null, content:"原文段落只在小窗读取。"};
+                          break;
+                        case "open_vks_library":
+                          result = {requested:true};
+                          break;
+                      }
+                      send({id,result:{structuredContent:{data:result}}});
+                    }
+                  });
+                  iframe.srcdoc = html;
+                }""",
+                {
+                    "html": sidebar_page(),
+                    "library": {"library_ref": library_ref, "file_url": file, "project_name": "云收费",
+                                "version": "v24", "file_name": "v24.html"},
+                    "section": section,
+                },
+            )
+            app = page.frame_locator('iframe[title="VKS"]')
+            query = app.get_by_label("向成品库提问")
+            query.fill("收费标准如何计算？")
+            analyze = app.get_by_role("button", name="AI 分析", exact=True)
+            analyze.click()
+            expect(app.get_by_label("订阅模型")).to_have_value("test-model")
+            assert page.evaluate("!window.calls.some(c => c.name === 'analyze_vks_library')")
+            app.get_by_role("checkbox", name="允许发送问题", exact=False).check()
+            query.press("Enter")
+            expect(app.locator("#status")).to_have_text("分析完成 · 使用 ChatGPT 额度")
+            expect(app.locator("#results strong")).to_have_text("计费依据")
+            expect(app.locator(".references")).not_to_have_attribute("open", "")
+            expect(app.get_by_text("原文段落只在小窗读取。")).to_have_count(0)
+            assert page.evaluate("!window.calls.some(c => c.name === 'read_vks_library_section')")
+            assert page.evaluate("window.calls.find(c => c.name === 'analyze_vks_library').arguments") == {
+                "library_ref": library_ref, "question": "收费标准如何计算？", "model": "test-model", "allow_external": True,
+            }
+            app.get_by_role("button", name="预览引用 [1] 收费标准公式").click()
+            modal = app.get_by_role("dialog", name="收费标准公式")
+            expect(modal.get_by_text("原文段落只在小窗读取。")).to_be_visible()
+            source = modal.get_by_role("link", name="在成品库打开原文章节")
+            expect(source).to_have_attribute("href", section["file_url"])
+            source.click()
+            expect(app.get_by_label("成品库地址")).to_have_value(section["file_url"])
+            expect(modal).to_be_hidden()
+            assert page.evaluate("window.calls.find(c => c.name === 'open_vks_library').arguments") == {
+                "library_ref": library_ref, "section_id": "formula",
+            }
+            app.get_by_role("button", name="本地检索").click()
+            expect(app.locator("#status")).to_have_text("找到 1 个章节")
+            expect(app.get_by_role("button", name="收费标准公式", exact=True)).to_be_visible()
+            expect(app.get_by_text("搜索返回的原文片段")).to_have_count(0)
+            expect(app.locator("#results .rich-markdown")).to_have_count(0)
+        finally:
+            browser.close()

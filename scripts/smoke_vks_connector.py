@@ -66,7 +66,7 @@ async def smoke_library(command, cwd, env, settings):
         "project": {"id": "local-project", "name": "收费"},
         "snapshot": {"id": "saved", "name": "v7", "sha256": INSTANCE},
         "documents": [
-            {"title": "合并缴费", "sections": [{"id": "section-7", "title": "条数限制", "content": "超过100条"}]}
+            {"title": "收费标准公式", "sections": [{"id": "section-7", "title": "收费标准", "content": "核对计费基数与单价"}]}
         ],
         "bindings": [{"id": "binding-1", "title": "缴费关联", "summary": "原关联", "section_ids": ["section-7"]}],
     }
@@ -97,6 +97,8 @@ async def smoke_library(command, cwd, env, settings):
         panel = tools["open_vks_workspace"]
         assert panel.meta["openai/ui"]["entrypoints"] == [{"type": "global"}]
         assert tools["choose_vks_library"].meta["ui"]["visibility"] == ["app"]
+        assert tools["analyze_vks_library"].meta["ui"]["visibility"] == ["app"]
+        assert tools["vks_library_chatgpt_plan"].meta["ui"]["visibility"] == ["app"]
         assert tools["search_vks_library"].meta["ui"]["visibility"] == ["app", "model"]
         assert "search_knowledge" not in tools and "open_vks_studio" not in tools
         uri = panel.meta["ui"]["resourceUri"]
@@ -111,13 +113,13 @@ async def smoke_library(command, cwd, env, settings):
         picked = await client.call_tool(panel.name, {})
         assert picked.meta["vks/library"]["library"] == context and context["version"] == "v7"
         scope = {"library_ref": context["library_ref"]}
-        search = await client.call_tool("search_vks_library", {**scope, "query": "合并缴费"})
+        search = await client.call_tool("search_vks_library", {**scope, "query": "收费标准公式"})
         assert search.structuredContent["data"][0]["file_url"] == library_file.resolve().as_uri() + "#section=section-7"
         if expect_local:
             assert search.structuredContent["retrieval"]["vector_source"] == "local"
         section = {**scope, "section_id": "section-7"}
         readback = await client.call_tool("read_vks_library_section", section)
-        assert readback.structuredContent["data"]["content"] == "超过100条"
+        assert readback.structuredContent["data"]["content"] == "核对计费基数与单价"
         associations = await client.call_tool("read_vks_library_associations", section)
         assert associations.structuredContent["data"]["bindings"][0]["summary"] == "原关联"
         bad = await client.call_tool("open_vks_library", {**scope, "url": "https://untrusted.example"})

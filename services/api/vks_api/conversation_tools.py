@@ -165,6 +165,10 @@ class ConversationTools:
         self.tools = ProjectTools(service, assistant)
 
     def answer(self, actor, pid, form, key):
+        from .chatgpt_plan import CURRENT_PLAN
+
+        if CURRENT_PLAN.get():
+            return self.assistant.run(actor, pid, form)
         operation = None if form.retrieval_mode == "local" else intent(form.question)
         if not operation:
             return self.assistant.run(actor, pid, form)
@@ -574,8 +578,11 @@ def install_conversation_tools(app, service, actor, envelope, assistant):
         a: Annotated[Actor, Depends(actor)],
         idempotency_key: str = Header(..., min_length=1, max_length=128),
     ):
-        if "text/event-stream" in request.headers.get("accept", "").lower():
-            from .conversation_stream import conversation_response
+        from .chatgpt_plan import studio_plan
 
-            return conversation_response(request, tools, a, pid, payload, idempotency_key)
-        return envelope(request, tools.answer(a, pid, payload, idempotency_key))
+        with studio_plan(service, request, a, pid):
+            if "text/event-stream" in request.headers.get("accept", "").lower():
+                from .conversation_stream import conversation_response
+
+                return conversation_response(request, tools, a, pid, payload, idempotency_key)
+            return envelope(request, tools.answer(a, pid, payload, idempotency_key))

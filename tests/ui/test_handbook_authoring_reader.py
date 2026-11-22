@@ -67,6 +67,7 @@ def test_authoring_replace_preserves_personal_connection_and_fences_old_stream(t
             page.route("https://api.example.test/**", respond)
             page.goto(path.as_uri())
             page.wait_for_function("!!window.VksHandbookAuthoring")
+            expect(page.locator(".hb-sidebar .hb-brand")).to_be_visible()
             configure(page)
             assistant = page.frame_locator('iframe[title="知识手册 AI 助手"]')
             assistant.locator("#fh-ai-question").fill("Original")

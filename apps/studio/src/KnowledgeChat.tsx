@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { api, apiResponse, mutation } from "../../web/src/api";
 import { conversationAnswer } from "./chatStream";
+import { chatGPTPlanHeaders } from "./ChatGPTPlanSettings";
 import { TaskTiming, type Timing } from "./TaskTiming";
 import {
   MarkdownReadingContext,
@@ -124,6 +125,7 @@ export function useKnowledgeChat(
   sourceFingerprint = "",
   onUpdated?: (operations: Operation[]) => Promise<void>,
 ) {
+  const project = prefix.split("/")[4] || "";
   const identity = key;
   key = JSON.stringify([identity, sourceFingerprint]);
   const saved = useMemo(() => savedChat(key), [key]);
@@ -261,6 +263,7 @@ export function useKnowledgeChat(
         ...request,
         headers: {
           ...request.headers,
+          ...chatGPTPlanHeaders(project),
           "Idempotency-Key": requestId,
           Accept: "text/event-stream",
         },
@@ -348,6 +351,7 @@ export function useKnowledgeChat(
   return {
     ...current,
     storageError,
+    chatGPTPlan: !!chatGPTPlanHeaders(project)["X-VKS-Model-Access"],
     pendingOperation:
       /修改|改写|重写|更新|改成|改为|调整|补充|重新关联|导出|export|rewrite|update|reassociate/i.test(
         current.pending,
@@ -647,6 +651,7 @@ export function KnowledgeChat({
           <MessageCircle size={14} />
           围绕当前功能提问
         </span>
+        {chat.chatGPTPlan && <a href="https://chatgpt.com/#settings/usage" target="_blank" rel="noreferrer">使用 ChatGPT 额度</a>}
       </header>
       <div
         className="chat-messages"
@@ -661,7 +666,7 @@ export function KnowledgeChat({
         {!chat.turns.length && !chat.pending && (
           <div className="chat-welcome">
             <b>想了解「{label}」的哪一部分？</b>
-            <p>查找依据、连续追问；也可以要求修改当前关联、文档或导出项目。</p>
+            <p>{chat.chatGPTPlan ? "查找原文依据并连续追问。" : "查找依据、连续追问。也可以要求修改当前关联、文档或导出项目。"}</p>
             {[
               "这个功能的办理流程是什么？",
               "使用前需要满足哪些条件？",

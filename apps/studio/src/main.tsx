@@ -39,6 +39,7 @@ import type {
 } from "./runtime";
 import "./style.css";
 import { AISettings } from "./AISettings";
+import { chatGPTPlanHeaders } from "./ChatGPTPlanSettings";
 import { Projects } from "./Projects";
 import { DocumentCache } from "./DocumentCache";
 import {
@@ -1618,10 +1619,12 @@ function Workspace({
       if (epoch !== assistEpoch.current || controller.signal.aborted) return;
       setAssisting(true);
       try {
+        const modelRequest = mutation("POST", payload);
         const result = await api<Assistance>(
           `${prefix}/${mode === "explain" ? "explain" : "assist"}`,
           {
-            ...mutation("POST", payload),
+            ...modelRequest,
+            headers: { ...modelRequest.headers, ...(mode === "explain" ? chatGPTPlanHeaders(route.project) : {}) },
             signal: controller.signal,
           },
         );

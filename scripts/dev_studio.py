@@ -182,6 +182,7 @@ def main(argv=None):
         api_env = {
             **common_env,
             "VKS_PERSONAL_MODE": os.getenv("VKS_PERSONAL_MODE", "1"),
+            "VKS_CHATGPT_LOCAL": os.getenv("VKS_CHATGPT_LOCAL", "1"),
             "VKS_STUDIO_BASE_URL": studio_url,
             "VKS_MODEL_ALLOWED_ORIGINS": os.getenv("VKS_MODEL_ALLOWED_ORIGINS", "https://api.openai.com"),
         }

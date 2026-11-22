@@ -5,7 +5,9 @@ from __future__ import annotations
 import ctypes as C
 import hashlib
 import os
+import stat
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -43,6 +45,59 @@ def credential_store():
     if sys.platform == "win32":
         return WindowsCredentialManager()
     raise CredentialError("当前平台没有连接器系统密钥库后端，请使用会话环境变量")
+
+
+class LocalPlanCredentials:
+    """Keep ChatGPT refresh credentials private to the current macOS user."""
+
+    def __init__(self, directory: Path):
+        self.directory = directory
+
+    def _path(self, reference: str, *, create=False) -> Path:
+        if create:
+            self.directory.mkdir(mode=0o700, exist_ok=True)
+        info = self.directory.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise CredentialError("本机 ChatGPT 授权目录必须仅允许当前用户访问。")
+        return self.directory / reference
+
+    def get(self, reference: str) -> str | None:
+        try:
+            path = self._path(reference)
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as handle:
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                    raise CredentialError("本机 ChatGPT 授权文件必须仅允许当前用户访问。")
+                return validate_token(handle.read(2049).decode("ascii"))
+        except FileNotFoundError:
+            return None
+        except (OSError, UnicodeError) as exc:
+            raise CredentialError("无法读取本机 ChatGPT 授权。") from exc
+
+    def set(self, reference: str, value: str) -> None:
+        raw = validate_token(value).encode("ascii")
+        try:
+            path = self._path(reference, create=True)
+            with tempfile.NamedTemporaryFile(dir=self.directory, delete=False) as handle:
+                pending = Path(handle.name)
+                try:
+                    handle.write(raw)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                    os.replace(pending, path)
+                finally:
+                    pending.unlink(missing_ok=True)
+        except OSError as exc:
+            raise CredentialError("无法保存本机 ChatGPT 授权。") from exc
+
+    def remove(self, reference: str) -> None:
+        try:
+            self._path(reference).unlink(missing_ok=True)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise CredentialError("无法移除本机 ChatGPT 授权。") from exc
 
 
 class MacKeychain:

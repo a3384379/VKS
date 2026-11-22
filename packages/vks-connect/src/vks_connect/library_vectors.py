@@ -58,12 +58,14 @@ class LibraryVectors:
     def info(self):
         return {"model": self.model, "dimensions": self.dimensions, "indexed_chunks": len(self.chunks)}
 
-    def rank(self, vector, limit):
+    def rank(self, vector, limit, *, eligible=None):
         norm = math.sqrt(math.sumprod(vector, vector))
         if not norm or not math.isfinite(norm):
             return []
         ranked = {}
         for section_id, values, inverse_norm in self.chunks:
+            if eligible is not None and section_id not in eligible:
+                continue
             score = math.sumprod(vector, values) * inverse_norm / norm
             if score > ranked.get(section_id, 0):
                 ranked[section_id] = score
