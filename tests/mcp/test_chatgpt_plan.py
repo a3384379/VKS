@@ -54,11 +54,13 @@ def test_oauth_grant_reuse_rotation_and_fixed_responses(tmp_path, monkeypatch, g
     authorization = {}
     errors = []
     seen = []
+    expected_client = "issued-client" if local else "dynamic_agent_client"
+    subject = "test-sub"
 
     def browser(url):
         authorization.update({name: values[0] for name, values in parse_qs(urlsplit(url).query).items()})
-        assert authorization["client_id"] == ("issued-client" if local else "dynamic_agent_client")
-        if local:
+        assert authorization["client_id"] == expected_client
+        if expected_client == "issued-client":
             assert authorization["prompt"] == "consent"
         assert authorization["resource"] == RESOURCE
         def return_to_app():
@@ -90,7 +92,7 @@ def test_oauth_grant_reuse_rotation_and_fixed_responses(tmp_path, monkeypatch, g
             assert base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=") == authorization["code_challenge"]
             assert form["redirect_uri"] == [authorization["redirect_uri"]]
             identity = jwt.encode({
-                "iss": ISSUER, "aud": "issued-client", "sub": "test-sub", "nonce": authorization["nonce"],
+                "iss": ISSUER, "aud": "issued-client", "sub": subject, "nonce": authorization["nonce"],
                 "email": "synthetic@example.test", "exp": int(time.time()) + 60,
             }, private, algorithm="RS256", headers={"kid": "synthetic-key"})
             return httpx.Response(200, json={"id_token": identity, "access_token": "first-access",
@@ -164,6 +166,13 @@ def test_oauth_grant_reuse_rotation_and_fixed_responses(tmp_path, monkeypatch, g
     database = (tmp_path / "chatgpt/connections.sqlite3").read_bytes()
     assert b"first-refresh" not in database and b"rotated-access" not in database
     assert b"rotated-refresh" not in database
+
+    expected_client, subject = "issued-client", "different-account"
+    session.begin()
+    session.pending.join(8)
+    assert not session.pending.is_alive() and not errors
+    assert session.status()["connected"] and session.profile()["subject"] == subject
+    assert session.status()["profile_id"] != active["profile_id"]
 
 
 def test_unexpected_chatgpt_response_reports_type_without_body(tmp_path, monkeypatch):

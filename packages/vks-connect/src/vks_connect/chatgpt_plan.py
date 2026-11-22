@@ -339,6 +339,8 @@ class PlanSession:
                     pass
             if storage:
                 storage.remove(self.ref(profile))
+            profile.pop("subject", None)
+            profile.pop("account", None)
             # Change the generation so an in-flight sign-in cannot restore the session.
             self.write(db, self.profile_key, {**profile, "id": str(uuid4()), "connected": False})
             self.access = None
