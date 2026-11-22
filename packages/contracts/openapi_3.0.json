@@ -41,6 +41,53 @@
         }
       }
     },
+    "/api/v3/projects/{pid}/chatgpt-plan": {
+      "post": {
+        "summary": "Manage",
+        "operationId": "manage_api_v3_projects__pid__chatgpt_plan_post",
+        "parameters": [
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/projects/{pid}/prototype/settings": {
       "put": {
         "summary": "Settings",
@@ -7788,6 +7835,39 @@
           "title"
         ],
         "title": "OperationReceipt"
+      },
+      "PlanInput": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "connect",
+              "models",
+              "enable",
+              "disable",
+              "disconnect"
+            ],
+            "title": "Action"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Model",
+            "default": ""
+          },
+          "allow_external": {
+            "type": "boolean",
+            "title": "Allow External",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "PlanInput"
       },
       "PointText": {
         "properties": {
