@@ -23,7 +23,10 @@ def test_original_static_site_offline_styles_navigation_exact_sections_and_isola
         [
             (
                 "index.html",
-                '<title>Home</title><link rel="stylesheet" href="theme.css"><h1 id="home">Original home</h1><p>First original page.</p><a href="next.html#rule">Read next</a>',
+                '<title>Home</title><link rel="stylesheet" href="theme.css">'
+                '<aside id="sidebar"><a class="brand" href="#book-start"><span class="brand-mark">Site brand</span></a></aside>'
+                '<header class="topbar"><a class="overview-link" href="#book-start">Overview</a></header>'
+                '<main id="book-start"><h1 id="home">Original home</h1><p>First original page.</p><a href="next.html#rule">Read next</a></main>',
             ),
             (
                 "next.html",
@@ -47,6 +50,7 @@ def test_original_static_site_offline_styles_navigation_exact_sections_and_isola
             page.goto(path.as_uri())
             source = page.frame_locator("iframe.native-document-frame")
             expect(source.get_by_role("heading", name="Original home", exact=True)).to_be_visible()
+            expect(source.locator("#sidebar .brand")).to_be_visible()
             expect(page.locator(".document-library-bar")).to_be_hidden()
             assert (
                 page.locator(".native-document-toolbar").evaluate(
@@ -83,7 +87,11 @@ def active_handbook():
     data = packed.split('<script id="fh-pack-data" type="application/octet-stream">')[1].split("</script>")[0]
     inner = gzip.decompress(base64.b64decode(data)).decode()
     inner = (
-        '<title>Original handbook</title><style>body{margin:0}#cover{padding:30px;color:rgb(23,45,67)}</style><div id="cover"><h1>Original cover</h1><a href="#article-b--duplicate-1">Open original rule</a></div>'
+        '<title>Original handbook</title><style>body{margin:0}#cover{padding:30px;color:rgb(23,45,67)}</style>'
+        '<aside id="sidebar"><a class="brand" href="#book-start"><span class="brand-mark">Handbook brand</span></a></aside>'
+        '<header class="topbar"><a class="overview-link" href="#book-start">总览</a></header>'
+        '<div id="cover"><section id="book-start"><h1>Original cover</h1>'
+        '<a href="#article-b--duplicate-1">Open original rule</a></section></div>'
         + inner
     )
     inner += """<input id="fh-update-file" type="file"><button id="fh-update-save">Update source</button>
@@ -191,6 +199,8 @@ def test_known_handbook_keeps_home_and_native_navigation_and_disables_updates(ma
             page.goto(path.as_uri())
             source = page.frame_locator("iframe.native-document-frame")
             expect(source.get_by_role("heading", name="Original cover", exact=True)).to_be_visible()
+            expect(source.locator("#sidebar .brand")).to_have_count(1)
+            expect(source.locator("#sidebar .brand")).to_be_hidden()
             expect(source.locator("#fh-update-save")).to_be_hidden()
             expect(source.locator("#fh-update-file")).to_be_disabled()
             assert source.locator("body").evaluate("()=>window.forbiddenSourceUpdater") is None
@@ -202,6 +212,8 @@ def test_known_handbook_keeps_home_and_native_navigation_and_disables_updates(ma
             expect(page).to_have_url(re.compile(r"#section=" + re.escape(section["revision_id"])))
             expect(page.get_by_role("button", name="标准阅读", exact=True)).to_have_count(0)
             expect(source.get_by_text("Second rule.", exact=True)).to_be_visible()
+            source.get_by_role("link", name="总览", exact=True).click()
+            expect(source.get_by_role("heading", name="Original cover", exact=True)).to_be_visible()
             page.get_by_role("button", name="打开知识助手", exact=True).click()
             document_ai = page.frame_locator('iframe[title="知识手册 AI 助手"]')
             expect(document_ai.locator("#fh-ai-panel")).to_be_visible()

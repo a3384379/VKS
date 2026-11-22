@@ -2097,6 +2097,20 @@
     const nonce = crypto.randomUUID();
     nativeView = { packageId: original.id, page, frame, nonce, ready: false };
     const parsed = new DOMParser().parseFromString(html, "text/html");
+    if (
+      original.format === "charge-handbook" ||
+      original.format === "standalone-handbook"
+    ) {
+      const brand = parsed.querySelector('#sidebar > a.brand[href="#book-start"]');
+      const overview = parsed.querySelector('.topbar .overview-link[href="#book-start"]');
+      // Leave the stored original intact and retain an overview link in the frame.
+      if (
+        overview &&
+        parsed.getElementById("book-start") &&
+        brand?.querySelector(":scope > .brand-mark")
+      )
+        brand.style.setProperty("display", "none", "important");
+    }
     for (const node of parsed.querySelectorAll(
       'base,meta[http-equiv="Content-Security-Policy" i],meta[http-equiv="refresh" i]',
     ))
