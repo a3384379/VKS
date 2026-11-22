@@ -7,7 +7,7 @@
   <!-- markdown-css -->
   <style>
     :root {
-      color-scheme: light dark;
+      color-scheme: light;
       --ink: #172520;
       --canvas: #fafcfb;
       --surface: #fff;
@@ -15,6 +15,10 @@
       --line: #d5e0da;
       --accent: #176b57;
       --on-accent: #fff;
+      --inset: #f1f6f3;
+      --stripe: #fafcfb;
+      --code: #963d57;
+      --error: #983c36;
       font: 15px/1.6 system-ui, -apple-system, sans-serif;
     }
     :root[data-theme="dark"] {
@@ -26,6 +30,10 @@
       --line: #40534a;
       --accent: #91e0c2;
       --on-accent: #12251e;
+      --inset: #263930;
+      --stripe: #22322b;
+      --code: #ffb4c7;
+      --error: #ffa9a3;
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--canvas); color: var(--ink); }
@@ -39,6 +47,7 @@
     [hidden] { display: none !important; }
     select, input, button { font: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
     select, input { background: var(--surface); color: var(--ink); min-width: 0; }
+    input::placeholder { color: var(--muted); opacity: 1; }
     select { max-width: 100%; }
     .search { display: flex; flex-wrap: wrap; gap: 8px; }
     input { flex: 1 1 12rem; }
@@ -53,6 +62,35 @@
     article .excerpt { white-space: pre-wrap; overflow-wrap: anywhere; }
     article .rich-markdown, #navigation { margin: .75rem 0; }
     article .rich-markdown > :first-child { margin-top: 0; }
+    /* Apply the host palette to the shared Markdown reader and its overlays. */
+    .rich-markdown, .rich-markdown strong, .rich-markdown b, .rich-markdown pre code { color: var(--ink); }
+    .rich-markdown a { color: var(--accent); }
+    .rich-markdown pre, .rich-markdown :not(pre) > code, .rich-markdown blockquote, .rich-markdown th,
+    .rich-markdown .md-diagram-head { background: var(--inset); }
+    .rich-markdown :not(pre) > code { color: var(--code); }
+    .rich-markdown .math-error { color: var(--error); }
+    .rich-markdown tr:nth-child(even) td { background: var(--stripe); }
+    .rich-markdown h2, .rich-markdown pre, .rich-markdown :not(pre) > code, .rich-markdown .md-table-scroll,
+    .rich-markdown th, .rich-markdown td, .rich-markdown details, .rich-markdown .footnotes,
+    .rich-markdown .md-diagram, .rich-markdown .md-diagram details, .rich-markdown .md-image-note,
+    .md-image-dialog, .md-image-toolbar, .md-image-toolbar button, .md-selection-menu { border-color: var(--line); }
+    .rich-markdown blockquote { color: var(--ink); border-color: var(--accent); }
+    .rich-markdown .task-list-item input { accent-color: var(--accent); }
+    .rich-markdown .md-code-language, .rich-markdown .hljs-comment, .rich-markdown .hljs-quote,
+    .rich-markdown .md-image-note, .rich-markdown .md-image-caption, .rich-markdown .md-diagram-head,
+    .rich-markdown .md-diagram-status, .rich-markdown .md-diagram summary, .md-media-hint,
+    .md-image-help { color: var(--muted); }
+    .rich-markdown .md-diagram, .md-image-dialog, .md-image-toolbar button,
+    .md-selection-menu, .md-selection-menu button { background: var(--surface); color: var(--ink); }
+    .md-image-toolbar button[aria-pressed="true"], .md-selection-menu button:hover,
+    .md-selection-menu button:focus-visible { background: var(--inset); color: var(--accent); }
+    /* Rendered diagrams contain their own light-theme ink. Keep that canvas light. */
+    .rich-markdown .md-diagram-image, .md-image-canvas { background: #f8faf9; }
+    .rich-markdown :is(.hljs-number, .hljs-literal, .hljs-symbol) { color: #a74c2b; }
+    [data-theme="dark"] .rich-markdown :is(.hljs-keyword, .hljs-selector-tag, .hljs-type) { color: #dfb6f2; }
+    [data-theme="dark"] .rich-markdown :is(.hljs-string, .hljs-attr, .hljs-template-tag) { color: #a8dfab; }
+    [data-theme="dark"] .rich-markdown :is(.hljs-number, .hljs-literal, .hljs-symbol) { color: #ffc29c; }
+    [data-theme="dark"] .rich-markdown :is(.hljs-title, .hljs-function) { color: #aad7ff; }
     #navigation input { width: 100%; }
     #navigation button { margin-top: .35rem; }
     #embedding-settings { margin-top: .7rem; }
