@@ -360,6 +360,8 @@ def test_persisted_explanation_expires_when_generation_contract_changes(assistan
 
 
 def test_chatgpt_plan_is_explicit_local_and_read_only(assistant, monkeypatch):
+    from types import SimpleNamespace
+
     from fastapi.testclient import TestClient
     from vks_api import chatgpt_plan
     from vks_connect.chatgpt_plan import responses_body
@@ -409,6 +411,11 @@ def test_chatgpt_plan_is_explicit_local_and_read_only(assistant, monkeypatch):
     client.cookies.set("vks_session", session)
     headers = {"Origin": origin, "X-CSRF-Token": owner.csrf_token}
     manage = f"/api/v3/projects/{pid}/chatgpt-plan"
+    monkeypatch.setattr(chatgpt_plan, "sys", SimpleNamespace(platform="linux"))
+    unavailable = client.post(manage, json={"action": "connect"}, headers=headers)
+    assert unavailable.status_code == 200 and unavailable.json()["data"] == {"available": False}
+    assert not settings
+    monkeypatch.setattr(chatgpt_plan, "sys", SimpleNamespace(platform="darwin"))
     connected = client.post(manage, json={"action": "connect"}, headers=headers)
     assert connected.status_code == 200 and connected.json()["data"]["connected"], connected.text
     enabled = client.post(manage, json={"action": "enable", "model": "synthetic-plan", "allow_external": True},
