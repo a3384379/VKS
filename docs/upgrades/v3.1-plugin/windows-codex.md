@@ -5,16 +5,19 @@
 ## 下载和校验
 
 1. 在 [VKS connector packages 的主干构建](https://github.com/a3384379/VKS/actions/workflows/vks-connector.yaml?query=branch%3Amain) 中打开对应提交的成功运行，登录 GitHub 后在 **Artifacts** 下载 **vks-connector-windows-x64**。要试用尚在审查的版本，可在对应 Pull Request 的 Checks 中找到该分支的构建。
-2. 解压外层下载包。将其中的 `vks-plugin-3.1.0-rc.7-windows-x64.zip` 和同名的 `.zip.sha256` 文件放在同一目录。打开 Windows PowerShell 并进入这个目录。
+2. 解压外层下载包。将其中的 `vks-plugin-…-windows-x64.zip` 和同名的 `.zip.sha256` 文件放在同一目录。打开 Windows PowerShell 并进入这个目录。
 3. 运行下方命令校验并解压。安装目录按版本分开，升级时可以保留原来的解压目录。
 
 ```powershell
-$archive = 'vks-plugin-3.1.0-rc.7-windows-x64.zip'
+$packages = @(Get-ChildItem -File 'vks-plugin-*-windows-x64.zip')
+if ($packages.Count -ne 1) { throw 'Keep one VKS plugin ZIP in the current folder' }
+$archive = $packages[0].Name
 $expected = ((Get-Content -LiteralPath "$archive.sha256" -Raw).Trim() -split '\s+')[0]
 $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw 'VKS package SHA-256 mismatch' }
 
-$market = Join-Path $env:LOCALAPPDATA 'VKS\codex-marketplace-rc7'
+$version = $archive -replace '^vks-plugin-(.*)-windows-x64\.zip$', '$1'
+$market = Join-Path $env:LOCALAPPDATA "VKS\codex-marketplace-$version"
 $plugin = Join-Path $market 'plugins\vks'
 if (Test-Path -LiteralPath $plugin) { throw "VKS package folder already exists: $plugin" }
 Expand-Archive -LiteralPath $archive -DestinationPath $plugin
@@ -53,7 +56,7 @@ codex plugin list --marketplace vks-local --json
 ## 选择成品库和测试
 
 1. 把你自己的成品库 HTML 复制到 Windows 本地磁盘。在 VKS 左栏点「选择成品库」或「更换成品库」，选中文件并核对项目名和保存版本。同一个 HTML 包含导出时的原文、已有的关联和检索数据。
-2. 搜两个不同主题。每次都点结果中的「在成品库打开原文章节」，确认系统浏览器进入该文件的「知识文档」，并定位到结果中显示的章节。浏览器地址应包含 `#section=`，两次点击的章节值应不同。
+2. 搜两个不同主题。点结果标题或「预览原文章节」，在 Codex 内核对章节内容。再点预览底部的「在成品库打开原文章节」，确认系统浏览器进入该文件的「知识文档」并定位到同一章节。两次浏览器地址都应包含 `#section=`，且章节值不同。
 3. 用支持本地向量的 HTML 做一次换说法查询。结果应显示「本地向量 + 关键词」。旧版 HTML 缺少本地向量时仍可按关键词查找。
 4. 在一个新 Codex 对话中也可以输入「用 VKS 查询当前成品库，找到与我的问题对应的规则，并返回原文章节引用。找不到依据时请注明。」对话里附上你要查的具体问题。
 

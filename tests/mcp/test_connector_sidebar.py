@@ -29,11 +29,21 @@ MARKDOWN = """## 收费台合并缴费
 
 **先核对账单**
 
+核对[缴费说明](https://example.com/)中的 `账单条数`。
+
 - 保留已选项
+
+> 确认后再提交。
 
 | 条数 | 行为 |
 | --- | --- |
+| 100 | 允许 |
 | 101 | 拦截 |
+
+```javascript
+// 校验上限
+const limit = 100;
+```
 
 ```mermaid
 %%{init: {"flowchart": {"useMaxWidth": false}}}%%
@@ -48,11 +58,30 @@ flowchart LR
 """
 
 
+def assert_readable_text(locator):
+    contrast = locator.evaluate("""element => {
+      const rgb = color => color.match(/[\\d.]+/g).map(Number);
+      const luminance = color => rgb(color).slice(0, 3).reduce((sum, channel, i) => {
+        const s = channel / 255;
+        const linear = s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        return sum + linear * [0.2126, 0.7152, 0.0722][i];
+      }, 0);
+      let surface = element;
+      while (getComputedStyle(surface).backgroundColor === "rgba(0, 0, 0, 0)") {
+        surface = surface.parentElement;
+      }
+      const text = luminance(getComputedStyle(element).color);
+      const background = luminance(getComputedStyle(surface).backgroundColor);
+      return (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
+    }""")
+    assert contrast >= 4.5, f"{locator}: contrast {contrast:.2f}:1"
+
+
 def test_sidebar_renders_pinned_chapters_and_opens_studio():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=chromium_path(playwright))
         try:
-            page = browser.new_page(viewport={"width": 440, "height": 1000})
+            page = browser.new_page(viewport={"width": 440, "height": 1000}, color_scheme="dark")
             page.route(
                 "http://127.0.0.1:49152/",
                 lambda route: route.fulfill(
@@ -66,6 +95,7 @@ def test_sidebar_renders_pinned_chapters_and_opens_studio():
                   const view = document.querySelector("iframe");
                   window.messages = [];
                   const send = (payload) => view.contentWindow.postMessage({jsonrpc:"2.0",...payload}, "*");
+                  window.changeHostTheme = theme => send({method:"ui/notifications/host-context-changed",params:{theme}});
                   window.addEventListener("message", ({source, data}) => {
                     if (source !== view.contentWindow) return;
                     const {id, method, params} = data;
@@ -140,13 +170,55 @@ def test_sidebar_renders_pinned_chapters_and_opens_studio():
             expect(diagram).to_be_attached(timeout=20_000)
             diagram.scroll_into_view_if_needed()
             assert diagram.evaluate("image => image.naturalWidth > 0")
+            markdown = app.locator("article .rich-markdown")
+            for theme in ("dark", "light", "dark"):
+                page.evaluate("theme => window.changeHostTheme(theme)", theme)
+                expect(app.locator("html")).to_have_css("color-scheme", theme)
+                for selector in (
+                    "p:has(> a)", "strong", "li", "blockquote p", "th", "tbody tr:first-child td",
+                    "tbody tr:nth-child(2) td", "p code", "pre code", ".md-code-language", ".hljs-comment",
+                    ".hljs-keyword", ".hljs-number", "a", ".md-image-note", ".md-diagram-head button",
+                    ".md-diagram summary",
+                ):
+                    assert_readable_text(markdown.locator(selector).first)
+            diagram.click()
+            viewer = app.get_by_role("dialog")
+            expect(viewer).to_be_visible()
+            assert_readable_text(viewer.locator(".md-image-title"))
+            assert_readable_text(viewer.locator(".md-image-help"))
+            viewer.get_by_role("button", name="关闭").click()
+            expect(viewer).to_have_count(0)
             expect(app.get_by_text("-> 被截断的图表片段", exact=True)).to_have_count(0)
             expect(app.locator("body")).not_to_have_attribute("data-executed", "yes")
             expect(app.get_by_role("img", name="外部图片")).to_have_count(0)
             app.get_by_role("link", name="打开 Studio", exact=True).click()
             expect(app.locator("#navigation-status")).to_have_text("系统未能打开 Studio，可以复制地址。")
             expect(app.get_by_label("Studio 地址")).to_have_value(STUDIO + "/")
-            app.get_by_role("link", name="在 Studio 打开原文章节").click()
+            open_preview = app.get_by_role("button", name="预览原文章节")
+            open_preview.click()
+            preview = app.get_by_role("dialog", name="收费台合并缴费")
+            expect(preview).to_be_visible()
+            expect(preview.get_by_role("cell", name="101")).to_be_visible()
+            expect(preview.get_by_role("img", name="原文图片")).to_have_js_property("naturalWidth", 1)
+            for theme in ("light", "dark"):
+                page.evaluate("theme => window.changeHostTheme(theme)", theme)
+                expect(app.locator("html")).to_have_css("color-scheme", theme)
+                assert_readable_text(preview.locator("p:has(> a)"))
+                assert_readable_text(preview.get_by_role("link", name="在 Studio 打开原文章节"))
+            page.keyboard.press("Escape")
+            expect(preview).to_be_hidden()
+            expect(open_preview).to_be_focused()
+            title = app.get_by_role("button", name="收费台合并缴费", exact=True)
+            title.click()
+            expect(preview.get_by_text("先核对账单", exact=True)).to_be_visible()
+            preview.get_by_role("button", name="关闭", exact=True).click()
+            expect(preview).to_be_hidden()
+            expect(title).to_be_focused()
+            launches = page.evaluate("window.messages.filter(m => m.params?.name === 'open_vks_studio')")
+            assert len(launches) == 1  # 页面顶部的跳转
+            title.click()
+            preview.get_by_role("link", name="在 Studio 打开原文章节").click()
+            expect(preview).to_be_hidden()
             expect(app.locator("#navigation-status")).to_have_text("已请求系统浏览器打开 Studio。")
             expect(app.get_by_label("Studio 地址")).to_have_value(LINK)
             calls = page.evaluate("window.messages.filter(m => m.method === 'tools/call').map(m => m.params)")

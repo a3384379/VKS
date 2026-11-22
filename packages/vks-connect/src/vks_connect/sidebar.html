@@ -7,7 +7,7 @@
   <!-- markdown-css -->
   <style>
     :root {
-      color-scheme: light dark;
+      color-scheme: light;
       --ink: #172520;
       --canvas: #fafcfb;
       --surface: #fff;
@@ -15,6 +15,10 @@
       --line: #d5e0da;
       --accent: #176b57;
       --on-accent: #fff;
+      --inset: #f1f6f3;
+      --stripe: #fafcfb;
+      --code: #963d57;
+      --error: #983c36;
       font: 15px/1.6 system-ui, -apple-system, sans-serif;
     }
     :root[data-theme="dark"] {
@@ -26,6 +30,10 @@
       --line: #40534a;
       --accent: #91e0c2;
       --on-accent: #12251e;
+      --inset: #263930;
+      --stripe: #22322b;
+      --code: #ffb4c7;
+      --error: #ffa9a3;
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--canvas); color: var(--ink); }
@@ -39,6 +47,7 @@
     [hidden] { display: none !important; }
     select, input, button { font: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
     select, input { background: var(--surface); color: var(--ink); min-width: 0; }
+    input::placeholder { color: var(--muted); opacity: 1; }
     select { max-width: 100%; }
     .search { display: flex; flex-wrap: wrap; gap: 8px; }
     input { flex: 1 1 12rem; }
@@ -51,8 +60,58 @@
     #results { display: grid; gap: 10px; }
     article h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
     article .excerpt { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .preview-link, .preview-title {
+      border: 0; border-radius: 2px; padding: 0; background: transparent; color: var(--accent);
+      text-align: start; text-decoration: underline; text-underline-offset: 3px;
+    }
+    .preview-title { color: inherit; text-decoration: none; overflow-wrap: anywhere; }
+    .preview-title:hover { text-decoration: underline; }
+    #chapter-preview {
+      width: min(720px, calc(100% - 24px)); max-height: min(680px, 86dvh); padding: 0;
+      background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 14px;
+    }
+    #chapter-preview[open] { display: flex; flex-direction: column; }
+    #chapter-preview::backdrop { background: #0007; }
+    .chapter-header, #chapter-footer { padding: 12px 16px; flex: none; }
+    .chapter-header { display: flex; gap: 12px; align-items: start; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .chapter-header button { white-space: nowrap; }
+    #chapter-title { margin: 0; font-size: 19px; overflow-wrap: anywhere; }
+    #chapter-document { color: var(--muted); overflow-wrap: anywhere; }
+    #chapter-body { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px 16px; overflow-wrap: anywhere; }
+    #chapter-body:focus-visible { outline-offset: -3px; }
+    #chapter-body > .rich-markdown > :first-child { margin-top: 0; }
+    #chapter-footer { border-top: 1px solid var(--line); }
     article .rich-markdown, #navigation { margin: .75rem 0; }
     article .rich-markdown > :first-child { margin-top: 0; }
+    /* Apply the host palette to the shared Markdown reader and its overlays. */
+    .rich-markdown, .rich-markdown strong, .rich-markdown b, .rich-markdown pre code { color: var(--ink); }
+    .rich-markdown a { color: var(--accent); }
+    .rich-markdown pre, .rich-markdown :not(pre) > code, .rich-markdown blockquote, .rich-markdown th,
+    .rich-markdown .md-diagram-head { background: var(--inset); }
+    .rich-markdown :not(pre) > code { color: var(--code); }
+    .rich-markdown .math-error { color: var(--error); }
+    .rich-markdown tr:nth-child(even) td { background: var(--stripe); }
+    .rich-markdown h2, .rich-markdown pre, .rich-markdown :not(pre) > code, .rich-markdown .md-table-scroll,
+    .rich-markdown th, .rich-markdown td, .rich-markdown details, .rich-markdown .footnotes,
+    .rich-markdown .md-diagram, .rich-markdown .md-diagram details, .rich-markdown .md-image-note,
+    .md-image-dialog, .md-image-toolbar, .md-image-toolbar button, .md-selection-menu { border-color: var(--line); }
+    .rich-markdown blockquote { color: var(--ink); border-color: var(--accent); }
+    .rich-markdown .task-list-item input { accent-color: var(--accent); }
+    .rich-markdown .md-code-language, .rich-markdown .hljs-comment, .rich-markdown .hljs-quote,
+    .rich-markdown .md-image-note, .rich-markdown .md-image-caption, .rich-markdown .md-diagram-head,
+    .rich-markdown .md-diagram-status, .rich-markdown .md-diagram summary, .md-media-hint,
+    .md-image-help { color: var(--muted); }
+    .rich-markdown .md-diagram, .md-image-dialog, .md-image-toolbar button,
+    .md-selection-menu, .md-selection-menu button { background: var(--surface); color: var(--ink); }
+    .md-image-toolbar button[aria-pressed="true"], .md-selection-menu button:hover,
+    .md-selection-menu button:focus-visible { background: var(--inset); color: var(--accent); }
+    /* Rendered diagrams contain their own light-theme ink. Keep that canvas light. */
+    .rich-markdown .md-diagram-image, .md-image-canvas { background: #f8faf9; }
+    .rich-markdown :is(.hljs-number, .hljs-literal, .hljs-symbol) { color: #a74c2b; }
+    [data-theme="dark"] .rich-markdown :is(.hljs-keyword, .hljs-selector-tag, .hljs-type) { color: #dfb6f2; }
+    [data-theme="dark"] .rich-markdown :is(.hljs-string, .hljs-attr, .hljs-template-tag) { color: #a8dfab; }
+    [data-theme="dark"] .rich-markdown :is(.hljs-number, .hljs-literal, .hljs-symbol) { color: #ffc29c; }
+    [data-theme="dark"] .rich-markdown :is(.hljs-title, .hljs-function) { color: #aad7ff; }
     #navigation input { width: 100%; }
     #navigation button { margin-top: .35rem; }
     #embedding-settings { margin-top: .7rem; }
@@ -97,6 +156,17 @@
   <p id="status" role="status" aria-live="polite"></p>
   <div id="results" aria-label="检索结果"></div>
 </main>
+<dialog id="chapter-preview" aria-labelledby="chapter-title">
+  <div class="chapter-header">
+    <div>
+      <h2 id="chapter-title"></h2>
+      <small id="chapter-document" hidden></small>
+    </div>
+    <button id="chapter-close" type="button" autofocus>关闭</button>
+  </div>
+  <div id="chapter-body" role="region" aria-label="章节正文" tabindex="0"></div>
+  <div id="chapter-footer" hidden><a id="chapter-source" target="_blank" rel="noopener noreferrer"></a></div>
+</dialog>
 <!-- markdown-js -->
 <script>
   "use strict";
@@ -112,6 +182,8 @@
   const navigation = byId("navigation");
   const navigationStatus = byId("navigation-status");
   const address = byId("studio-address");
+  const chapterPreview = byId("chapter-preview");
+  const chapterBody = byId("chapter-body");
   const rasterTypes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
   const pending = new Map();
   let sequence = 0;
@@ -161,7 +233,7 @@
     }
   });
 
-  function navigationLink(link, value, locator) {
+  function navigationLink(link, value, locator, beforeOpen) {
     try {
       const url = new URL(value);
       if (url.username || url.password || url.search) return false;
@@ -173,6 +245,7 @@
       link.onclick = async (event) => {
         if (!event.isTrusted || event.defaultPrevented) return;
         event.preventDefault();
+        beforeOpen?.();
         const ticket = ++navigationRequest;
         const destination = libraryMode ? "成品库" : "Studio";
         address.value = url.href;
@@ -196,6 +269,7 @@
 
   async function selectProject() {
     const ticket = ++request;
+    chapterPreview.close();
     visibleChapters?.disconnect();
     scope = undefined;
     query.disabled = submit.disabled = true;
@@ -224,6 +298,7 @@
   function useLibrary(data) {
     libraryMode = true;
     ++request;
+    chapterPreview.close();
     visibleChapters?.disconnect();
     results.replaceChildren();
     status.textContent = "";
@@ -402,22 +477,66 @@
     return available;
   }
 
-  async function renderChapter(row, body, ticket) {
+  async function loadChapter(row, ticket) {
+    if (ticket !== request) throw new Error();
+    const markdown = displayMarkdown(await readChapter(row.locator, ticket));
+    if (ticket !== request) throw new Error();
+    return {markdown, images: await chapterImages(markdown, row.locator, ticket)};
+  }
+
+  function chapterMarkup({markdown, images}, title) {
+    const chapter = window.VksReaderMarkdown.render(markdown, {resolveImage: (path) => images.get(path)});
+    const heading = chapter.firstElementChild;
+    if (heading?.matches("h1,h2,h3,h4,h5,h6") && heading.textContent.trim() === title) heading.remove();
+    return chapter;
+  }
+
+  async function renderChapter(row, body, ticket, load) {
     if (ticket !== request) return;
     try {
-      const markdown = displayMarkdown(await readChapter(row.locator, ticket));
+      const chapter = await load();
       if (ticket !== request) return;
-      const images = await chapterImages(markdown, row.locator, ticket);
-      if (ticket !== request) return;
-      const chapter = window.VksReaderMarkdown.render(markdown, {resolveImage: (path) => images.get(path)});
-      const heading = chapter.firstElementChild;
-      if (heading?.matches("h1,h2,h3,h4,h5,h6") && heading.textContent.trim() === row.entity.name) heading.remove();
-      body.replaceWith(chapter);
+      body.replaceWith(chapterMarkup(chapter, row.entity.name));
     } catch {
       if (ticket !== request) return;
       const message = document.createElement("small");
       message.textContent = libraryMode ? "当前仅显示摘要，可打开成品库阅读完整章节。" : "当前仅显示检索摘要，可在 Studio 阅读完整章节。";
       body.append(document.createElement("br"), message);
+    }
+  }
+
+  byId("chapter-close").addEventListener("click", () => chapterPreview.close());
+  chapterPreview.addEventListener("close", () => {
+    if (!chapterPreview.open) chapterBody.replaceChildren();
+  });
+
+  async function showChapterPreview(row, ticket, load) {
+    byId("chapter-title").textContent = row.entity.name;
+    const documentTitle = byId("chapter-document");
+    documentTitle.textContent = row.documentTitle || "";
+    documentTitle.hidden = !row.documentTitle || row.documentTitle === row.entity.name;
+    const source = byId("chapter-source");
+    source.textContent = libraryMode ? "在成品库打开原文章节" : "在 Studio 打开原文章节";
+    byId("chapter-footer").hidden = !navigationLink(source, libraryMode ? row.url : row.studio_url, row.locator,
+      () => chapterPreview.close());
+    const loading = document.createElement("p");
+    loading.setAttribute("role", "status");
+    loading.textContent = "正在读取原文章节…";
+    chapterBody.replaceChildren(loading);
+    chapterBody.scrollTop = 0;
+    chapterPreview.showModal();
+    try {
+      const chapter = await load();
+      if (loading.isConnected && chapterPreview.open && ticket === request) {
+        loading.replaceWith(chapterMarkup(chapter, row.entity.name));
+      }
+    } catch {
+      if (loading.isConnected && chapterPreview.open && ticket === request) {
+        loading.textContent = "暂时无法读取完整章节。";
+        const excerpt = document.createElement("p");
+        excerpt.textContent = row.excerpt || "";
+        chapterBody.append(excerpt);
+      }
     }
   }
 
@@ -449,22 +568,17 @@
         for (const entry of entries) {
           if (!entry.isIntersecting) continue;
           observer.unobserve(entry.target);
-          const row = chapters.get(entry.target);
+          const render = chapters.get(entry.target);
           chapters.delete(entry.target);
-          queue = queue.then(() => renderChapter(row, entry.target, ticket));
+          queue = queue.then(render);
         }
       });
       for (const row of rows) {
         const article = document.createElement("article");
         const title = document.createElement("h2");
-        title.textContent = row.entity.name;
         const excerpt = document.createElement("p");
         excerpt.className = "excerpt";
         excerpt.textContent = row.excerpt || "";
-        const link = document.createElement("a");
-        link.textContent = libraryMode ? "在成品库打开原文章节" : row.locator ? "在 Studio 打开原文章节" : "在 Studio 打开版本目录";
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
         article.append(title);
         if (row.documentTitle && row.documentTitle !== row.entity.name) {
           const documentTitle = document.createElement("small");
@@ -472,12 +586,38 @@
           article.append(documentTitle);
         }
         article.append(excerpt);
-        if (navigationLink(link, libraryMode ? row.url : row.studio_url, row.locator)) article.append(link);
-        results.append(article);
         if (row.locator) {
-          chapters.set(excerpt, row);
+          let chapter;
+          const load = () => chapter ??= loadChapter(row, ticket).catch((error) => {
+            chapter = undefined;
+            throw error;
+          });
+          const open = () => showChapterPreview(row, ticket, load);
+          const titleButton = document.createElement("button");
+          titleButton.type = "button";
+          titleButton.className = "preview-title";
+          titleButton.textContent = row.entity.name;
+          titleButton.setAttribute("aria-haspopup", "dialog");
+          titleButton.addEventListener("click", open);
+          title.append(titleButton);
+          const previewButton = document.createElement("button");
+          previewButton.type = "button";
+          previewButton.className = "preview-link";
+          previewButton.textContent = "预览原文章节";
+          previewButton.setAttribute("aria-haspopup", "dialog");
+          previewButton.addEventListener("click", open);
+          article.append(previewButton);
+          chapters.set(excerpt, () => renderChapter(row, excerpt, ticket, load));
           visibleChapters.observe(excerpt);
+        } else {
+          title.textContent = row.entity.name;
+          const link = document.createElement("a");
+          link.textContent = "在 Studio 打开版本目录";
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          if (navigationLink(link, row.studio_url)) article.append(link);
         }
+        results.append(article);
       }
       const count = rows.length ? `找到 ${rows.length} 个章节` : "没有找到匹配章节。";
       const used = libraryResult?.retrieval?.used;
