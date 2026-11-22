@@ -73,12 +73,12 @@ def sidebar_actions():
     }
 
 
-def sidebar_action(name, description, properties, required, *, model_visible=False):
+def sidebar_action(name, description, properties, required, *, model_visible=False, read_only=True, open_world=False):
     return types.Tool(
         name=name,
         description=description,
         inputSchema={"type": "object", "properties": properties, "required": required, "additionalProperties": False},
-        annotations=types.ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False),
+        annotations=types.ToolAnnotations(readOnlyHint=read_only, destructiveHint=False, openWorldHint=open_world),
         _meta={"ui": {"visibility": ["app", "model"] if model_visible else ["app"]}},
     )
 
@@ -106,14 +106,19 @@ async def open_studio(base_url, fragment):
 
 
 @cache
-def sidebar_page():
+def markdown_assets():
     package = files("vks_connect")
     assets = package
     if not assets.joinpath(MARKDOWN_ASSETS[0]).is_file():
         # Editable development installs share the canonical checked-in reader assets.
         assets = Path(__file__).resolve().parents[4] / "services/api/vks_api/reader_assets"
-    page = package.joinpath("sidebar.html").read_text(encoding="utf-8")
-    js, css = (assets.joinpath(name).read_text(encoding="utf-8") for name in MARKDOWN_ASSETS[:2])
+    return tuple(assets.joinpath(name).read_text(encoding="utf-8") for name in MARKDOWN_ASSETS[:2])
+
+
+@cache
+def sidebar_page():
+    page = files("vks_connect").joinpath("sidebar.html").read_text(encoding="utf-8")
+    js, css = markdown_assets()
     return page.replace("<!-- markdown-css -->", f"<style>{css}</style>").replace(
         "<!-- markdown-js -->", f"<script>{js}</script>"
     )

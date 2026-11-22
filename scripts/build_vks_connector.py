@@ -72,7 +72,8 @@ def make_wheel(uv, work):
     source.mkdir(parents=True)
     for module in (PACKAGE / "src/vks_connect").glob("*.py"):
         shutil.copyfile(module, source / module.name)
-    shutil.copyfile(PACKAGE / "src/vks_connect/sidebar.html", source / "sidebar.html")
+    for name in ("sidebar.html", "library_reader.html"):
+        shutil.copyfile(PACKAGE / "src/vks_connect" / name, source / name)
     shutil.copyfile(CATALOG, source / CATALOG.name)
     for name in ("markdown-vendor.js", "markdown-vendor.css", "markdown-licenses.txt"):
         shutil.copyfile(READER_ASSETS / name, source / name)
@@ -176,7 +177,19 @@ def bundle(uv, work, out, source, python, installer, platform_name, model_dir):
     shutil.copyfile(PACKAGE / "licenses/BGE-LICENSE.txt", root / "licenses/BGE-LICENSE.txt")
     shutil.copyfile(REPO / "docs/upgrades/v3.1-plugin/连接器安装与诊断.md", root / "README.md")
     shutil.copyfile(REPO / "docs/upgrades/v3.1-plugin/windows-codex.md", root / "windows-codex.md")
+    shutil.copyfile(REPO / "docs/upgrades/v3.1-plugin/chatgpt-plan.md", root / "chatgpt-plan.md")
     shutil.copytree(work / "frozen/vks-connect", root / "bin", symlinks=True)
+    if os.name == "nt":
+        (root / "Open VKS Library.cmd").write_text(
+            '@echo off\n"%~dp0bin\\vks-connect.exe" library open\n', encoding="ascii"
+        )
+    else:
+        launcher = root / "Open VKS Library.command"
+        launcher.write_text(
+            '#!/bin/sh\ncd -- "$(dirname -- "$0")" || exit 1\nexec ./bin/vks-connect library open\n',
+            encoding="ascii",
+        )
+        launcher.chmod(0o755)
     models = root / "models" / PROFILE
     models.mkdir(parents=True)
     for name in ASSETS:

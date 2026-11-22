@@ -98,6 +98,9 @@
   color: #788996;
   background: #f7f9fa;
 }
+.vks-handbook .hb-search-launch:first-child {
+  margin-top: 16px;
+}
 .vks-handbook kbd {
   font:
     10px Consolas,

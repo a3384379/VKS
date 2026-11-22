@@ -59,7 +59,14 @@
     #status { min-height: 1.6em; }
     #results { display: grid; gap: 10px; }
     article h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
-    article .excerpt { white-space: pre-wrap; overflow-wrap: anywhere; }
+    #offline-search { background: var(--surface); color: var(--accent); }
+    #plan-settings { margin-top: .7rem; }
+    #plan-settings summary, .references summary { cursor: pointer; }
+    #plan-settings .search { align-items: center; }
+    #plan-status, article > small { color: var(--muted); }
+    .references { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+    .references li { margin: .35rem 0; }
+    .rich-markdown .citation { color: var(--accent); padding: 0 .18em; }
     .preview-link, .preview-title {
       border: 0; border-radius: 2px; padding: 0; background: transparent; color: var(--accent);
       text-align: start; text-decoration: underline; text-underline-offset: 3px;
@@ -140,7 +147,19 @@
     <div class="search">
       <input id="query" maxlength="1000" placeholder="输入关键词或完整问题" disabled>
       <button id="submit" type="button" disabled>搜索</button>
+      <button id="offline-search" type="button" hidden disabled>本地检索</button>
     </div>
+    <details id="plan-settings" hidden>
+      <summary>ChatGPT 订阅设置</summary>
+      <p id="plan-status" role="status"></p>
+      <div class="search">
+        <button id="plan-connect" type="button" hidden>使用 ChatGPT 登录</button>
+        <button id="plan-disconnect" type="button" hidden>退出 ChatGPT 连接</button>
+        <a href="https://chatgpt.com/#settings/usage" target="_blank" rel="noopener noreferrer">管理用量</a>
+      </div>
+      <label id="plan-model-label" hidden>订阅模型 <select id="plan-model"></select></label>
+      <label id="plan-consent-label" hidden><input type="checkbox" id="plan-consent"> 允许发送问题和必要的原文章节片段给 OpenAI</label>
+    </details>
     <details id="embedding-settings" hidden>
       <summary>云端向量检索（可选）</summary>
       <p id="embedding-index"></p>
@@ -184,6 +203,10 @@
   const address = byId("studio-address");
   const chapterPreview = byId("chapter-preview");
   const chapterBody = byId("chapter-body");
+  const offlineSearch = byId("offline-search");
+  const planSettings = byId("plan-settings");
+  const planModel = byId("plan-model");
+  const planConsent = byId("plan-consent");
   const rasterTypes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
   const pending = new Map();
   let sequence = 0;
@@ -192,7 +215,8 @@
   let studioBase;
   let libraryMode = false;
   let navigationRequest = 0;
-  let visibleChapters;
+  let planState;
+  let planRevision = 0;
 
   function post(message) {
     window.parent.postMessage({jsonrpc: "2.0", ...message}, "*");
@@ -270,7 +294,6 @@
   async function selectProject() {
     const ticket = ++request;
     chapterPreview.close();
-    visibleChapters?.disconnect();
     scope = undefined;
     query.disabled = submit.disabled = true;
     status.textContent = "";
@@ -299,7 +322,6 @@
     libraryMode = true;
     ++request;
     chapterPreview.close();
-    visibleChapters?.disconnect();
     results.replaceChildren();
     status.textContent = "";
     navigation.hidden = true;
@@ -311,7 +333,8 @@
     byId("embedding-index").textContent = index ? `${index.model} · ${index.dimensions} 维` : "";
     byId("embedding-status").textContent = "";
     byId("project-label").hidden = project.hidden = true;
-    document.querySelector('label[for="query"]').textContent = "搜索成品库";
+    document.querySelector('label[for="query"]').textContent = "向成品库提问";
+    query.placeholder = "输入要分析的问题";
     byId("navigation").setAttribute("aria-label", "成品库链接");
     document.querySelector('label[for="studio-address"]').textContent = "成品库地址";
     pickLibrary.textContent = scope ? "更换成品库" : "选择成品库";
@@ -320,9 +343,82 @@
       ? `${scope.project_name} · ${scope.version} · ${scope.file_name}${localIndex ? " · 本地向量" : ""}`
       : data.message || "请选择本机 VKS 只读成品库 HTML。";
     query.disabled = submit.disabled = !scope;
+    submit.textContent = "AI 分析";
+    offlineSearch.hidden = false;
+    offlineSearch.disabled = !scope;
+    offlineSearch.textContent = "本地检索";
+    resetPlan();
+    if (scope) void updatePlan();
     studio.textContent = "打开成品库";
     studio.hidden = !scope || !navigationLink(studio, scope.file_url, {library_ref: scope.library_ref});
   }
+
+  function resetPlan() {
+    ++planRevision;
+    planState = undefined;
+    planSettings.hidden = !scope;
+    planSettings.open = false;
+    byId("plan-status").textContent = "正在检查 ChatGPT 连接…";
+    for (const id of ["plan-connect", "plan-disconnect", "plan-model-label", "plan-consent-label"]) {
+      byId(id).hidden = true;
+    }
+    planModel.replaceChildren();
+    planConsent.checked = false;
+  }
+
+  async function updatePlan(action = "status") {
+    if (!libraryMode || !scope) return;
+    const ticket = ++planRevision;
+    const library_ref = scope.library_ref;
+    const connect = byId("plan-connect");
+    const disconnect = byId("plan-disconnect");
+    connect.disabled = disconnect.disabled = true;
+    try {
+      const value = await callTool("vks_library_chatgpt_plan", {library_ref, action});
+      if (ticket !== planRevision) return;
+      planState = value;
+      connect.hidden = !value.can_ask || value.connected || value.pending;
+      disconnect.hidden = !value.connected;
+      byId("plan-status").textContent = !value.can_ask
+        ? "请更换支持 AI 问答的成品库。当前可继续本地检索。"
+        : value.pending ? "请在系统浏览器完成授权。"
+        : value.connected ? `当前账号 ${value.account}` : value.message || "登录后可使用自己的 ChatGPT 额度分析。";
+      if (!value.connected || action === "disconnect") {
+        planModel.replaceChildren();
+        planConsent.checked = false;
+      }
+      if (action === "models") {
+        const selected = planModel.value;
+        planModel.replaceChildren(...value.models.map((item) => new Option(item.name, item.id)));
+        if (value.models.some((item) => item.id === selected)) planModel.value = selected;
+        if (!value.models.length) byId("plan-status").textContent = "当前账号没有可用的订阅模型。";
+      }
+      byId("plan-model-label").hidden = !planModel.options.length;
+      byId("plan-consent-label").hidden = !planModel.options.length;
+      if (value.pending) {
+        setTimeout(() => { if (ticket === planRevision) void updatePlan(); }, 1500);
+      } else if (action !== "models" && value.can_ask && value.connected && planSettings.open && !planModel.options.length) {
+        void updatePlan("models");
+      }
+    } catch (error) {
+      if (ticket === planRevision) byId("plan-status").textContent = error.message;
+    } finally {
+      if (ticket === planRevision) connect.disabled = disconnect.disabled = false;
+    }
+  }
+
+  planSettings.addEventListener("toggle", () => {
+    if (planSettings.open && planState?.connected && planState.can_ask && !planModel.options.length) void updatePlan("models");
+  });
+  byId("plan-connect").addEventListener("click", (event) => {
+    if (event.isTrusted) void updatePlan("connect");
+  });
+  byId("plan-disconnect").addEventListener("click", (event) => {
+    if (event.isTrusted) void updatePlan("disconnect");
+  });
+  byId("cloud-search").addEventListener("change", (event) => {
+    offlineSearch.textContent = event.target.checked ? "云端检索" : "本地检索";
+  });
 
   byId("embedding-save").addEventListener("click", async (event) => {
     if (!event.isTrusted || !scope?.vector_index) return;
@@ -368,6 +464,14 @@
       scopeLabel.textContent = result.structuredContent?.error?.message || "无法读取工作台，请重新打开。";
       return;
     }
+    libraryMode = false;
+    ++planRevision;
+    planSettings.hidden = offlineSearch.hidden = true;
+    byId("embedding-settings").hidden = true;
+    byId("project-label").hidden = project.hidden = false;
+    submit.textContent = "搜索";
+    document.querySelector('label[for="query"]').textContent = "搜索保存版本";
+    query.placeholder = "输入关键词或完整问题";
     try {
       const url = new URL(data.studioBaseUrl);
       const loopback = ["localhost", "[::1]"].includes(url.hostname) || /^127(?:\.\d{1,3}){3}$/.test(url.hostname);
@@ -491,20 +595,6 @@
     return chapter;
   }
 
-  async function renderChapter(row, body, ticket, load) {
-    if (ticket !== request) return;
-    try {
-      const chapter = await load();
-      if (ticket !== request) return;
-      body.replaceWith(chapterMarkup(chapter, row.entity.name));
-    } catch {
-      if (ticket !== request) return;
-      const message = document.createElement("small");
-      message.textContent = libraryMode ? "当前仅显示摘要，可打开成品库阅读完整章节。" : "当前仅显示检索摘要，可在 Studio 阅读完整章节。";
-      body.append(document.createElement("br"), message);
-    }
-  }
-
   byId("chapter-close").addEventListener("click", () => chapterPreview.close());
   chapterPreview.addEventListener("close", () => {
     if (!chapterPreview.open) chapterBody.replaceChildren();
@@ -533,10 +623,111 @@
     } catch {
       if (loading.isConnected && chapterPreview.open && ticket === request) {
         loading.textContent = "暂时无法读取完整章节。";
-        const excerpt = document.createElement("p");
-        excerpt.textContent = row.excerpt || "";
-        chapterBody.append(excerpt);
       }
+    }
+  }
+
+  function previewAction(row, ticket) {
+    let chapter;
+    const load = () => chapter ??= loadChapter(row, ticket).catch((error) => {
+      chapter = undefined;
+      throw error;
+    });
+    return () => {
+      if (ticket === request && !chapterPreview.open) void showChapterPreview(row, ticket, load);
+    };
+  }
+
+  function previewButton(label, css, open) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = css;
+    button.textContent = label;
+    button.setAttribute("aria-haspopup", "dialog");
+    button.addEventListener("click", open);
+    return button;
+  }
+
+  function libraryRow(row, libraryRef) {
+    return {
+      entity: {name: row.title}, documentTitle: row.document_title, url: row.file_url,
+      locator: {library_ref: libraryRef, section_id: row.section_id},
+    };
+  }
+
+  function renderAnalysis(data, ticket, libraryRef) {
+    const article = document.createElement("article");
+    const heading = document.createElement("h2");
+    heading.textContent = "AI 分析";
+    const answer = window.VksReaderMarkdown.render(data.answer);
+    const references = new Map(data.sources.map((source) => [source.number, {
+      source, open: previewAction(libraryRow(source, libraryRef), ticket),
+    }]));
+    // The model does not choose link destinations. Only cited, validated VKS sections have actions.
+    for (const link of answer.querySelectorAll("a")) link.replaceWith(...link.childNodes);
+    const walker = document.createTreeWalker(answer, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) {
+      if (!walker.currentNode.parentElement.closest("pre, code, .katex")) nodes.push(walker.currentNode);
+    }
+    for (const node of nodes) {
+      const parts = node.textContent.split(/(\[\d{1,3}\])/g);
+      if (parts.length === 1) continue;
+      node.replaceWith(...parts.map((part, i) => {
+        const item = i % 2 ? references.get(Number(part.slice(1, -1))) : null;
+        if (!item) return document.createTextNode(part);
+        const button = previewButton(part, "preview-link citation", item.open);
+        button.setAttribute("aria-label", `预览引用 ${part} ${item.source.title}`);
+        return button;
+      }));
+    }
+    article.append(heading, answer);
+    if (references.size) {
+      const details = document.createElement("details");
+      details.className = "references";
+      const summary = document.createElement("summary");
+      summary.textContent = `原文引用（${references.size}）`;
+      const list = document.createElement("ul");
+      for (const [number, {source, open}] of references) {
+        const item = document.createElement("li");
+        item.append(previewButton(`[${number}] ${source.title}`, "preview-link", open));
+        list.append(item);
+      }
+      details.append(summary, list);
+      article.append(details);
+    }
+    results.append(article);
+  }
+
+  function setBusy(busy) {
+    submit.disabled = offlineSearch.disabled = busy || !scope;
+  }
+
+  async function analyze() {
+    const question = query.value.trim();
+    if (!scope || !question || submit.disabled) return;
+    if (!planState?.can_ask || !planState.connected || !planModel.value || !planConsent.checked) {
+      planSettings.open = true;
+      status.textContent = planState?.can_ask === false ? "当前成品库可使用本地检索。"
+        : "请先确认 ChatGPT 连接、模型和资料发送许可。";
+      return;
+    }
+    const ticket = ++request;
+    const library_ref = scope.library_ref;
+    setBusy(true);
+    status.textContent = "正在分析…";
+    results.replaceChildren();
+    try {
+      const data = await callTool("analyze_vks_library", {
+        library_ref, question, model: planModel.value, allow_external: true,
+      }, 155000);
+      if (ticket !== request) return;
+      renderAnalysis(data, ticket, library_ref);
+      status.textContent = data.used_model === false ? "没有找到可用于分析的章节" : "分析完成 · 使用 ChatGPT 额度";
+    } catch (error) {
+      if (ticket === request) status.textContent = error.message;
+    } finally {
+      if (ticket === request) setBusy(false);
     }
   }
 
@@ -545,8 +736,7 @@
     const term = query.value.trim();
     if (!scope || !term || submit.disabled) return;
     const ticket = ++request;
-    visibleChapters?.disconnect();
-    submit.disabled = true;
+    setBusy(true);
     status.textContent = "正在检索…";
     results.replaceChildren();
     try {
@@ -555,60 +745,22 @@
         library_ref: libraryRef, query: term, limit: 8,
         retrieval_mode: byId("cloud-search").checked ? "hybrid" : "auto",
       }) : null;
-      const rows = libraryResult ? libraryResult.data.map((row) => ({
-        entity: {name: row.title}, documentTitle: row.document_title, excerpt: row.excerpt, url: row.file_url,
-        locator: {library_ref: libraryRef, section_id: row.section_id},
-      })) : await callTool("search_knowledge", {
+      const rows = libraryResult ? libraryResult.data.map((row) => libraryRow(row, libraryRef)) : await callTool("search_knowledge", {
         ...scope, query: term, retrieval_mode: "keyword", kinds: ["section"], limit: 8,
       });
       if (ticket !== request) return;
-      const chapters = new Map();
-      let queue = Promise.resolve();
-      visibleChapters = new IntersectionObserver((entries, observer) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          observer.unobserve(entry.target);
-          const render = chapters.get(entry.target);
-          chapters.delete(entry.target);
-          queue = queue.then(render);
-        }
-      });
       for (const row of rows) {
         const article = document.createElement("article");
         const title = document.createElement("h2");
-        const excerpt = document.createElement("p");
-        excerpt.className = "excerpt";
-        excerpt.textContent = row.excerpt || "";
         article.append(title);
         if (row.documentTitle && row.documentTitle !== row.entity.name) {
           const documentTitle = document.createElement("small");
           documentTitle.textContent = row.documentTitle;
           article.append(documentTitle);
         }
-        article.append(excerpt);
         if (row.locator) {
-          let chapter;
-          const load = () => chapter ??= loadChapter(row, ticket).catch((error) => {
-            chapter = undefined;
-            throw error;
-          });
-          const open = () => showChapterPreview(row, ticket, load);
-          const titleButton = document.createElement("button");
-          titleButton.type = "button";
-          titleButton.className = "preview-title";
-          titleButton.textContent = row.entity.name;
-          titleButton.setAttribute("aria-haspopup", "dialog");
-          titleButton.addEventListener("click", open);
-          title.append(titleButton);
-          const previewButton = document.createElement("button");
-          previewButton.type = "button";
-          previewButton.className = "preview-link";
-          previewButton.textContent = "预览原文章节";
-          previewButton.setAttribute("aria-haspopup", "dialog");
-          previewButton.addEventListener("click", open);
-          article.append(previewButton);
-          chapters.set(excerpt, () => renderChapter(row, excerpt, ticket, load));
-          visibleChapters.observe(excerpt);
+          const open = previewAction(row, ticket);
+          title.append(previewButton(row.entity.name, "preview-title", open));
         } else {
           title.textContent = row.entity.name;
           const link = document.createElement("a");
@@ -638,12 +790,16 @@
     } catch (error) {
       if (ticket === request) status.textContent = error.message;
     } finally {
-      if (ticket === request) submit.disabled = false;
+      if (ticket === request) setBusy(false);
     }
   }
-  submit.addEventListener("click", search);
+  function submitQuery(event) {
+    if (event.isTrusted) void (libraryMode ? analyze() : search());
+  }
+  submit.addEventListener("click", submitQuery);
+  offlineSearch.addEventListener("click", (event) => { if (event.isTrusted) void search(); });
   query.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.isComposing) search();
+    if (event.key === "Enter" && !event.isComposing) submitQuery(event);
   });
 
   rpc("ui/initialize", {

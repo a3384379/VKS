@@ -85,6 +85,7 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
     """Read an immutable release using the same closure as Studio, before names."""
     from .explanation_batches import saved_explanations
     from .materials import ROOT, roots
+    from .reading import artifact_policy
 
     links = InteractiveKnowledgeService(service)
     _, release, choices, _ = links.reader.scope(s, actor, pid, None, release_id)
@@ -131,6 +132,21 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
     documents = []
     missing_images = 0
     section_ids = set()
+    model_section_ids = set()
+    model_artifacts = {}
+
+    def model_eligible(artifact_id):
+        if not artifact_id:
+            return False
+        if artifact_id not in model_artifacts:
+            artifact = s.get(Artifact, artifact_id)
+            policy = artifact_policy(s, artifact)
+            model_artifacts[artifact_id] = bool(
+                artifact and artifact.sensitivity != "confidential" and artifact.kind not in {"source", "trace", "capture"}
+                and not policy.get("requires_source_read") and not policy.get("requires_trace_read")
+            )
+        return model_artifacts[artifact_id]
+
     for entity, row in rows.values():
         if entity.type != "document":
             continue
@@ -140,6 +156,10 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
         sections = [{**c, "id": c["revision_id"], "title": c["name"]} for c in projected["sections"]]
         if not sections:
             continue
+        if model_eligible(row.artifact_id):
+            model_section_ids.update(
+                section["id"] for section in sections if model_eligible(rows[section["id"]][1].artifact_id)
+            )
         material = mounted_documents.get(row.metadata_json.get("material_package_id"), {})
         images, image_dependencies, absent = document_images(
             service,
@@ -301,6 +321,7 @@ def projection(service, s, actor, pid, release_id, caps, document_mode="project"
         + native_warnings,
         # Recipient chooses their own connection. Never serialize publisher settings.
         "ai": {"base_url": "https://api.openai.com/v1", "protocol": "responses", "model": ""},
+        "chatgpt_plan": {"section_ids": sorted(model_section_ids)},
     }
     deps = {
         "_export_revision_ids": sorted(revisions),
@@ -353,17 +374,22 @@ def html_library(payload, *, encoded=None):
 
 
 def recent_local_exports(s, job):
-    release = Job.input_json["release_id"].as_string() == job.input_json["release_id"]
+    return local_export_objects(s, job.project_id, job.created_by, job.input_json["release_id"])
+
+
+def local_export_objects(s, project_id, actor_id, release_id, *, exact=False):
+    release = Job.input_json["release_id"].as_string() == release_id
     # Use this actor's server-generated products as inputs to the newly authorized projection.
     return s.execute(
         select(Job.input_json, Job.result_json["object_key"].as_string())
         .where(
-            Job.project_id == job.project_id,
-            Job.created_by == job.created_by,
+            Job.project_id == project_id,
+            Job.created_by == actor_id,
             Job.kind == "export",
             Job.state == "succeeded",
             Job.input_json["format"].as_string() == "readonly_html",
             Job.input_json["local_vectors"].as_boolean().is_(True),
+            *([release] if exact else []),
         )
         .order_by(release.desc(), Job.created_at.desc(), Job.id.desc())
         .limit(8)

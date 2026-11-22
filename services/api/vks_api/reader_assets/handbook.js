@@ -35,6 +35,7 @@
       docFilter,
       docList,
       docScroll,
+      showBrand,
       getState,
       onOpen,
       onOverview,
@@ -63,11 +64,14 @@
 
     const sidebar = element("aside", "hb-sidebar");
     sidebar.setAttribute("aria-label", "手册目录");
-    const brand = action("", onOverview, "hb-brand", "手册总览");
-    brand.append(element("span", "hb-brand-mark", [...projectName][0] || "知"));
-    const brandTitle = element("span", "", projectName);
-    brandTitle.append(element("small", "", "PROJECT KNOWLEDGE BASE"));
-    brand.append(brandTitle);
+    if (showBrand) {
+      const brand = action("", onOverview, "hb-brand", "手册总览");
+      brand.append(element("span", "hb-brand-mark", [...projectName][0] || "知"));
+      const brandTitle = element("span", "", projectName);
+      brandTitle.append(element("small", "", "PROJECT KNOWLEDGE BASE"));
+      brand.append(brandTitle);
+      sidebar.append(brand);
+    }
     const search = action(
       "⌕　搜索全文",
       onSearch,
@@ -98,7 +102,6 @@
       element("span", "", `v1.0.0 · ${documents.length} 篇`),
     );
     sidebar.append(
-      brand,
       search,
       sourcePicker,
       categoryName,

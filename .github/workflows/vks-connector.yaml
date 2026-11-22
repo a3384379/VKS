@@ -28,6 +28,20 @@ jobs:
         with: { python-version: '3.12' }
       - uses: astral-sh/setup-uv@v6
         with: { enable-cache: true }
+      - name: Statically link OpenSSL for Intel macOS cryptography
+        if: matrix.platform == 'macos-x64'
+        shell: bash
+        run: |
+          # The Intel cryptography source build must not share Python's older
+          # libssl.3.dylib after PyInstaller relocates the package.
+          prefix="$(brew --prefix openssl@3)"
+          test -f "$prefix/lib/libssl.a"
+          test -f "$prefix/lib/libcrypto.a"
+          {
+            printf 'OPENSSL_DIR=%s\n' "$prefix"
+            printf 'OPENSSL_STATIC=1\n'
+            printf 'UV_CACHE_DIR=%s/vks-intel-static-uv\n' "$RUNNER_TEMP"
+          } >> "$GITHUB_ENV"
       - name: Build and verify isolated wheel and relocated native package
         run: python scripts/build_vks_connector.py --native ${{ matrix.platform }}
       - name: Check native private file storage and live HTTP diagnostics

@@ -137,6 +137,11 @@ class Library:
             for sid in references:
                 self.section_bindings[sid].append(bid)
         self.vectors = LibraryVectors.read(payload.get("rag"), self.sections)
+        plan = payload.get("chatgpt_plan")
+        eligible = plan.get("section_ids") if isinstance(plan, dict) else None
+        self.plan_sections = frozenset(
+            sid for sid in eligible if isinstance(sid, str) and sid in self.sections
+        ) if isinstance(eligible, list) else frozenset()
         local = payload.get("local_rag")
         self.local_vectors = None
         if isinstance(local, dict) and (local.get("profile"), local.get("model"), local.get("dimensions")) == (
@@ -180,13 +185,15 @@ class Library:
             "file_url": self.url(sid),
         }
 
-    def search(self, query, limit, vector=None, *, index=None):
+    def search(self, query, limit, vector=None, *, index=None, eligible=None):
         query = normalized(query).strip()
         if not query:
             return []
         query_terms = set(terms(query))
         scored = []
         for sid, section in self.sections.items():
+            if eligible is not None and sid not in eligible:
+                continue
             score = sum(
                 (1 + math.log(section.counts[term])) / (1 + len(section.indexed_text) / 2400)
                 + (4 if term in section.indexed_title else 0)
@@ -202,7 +209,7 @@ class Library:
         candidates = max(30, limit * 2)
         lexical = [sid for _, sid in sorted(scored)[:candidates]]
         index = index if index is not None else self.vectors
-        semantic = index.rank(vector, candidates) if vector is not None and index else []
+        semantic = index.rank(vector, candidates, eligible=eligible) if vector is not None and index else []
         ranking = lexical
         if semantic:
             fusion = defaultdict(float)

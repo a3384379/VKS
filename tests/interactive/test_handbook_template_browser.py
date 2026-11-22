@@ -76,6 +76,8 @@ def test_handbook_cover_exact_navigation_fulltext_callbacks_and_readonly(tmp_pat
             page.goto(url)
             book = page.get_by_role("region", name="知识手册阅读模板")
             expect(book.get_by_role("heading", name="Synthetic Atlas 项目知识手册")).to_be_visible()
+            expect(book.locator(".hb-sidebar .hb-brand")).to_have_count(0)
+            expect(book.locator(".hb-sidebar > :first-child")).to_have_attribute("aria-label", "搜索全文")
             page.screenshot(path=str(tmp_path / "handbook-overview.png"))
             assert page.evaluate("window.loads") == [], "Template overview must not load all article bodies"
             expect(book.get_by_text("Hidden category", exact=True)).to_have_count(0)

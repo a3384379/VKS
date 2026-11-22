@@ -357,3 +357,90 @@ def test_persisted_explanation_expires_when_generation_contract_changes(assistan
         monkeypatch.setattr(interactive_ai, "SCHEMA", schema)
     repeated = interactive_ai.InteractiveAssistant(service).run(owner, pid, form)
     assert not repeated["cached"] and len(calls) == 2
+
+
+def test_chatgpt_plan_is_explicit_local_and_read_only(assistant, monkeypatch):
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+    from vks_api import chatgpt_plan
+    from vks_connect.chatgpt_plan import responses_body
+
+    (web, service, _owner, pid, aid, grant, _package, section, _), body, _ = assistant
+    origin = "http://127.0.0.1:5193"
+    service.studio_base_url = origin + "/"
+    service.personal_mode = True
+    monkeypatch.setenv("VKS_CHATGPT_LOCAL", "1")
+    profile = {"profile_id": "authorized-profile", "connected": True, "account": "synthetic@example.test",
+               "pending": False, "message": ""}
+    calls, settings = [], {}
+
+    class Runtime:
+        def claim_studio(self, owner):
+            settings["studio-owner"] = {"owner": owner}
+            return True
+
+        def setting(self, key, value=None):
+            if value is not None:
+                settings[key] = value
+            return settings.get(key, {})
+
+        def begin(self):
+            return {}
+
+        def status(self):
+            return profile.copy()
+
+        def models(self, selected):
+            assert selected == profile["profile_id"]
+            return [{"id": "synthetic-plan", "name": "Synthetic model"}]
+
+        def generate(self, selected, request, **_):
+            assert selected == profile["profile_id"]
+            payload = responses_body(request)
+            calls.append(payload)
+            assert payload["model"] == "synthetic-plan"
+            assert payload["input"][0]["role"] == "developer" and payload["store"] is False
+            return response(section["entity_revision_id"])
+
+    runtime = Runtime()
+    monkeypatch.setattr(chatgpt_plan, "runtime", lambda _: runtime)
+    monkeypatch.setattr(ai_gateway, "request_model", ai_gateway._request_model)
+    session, owner = service.login(service.bootstrap_token)
+    client = TestClient(web.app, base_url=origin, client=("127.0.0.1", 43210))
+    client.cookies.set("vks_session", session)
+    headers = {"Origin": origin, "X-CSRF-Token": owner.csrf_token}
+    manage = f"/api/v3/projects/{pid}/chatgpt-plan"
+    monkeypatch.setattr(chatgpt_plan, "sys", SimpleNamespace(platform="linux"))
+    unavailable = client.post(manage, json={"action": "connect"}, headers=headers)
+    assert unavailable.status_code == 200 and unavailable.json()["data"] == {"available": False}
+    assert not settings
+    monkeypatch.setattr(chatgpt_plan, "sys", SimpleNamespace(platform="darwin"))
+    connected = client.post(manage, json={"action": "connect"}, headers=headers)
+    assert connected.status_code == 200 and connected.json()["data"]["connected"], connected.text
+    enabled = client.post(manage, json={"action": "enable", "model": "synthetic-plan", "allow_external": True},
+                          headers=headers)
+    assert enabled.status_code == 200 and enabled.json()["data"]["enabled"], enabled.text
+    ask = {**body, "question": "What is the rule for Add?"}
+    plan_headers = {**headers, "X-VKS-Model-Access": "chatgpt-plan"}
+    denied = client.post(root(pid) + "/questions", json=ask,
+                         headers={**plan_headers, "Origin": "http://example.test"})
+    assert denied.status_code == 403 and not calls
+    denied = client.post(root(pid) + "/questions", json=ask, headers={
+        **_headers(grant, 0, "plan-denied"), "Origin": origin, "X-VKS-Model-Access": "chatgpt-plan",
+    })
+    assert denied.status_code == 403 and not calls
+    answer = client.post(root(pid) + "/questions", json=ask, headers=plan_headers)
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["data"]["model_id"] == "synthetic-plan"
+    assert answer.json()["data"]["sections"]
+    streamed = client.post(root(pid) + "/conversation", json={**body, "question": "导出项目"},
+                           headers={**plan_headers, "Accept": "text/event-stream", "Idempotency-Key": "plan-chat"})
+    assert "event: complete" in streamed.text and '"operations": []' in streamed.text, streamed.text
+    explain = client.post(root(pid) + "/explain", headers=plan_headers, json=body)
+    assert explain.status_code == 200 and explain.json()["data"]["model_id"] == "synthetic-plan", explain.text
+    assert len(calls) == 3
+    assert not web.get(root(pid) + "/bindings", params={"analysis_set_id": aid}, headers=_headers(grant, 0, "read")).json()["data"]
+    client.post(manage, json={"action": "disable"}, headers=headers)
+    refused = client.post(root(pid) + "/questions", json=ask, headers=plan_headers)
+    assert refused.status_code == 409 and len(calls) == 3

@@ -212,6 +212,16 @@ def _request_model(config, body):
     from .model_stream import CURRENT_MODEL_STREAM, request_stream
 
     stream = CURRENT_MODEL_STREAM.get()
+    if profile := config.get("_chatgpt_plan"):
+        from .chatgpt_plan import domain_error, runtime
+        from vks_connect.chatgpt_plan import PlanError
+
+        try:
+            return runtime(os.getenv("VKS_CONNECT_CONFIG_DIR")).generate(
+                profile, body, **({"check": stream.check, "preview": stream.preview} if stream else {})
+            )
+        except PlanError as exc:
+            raise domain_error(exc) from exc
     if stream is not None and config["protocol"] in {"responses", "chat_completions"}:
         return request_stream(config, body, stream)
     search_call = config.get("_search_call")
@@ -953,6 +963,8 @@ def install_ai(app, service, actor, envelope, API="/api/v1"):
         return envelope(request, ai.usage(a, pid))
 
     from .model_connections import install_connections
+    from .chatgpt_plan import install_chatgpt_plan
 
     install_connections(app, service, actor, envelope)
+    install_chatgpt_plan(app, service, actor, envelope)
     return ai

@@ -564,13 +564,6 @@ export function HandbookTemplate({
       style={{ "--hb-accent": settings.accent } as CSSProperties}
     >
       <aside className="hb-sidebar" aria-label="当前分类目录">
-        <button className="hb-brand" onClick={overview}>
-          <span className="hb-brand-mark">{settings.brand}</span>
-          <span>
-            {settings.title}
-            <small>{settings.subtitle}</small>
-          </span>
-        </button>
         <button
           className="hb-search-launch"
           aria-label="搜索全文"

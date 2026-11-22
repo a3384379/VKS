@@ -14,6 +14,7 @@ from .service import DomainError
 
 
 def conversation_response(request, tools, actor, pid, form, key):
+    from .chatgpt_plan import CURRENT_PLAN
     from .conversation_tools import ConversationOutput, intent
 
     pending = queue.Queue(maxsize=64)
@@ -29,7 +30,7 @@ def conversation_response(request, tools, actor, pid, form, key):
         state.check()
 
     state = ModelStream(emit)
-    operation = intent(form.question)
+    operation = None if CURRENT_PLAN.get() else intent(form.question)
 
     def work():
         token = CURRENT_MODEL_STREAM.set(state) if not operation else None

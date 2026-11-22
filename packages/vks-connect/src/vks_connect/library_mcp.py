@@ -14,8 +14,10 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
+from .chatgpt_plan import PlanError, PlanSession
 from .credentials import CredentialError
 from .library import LibraryError
+from .library_analysis import analyze_library
 from .library_embeddings import DEFAULT_ENDPOINT, EmbeddingSettings, LibraryEmbeddings
 from .local_embeddings import LocalModelError, local_query, model_directory
 from .sidebar import SIDEBAR_TOOL, open_browser_url, register_sidebar, sidebar_action, sidebar_tool
@@ -28,6 +30,8 @@ PICK = "choose_vks_library"
 OPEN = "open_vks_library"
 IMAGE = "read_vks_library_image"
 CONFIGURE = "configure_vks_library_embedding"
+PLAN = "vks_library_chatgpt_plan"
+ANALYZE = "analyze_vks_library"
 
 MAC_PICKER = 'POSIX path of (choose file with prompt "选择 VKS 只读成品库 HTML" of type {"public.html"})'
 WINDOWS_PICKER = """
@@ -187,12 +191,42 @@ def library_tools():
             sidebar_action(name, description, properties, required, model_visible=visible)
             for name, description, properties, required, visible in descriptors
         ],
+        sidebar_action(
+            PLAN, "在 VKS 面板管理本机 ChatGPT 订阅连接。",
+            {**frozen, "action": {"enum": ["status", "connect", "models", "disconnect"]}},
+            ["library_ref", "action"], read_only=False, open_world=True,
+        ),
+        sidebar_action(
+            ANALYZE, "按用户的明确请求，对选定成品库中获准使用的章节做带引用的 AI 分析。",
+            {**frozen, "question": {"type": "string", "minLength": 1, "maxLength": 2000},
+             "model": {"type": "string", "minLength": 1, "maxLength": 160},
+             "allow_external": {"const": True}},
+            ["library_ref", "question", "model", "allow_external"], open_world=True,
+        ),
     ]
 
 
-def create_library_server(store, version, embedding=None):
+async def open_library_section(library, section, directory):
+    destination = library.path
+    if section is not None:
+        # A local redirect preserves the fragment when the OS opens the file.
+        target = escape(library.url(section), quote=True)
+        with NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".html", dir=directory, delete=False) as link:
+            link.write(
+                '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
+                "<title>打开成品库原文章节</title>"
+                f'<meta http-equiv="refresh" content="0;url={target}">'
+                f'<a href="{target}">打开成品库原文章节</a></html>'
+            )
+            destination = Path(link.name)
+    await open_browser_url(str(destination) if sys.platform == "win32" else destination.as_uri())
+
+
+def create_library_server(store, version, embedding=None, plan=None):
     embedding = embedding or LibraryEmbeddings(store.preference_path.with_suffix(".embedding.json"))
+    plan = plan or PlanSession(store.preference_path.parent)
     local_capacity = anyio.CapacityLimiter(1)
+    analysis_capacity = anyio.CapacityLimiter(1)
 
     @asynccontextmanager
     async def lifespan(_server):
@@ -231,11 +265,37 @@ def create_library_server(store, version, embedding=None):
                     return ok({"cancelled": True})
                 library = await anyio.to_thread.run_sync(store.select, path)
                 return ok(library.context())
-            if name not in {CONTEXT, SEARCH, SECTION, BINDINGS, OPEN, IMAGE, CONFIGURE}:
+            if name not in {CONTEXT, SEARCH, SECTION, BINDINGS, OPEN, IMAGE, CONFIGURE, PLAN, ANALYZE}:
                 raise LibraryError("该工具不在成品库的只读范围。", "VKS_READONLY_PROFILE")
             library = await anyio.to_thread.run_sync(store.current, arguments.get("library_ref"))
             if name == CONTEXT:
                 return ok(library.context())
+            if name == PLAN:
+                action = arguments["action"]
+
+                def apply_plan():
+                    if action in {"connect", "models"} and not library.plan_sections:
+                        raise PlanError("VKS_LIBRARY_PLAN_UNAVAILABLE", "请用支持 AI 问答的 Studio 重新导出成品库。")
+                    if action == "connect":
+                        plan.begin()
+                    elif action == "disconnect":
+                        plan.disconnect()
+                    state = plan.status()
+                    profile = state.pop("profile_id")
+                    models = plan.models(profile) if action == "models" else []
+                    store.current(library.ref)
+                    return {**state, "can_ask": bool(library.plan_sections), "models": models}
+
+                return ok(await anyio.to_thread.run_sync(apply_plan))
+            if name == ANALYZE:
+                def analyze():
+                    def check_scope():
+                        store.current(library.ref)
+                        anyio.from_thread.check_cancelled()
+
+                    return analyze_library(library, plan, arguments, check_scope)
+
+                return ok(await anyio.to_thread.run_sync(analyze, limiter=analysis_capacity))
             if name == CONFIGURE:
                 if library.vectors is None:
                     raise LibraryError("此成品库没有可用的向量索引。", "VKS_EMBEDDING_INDEX_MISSING")
@@ -295,26 +355,12 @@ def create_library_server(store, version, embedding=None):
             if name == IMAGE:
                 media, data = library.image(section, arguments["path"])
                 return types.CallToolResult(content=[types.ImageContent(type="image", data=data, mimeType=media)])
-            destination = library.path
-            if section is not None:
-                # File associations can hand the browser a path stripped of the URL
-                # fragment. Navigate from a local HTML page so the browser gets it intact.
-                target = escape(library.url(section), quote=True)
-                with NamedTemporaryFile(
-                    mode="w", encoding="utf-8", suffix=".html",
-                    dir=server.request_context.lifespan_context, delete=False,
-                ) as link:
-                    link.write(
-                        '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
-                        "<title>打开成品库原文章节</title>"
-                        f'<meta http-equiv="refresh" content="0;url={target}">'
-                        f'<a href="{target}">打开成品库原文章节</a></html>'
-                    )
-                    destination = Path(link.name)
-            await open_browser_url(str(destination) if sys.platform == "win32" else destination.as_uri())
+            await open_library_section(library, section, server.request_context.lifespan_context)
             return ok({"requested": True})
-        except LibraryError as error:
+        except (LibraryError, PlanError) as error:
             return failure(error)
+        except CredentialError:
+            return failure(LibraryError("系统密钥库未能读取或更新 ChatGPT 连接。", "VKS_CHATGPT_CREDENTIAL"))
         except (OSError, TimeoutError, subprocess.CalledProcessError, UnicodeError):
             return failure(LibraryError("本机操作失败，请检查文件路径和打开权限。", "VKS_LIBRARY_LOCAL_ERROR"))
 

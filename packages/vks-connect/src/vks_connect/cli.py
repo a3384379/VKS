@@ -141,8 +141,8 @@ def build_parser():
     source.add_argument("--codex-library", action="store_true", help="读取本机成品库并启用 Codex 左栏")
     connection_arguments(mcp)
 
-    library = commands.add_parser("library", help="选择或查看本机成品库")
-    library.add_argument("operation", choices=("use", "status"))
+    library = commands.add_parser("library", help="选择、查看或打开本机成品库")
+    library.add_argument("operation", choices=("use", "status", "open"))
     library.add_argument("file", type=Path, nargs="?")
     connection_arguments(library)
 
@@ -213,12 +213,16 @@ def main(argv=None):
             store = LibraryStore(path.with_suffix(".library.json"))
             if args.action == "mcp":
                 asyncio.run(run_library_stdio(store, VERSION))
+            elif args.operation == "open":
+                from .library_reader import open_reader
+
+                open_reader(args.file, Path(root))
             elif args.operation == "use" and args.file is not None:
                 print(json.dumps(store.select(args.file).context(), ensure_ascii=False, indent=2))
             elif args.operation == "status" and args.file is None:
                 print(json.dumps(store.current().context(), ensure_ascii=False, indent=2))
             else:
-                raise ValueError("用法：library use <成品库 HTML 路径> 或 library status")
+                raise ValueError("用法：library use <成品库 HTML 路径>、library status 或 library open [成品库 HTML 路径]")
             return 0
         if args.action == "configure":
             runtime = args.runtime_url

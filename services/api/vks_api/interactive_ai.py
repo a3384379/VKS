@@ -494,11 +494,21 @@ class InteractiveAssistant:
             if not package:
                 failure("VKS_NOT_FOUND", "当前版本中没有可读取的原型", 404)
             policy = s.scalar(select(ModelPolicy).where(ModelPolicy.project_id == pid))
-            if for_model and (
+            from .chatgpt_plan import current_selection
+
+            selected_plan = current_selection(actor, pid) if isinstance(form, (InteractiveQuestionInput, ExplanationInput)) else None
+            if for_model and not selected_plan and (
                 not policy or not policy.settings.get("enabled") or not policy.settings.get("allow_external")
             ):
                 failure("VKS_MODEL_NOT_CONFIGURED", "请在 AI 设置中保存并启用模型，允许使用本项目获授权的相关内容", 503)
             config = PolicyInput.model_validate(policy.settings if policy else {}).model_dump()
+            if selected_plan:
+                config.update(
+                    enabled=True, allow_external=True, allow_source=False, protocol="responses",
+                    endpoint="https://api.openai.com/v1", model_id=selected_plan["model"], secret_ref=None,
+                    input_rate_micro_per_million=0, output_rate_micro_per_million=0,
+                    _chatgpt_plan=selected_plan["profile_id"],
+                )
             if not isinstance(form, (InteractiveQuestionInput, ExplanationInput)):
                 config = association_policy(config)
             original = (
@@ -1254,6 +1264,7 @@ class InteractiveAssistant:
         )
         if (
             not fixed_sections
+            and not config.get("_chatgpt_plan")
             and (not question or form.retrieval_mode != "keyword")
             and self.rag.available(actor, pid, chapters)
         ):
@@ -1262,6 +1273,13 @@ class InteractiveAssistant:
             except DomainError as e:
                 if e.code not in {"VKS_DEPENDENCY_UNAVAILABLE", "VKS_LIMIT_EXCEEDED"}:
                     raise
+        if config.get("_chatgpt_plan") and not fixed_sections and form.release_id:
+            from .chatgpt_plan import rerank_saved_chapters
+
+            candidates = rerank_saved_chapters(
+                self.service, actor, pid, form.release_id, retrieval_form.context.section_title or form.target.label,
+                chapters, candidates,
+            )
         previous_preview = None
         original_for_model = current
         required_sections = set()
@@ -1898,7 +1916,10 @@ def install_interactive_ai(app, service, actor, envelope):
 
     @app.post("/api/v3/projects/{pid}/interactive/explain", response_model=PrototypeEnvelope[AssistanceOutput])
     def explain(pid: str, payload: ExplanationInput, request: Request, a: Annotated[Actor, Depends(actor)]):
-        return envelope(request, run_generation(a, pid, payload))
+        from .chatgpt_plan import studio_plan
+
+        with studio_plan(service, request, a, pid):
+            return envelope(request, run_generation(a, pid, payload))
 
     @app.post("/api/v3/projects/{pid}/interactive/reassociate", response_model=PrototypeEnvelope[ReassociationOutput])
     def reassociate(pid: str, payload: ReassociationInput, request: Request, a: Annotated[Actor, Depends(actor)]):
@@ -1926,4 +1947,7 @@ def install_interactive_ai(app, service, actor, envelope):
     @app.post("/api/v3/projects/{pid}/interactive/questions", response_model=PrototypeEnvelope[AssistanceOutput])
     def question(pid: str, payload: InteractiveQuestionInput, request: Request, a: Annotated[Actor, Depends(actor)]):
         # Answers are ephemeral: never write a conversation into a prototype binding.
-        return envelope(request, shared.run(a, pid, payload))
+        from .chatgpt_plan import studio_plan
+
+        with studio_plan(service, request, a, pid):
+            return envelope(request, shared.run(a, pid, payload))

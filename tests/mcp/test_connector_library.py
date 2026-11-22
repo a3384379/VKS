@@ -28,8 +28,8 @@ def write_library(path, version, *, duplicate=False, vectors=False, local=False)
             {
                 "title": "收费手册",
                 "sections": [
-                    {"id": "payment-limit", "title": "合并缴费条数", "content": "**最多100条，101条须分批。**"},
-                    {"id": "allocation", "title": "公摊联动", "content": "房间及公区仪表联动。"},
+                    {"id": "charge-formula", "title": "收费标准公式", "content": "**计费金额由计费基数与单价确定。**"},
+                    {"id": "monthly-card", "title": "首次开通月卡", "content": "先核对车辆、套餐和收款信息。"},
                 ],
                 "images": {"figure.png": "data:image/png;base64,cGljdHVyZQ=="},
             },
@@ -39,7 +39,7 @@ def write_library(path, version, *, duplicate=False, vectors=False, local=False)
                 "id": "payment-panel",
                 "title": "收费控件",
                 "summary": "**已保存说明。**",
-                "section_ids": ["payment-limit", "allocation"],
+                "section_ids": ["charge-formula", "monthly-card"],
             }
         ],
     }
@@ -51,10 +51,10 @@ def write_library(path, version, *, duplicate=False, vectors=False, local=False)
             "chunks": [
                 {"section_id": sid, "vector": base64.b64encode(struct.pack("<2f", *values)).decode()}
                 for sid, values in [
-                    ("allocation", (1, 0)),
-                    ("payment-limit", (0, 1)),
+                    ("monthly-card", (1, 0)),
+                    ("charge-formula", (0, 1)),
                     ("missing-section", (1, 0)),
-                    ("payment-limit", (float("nan"), 0)),
+                    ("charge-formula", (float("nan"), 0)),
                 ]
             ],
         }
@@ -62,7 +62,7 @@ def write_library(path, version, *, duplicate=False, vectors=False, local=False)
         vector = struct.pack(f"<{DIMENSIONS}f", 1, *([0] * (DIMENSIONS - 1)))
         payload["local_rag"] = {
             "profile": PROFILE, "model": MODEL, "dimensions": DIMENSIONS, "encoding": "float32-le-base64",
-            "chunks": [{"section_id": "allocation", "vector": base64.b64encode(vector).decode()}],
+            "chunks": [{"section_id": "monthly-card", "vector": base64.b64encode(vector).decode()}],
         }
     data = base64.b64encode(gzip.compress(json.dumps(payload).encode())).decode()
     envelope = f'<script id="vks-payload" type="application/octet-stream" data-encoding="gzip-base64">{data}</script>'
@@ -82,14 +82,14 @@ def test_library_selection_reads_saved_sections_and_associations(tmp_path):
     assert snapshot["version"] == "v19" and snapshot["binding_count"] == 1
     assert store.current(snapshot["library_ref"]) is source
     assert library.LibraryStore(store.preference_path).current().context() == snapshot
-    result = source.search("合并缴费 100 条 101 条", 1)[0]
-    assert result["section_id"] == "payment-limit" and result["binding_count"] == 1
-    assert "%23" in result["file_url"] and result["file_url"].endswith("#section=payment-limit")
-    assert source.read("payment-limit", 0, 100)["content"] == "**最多100条，101条须分批。**"
-    association = source.associations("payment-limit", 0, 8)["bindings"][0]
+    result = source.search("收费标准公式 单价", 1)[0]
+    assert result["section_id"] == "charge-formula" and result["binding_count"] == 1
+    assert "%23" in result["file_url"] and result["file_url"].endswith("#section=charge-formula")
+    assert source.read("charge-formula", 0, 100)["content"] == "**计费金额由计费基数与单价确定。**"
+    association = source.associations("charge-formula", 0, 8)["bindings"][0]
     assert association["summary"] == "**已保存说明。**"
-    assert [section["section_id"] for section in association["sections"]] == ["payment-limit", "allocation"]
-    assert source.image("payment-limit", "figure.png") == ("image/png", "cGljdHVyZQ==")
+    assert [section["section_id"] for section in association["sections"]] == ["charge-formula", "monthly-card"]
+    assert source.image("charge-formula", "figure.png") == ("image/png", "cGljdHVyZQ==")
 
     invalid = tmp_path / "invalid.html"
     write_library(invalid, "v20", duplicate=True)
@@ -111,7 +111,7 @@ def test_library_rejects_out_of_budget_and_missing_targets(tmp_path, monkeypatch
     with pytest.raises(library.LibraryError):
         source.url("https://untrusted.example")
     with pytest.raises(library.LibraryError):
-        source.image("payment-limit", "https://untrusted.example/tracker.png")
+        source.image("charge-formula", "https://untrusted.example/tracker.png")
     monkeypatch.setattr(library, "MAX_DATA_BYTES", 100)
     with pytest.raises(library.LibraryError):
         library.read_library(path)
@@ -141,17 +141,17 @@ async def test_default_library_search_never_uses_cloud(tmp_path, monkeypatch):
         args = {"library_ref": store.select(path).ref, "query": "如何平均分配公共用电"}
         result = (await client.call_tool("search_vks_library", args)).structuredContent
         assert result["retrieval"] == {"requested": "auto", "used": "hybrid", "fallback": None, "vector_source": "local"}
-        assert result["data"][0]["section_id"] == "allocation"
+        assert result["data"][0]["section_id"] == "monthly-card"
         assert not remote.calls
 
         def broken_model(_):
             raise LocalModelError("missing model")
 
         monkeypatch.setattr(library_mcp, "local_query", broken_model)
-        args["query"] = "合并缴费 101 条"
+        args["query"] = "收费标准公式 单价"
         result = (await client.call_tool("search_vks_library", args)).structuredContent
         assert result["retrieval"]["fallback"] == "local_model_unavailable"
-        assert result["data"][0]["section_id"] == "payment-limit" and not remote.calls
+        assert result["data"][0]["section_id"] == "charge-formula" and not remote.calls
 
         write_library(path, "v19", vectors=True)
         args["library_ref"] = store.select(path).ref
@@ -190,8 +190,8 @@ async def test_embeddings_use_stored_vectors_and_send_only_the_query(tmp_path, m
     assert "fixture-only" not in service.path.read_text()
     assert source.search(question, 1) == []
     row = source.search(question, 1, vector)[0]
-    assert row["section_id"] == "allocation" and row["match"] == "semantic"
-    assert row["file_url"].endswith("#section=allocation") and row["binding_count"] == 1
+    assert row["section_id"] == "monthly-card" and row["match"] == "semantic"
+    assert row["file_url"].endswith("#section=monthly-card") and row["binding_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -222,9 +222,9 @@ async def test_unusable_embedding_response_returns_reason(tmp_path, monkeypatch,
     monkeypatch.setenv("VKS_CONNECT_EMBEDDING_KEY", "fixture-only")
     service = LibraryEmbeddings(tmp_path / "embedding.json", httpx.MockTransport(respond))
     service.configure(EmbeddingSettings("http://127.0.0.1:5151/v1", "embedding-fixture", 2))
-    assert await service.query(source.vectors, "合并缴费 101 条") == (None, reason)
+    assert await service.query(source.vectors, "收费标准公式 单价") == (None, reason)
     assert calls == ["127.0.0.1"]
-    assert source.search("合并缴费 101 条", 1)[0]["section_id"] == "payment-limit"
+    assert source.search("收费标准公式 单价", 1)[0]["section_id"] == "charge-formula"
 
 
 @pytest.mark.asyncio
@@ -266,7 +266,7 @@ async def test_chapter_open_preserves_exact_fragment_across_native_file_handoff(
             browser = await playwright.chromium.launch(executable_path=chromium_path(playwright))
             page = await browser.new_page()
             try:
-                for section in ("payment-limit", "allocation"):
+                for section in ("charge-formula", "monthly-card"):
                     opened = await client.call_tool(library_mcp.OPEN, {**context, "section_id": section})
                     assert not opened.isError
                     launcher = launched.pop()

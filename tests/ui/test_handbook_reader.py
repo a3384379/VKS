@@ -141,6 +141,8 @@ def test_handbook_export_keeps_framework_markdown_exact_links_and_readonly(handb
             page.goto(handbook_file.as_uri())
             book = page.get_by_role("region", name="知识手册阅读模板")
             expect(book.get_by_role("heading", name="Synthetic Atlas 项目知识手册")).to_be_visible()
+            expect(book.locator(".hb-sidebar .hb-brand")).to_have_count(0)
+            expect(book.locator(".hb-sidebar > :first-child")).to_have_attribute("aria-label", "搜索全文")
             expect(book.get_by_text("Unselected category", exact=True)).to_have_count(0)
             expect(book.get_by_text("Unselected secret", exact=True)).to_have_count(0)
             expect(book.get_by_text("没有匹配文档", exact=True)).to_have_count(0)
@@ -161,6 +163,8 @@ def test_handbook_export_keeps_framework_markdown_exact_links_and_readonly(handb
             expect(
                 book.get_by_role("navigation", name="文章翻页").get_by_role("button", name=re.compile("Other source"))
             ).to_have_count(0)
+            book.locator(".hb-actions").get_by_role("button", name="手册总览", exact=True).click()
+            expect(book.locator(".hb-cover")).to_be_visible()
             book.get_by_role("button", name="搜索全文", exact=True).click()
             page.get_by_role("textbox", name="搜索知识库", exact=True).fill("Strong original")
             page.locator(".search-result").first.click()
