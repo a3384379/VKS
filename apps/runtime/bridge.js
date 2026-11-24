@@ -2,7 +2,6 @@
 (() => {
   "use strict";
   const query = new URLSearchParams(location.search);
-  const instance = query.get("instance");
   let config;
   try {
     config = JSON.parse(
@@ -13,6 +12,8 @@
   }
   const host = config.host;
   const documentMode = config.mode === "document";
+  const opaquePrototype = location.protocol === "data:" && config.mode === "prototype";
+  const instance = opaquePrototype ? config.instance : query.get("instance");
   if (!instance || !host || !/^https?:\/\//.test(host)) return;
   const frame = document.querySelector("#material");
   let port,
@@ -775,7 +776,7 @@
     const source = frame.contentWindow;
     const page = source.document.querySelector("iframe#actualPage");
     const src = Object.getOwnPropertyDescriptor(source.HTMLIFrameElement.prototype, "src");
-    if (materialWrapper !== "static-site" || !page?.contentWindow ||
+    if (opaquePrototype || materialWrapper !== "static-site" || !page?.contentWindow ||
         !src?.get || !src.set || Object.hasOwn(page, "src")) {
       pack.show(route.slice(1));
       return;
@@ -1263,17 +1264,47 @@
       observing.forEach((observer) => observer.disconnect());
     }
   }
-  window.addEventListener("message", (event) => {
-    if (
-      event.source !== parent ||
-      event.origin !== host ||
-      event.data?.type !== "vks.connect" ||
-      event.data?.instance !== instance ||
-      !event.ports[0] ||
-      port
-    )
-      return;
-    port = event.ports[0];
+  function installOpaqueFrameNavigation() {
+    // A Blob document made by an opaque origin gets a different origin.
+    // Package-owned HTML frames use srcdoc so the runtime can inspect them.
+    const documents = new Map();
+    const navigations = new WeakMap();
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = (blob) => {
+      const url = create(blob);
+      if (/^text\/html(?:;|$)/i.test(blob.type)) documents.set(url, blob);
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      documents.delete(url);
+      revoke(url);
+    };
+    const prototype = HTMLIFrameElement.prototype;
+    const source = Object.getOwnPropertyDescriptor(prototype, "src");
+    function setSource(value) {
+      const blob = documents.get(String(value).split("#", 1)[0]);
+      if (!blob) {
+        navigations.delete(this);
+        this.removeAttribute("srcdoc");
+        source.set.call(this, value);
+        return;
+      }
+      const request = {};
+      navigations.set(this, request);
+      blob.text().then((html) => {
+        if (navigations.get(this) === request) this.srcdoc = html;
+      });
+    }
+    Object.defineProperty(prototype, "src", { ...source, set: setSource });
+    const setAttribute = prototype.setAttribute;
+    prototype.setAttribute = function (name, value) {
+      if (String(name).toLowerCase() === "src") setSource.call(this, value);
+      else setAttribute.call(this, name, value);
+    };
+  }
+  function connect(channel) {
+    port = channel;
     port.onmessage = async ({ data }) => {
       if (
         data?.runtime_instance_id !== instance ||
@@ -1289,13 +1320,12 @@
         inventorySpec = null;
         materialWrapper = null;
         openingPage = null;
+        let prototypeSource;
         if (!documentMode) {
           // Bind the wrapper fact to this verified material transfer. Charge
           // startup removes its inert payload node, so live DOM is insufficient.
-          const parsed = new DOMParser().parseFromString(
-            new TextDecoder().decode(data.payload.bytes),
-            "text/html",
-          );
+          prototypeSource = new TextDecoder().decode(data.payload.bytes);
+          const parsed = new DOMParser().parseFromString(prototypeSource, "text/html");
           if (
             parsed.querySelector('script#vks-site[type="application/json"]') &&
             parsed.querySelector("iframe#actualPage")
@@ -1308,6 +1338,13 @@
             parsed.querySelector("iframe#actualPage")
           )
             materialWrapper = "charge-prototype";
+          if (opaquePrototype) {
+            parsed.querySelectorAll('base,meta[http-equiv="refresh" i]').forEach((node) => node.remove());
+            const support = parsed.createElement("script");
+            support.textContent = "(" + installOpaqueFrameNavigation.toString() + ")();";
+            parsed.head.prepend(support);
+            prototypeSource = "<!doctype html>" + parsed.documentElement.outerHTML;
+          }
         }
         if (documentMode) {
           // Native submit listeners must run; CSP form-action 'none' still
@@ -1318,7 +1355,7 @@
             new Blob([data.payload.bytes], { type: "text/html" }),
           );
           frame.src = documentURL;
-        } else frame.srcdoc = new TextDecoder().decode(data.payload.bytes);
+        } else frame.srcdoc = prototypeSource;
         frame.hidden = false;
         document.querySelector("#status").hidden = true;
         loaded = true;
@@ -1394,8 +1431,27 @@
     };
     port.start();
     send("runtime.ready");
-  });
+  }
   frame.addEventListener("load", scan);
   setInterval(scan, 200);
-  parent.postMessage({ type: "vks.runtime.ready", instance }, host);
+  const ready = { type: "vks.runtime.ready", instance };
+  if (opaquePrototype) {
+    // The bootstrap transfers a port before receiving bytes. Future frame
+    // navigations cannot observe the material sent on this port.
+    const channel = new MessageChannel();
+    parent.postMessage(ready, host, [channel.port2]);
+    connect(channel.port1);
+  } else {
+    window.addEventListener("message", (event) => {
+      if (
+        event.source === parent &&
+        event.origin === host &&
+        event.data?.type === "vks.connect" &&
+        event.data?.instance === instance &&
+        event.ports[0] &&
+        !port
+      ) connect(event.ports[0]);
+    });
+    parent.postMessage(ready, host);
+  }
 })();

@@ -28,8 +28,8 @@ import {
   type MarkdownSection,
   type ReadingContext,
 } from "./RichMarkdown";
-import { api, mutation, observeUnauthenticated, setCsrf } from "../../web/src/api";
-import { OriginalRuntime, isTarget, samePage } from "./runtime";
+import { ApiError, api, mutation, observeUnauthenticated, setCsrf } from "../../web/src/api";
+import { OriginalRuntime, PrototypeMaterial, clearPrototypeCache, hostedStudio, isTarget, samePage } from "./runtime";
 import type {
   Target,
   RuntimeEvent,
@@ -220,6 +220,7 @@ const bindingForTarget = (
   );
 const text = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const missingLocation = "当前版本中无法读取该位置";
+const defaultWorkspaceView = hostedStudio ? "documents" : "prototype";
 
 function App() {
   const navigation = useStudioNavigation();
@@ -268,8 +269,13 @@ function App() {
       checkedHash.current = requestedHash === location.hash ? requestedHash : "";
       updateSession(actorId, session.csrf_token);
       if (!actorId && afterUnauthorized) setLoginError("会话已失效，请重新登录。");
-    } catch {
-      if (!controller.signal.aborted) updateSession("");
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        updateSession("");
+        if (error instanceof ApiError && error.code.startsWith("VKS_MAC_")) {
+          setLoginError(error.message);
+        }
+      }
     } finally {
       if (authRequest.current === controller) {
         authRequest.current = null;
@@ -331,6 +337,7 @@ function App() {
       // Always clear the local workspace after logout is requested.
     } finally {
       if (authRequest.current === controller) {
+        void clearPrototypeCache(accountId);
         updateSession("");
         setLoginError("");
         authRequest.current = null;
@@ -428,6 +435,7 @@ function Workspace({
     (inPrototype && !!(bindingId || pageRef || route.package)) ||
     (inDocuments && !!route.doc);
   const [workspaceReady, setWorkspaceReady] = useState(""),
+    openedOnCurrentNavigation = useRef(""),
     [loadedCatalog, setCatalog] = useState<Catalog | null>(null),
     loadedScope = useRef(""),
     authorizedGeneration = useRef(-1),
@@ -522,6 +530,19 @@ function Workspace({
     (!bindingId || packageChoice.id === linkedBinding?.package_id) &&
     (!pageRef || packageChoice.id === page?.package_artifact_id)
     ? packageChoice : undefined;
+  const prototypeUrl = p ? `${prefix}/packages/${p.id}/content?${scope}` : "";
+  const prototypeMaterial = useMemo(
+    () => hostedStudio && prototypeUrl && p?.sha256
+      ? new PrototypeMaterial(prototypeUrl, p.sha256, accountId)
+      : undefined,
+    [accountId, catalog?.selection_version, prototypeUrl, p?.sha256],
+  );
+  useEffect(() => () => prototypeMaterial?.dispose(), [prototypeMaterial]);
+  useEffect(() => {
+    if (!prototypeMaterial || !inDocuments) return;
+    const timer = window.setTimeout(() => void prototypeMaterial.load().catch(() => {}), 900);
+    return () => window.clearTimeout(timer);
+  }, [prototypeMaterial, inDocuments]);
   const documentCache = useMemo(
     () =>
       new DocumentCache<Document>((id, native, signal) =>
@@ -907,39 +928,55 @@ function Workspace({
   }, [prefix, scope]);
   useEffect(() => {
     if (invalid) return;
+    const opened = openedOnCurrentNavigation.current;
+    openedOnCurrentNavigation.current = "";
+    const workspaceAlreadyOpened = !route.release && opened === `${route.project}:${route.analysis}`;
     let cancelled = false;
-    api<{ id: string; name: string }[]>("/projects?limit=100")
-      .then(async (p) => {
+    const requests = new AbortController();
+    const projectList = api<{ id: string; name: string }[]>("/projects?limit=100", { signal: requests.signal })
+      .then((p) => {
         if (cancelled) return;
         setProjects(p);
         if (!route.project && p[0]) navigate({ project: p[0].id }, true);
         else if (!route.project) navigate({ view: "projects" }, true);
-        else if (route.project && !route.release) {
-          const w = await api<{ analysis_set_id: string }>(
-            `/api/v3/projects/${route.project}/materials/open`,
-            mutation("POST", { analysis_set_id: route.analysis || null }),
-          );
-          if (!cancelled) {
-            if (!route.analysis)
-              navigate(
-                {
-                  analysis: w.analysis_set_id,
-                  view: route.view || "prototype",
-                },
-                true,
-              );
-            else setWorkspaceReady(`${route.project}:${route.analysis}`);
-          }
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setFailedScope(prefix + scope);
-          setError(text(e));
-        }
       });
+    async function openSelectedProject() {
+      if (cancelled || !route.project || route.release || workspaceAlreadyOpened) return;
+      const workspace = await api<{ analysis_set_id: string }>(
+        `/api/v3/projects/${route.project}/materials/open`,
+        { ...mutation("POST", { analysis_set_id: route.analysis || null }), signal: requests.signal },
+      );
+      if (cancelled) return;
+      if (route.analysis) {
+        setWorkspaceReady(`${route.project}:${route.analysis}`);
+      } else {
+        if (hostedStudio) {
+          const key = `${route.project}:${workspace.analysis_set_id}`;
+          openedOnCurrentNavigation.current = key;
+          setWorkspaceReady(key);
+        }
+        navigate(
+          {
+            analysis: workspace.analysis_set_id,
+            view: route.view || defaultWorkspaceView,
+            reader: route.reader || (hostedStudio ? "standard" : ""),
+          },
+          true,
+        );
+      }
+    }
+    const opening = hostedStudio && route.project
+      ? Promise.all([projectList, openSelectedProject()])
+      : projectList.then(openSelectedProject);
+    void opening.catch((e) => {
+      if (!cancelled) {
+        setFailedScope(prefix + scope);
+        setError(text(e));
+      }
+    });
     return () => {
       cancelled = true;
+      requests.abort();
     };
   }, [invalid, route.project, route.analysis, route.release, navigate, scopeRetry]);
   useEffect(() => {
@@ -2608,8 +2645,8 @@ function Workspace({
       page_ref: "",
       package: "",
       book: "",
-      reader: "",
-      view: "prototype",
+      reader: hostedStudio ? "standard" : "",
+      view: defaultWorkspaceView,
     });
   }
   async function materialsChanged(result: { analysis_set_id: string }) {
@@ -2797,6 +2834,9 @@ function Workspace({
             <button
               key={v}
               className={currentView === v ? "selected" : ""}
+              onPointerEnter={v === "prototype" && prototypeMaterial
+                ? () => void prototypeMaterial.load().catch(() => {})
+                : undefined}
               onClick={() => {
                 if (editing) {
                   setNotice("请先保存或取消当前编辑");
@@ -3066,9 +3106,10 @@ function Workspace({
               {(currentView === "prototype" || prototypeMounted) && (
                 <OriginalRuntime
                   key={p.id + scope + `:${runtimeRestart}` + (pageRef ? `:${generation}` : "")}
-                  url={`${prefix}/packages/${p.id}/content?${scope}`}
+                  url={prototypeUrl}
                   digest={p.sha256}
                   kind="prototype"
+                  prefetchedMaterial={prototypeMaterial}
                   storageScope={{
                     accountId,
                     projectId: route.project,

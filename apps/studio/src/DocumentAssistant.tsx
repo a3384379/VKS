@@ -34,6 +34,34 @@ type Question = {
   document_id: string;
 };
 
+// The Sites shell is a versioned application asset without any project data.
+const hostedShell = typeof document !== "undefined" && document.querySelector<HTMLMetaElement>(
+  'meta[name="vks-document-assistant"]',
+)?.content;
+let cachedShell: Promise<string> | undefined;
+
+function assistantSource(signal?: AbortSignal) {
+  if (!hostedShell || typeof DecompressionStream !== "function")
+    return apiResponse("/api/v3/document-templates/handbook/assistant", { signal })
+      .then((response) => response.text());
+  return cachedShell ??= fetch(hostedShell, {
+    credentials: "same-origin",
+    redirect: "error",
+  }).then(async (response) => {
+    if (!response.ok) throw new Error("文档助手资源加载失败。");
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    // If the serving layer already applied Content-Encoding, fetch has decoded it.
+    if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+      return new Response(stream).text();
+    }
+    return new TextDecoder().decode(bytes);
+  }).catch((error) => {
+    cachedShell = undefined;
+    throw error;
+  });
+}
+
 /** Original handbook UI; the host alone owns authenticated API requests. */
 export function DocumentAssistant(props: {
   visible: boolean;
@@ -89,6 +117,7 @@ export function DocumentAssistant(props: {
   const channel = useRef(crypto.randomUUID());
   const [source, setSource] = useState("");
   const [error, setError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [ready, setReady] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [selectionToExplain, setSelectionToExplain] = useState("");
@@ -180,17 +209,21 @@ export function DocumentAssistant(props: {
     if (host) view.current?.moveTo(host, props.detachedOpen);
   }, [source, props.detachedOpen, props.detachedWindow]);
   useEffect(() => {
+    if (!props.reading || !hostedShell || typeof DecompressionStream !== "function") return;
+    const preload = window.setTimeout(() => void assistantSource().catch(() => {}), 400);
+    return () => window.clearTimeout(preload);
+  }, [props.reading]);
+  useEffect(() => {
     if (!props.visible || source) return;
     const controller = new AbortController();
-    void apiResponse("/api/v3/document-templates/handbook/assistant", {
-      signal: controller.signal,
-    })
-      .then((response) => response.text())
+    setError("");
+    void assistantSource(controller.signal)
       .then((html) => {
-        if (!controller.signal.aborted)
+        if (!controller.signal.aborted && sourceScope.current === props.scopeKey)
           setSource(
             html
               .replaceAll("HOST_CHANNEL", channel.current)
+              .replaceAll("HOST_ASSET_ORIGIN", location.origin)
               .replaceAll(
                 "HOST_SCOPE",
                 encodeURIComponent(props.scopeKey).replaceAll("%", "_"),
@@ -201,7 +234,7 @@ export function DocumentAssistant(props: {
         if (!controller.signal.aborted) setError(String(error));
       });
     return () => controller.abort();
-  }, [props.visible, source, props.scopeKey]);
+  }, [props.visible, source, props.scopeKey, loadAttempt]);
   useEffect(() => {
     if (ready)
       post("context", {
@@ -471,7 +504,7 @@ export function DocumentAssistant(props: {
   }, []);
   return (
     <>
-      {(source || error) && (
+      {(props.visible || source || error) && (
         <aside
           ref={floating.ref}
           className={
@@ -493,13 +526,23 @@ export function DocumentAssistant(props: {
                 : { width }
           }
           aria-label="文档 AI 助手"
+          aria-busy={!ready && !error}
           hidden={!props.visible || props.detachedOpen}
         >
           {error && (
-            <p role="alert">
-              {error}
-              <button onClick={() => setError("")}>关闭提示</button>
-            </p>
+            <div className="document-ai-load-state" role="alert">
+              <p>{error}</p>
+              <button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+                重试
+              </button>
+              <button type="button" onClick={props.onClose}>收起助手</button>
+            </div>
+          )}
+          {!ready && !error && (
+            <div className="document-ai-load-state">
+              <p role="status">正在打开文档助手…</p>
+              <button type="button" onClick={props.onClose}>收起助手</button>
+            </div>
           )}
           <div ref={inlineHost} style={{ width: "100%", height: "100%" }} />
           {mode === "floating" && !expanded && (

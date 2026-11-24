@@ -541,8 +541,11 @@ function installChatUpgrade() {
     P('fh-ai-panel').dataset.historyReady = 'true';
   })();
 
-  if (window.mermaid) mermaid.initialize({startOnLoad:false, securityLevel:'strict', theme:'neutral', maxTextSize:100000,
-    fontFamily:'Microsoft YaHei, Arial, sans-serif', flowchart:{htmlLabels:false, useMaxWidth:false}, sequence:{useMaxWidth:false, wrap:true}});
+  function initializeMermaid() {
+    window.mermaid?.initialize({startOnLoad:false, securityLevel:'strict', theme:'neutral', maxTextSize:100000,
+      fontFamily:'Microsoft YaHei, Arial, sans-serif', flowchart:{htmlLabels:false, useMaxWidth:false}, sequence:{useMaxWidth:false, wrap:true}});
+  }
+  initializeMermaid();
   function renderDiagrams(fragment, mermaidOnly = false) {
     for (const code of fragment.querySelectorAll('pre > code')) {
       const source = code.textContent;
@@ -600,7 +603,7 @@ function installChatUpgrade() {
     return fragment;
   }
 
-  return {ready, renderDiagrams, waitForDiagrams:() => diagramChain,
+  return {ready, initializeMermaid, renderDiagrams, waitForDiagrams:() => diagramChain,
     snapshot() {
       const session = current();
       if (session) session.draft = P('fh-ai-question').value;
@@ -3668,6 +3671,10 @@ function installChatPresentation() {
   }
 
   async function renderMermaid(id, source) {
+    if (!window.mermaid && window.vksLoadAssistantMermaid) {
+      await window.vksLoadAssistantMermaid();
+      fhChatUpgrade.initializeMermaid();
+    }
     if (!window.mermaid) throw new Error('图表组件未能加载');
     const normalized = normalizeFlowchart(source);
     const attempts = [source, normalized];

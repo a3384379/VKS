@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { apiResponse } from "../../web/src/api";
+import runtimeShell from "../../runtime/index.html?raw";
+import runtimeBridge from "../../runtime/bridge.js?raw";
+export const hostedStudio =
+  typeof document !== "undefined" &&
+  document.querySelector('meta[name="vks-hosted-studio"]') !== null;
 export type Target = {
   route: string;
   frame_path: string[];
@@ -72,12 +77,120 @@ export type DocumentLocation = {
   heading_level?: number;
   heading_ordinal?: number;
 };
+
+function prototypeFrameUrl(instance: string) {
+  const config = JSON.stringify({
+    mode: "prototype",
+    host: location.origin,
+    instance,
+  }).replaceAll("<", "\\u003c");
+  const policy =
+    "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob: data:; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:; frame-src blob: data: about:; worker-src blob:; connect-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
+  const html = runtimeShell
+    .replace("<head>", `<head><meta http-equiv="Content-Security-Policy" content="${policy}">`)
+    .replace("<!--RUNTIME_CONFIG-->", `<script id="vks-runtime-config" type="application/json">${config}</script>`)
+    .replace('<script src="/bridge.js"></script>', () =>
+      "<script>" + runtimeBridge.replace(/<\/script/gi, "<\\/script") + "</script>",
+    );
+  return "data:text/html;charset=utf-8," + encodeURIComponent(html);
+}
+
+const prototypeCacheName = "vks-private-prototype-v1";
+
+function prototypeCacheKey(accountId: string) {
+  return location.origin + "/__vks_private_prototype?account=" + encodeURIComponent(accountId);
+}
+
+export async function clearPrototypeCache(accountId: string) {
+  if (!hostedStudio || !("caches" in window)) return;
+  const cache = await caches.open(prototypeCacheName).catch(() => undefined);
+  await cache?.delete(prototypeCacheKey(accountId), { ignoreVary: true }).catch(() => {});
+}
+
+async function verifiedMaterial(
+  url: string, digest: string, signal: AbortSignal, compressed = false, accountId?: string,
+) {
+  const cache = accountId && "caches" in window
+    ? await caches.open(prototypeCacheName).catch(() => undefined)
+    : undefined;
+  const key = accountId ? prototypeCacheKey(accountId) : "";
+  const tag = 'W/"' + digest + '"';
+  const candidate = await cache?.match(key, { ignoreVary: true }).catch(() => undefined);
+  const cached = candidate?.headers.get("etag") === tag ? candidate : undefined;
+  const network = await apiResponse(url, {
+    signal,
+    redirect: "error",
+    cache: "no-store",
+    ...(compressed ? { headers: {
+      "X-VKS-Prototype-Cache": "revalidate",
+      ...(typeof DecompressionStream === "function" ? { "X-VKS-Prototype-Encoding": "gzip" } : {}),
+      ...(cached ? { "If-None-Match": tag } : {}),
+    } } : {}),
+  }, { acceptNotModified: !!cached });
+  const response = network.status === 304 && cached ? cached : network;
+  const save = cache && network.status === 200 &&
+    network.headers.get("x-vks-prototype-cache") === "revalidate" &&
+    network.headers.get("etag") === tag
+    ? network.clone()
+    : undefined;
+  const body = response.headers.get("X-VKS-Prototype-Encoding") === "gzip" && response.body
+    ? new Response(response.body.pipeThrough(new DecompressionStream("gzip")))
+    : response;
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await body.arrayBuffer();
+    const hash = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    if (hash !== digest) throw new Error("资料摘要校验失败");
+  } catch (error) {
+    void save?.body?.cancel().catch(() => {});
+    if (!signal.aborted && network.status === 304 && cache) {
+      await cache.delete(key, { ignoreVary: true }).catch(() => {});
+      return verifiedMaterial(url, digest, signal, compressed);
+    }
+    throw error;
+  }
+  // Keep one verified package per account on this device. A later viewer
+  // always checks the original URL and current grant before using these bytes.
+  if (save && cache) void cache.put(key, save).then(async () => {
+    if (signal.aborted) {
+      const entry = await cache.match(key, { ignoreVary: true });
+      if (entry?.headers.get("etag") === tag)
+        await cache.delete(key, { ignoreVary: true });
+    }
+  }).catch(() => {});
+  return bytes;
+}
+
+// One current prototype per authenticated catalog scope. A copy is transferred
+// to the isolated frame so it cannot detach the prefetched bytes.
+export class PrototypeMaterial {
+  private controller = new AbortController();
+  private pending?: Promise<ArrayBuffer>;
+  constructor(private url: string, private digest: string, private accountId: string) {}
+  load() {
+    return (this.pending ??= verifiedMaterial(this.url, this.digest, this.controller.signal, true, this.accountId)
+      .catch((error) => {
+        this.pending = undefined;
+        throw error;
+      }));
+  }
+  dispose() {
+    this.controller.abort();
+    this.pending = undefined;
+  }
+}
+
 export function OriginalRuntime({
   url,
   digest,
   kind,
   storageScope,
   networkOrigins = [],
+  prefetchedMaterial,
   inventoryOnly = false,
   onEvent,
   onFailure,
@@ -88,6 +201,7 @@ export function OriginalRuntime({
   kind: string;
   storageScope: RuntimeStorageScope;
   networkOrigins?: string[];
+  prefetchedMaterial?: PrototypeMaterial;
   inventoryOnly?: boolean;
   onEvent: (e: RuntimeEvent) => void;
   onFailure?: (message: string) => void;
@@ -106,13 +220,21 @@ export function OriginalRuntime({
   const runtimePort = configuredPort || import.meta.env.VITE_RUNTIME_PORT || 5195;
   const networkKey = JSON.stringify(kind === "prototype" ? [] : networkOrigins);
   useEffect(() => {
+    if (hostedStudio && kind !== "prototype") {
+      const message = "远程站点可使用标准文档视图。原样文档请在 Mac 的 Studio 中打开。";
+      setStatus(message);
+      failureRef.current?.(message);
+      return;
+    }
     const controller = new AbortController();
+    const opaquePrototype = hostedStudio && kind === "prototype";
+    const instance = opaquePrototype ? crypto.randomUUID() : identity;
     let port: MessagePort | null = null,
       disposed = false,
       transferred = false,
       lastSequence = 0,
       navigationRequest = "",
-      origin = "";
+      origin = opaquePrototype ? "null" : "";
     setStatus("正在读取原始资料…");
     if (iframe.current) iframe.current.src = "about:blank";
     const failed = (error: unknown) => {
@@ -121,19 +243,9 @@ export function OriginalRuntime({
       setStatus(message);
       failureRef.current?.(message);
     };
-    const bytes = apiResponse(url, {
-      signal: controller.signal,
-      redirect: "error",
-    }).then(async (r) => {
-      const b = await r.arrayBuffer();
-      const h = Array.from(
-        new Uint8Array(await crypto.subtle.digest("SHA-256", b)),
-      )
-        .map((n) => n.toString(16).padStart(2, "0"))
-        .join("");
-      if (h !== digest) throw new Error("资料摘要校验失败");
-      return b;
-    });
+    const bytes = prefetchedMaterial
+      ? prefetchedMaterial.load()
+      : verifiedMaterial(url, digest, controller.signal, opaquePrototype);
     void bytes.catch(failed);
     const send = (type: string, payload: unknown = {}) => {
       const request = crypto.randomUUID();
@@ -142,7 +254,7 @@ export function OriginalRuntime({
       if (type === "target.cancel" || type === "document.cancel") navigationRequest = "";
       port?.postMessage({
         protocol_version: 1,
-        runtime_instance_id: identity,
+        runtime_instance_id: instance,
         epoch: 1,
         request_id: request,
         type,
@@ -155,17 +267,19 @@ export function OriginalRuntime({
         e.source !== iframe.current?.contentWindow ||
         e.origin !== origin ||
         e.data?.type !== "vks.runtime.ready" ||
-        e.data?.instance !== identity ||
+        e.data?.instance !== instance ||
+        (opaquePrototype && e.ports.length !== 1) ||
         port
       )
         return;
-      const channel = new MessageChannel();
-      port = channel.port1;
+      const channel = opaquePrototype ? null : new MessageChannel();
+      const peer = channel ? channel.port1 : e.ports[0];
+      port = peer;
       port.onmessage = async ({ data }) => {
         if (
           disposed ||
           data?.protocol_version !== 1 ||
-          data?.runtime_instance_id !== identity ||
+          data?.runtime_instance_id !== instance ||
           !Number.isSafeInteger(data.sequence) ||
           data.sequence <= lastSequence
         )
@@ -174,12 +288,14 @@ export function OriginalRuntime({
         if (data.type === "runtime.ready" && !transferred) {
           transferred = true;
           try {
-            const raw = await bytes;
+            const verified = await bytes;
             if (disposed) return;
+            const raw = prefetchedMaterial ? verified.slice(0) : verified;
+            if (kind === "prototype") setStatus("正在初始化原型画面…");
             port?.postMessage(
               {
                 protocol_version: 1,
-                runtime_instance_id: identity,
+                runtime_instance_id: instance,
                 type: "material.load",
                 payload: { bytes: raw },
               },
@@ -219,17 +335,21 @@ export function OriginalRuntime({
         }
       };
       port.start();
-      handle.current = { instanceId: identity, send };
-      iframe.current?.contentWindow?.postMessage(
-        { type: "vks.connect", instance: identity },
-        origin,
-        [channel.port2],
-      );
+      handle.current = { instanceId: instance, send };
+      if (channel) {
+        iframe.current?.contentWindow?.postMessage(
+          { type: "vks.connect", instance },
+          origin,
+          [channel.port2],
+        );
+      }
     };
     window.addEventListener("message", listener);
     // The server accepts registration only from the configured Studio origin.
     // Material bytes and platform credentials never enter this request.
-    void fetch(`http://localhost:${runtimePort}/register`, {
+    if (opaquePrototype) {
+      if (iframe.current) iframe.current.src = prototypeFrameUrl(instance);
+    } else void fetch(`http://localhost:${runtimePort}/register`, {
       method: "POST",
       mode: "cors",
       credentials: "omit",
@@ -258,7 +378,7 @@ export function OriginalRuntime({
         if (disposed) return;
         origin = expected.origin;
         iframe.current?.contentWindow?.location.replace(
-          `${origin}/?registration=${encodeURIComponent(registration.registration)}&instance=${identity}`,
+          `${origin}/?registration=${encodeURIComponent(registration.registration)}&instance=${instance}`,
         );
       })
       .catch(failed);
@@ -267,12 +387,13 @@ export function OriginalRuntime({
       controller.abort();
       window.removeEventListener("message", listener);
       port?.close();
-      if (handle.current?.instanceId === identity) handle.current = null;
+      if (handle.current?.instanceId === instance) handle.current = null;
     };
   }, [
     url,
     digest,
     kind,
+    prefetchedMaterial,
     storageScope.accountId,
     storageScope.projectId,
     storageScope.packageId,

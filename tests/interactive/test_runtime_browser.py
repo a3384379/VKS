@@ -4,14 +4,14 @@ import json
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 import pytest
 from playwright.sync_api import expect, sync_playwright
 from vks_api.material_site import site_html
 
-from apps.runtime.server import RuntimeHandler
+from apps.runtime.server import ROOT, RuntimeHandler
 from tests.ui.test_frontend_browser import chromium_path
 
 HARNESS = b"""<!doctype html><iframe id="runtime" sandbox="allow-scripts allow-same-origin allow-modals allow-downloads" style="width:100%;height:700px"></iframe><script>
@@ -87,6 +87,70 @@ def registration_options(runtime, material, **changes):
         "origins": [],
         **changes,
     }
+
+
+def test_opaque_prototype_keeps_nested_controls_inside_the_runtime(runtime_sites):
+    """A Sites prototype can run with a browser origin that has no credentials."""
+    host_url, runtime, _ = runtime_sites
+    instance = "opaque-prototype-test"
+    policy = (
+        "default-src 'none'; script-src 'unsafe-inline' blob: data:; "
+        "frame-src blob: data: about:; connect-src 'none'; form-action 'none'"
+    )
+    config = json.dumps({"host": host_url, "mode": "prototype", "instance": instance})
+    bridge = (ROOT / "bridge.js").read_text()
+    bootstrap = (ROOT / "index.html").read_text().replace(
+        "<head>", f'<head><meta http-equiv="Content-Security-Policy" content="{policy}">'
+    ).replace(
+        "<!--RUNTIME_CONFIG-->", f'<script id="vks-runtime-config" type="application/json">{config}</script>'
+    ).replace('<script src="/bridge.js"></script>', f"<script>{bridge}</script>")
+    material = """
+        <!doctype html><title>原型测试</title>
+        <iframe id="actualPage" sandbox="allow-scripts allow-same-origin"></iframe>
+        <script>
+        const html = '<button id="query" onclick="this.textContent=&quot;本地完成&quot;">查询</button>';
+        document.querySelector("#actualPage").src = URL.createObjectURL(new Blob([html], {type:"text/html"}));
+        fetch(PROBE_URL).then(() => document.body.dataset.network = "allowed",
+                            () => document.body.dataset.network = "blocked");
+        </script>
+    """.replace("PROBE_URL", json.dumps(host_url + "/api/runtime-probe"))
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=chromium_path(pw), headless=True)
+        try:
+            page = browser.new_page()
+            page.goto(host_url)
+            page.evaluate(
+                """({src, instance, material}) => {
+                    const frame = document.querySelector("#runtime");
+                    addEventListener("message", function ready(event) {
+                      if (event.source !== frame.contentWindow || event.origin !== "null" ||
+                          event.data?.type !== "vks.runtime.ready" || event.data.instance !== instance ||
+                          event.ports.length !== 1) return;
+                      removeEventListener("message", ready);
+                      const port = event.ports[0];
+                      port.onmessage = ({data}) => {
+                        events.push(data);
+                        if (data.type === "runtime.ready") {
+                          const bytes = new TextEncoder().encode(material).buffer;
+                          port.postMessage({protocol_version: 1, runtime_instance_id: instance,
+                                            type: "material.load", payload: {bytes}}, [bytes]);
+                        }
+                      };
+                    });
+                    frame.src = src;
+                }""",
+                {"src": "data:text/html;charset=utf-8," + quote(bootstrap), "instance": instance, "material": material},
+            )
+            portal = page.frame_locator("#runtime").frame_locator("#material")
+            control = portal.frame_locator("#actualPage").locator("#query")
+            control.click()
+            expect(control).to_have_text("本地完成")
+            page.wait_for_function("events.some(e => e.type === 'control.activated' && e.payload.target.selector === '#query')")
+            expect(portal.locator("body")).to_have_attribute("data-network", "blocked")
+            assert page.locator("#runtime").evaluate("frame => frame.contentDocument === null")
+            assert not runtime.platform_api_requests
+        finally:
+            browser.close()
 
 
 def test_prototype_blank_list_click_returns_to_module_without_intercepting_controls(runtime_sites):

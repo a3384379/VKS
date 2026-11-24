@@ -41,6 +41,7 @@ export type ApiMeta = {
 export async function apiResponse(
   path: string,
   init: RequestInit = {},
+  options: { acceptNotModified?: boolean } = {},
 ): Promise<Response> {
   const revision = sessionRevision;
   const headers = new Headers(init.headers);
@@ -67,6 +68,7 @@ export async function apiResponse(
     { ...init, headers, credentials: "same-origin" },
   );
   checkSessionRevision(revision);
+  if (options.acceptNotModified && response.status === 304) return response;
   if (!response.ok) {
     const json = await response.json().catch(() => ({}));
     checkSessionRevision(revision);

@@ -9,8 +9,8 @@ from functools import lru_cache
 from pathlib import Path
 
 
-@lru_cache(maxsize=1)
-def assistant_html():
+@lru_cache(maxsize=2)
+def assistant_html(mermaid_asset: str = ""):
     root = Path(__file__).resolve().parents[3] / "packages/handbook-template/standalone"
     assets = Path(__file__).with_name("reader_assets")
     source = root.joinpath("shell.html").read_text()
@@ -20,6 +20,13 @@ def assistant_html():
         '"corpusHash":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"', '"corpusHash":""'
     )
     source = source.replace("__TEMPLATE_LOADER_JSON__", '""')
+    if mermaid_asset:
+        # Only the generated, versioned script can be loaded by the hosted view.
+        source = source.replace(
+            "script-src 'unsafe-inline'",
+            "script-src 'unsafe-inline' HOST_ASSET_ORIGIN" + mermaid_asset,
+            1,
+        )
     runtime = root.joinpath("assistant.js").read_text()
     marker = "const fhChatUpgrade = installChatUpgrade();"
     assert runtime.count(marker) == 1
@@ -39,6 +46,27 @@ def assistant_html():
         code = runtime if name == "assistant" else root.joinpath(name + ".js").read_text()
         if name == "integration":
             code = ""
+        if name == "mermaid" and mermaid_asset:
+            code = """
+window.vksLoadAssistantMermaid = (() => {
+  let loading;
+  return () => loading ||= new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = """ + json.dumps(mermaid_asset) + """;
+    script.onload = () => {
+      if (window.mermaid) resolve();
+      else failed();
+    };
+    script.onerror = failed;
+    function failed() {
+      script.remove();
+      loading = undefined;
+      reject(new Error("图表组件未能加载"));
+    }
+    document.head.append(script);
+  });
+})();
+"""
         source = source.replace("__TEMPLATE_" + name.upper() + "__", code.replace("</script", "<\\/script"))
     style = """<style id="vks-document-assistant-host-style">
 html,body{margin:0!important;width:100%;height:100%;overflow:hidden!important}
