@@ -3412,14 +3412,30 @@ p {
   min-height: 0;
   overflow: hidden;
 }
+.document-library-header {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  min-height: 46px;
+  padding-inline: 20px;
+  gap: 8px;
+  border-bottom: 1px solid #e0e9e3;
+  background: #fbfdfb;
+}
+.document-directory-toggle {
+  flex: none;
+  align-self: center;
+  min-height: 36px;
+  padding: 6px 10px;
+  color: #176b57;
+  font-size: 12px;
+}
 .document-categories {
   display: flex;
+  flex: 1;
+  min-width: 0;
   min-height: 53px;
-  flex-shrink: 0;
   gap: 14px;
-  border-bottom: 1px solid #e0e9e3;
-  padding: 0 20px;
-  background: #fbfdfb;
   align-items: center;
 }
 .document-category-tabs {
@@ -3624,8 +3640,10 @@ p {
   .document-library .doc-sidebar {
     width: 245px;
   }
-  .document-categories {
+  .document-library-header {
     padding-inline: 12px;
+  }
+  .document-categories {
     gap: 8px;
   }
   .document-category-tabs > button {
@@ -3633,10 +3651,18 @@ p {
   }
 }
 @media (max-width: 700px) {
-  .document-categories {
+  .document-library-header {
     flex-wrap: wrap;
     gap: 0;
-    padding-top: 6px;
+  }
+  .document-directory-toggle {
+    min-height: 44px;
+    margin-block: 2px;
+  }
+  .document-categories {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    gap: 0;
   }
   .document-category-tabs {
     width: 100%;
@@ -3645,8 +3671,17 @@ p {
     width: 100%;
     padding: 3px 0 6px;
   }
+  .document-library > .documents-space {
+    position: relative;
+  }
   .document-library .doc-sidebar {
-    width: 190px;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    border-right: 0;
+  }
+  .documents-space[data-mobile-directory-open] > .document-reader {
+    visibility: hidden;
   }
 }
 
@@ -4730,6 +4765,19 @@ p {
 }
 .document-ai-window[hidden] {
   display: none;
+}
+.document-ai-load-state {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px;
+  background: #fff;
+  color: #526b60;
+  text-align: center;
 }
 .document-ai-selection-ask {
   position: fixed;

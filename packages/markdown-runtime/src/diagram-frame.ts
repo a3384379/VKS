@@ -4,6 +4,8 @@ import {
   validateDiagramSource,
 } from "./diagram-policy";
 
+// Sites bundles one engine at a time. Native builds keep both lazy imports.
+declare const __VKS_DIAGRAM_ENGINE__: "mermaid" | "plantuml";
 const hostOrigin = new URL(import.meta.url).origin;
 let accepted = false;
 window.addEventListener("message", async (event: MessageEvent) => {
@@ -33,7 +35,10 @@ window.addEventListener("message", async (event: MessageEvent) => {
     const problem = validateDiagramSource(data.kind, data.source);
     if (problem) throw new Error(problem);
     let svg: string;
-    if (data.kind === "mermaid") {
+    if (
+      (typeof __VKS_DIAGRAM_ENGINE__ === "undefined" || __VKS_DIAGRAM_ENGINE__ === "mermaid") &&
+      data.kind === "mermaid"
+    ) {
       const { default: mermaid } = await import("mermaid");
       mermaid.initialize({
         startOnLoad: false,
@@ -48,7 +53,7 @@ window.addEventListener("message", async (event: MessageEvent) => {
       });
       const result = await mermaid.render("vks-diagram", data.source);
       svg = result.svg;
-    } else {
+    } else if (typeof __VKS_DIAGRAM_ENGINE__ === "undefined" || __VKS_DIAGRAM_ENGINE__ === "plantuml") {
       // The bundled native JS engine uses Smetana, without Java/Graphviz or a
       // hosted PlantUML server. No file or standard-library loader is exposed.
       const runtime = globalThis as typeof globalThis & {
@@ -99,6 +104,8 @@ window.addEventListener("message", async (event: MessageEvent) => {
         text.some((line) => /Syntax Error\?/.test(line))
       )
         throw new Error("PlantUML 语法无法解析");
+    } else {
+      throw new Error("图表引擎不可用");
     }
     if (typeof svg !== "string" || svg.length > MAX_SVG_LENGTH)
       throw new Error("图表输出过大");

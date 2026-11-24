@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import test from "node:test";
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
@@ -14,6 +16,19 @@ const compiled = await build({
   format: "esm",
   platform: "node",
   define: { "process.env.NODE_ENV": '"production"' },
+  plugins: [{
+    name: "vite-raw-imports",
+    setup(build) {
+      build.onResolve({ filter: /\?raw$/ }, ({ path, resolveDir }) => ({
+        path: resolve(resolveDir, path.slice(0, -4)),
+        namespace: "vite-raw",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "vite-raw" }, async ({ path }) => ({
+        contents: await readFile(path, "utf8"),
+        loader: "text",
+      }));
+    },
+  }],
 });
 const { mergeScanSnapshot, scanReceipt } = await import(
   "data:text/javascript;base64," +

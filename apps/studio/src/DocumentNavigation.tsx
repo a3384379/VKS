@@ -1,12 +1,34 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import {
   ChevronRight,
   FileText,
   Folder,
   FolderOpen,
   LoaderCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
   Search,
 } from "lucide-react";
+
+const compactDirectoryQuery = "(max-width: 700px)";
+
+function subscribeToDirectoryWidth(update: () => void) {
+  const media = window.matchMedia(compactDirectoryQuery);
+  media.addEventListener("change", update);
+  return () => media.removeEventListener("change", update);
+}
+
+function isCompactDirectory() {
+  return window.matchMedia(compactDirectoryQuery).matches;
+}
 
 export type NavigationDocument = {
   kind: "document";
@@ -228,6 +250,21 @@ export function DocumentLibrary({
   hidden?: boolean;
   children: ReactNode;
 }) {
+  const compact = useSyncExternalStore(subscribeToDirectoryWidth, isCompactDirectory);
+  const [desktopDirectoryOpen, setDesktopDirectoryOpen] = useState(true);
+  const [mobileDirectoryOpen, setMobileDirectoryOpen] = useState(false);
+  const directoryOpen = compact ? mobileDirectoryOpen : desktopDirectoryOpen;
+  const setDirectoryOpen = compact ? setMobileDirectoryOpen : setDesktopDirectoryOpen;
+  const directoryId = useId();
+  const directoryToggle = useRef<HTMLButtonElement>(null);
+  const closeMobileDirectory = () => {
+    setMobileDirectoryOpen(false);
+    directoryToggle.current?.focus({ preventScroll: true });
+  };
+  const openFromDirectory = (document: string, section?: string) => {
+    onOpen(document, section);
+    if (compact) closeMobileDirectory();
+  };
   const tree = useMemo(
     () => visibleNavigation(navigation, documents),
     [navigation, documents],
@@ -352,7 +389,7 @@ export function DocumentLibrary({
       });
   };
   useEffect(() => {
-    if (hidden) return;
+    if (hidden || !directoryOpen) return;
     for (const revision of articles)
       if (
         documents.some((doc) => doc.revision_id === revision) &&
@@ -360,7 +397,7 @@ export function DocumentLibrary({
         !errors.has(revision)
       )
         request(revision);
-  }, [articles, cache, identity, documents, hidden]);
+  }, [articles, cache, identity, documents, hidden, directoryOpen]);
   const pack =
     tree.packages.find((pack) => pack.id === packageId) ||
     location?.package ||
@@ -374,6 +411,7 @@ export function DocumentLibrary({
       entry.category.id === category?.id && entry.package.id === pack?.id,
   );
   useEffect(() => {
+    if (hidden || !directoryOpen) return;
     const frame = requestAnimationFrame(() =>
       (
         sidebar.current?.querySelector(".document-heading-row.selected") ||
@@ -381,12 +419,13 @@ export function DocumentLibrary({
       )?.scrollIntoView({ block: "nearest", inline: "nearest" }),
     );
     return () => cancelAnimationFrame(frame);
-  }, [selectedDocument, selectedSection, entryPath, cache[selectedDocument]]);
+  }, [selectedDocument, selectedSection, entryPath, cache[selectedDocument], hidden, directoryOpen]);
   useEffect(() => {
+    if (hidden || !directoryOpen) return;
     categoryTabs.current
       ?.querySelector("button.active")
       ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [category?.id]);
+  }, [category?.id, hidden, directoryOpen]);
   const toggle = (
     update: (
       value: Set<string> | ((previous: Set<string>) => Set<string>),
@@ -436,7 +475,7 @@ export function DocumentLibrary({
             )}
             <button
               className="heading-link"
-              onClick={() => onOpen(documentId, section.revision_id)}
+              onClick={() => openFromDirectory(documentId, section.revision_id)}
             >
               {section.name}
             </button>
@@ -490,7 +529,7 @@ export function DocumentLibrary({
               <button
                 className="document-open"
                 aria-current={selectedDocument === node.id ? "page" : undefined}
-                onClick={() => onOpen(node.id)}
+                onClick={() => openFromDirectory(node.id)}
               >
                 <FileText size={14} />
                 <span>{node.name}</span>
@@ -538,57 +577,92 @@ export function DocumentLibrary({
     ...new Map(matches.map((entry) => [entry.document.id, entry])).values(),
   ];
   return (
-    <section className="document-library" hidden={hidden}>
-      <nav className="document-categories" aria-label="文档分类">
-        {tree.packages.length > 1 && (
-          <label className="document-package-picker">
-            <span>资料包</span>
-            <select
-              aria-label="文档资料包"
-              value={pack?.id || ""}
-              onChange={(event) => {
-                const next = tree.packages.find(
-                  (pack) => pack.id === event.target.value,
-                );
-                if (next?.categories[0]) openCategory(next, next.categories[0]);
-              }}
-            >
-              {tree.packages.map((pack) => (
-                <option key={pack.id} value={pack.id}>
-                  {pack.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <div className="document-category-tabs" ref={categoryTabs}>
-          {pack?.categories.map((item) => (
-            <button
-              key={item.id}
-              className={item.id === category?.id ? "active" : ""}
-              aria-current={item.id === category?.id ? "page" : undefined}
-              onClick={() => openCategory(pack, item)}
-            >
-              {item.name}
-              <span>
-                {
-                  new Set(
-                    entries
-                      .filter(
-                        (entry) =>
-                          entry.package.id === pack.id &&
-                          entry.category.id === item.id,
-                      )
-                      .map((entry) => entry.document.id),
-                  ).size
-                }
-              </span>
-            </button>
-          ))}
-        </div>
-      </nav>
-      <div className="documents-space">
-        <aside className="doc-sidebar">
+    <section
+      className="document-library"
+      hidden={hidden}
+      onKeyDown={(event) => {
+        if (compact && directoryOpen && event.key === "Escape" && !event.defaultPrevented) {
+          event.preventDefault();
+          closeMobileDirectory();
+        }
+      }}
+    >
+      <div className="document-library-header">
+        <button
+          type="button"
+          ref={directoryToggle}
+          className="document-directory-toggle"
+          aria-expanded={directoryOpen}
+          aria-controls={`${directoryId}-categories ${directoryId}-tree`}
+          onClick={() => setDirectoryOpen(!directoryOpen)}
+        >
+          {directoryOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+          {directoryOpen ? "收起目录" : "展开目录"}
+        </button>
+        <nav
+          className="document-categories"
+          aria-label="文档分类"
+          id={`${directoryId}-categories`}
+          hidden={!directoryOpen}
+        >
+          {tree.packages.length > 1 && (
+            <label className="document-package-picker">
+              <span>资料包</span>
+              <select
+                aria-label="文档资料包"
+                value={pack?.id || ""}
+                onChange={(event) => {
+                  const next = tree.packages.find(
+                    (pack) => pack.id === event.target.value,
+                  );
+                  if (next?.categories[0]) openCategory(next, next.categories[0]);
+                }}
+              >
+                {tree.packages.map((pack) => (
+                  <option key={pack.id} value={pack.id}>
+                    {pack.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="document-category-tabs" ref={categoryTabs}>
+            {pack?.categories.map((item) => (
+              <button
+                key={item.id}
+                className={item.id === category?.id ? "active" : ""}
+                aria-current={item.id === category?.id ? "page" : undefined}
+                onClick={() => openCategory(pack, item)}
+              >
+                {item.name}
+                <span>
+                  {
+                    new Set(
+                      entries
+                        .filter(
+                          (entry) =>
+                            entry.package.id === pack.id &&
+                            entry.category.id === item.id,
+                        )
+                        .map((entry) => entry.document.id),
+                    ).size
+                  }
+                </span>
+              </button>
+            ))}
+          </div>
+        </nav>
+      </div>
+      <div
+        className="documents-space"
+        data-mobile-directory-open={compact && directoryOpen ? "true" : undefined}
+      >
+        <aside
+          className="doc-sidebar"
+          aria-label="文档目录"
+          id={`${directoryId}-tree`}
+          hidden={!directoryOpen}
+        >
           <div className="sidebar-title">
             <FileText size={17} />
             <b>{query ? "全部搜索结果" : category?.name || "项目知识库"}</b>
@@ -617,7 +691,7 @@ export function DocumentLibrary({
                       key={entry.document.id}
                       onClick={() => {
                         onQuery("");
-                        onOpen(entry.document.id);
+                        openFromDirectory(entry.document.id);
                       }}
                     >
                       <FileText size={14} />
