@@ -4,6 +4,7 @@ import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
+import { build } from "esbuild";
 
 const destination = process.argv[2];
 if (!destination || process.argv.length !== 3) {
@@ -34,10 +35,29 @@ await rm(resolve(checkout, "client/assets"), { recursive: true, force: true });
 await cp(fileURLToPath(new URL("assets/", built)), resolve(checkout, "client/assets"), { recursive: true });
 await writeFile(resolve(checkout, "client/assets", mermaidFile), mermaid);
 await writeFile(resolve(checkout, "client/assets", shellFile), shell);
+const diagramMeta = await Promise.all(["mermaid", "plantuml"].map(async (kind) => {
+  const { outputFiles } = await build({
+    entryPoints: [fileURLToPath(new URL("../../packages/markdown-runtime/src/diagram-frame.ts", import.meta.url))],
+    bundle: true,
+    minify: true,
+    format: "iife",
+    platform: "browser",
+    target: "es2022",
+    define: {
+      __VKS_DIAGRAM_ENGINE__: JSON.stringify(kind),
+      "import.meta.url": "location.href",
+    },
+    write: false,
+  });
+  const script = outputFiles[0].contents;
+  const file = `vks-diagram-${kind}-${createHash("sha256").update(script).digest("hex").slice(0, 16)}.js`;
+  await writeFile(resolve(checkout, "client/assets", file), script);
+  return `<meta name="vks-diagram-${kind}" content="/assets/${file}">`;
+}));
 await cp(new URL("diagram-frame.html", built), resolve(checkout, "client/diagram-frame.html"));
 await writeFile(
   resolve(checkout, "client/index.html"),
-  html.replace("</head>", `<meta name="vks-hosted-studio" content="1"><meta name="vks-document-assistant" content="/assets/${shellFile}"></head>`),
+  html.replace("</head>", `<meta name="vks-hosted-studio" content="1"><meta name="vks-document-assistant" content="/assets/${shellFile}">${diagramMeta.join("")}</head>`),
 );
 for (const item of ["worker.mjs", "build.mjs"]) {
   await cp(new URL(item, import.meta.url), resolve(checkout, item));

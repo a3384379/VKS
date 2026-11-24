@@ -1,6 +1,6 @@
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const ASSET = /^\/assets\/[A-Za-z0-9_.-]+$/;
-const VERSIONED_ASSISTANT = /^\/assets\/vks-document-assistant-(?:shell-[a-f0-9]{16}\.html\.gz|mermaid-[a-f0-9]{16}\.js)$/;
+const VERSIONED_RUNTIME = /^\/assets\/vks-(?:document-assistant-(?:shell-[a-f0-9]{16}\.html\.gz|mermaid-[a-f0-9]{16}\.js)|diagram-(?:mermaid|plantuml)-[a-f0-9]{16}\.js)$/;
 const API = /^\/api\/v(?:1|3)\/[A-Za-z0-9_./-]+$/;
 const PROTOTYPE_CONTENT = /^\/api\/v3\/projects\/[a-z0-9_-]+\/interactive\/packages\/[a-z0-9_-]+\/content$/i;
 
@@ -46,7 +46,7 @@ function withSiteHeaders(response, path, api) {
     const session = cookie.replace(/;\s*Domain=[^;]+/gi, "");
     headers.set("Set-Cookie", /;\s*Secure(?:;|$)/i.test(session) ? session : session + "; Secure");
   }
-  headers.set("Cache-Control", response.ok && VERSIONED_ASSISTANT.test(path)
+  headers.set("Cache-Control", response.ok && VERSIONED_RUNTIME.test(path)
     ? "private, max-age=31536000, immutable"
     : "no-store");
   if (ASSET.test(path)) headers.set("Access-Control-Allow-Origin", "*");

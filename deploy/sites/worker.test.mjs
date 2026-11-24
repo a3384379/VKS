@@ -47,6 +47,16 @@ test("allows private browser caching only for a successful versioned assistant a
   assert.equal(missing.headers.get("cache-control"), "no-store");
 });
 
+test("requires Site identity for the bundled diagram engine", async () => {
+  const url = site + "/assets/vks-diagram-mermaid-0123456789abcdef.js";
+  const env = { ASSETS: { fetch: async () => new Response("engine") } };
+  const blocked = await worker.fetch(new Request(url, { headers: { Origin: "null" } }), env);
+  assert.equal(blocked.status, 401);
+  const ok = await worker.fetch(new Request(url, { headers: user }), env);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get("cache-control"), "private, max-age=31536000, immutable");
+});
+
 test("preserves an authenticated prototype revalidation without a response body", async (context) => {
   const tag = 'W/"' + "0".repeat(64) + '"';
   context.mock.method(globalThis, "fetch", async (_upstream, request) => {

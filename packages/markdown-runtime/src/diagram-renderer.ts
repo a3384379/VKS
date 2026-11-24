@@ -72,6 +72,30 @@ export function sanitizedSvg(source: string): string {
 
 let active = 0;
 const queue: Array<() => void> = [];
+const hostedFrames = new Map<DiagramKind, Promise<string>>();
+
+function hostedDiagramFrame(kind: DiagramKind) {
+  const asset = document.querySelector<HTMLMetaElement>(`meta[name="vks-diagram-${kind}"]`)?.content;
+  if (!asset) return undefined;
+  const cached = hostedFrames.get(kind);
+  if (cached) return cached;
+  // The authenticated parent retrieves only the engine. The opaque child
+  // receives the source over postMessage and performs no remote requests.
+  const pending = fetch(asset, { credentials: "same-origin", redirect: "error", signal: AbortSignal.timeout(15000) })
+    .then(async (response) => {
+      if (!response.ok) throw new Error("图表引擎未能加载");
+      const code = (await response.text()).replace(/<\/script/gi, "<\\/script");
+      const html = `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; base-uri 'none'; form-action 'none'"><script>${code}</script>`;
+      return URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    })
+    .catch((error) => {
+      hostedFrames.delete(kind);
+      throw error;
+    });
+  hostedFrames.set(kind, pending);
+  return pending;
+}
+
 function drain() {
   while (active < 2 && queue.length) queue.shift()?.();
 }
@@ -114,7 +138,6 @@ export function renderDiagram(
         window.location.origin + import.meta.env.BASE_URL,
       );
       address.hash = id;
-      frame.src = address.href;
       let finished = false;
       const finish = (error?: Error, svg?: string) => {
         if (finished) return;
@@ -158,7 +181,19 @@ export function renderDiagram(
         receiver.addEventListener("message", receive),
       );
       signal.addEventListener("abort", abort, { once: true });
-      hostDocument.body.appendChild(frame);
+      const mount = (url: string) => {
+        if (finished) return;
+        frame.src = url;
+        hostDocument.body.appendChild(frame);
+      };
+      const hosted = hostedDiagramFrame(kind);
+      if (hosted) {
+        void hosted.then((url) => mount(url + "#" + id)).catch(() => {
+          finish(new Error("图表引擎未能加载"));
+        });
+      } else {
+        mount(address.href);
+      }
     };
     if (active < 2) start();
     else if (queue.length < 32) {
